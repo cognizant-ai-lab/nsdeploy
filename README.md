@@ -4,26 +4,30 @@ Take a neuro-san(-studio) agent-network **HOCON**, check its dependencies, host 
 tools as **MCP servers**, generate a static **index.html**, and **serve the network
 as a website** — with **no neuro-san server** and no runtime dependency on neuro-san.
 
-This is a standalone project. The browser runs the agents on a **vendored copy of the
-neuro-san-web runtime** (in [`runtime/`](runtime) — dependency-free ES modules); the
-only Python that runs is (a) the build-time HOCON resolver and (b) one small MCP
-server per coded/toolbox tool. The agent **tools** come from a
-[neuro-san-studio](https://github.com/cognizant-ai-lab/neuro-san-studio) checkout you
-point at with `--studio`.
+This is a standalone project. **No neuro-san-studio checkout is required** — by
+default nsdeploy pulls just the files it needs (`aaosa.hocon`, `toolbox_info.hocon`,
+coded-tool `.py` sources, …) from the public
+[neuro-san-studio](https://github.com/cognizant-ai-lab/neuro-san-studio) GitHub repo
+on demand, caching them under `~/.cache/nsdeploy/`. Files are located by suffix-
+matching the repo's git tree, so the repo's internal layout doesn't matter. Any pip
+dependency a hosted tool imports (e.g. `ddgs`) is auto-installed on demand.
+
+The browser runs the agents on a **vendored copy of the neuro-san-web runtime** (in
+[`runtime/`](runtime) — dependency-free ES modules); the only Python that runs is
+(a) the build-time HOCON resolver and (b) one small MCP server per hostable tool.
 
 ## Install & run
 
 ```bash
-# Easiest: use a neuro-san-studio venv (it already has neuro-san + the tool deps),
-# then add the MCP server libs:
-pip install "mcp>=1.0.0" uvicorn starlette pyhocon
+pip install "mcp>=1.0.0" uvicorn starlette pyhocon neuro-san
 
-python -m nsdeploy examples/travel_agent_system.hocon \
-    --studio /path/to/neuro-san-studio --port 8080
+# Tools are pulled from GitHub automatically — no --studio needed:
+python -m nsdeploy examples/travel_agent_system.hocon --port 8080
 ```
 
-Then open <http://127.0.0.1:8080/>. Run with `--no-serve` to generate the site
-without launching. Flags: `--studio` (tool source), `--port`, `--out` (site dir),
+Then open <http://127.0.0.1:8080/>. Flags: `--repo`/`--ref` (GitHub source, default
+`cognizant-ai-lab/neuro-san-studio@main`), `--studio DIR` (use a local checkout
+instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
 `--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime).
 
 By default it runs on a deterministic **mock** LLM (no key needed). For real output,
@@ -59,22 +63,26 @@ through the same-origin `/byok/v1` CORS proxy to your provider.
 `${demo_mode}` are listed under **"DEMO-MODE agents — NOT GROUNDED"**: they fabricate
 realistic-looking answers instead of using real data/tools. **Ground them later** by
 giving each a real tool/data source and removing `demo_mode` from its instructions.
-Tools missing from the studio checkout, and external MCP URLs that aren't browser-
-reachable, are likewise reported and dropped from the runnable network.
+Tools that can't be resolved from the repo, and external MCP URLs that aren't
+browser-reachable, are likewise reported and dropped from the runnable network.
 
 ## Example: `travel_agent_system.hocon`
 
 The bundled example (`examples/travel_agent_system.hocon`) is a 10-agent AAOSA travel
-concierge. Deploying it reports:
+concierge. Deploying it (tools pulled from `cognizant-ai-lab/neuro-san-studio@main`)
+reports:
 
-- ✅ 1 hostable tool → `ddgs_search` (DuckDuckGo) hosted as an MCP server and called
-  for real from the browser;
+- ✅ 3 hostable tools → `ddgs_search`, `web_fetch`, `wikimedia_media_search` — each
+  hosted as an MCP server and callable for real from the browser;
 - ⚠️ 6 demo-mode (ungrounded) agents: intake, itinerary, flight search, accommodation
   search, budgeting, final response;
-- ⚠️ 3 missing tools (`web_fetch`, `webpage_rag`, `wikimedia_media_search`) not in the
-  checkout — dropped;
+- ⚠️ 1 missing tool (`webpage_rag`) not resolvable from the repo — dropped;
 - ⚠️ 1 external MCP (`api.you.com`) — dropped (browser CORS);
-- ℹ️ 1 missing include (`config/llm_config.hocon`) — non-fatal (default model).
+- ℹ️ 1 missing include (`config/llm_config.hocon` is fetched; the resolver still notes
+  any include it can't find) — non-fatal (default model).
+
+(Exact counts depend on the repo `--ref`; against an older checkout fewer tools
+resolve. The point is the report tells you precisely what is grounded vs not.)
 
 ## Notes / limits
 

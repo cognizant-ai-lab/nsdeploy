@@ -21,6 +21,9 @@ from __future__ import annotations
 import importlib
 import io
 import logging
+import re
+import subprocess
+import sys
 from contextlib import redirect_stderr
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,9 +31,18 @@ from typing import Any, Dict, List, Optional
 
 from pyhocon import ConfigFactory
 
+from nsdeploy.studio import StudioSource
+
 # Substring that marks an agent as running in non-grounded "demo mode" (it is told
 # to fabricate realistic-looking answers). Matches the studio's demo_mode template.
 DEMO_MODE_MARKER = "part of a demo system"
+
+# `include "path"` / `include required("path")` / `include url("path")`
+_INCLUDE_RE = re.compile(r'include\s+(?:required\s*\(\s*|url\s*\(\s*)?["\']([^"\']+)["\']')
+
+# Auto-install a coded tool's missing pip dependency on demand (so the end user
+# needs no studio install). Toggle off by setting this to False.
+AUTO_INSTALL_TOOL_DEPS = True
 
 
 @dataclass
@@ -60,42 +72,59 @@ class DeploymentPlan:
     notes: List[str] = field(default_factory=list)
 
 
-def resolve_hocon(hocon_path: Path, studio_root: Path) -> tuple[Dict[str, Any], List[str]]:
-    """Parse + fully resolve a HOCON, with includes relative to the studio root.
+def _prefetch_includes(text: str, source: StudioSource, missing: List[str], seen: set) -> None:
+    """Recursively materialize every `include`d file (from the source) into the
+    source root so pyhocon can resolve them locally."""
+    for rel in _INCLUDE_RE.findall(text):
+        if rel in seen or rel.startswith(("http://", "https://")):
+            continue
+        seen.add(rel)
+        path = source.ensure(rel)
+        if path is None:
+            missing.append(f"Cannot include file {rel} (not found in {getattr(source, 'repo', source.root)}).")
+            continue
+        _prefetch_includes(path.read_text(encoding="utf-8"), source, missing, seen)
 
-    Returns (config_dict, missing_includes). Missing includes are non-fatal: pyhocon
-    logs them and continues, which is what we want (e.g. an absent llm_config.hocon
-    just means the runtime falls back to its default model).
+
+def resolve_hocon(hocon_path: Path, source: StudioSource) -> tuple[Dict[str, Any], List[str]]:
+    """Parse + fully resolve a HOCON, with includes resolved from `source` (a local
+    checkout or the GitHub repo) into source.root.
+
+    Returns (config_dict, missing_includes). Missing includes are non-fatal (e.g. an
+    absent llm_config.hocon just means the runtime falls back to its default model).
     """
     content = hocon_path.read_text(encoding="utf-8")
-    # pyhocon logs failed includes via the logger; capture them as warnings.
     missing: List[str] = []
+    _prefetch_includes(content, source, missing, set())
+
+    captured: List[str] = []
 
     class _IncludeCapture(logging.Handler):
         def emit(self, record: logging.LogRecord) -> None:
             msg = record.getMessage()
             if "Cannot include file" in msg or "does not exist" in msg.lower():
-                missing.append(msg)
+                captured.append(msg)
 
     handler = _IncludeCapture()
     pyhocon_logger = logging.getLogger("pyhocon.config_parser")
     pyhocon_logger.addHandler(handler)
     try:
-        # basedir makes `include "registries/..."` resolve under the studio root,
-        # regardless of where the input HOCON physically lives.
+        # Includes were pre-fetched into source.root above; basedir makes pyhocon
+        # resolve them there, regardless of where the input HOCON physically lives.
         with redirect_stderr(io.StringIO()):
-            cfg = ConfigFactory.parse_string(content, basedir=str(studio_root))
+            cfg = ConfigFactory.parse_string(content, basedir=str(source.root))
     finally:
         pyhocon_logger.removeHandler(handler)
+    missing.extend(m for m in captured if m not in missing)
 
     config = cfg.as_plain_ordered_dict() if hasattr(cfg, "as_plain_ordered_dict") else dict(cfg)
     return config, missing
 
 
-def load_toolbox_info(studio_root: Path) -> Dict[str, Any]:
-    """Load the studio's toolbox_info.hocon (name -> {class, description, parameters})."""
-    path = studio_root / "toolbox" / "toolbox_info.hocon"
-    if not path.exists():
+def load_toolbox_info(source: StudioSource) -> Dict[str, Any]:
+    """Load toolbox_info.hocon from the source (name -> {class, description, parameters})."""
+    path = source.ensure("toolbox/toolbox_info.hocon")
+    if not path:
         return {}
     cfg = ConfigFactory.parse_file(str(path))
     return cfg.as_plain_ordered_dict() if hasattr(cfg, "as_plain_ordered_dict") else dict(cfg)
@@ -109,27 +138,54 @@ def _is_url(ref: Any) -> bool:
     return isinstance(ref, str) and (ref.startswith("http://") or ref.startswith("https://"))
 
 
-def _resolve_class(class_path: str) -> Optional[tuple[str, str]]:
-    """Resolve a toolbox `class` ("module.Class") to an importable (module, Class).
+def _import_with_autoinstall(module: str):
+    """Import `module`, pip-installing a missing third-party dependency once and
+    retrying (so the user needs no studio install). Returns the module or None."""
+    try:
+        return importlib.import_module(module)
+    except ModuleNotFoundError as e:
+        missing = e.name
+        # Don't try to install the tool module itself, only its deps.
+        if not AUTO_INSTALL_TOOL_DEPS or not missing or missing.startswith("coded_tools"):
+            return None
+        print(f"   …installing dependency '{missing}' for a coded tool", flush=True)
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", missing],
+                           check=True)
+        except subprocess.CalledProcessError:
+            return None
+        try:
+            return importlib.import_module(module)
+        except Exception:
+            return None
+    except Exception:
+        return None
 
-    Studio coded tools live under the `coded_tools` package, so we try that prefix
-    first, then the bare module (for langchain/external classes).
+
+def _resolve_class(class_path: str, source: StudioSource) -> Optional[tuple[str, str]]:
+    """Resolve a toolbox `class` ("[pkg.]module.Class") to an importable
+    (module, Class), fetching the coded-tool source from `source` if needed.
+
+    The module's file name (its last dotted segment) is mirrored into the source's
+    `coded_tools` package and imported from there — so the repo's own package layout
+    doesn't matter.
     """
     if "." not in class_path:
         return None
     module_part, class_name = class_path.rsplit(".", 1)
-    for candidate in (f"coded_tools.{module_part}", module_part):
-        try:
-            mod = importlib.import_module(candidate)
-            if hasattr(mod, class_name):
-                return candidate, class_name
-        except Exception:  # ImportError or transitive import failure -> not hostable
-            continue
+    module_leaf = module_part.split(".")[-1]
+    if not source.ensure_coded_tool(f"{module_leaf}.py"):
+        return None
+    if str(source.root) not in sys.path:
+        sys.path.insert(0, str(source.root))
+    mod = _import_with_autoinstall(f"coded_tools.{module_leaf}")
+    if mod and hasattr(mod, class_name):
+        return f"coded_tools.{module_leaf}", class_name
     return None
 
 
 def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
-               network_name: str, missing_includes: List[str]) -> DeploymentPlan:
+               network_name: str, missing_includes: List[str], source: StudioSource) -> DeploymentPlan:
     """Classify the resolved config into a DeploymentPlan."""
     tools = config.get("tools", []) or []
     agent_names = {t["name"] for t in tools if "name" in t and "instructions" in t}
@@ -171,7 +227,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
         if not class_path:
             referenced_missing.add(name)
             return
-        resolved = _resolve_class(class_path)
+        resolved = _resolve_class(class_path, source)
         if not resolved:
             referenced_missing.add(name)
             return
