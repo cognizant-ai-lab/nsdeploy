@@ -61,9 +61,10 @@ def main() -> int:
         return 1
 
     out_dir = Path(args.out).resolve() if args.out else (Path.cwd() / ".nsdeploy" / network_name)
-    mock_router = f"http://127.0.0.1:{args.port}/v1"
-    byok_router = f"http://127.0.0.1:{args.port}/byok/v1"
-    generate_site(plan, out_dir, mock_router, byok_router)
+    site_base = f"http://127.0.0.1:{args.port}"
+    mock_router = f"{site_base}/v1"
+    byok_router = f"{site_base}/byok/v1"
+    generate_site(plan, out_dir, mock_router, byok_router, site_base)
     print(f"✅ Generated site → {out_dir}")
 
     if args.no_serve:
@@ -72,7 +73,8 @@ def main() -> int:
 
     runtime_dir = Path(args.runtime_dir).resolve() if args.runtime_dir else None
     # source.root holds the (materialized) coded-tool sources the MCP hosts import.
-    serve(out_dir, plan, source.root, port=args.port, upstream=args.upstream, runtime_dir=runtime_dir)
+    serve(out_dir, plan, source.root, port=args.port, upstream=args.upstream,
+          runtime_dir=runtime_dir, ext_mcps=plan.external_mcps)
     return 0
 
 

@@ -22,11 +22,15 @@ def _brandize(network_name: str) -> str:
     return network_name.replace("_", " ").replace("-", " ").title()
 
 
-def rewrite_config(plan: DeploymentPlan, mcp_host: str = "127.0.0.1") -> Dict[str, Any]:
+def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.0.1") -> Dict[str, Any]:
     """Produce the deployed network config: agents only, with tool references mapped
-    to local MCP URLs (hostable) or dropped (missing tools / external MCPs)."""
+    to local MCP URLs (hostable tools) or same-origin MCP-proxy URLs (external MCP
+    servers), and missing/other-external refs dropped."""
     hostable_url = {t.name: f"http://{mcp_host}:{t.port}/mcp" for t in plan.hostable_tools}
-    drop = set(plan.missing_tools) | set(plan.external_mcps)
+    # External MCP servers are reached through a same-origin proxy (avoids CORS) and
+    # given a clean /mcp URL so the runtime classifies them as MCP.
+    ext_url = {url: f"{site_base}/ext-mcp/{i}/mcp" for i, url in enumerate(plan.external_mcps)}
+    drop = set(plan.missing_tools) | set(plan.external_other)
 
     config = copy.deepcopy(plan.config)
     new_tools: List[Dict[str, Any]] = []
@@ -40,10 +44,12 @@ def rewrite_config(plan: DeploymentPlan, mcp_host: str = "127.0.0.1") -> Dict[st
         for ref in agent.get("tools", []) or []:
             if ref in hostable_url:
                 mapped.append(hostable_url[ref])
+            elif ref in ext_url:
+                mapped.append(ext_url[ref])
             elif ref in drop:
-                continue  # missing tool / external MCP — dropped (reported separately)
+                continue  # missing tool / non-MCP external URL — dropped (reported separately)
             else:
-                mapped.append(ref)  # sub-agent reference (or already-kept URL)
+                mapped.append(ref)  # sub-agent reference
         if "tools" in agent:
             agent["tools"] = mapped
         new_tools.append(agent)
@@ -52,11 +58,14 @@ def rewrite_config(plan: DeploymentPlan, mcp_host: str = "127.0.0.1") -> Dict[st
 
 
 def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
-                   mock_router: str, byok_router: str, mcp_host: str = "127.0.0.1") -> Dict[str, Any]:
+                   mock_router: str, byok_router: str, site_base: str,
+                   mcp_host: str = "127.0.0.1") -> Dict[str, Any]:
     meta = plan.config.get("metadata", {}) or {}
     front_fn = next((a.get("function", {}) for a in plan.agents if a.get("name") == plan.front_man), {})
     description = (front_fn.get("description") or meta.get("description") or plan.network_name).strip()
     allowed_peers = [f"http://{mcp_host}:{t.port}" for t in plan.hostable_tools]
+    if plan.external_mcps:  # the site itself hosts the external-MCP proxy
+        allowed_peers.append(site_base)
     return {
         "brand": _brandize(plan.network_name),
         "networks": [
@@ -113,12 +122,12 @@ def _index_html(brand: str) -> str:
 
 
 def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_router: str,
-                  mcp_host: str = "127.0.0.1") -> Dict[str, Any]:
+                  site_base: str, mcp_host: str = "127.0.0.1") -> Dict[str, Any]:
     """Write index.html, agent-manifest.json, and <network>.network.json into out_dir.
     Returns the manifest dict."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    network_config = rewrite_config(plan, mcp_host=mcp_host)
-    manifest = build_manifest(plan, network_config, mock_router, byok_router, mcp_host=mcp_host)
+    network_config = rewrite_config(plan, site_base, mcp_host=mcp_host)
+    manifest = build_manifest(plan, network_config, mock_router, byok_router, site_base, mcp_host=mcp_host)
 
     (out_dir / f"{plan.network_name}.network.json").write_text(
         json.dumps(network_config, indent=2), encoding="utf-8")

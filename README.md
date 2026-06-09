@@ -49,13 +49,15 @@ through the same-origin `/byok/v1` CORS proxy to your provider.
 3. **Host** each hostable tool as a standalone **FastMCP** streamable-HTTP server
    (with CORS), exposing its `CodedTool.invoke(args, sly_data)` as an MCP tool whose
    input schema is built from the tool's JSON-Schema parameters.
-4. **Rewrite** the resolved network (a copy): each hostable tool reference becomes
-   its local MCP URL; missing tools and external MCPs are dropped. This removes any
-   assumption of a local neuro-san server — tools are reached purely over MCP.
+4. **Rewrite** the resolved network (a copy): each hostable tool reference becomes its
+   local MCP URL; each **external MCP** URL becomes a same-origin proxy URL
+   (`/ext-mcp/<i>/mcp`) so the browser can call it without CORS; missing tools and
+   non-MCP external URLs are dropped. This removes any assumption of a local neuro-san
+   server — tools are reached purely over MCP.
 5. **Generate** `index.html` + `agent-manifest.json` + `<network>.network.json`.
 6. **Serve** one static origin (site + the `neuro-san-web` runtime, with the
-   sandbox-worker CSP), a mock LLM router at `/v1`, and a BYOK proxy at `/byok/v1`,
-   plus the MCP server subprocesses.
+   sandbox-worker CSP), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
+   external-MCP proxy at `/ext-mcp/<i>/mcp`, plus the local MCP server subprocesses.
 
 ## Grounding & `demo_mode`
 
@@ -63,8 +65,10 @@ through the same-origin `/byok/v1` CORS proxy to your provider.
 `${demo_mode}` are listed under **"DEMO-MODE agents — NOT GROUNDED"**: they fabricate
 realistic-looking answers instead of using real data/tools. **Ground them later** by
 giving each a real tool/data source and removing `demo_mode` from its instructions.
-Tools that can't be resolved from the repo, and external MCP URLs that aren't
-browser-reachable, are likewise reported and dropped from the runnable network.
+Tools that can't be resolved from the repo (and non-MCP external URLs) are likewise
+reported and dropped. **External MCP servers are kept** — proxied same-origin so the
+browser can call them; whether a given call succeeds then depends on that remote
+server (reachability/auth) and the user's run-time consent.
 
 ## Example: `travel_agent_system.hocon`
 
@@ -72,12 +76,13 @@ The bundled example (`examples/travel_agent_system.hocon`) is a 10-agent AAOSA t
 concierge. Deploying it (tools pulled from `cognizant-ai-lab/neuro-san-studio@main`)
 reports:
 
-- ✅ 3 hostable tools → `ddgs_search`, `web_fetch`, `wikimedia_media_search` — each
-  hosted as an MCP server and callable for real from the browser;
+- ✅ 4 hostable tools → `ddgs_search`, `web_fetch`, `webpage_rag`,
+  `wikimedia_media_search` — each hosted as an MCP server and callable for real;
+- 🔌 1 external MCP (`api.you.com`) — kept and reached through a same-origin proxy
+  (no browser CORS issue); in testing the remote returned HTTP 403 — i.e. *it* blocks
+  anonymous clients, but nsdeploy does attempt the call and surfaces the result;
 - ⚠️ 6 demo-mode (ungrounded) agents: intake, itinerary, flight search, accommodation
   search, budgeting, final response;
-- ⚠️ 1 missing tool (`webpage_rag`) not resolvable from the repo — dropped;
-- ⚠️ 1 external MCP (`api.you.com`) — dropped (browser CORS);
 - ℹ️ 1 missing include (`config/llm_config.hocon` is fetched; the resolver still notes
   any include it can't find) — non-fatal (default model).
 

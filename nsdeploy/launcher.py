@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -45,7 +47,9 @@ def _called_tool_names(messages: List[Dict[str, Any]]) -> set:
     return {m.get("name") for m in messages if m.get("role") == "tool" and m.get("name")}
 
 
-def make_handler(site_dir: Path, upstream: str, runtime_dir: Path):
+def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: List[str]):
+    ext_mcp_re = re.compile(r"^/ext-mcp/(\d+)/mcp$")
+
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -71,6 +75,9 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path):
                 return self._mock_router(raw)
             if path == "/byok/v1/chat/completions":
                 return self._byok_proxy(raw)
+            m = ext_mcp_re.match(path)
+            if m:
+                return self._ext_mcp_proxy(int(m.group(1)), raw)
             self._send(404, b"not found", "text/plain")
 
         # --- deterministic, name-agnostic mock LLM router (no key needed) ---------
@@ -154,6 +161,46 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path):
                     break
                 self.wfile.write(chunk)
 
+        # --- same-origin proxy to an external MCP server (avoids browser CORS) ----
+        def _ext_mcp_proxy(self, index: int, raw: bytes):
+            if index < 0 or index >= len(ext_mcps):
+                return self._send(404, b"unknown external MCP", "text/plain")
+            target = ext_mcps[index]
+            # Forward the MCP/JSON-RPC request + the headers the protocol needs.
+            fwd = {"Content-Type": "application/json",
+                   "Accept": self.headers.get("Accept", "application/json, text/event-stream"),
+                   "MCP-Protocol-Version": self.headers.get("MCP-Protocol-Version", "2025-06-18")}
+            sid = self.headers.get("Mcp-Session-Id")
+            if sid:
+                fwd["Mcp-Session-Id"] = sid
+            try:
+                up = urllib.request.urlopen(
+                    urllib.request.Request(target, data=raw, method="POST", headers=fwd), timeout=120)
+            except urllib.error.HTTPError as e:
+                detail = e.read()
+                self._send(e.code, detail, e.headers.get("Content-Type", "application/json"))
+                return
+            except Exception as e:  # network/DNS/timeout — report as an MCP-readable error
+                msg = json.dumps({"jsonrpc": "2.0", "error": {"code": -32000,
+                                  "message": f"external MCP unreachable: {e}"}}).encode("utf-8")
+                self._send(502, msg, "application/json")
+                return
+            self.send_response(200)
+            self._cors()
+            self.send_header("Content-Type", up.headers.get("Content-Type", "application/json"))
+            up_sid = up.headers.get("Mcp-Session-Id")
+            if up_sid:
+                self.send_header("Mcp-Session-Id", up_sid)
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.close_connection = True
+            self.end_headers()
+            while True:
+                chunk = up.read(2048)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+
         # --- static files: /runtime/* from the runtime, else from the site -------
         def do_GET(self):
             path = self.path.split("?")[0]
@@ -205,11 +252,12 @@ def spawn_mcp_servers(plan: DeploymentPlan, studio_root: Path, python_exe: str) 
 
 def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int = 8080,
           upstream: str = "https://api.openai.com/v1", python_exe: Optional[str] = None,
-          runtime_dir: Optional[Path] = None) -> None:
+          runtime_dir: Optional[Path] = None, ext_mcps: Optional[List[str]] = None) -> None:
     python_exe = python_exe or sys.executable
     runtime_dir = runtime_dir or DEFAULT_RUNTIME_DIR
+    ext_mcps = ext_mcps or []
     procs = spawn_mcp_servers(plan, studio_root, python_exe)
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(site_dir, upstream, runtime_dir))
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(site_dir, upstream, runtime_dir, ext_mcps))
     url = f"http://127.0.0.1:{port}/"
     print(f"\n🌐  {plan.network_name} is live:  {url}")
     print(f"    LLM: mock router (no key) at /v1  ·  BYOK proxy at /byok/v1 → {upstream}")
@@ -217,6 +265,8 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
         print("    MCP tool servers:")
         for t in plan.hostable_tools:
             print(f"      • {t.name}  →  http://127.0.0.1:{t.port}/mcp")
+    for i, target in enumerate(ext_mcps):
+        print(f"    External MCP (proxied): /ext-mcp/{i}/mcp  →  {target}")
     print("    Ctrl-C to stop.\n")
     try:
         httpd.serve_forever()

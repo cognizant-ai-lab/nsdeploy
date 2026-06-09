@@ -66,8 +66,9 @@ class DeploymentPlan:
     agents: List[Dict[str, Any]] = field(default_factory=list)
     demo_mode_agents: List[str] = field(default_factory=list)
     hostable_tools: List[HostableTool] = field(default_factory=list)
-    missing_tools: List[str] = field(default_factory=list)      # referenced, unresolvable
-    external_mcps: List[str] = field(default_factory=list)      # http(s) MCP URLs we don't host
+    missing_tools: List[str] = field(default_factory=list)       # referenced, unresolvable
+    external_mcps: List[str] = field(default_factory=list)       # http(s) MCP URLs — proxied & callable
+    external_other: List[str] = field(default_factory=list)      # other http(s) URLs — not handled
     missing_includes: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
 
@@ -138,6 +139,13 @@ def _is_url(ref: Any) -> bool:
     return isinstance(ref, str) and (ref.startswith("http://") or ref.startswith("https://"))
 
 
+def _looks_like_mcp(url: str) -> bool:
+    """A URL pointing at an MCP server — by path (ignoring any query string)."""
+    from urllib.parse import urlparse
+    path = urlparse(url).path.lower()
+    return path.endswith("/mcp") or "/mcp/" in path or path.endswith("/sse")
+
+
 def _import_with_autoinstall(module: str):
     """Import `module`, pip-installing a missing third-party dependency once and
     retrying (so the user needs no studio install). Returns the module or None."""
@@ -205,7 +213,8 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
 
     seen_hostable: Dict[str, HostableTool] = {}
     referenced_missing: set[str] = set()
-    external: set[str] = set()
+    external_mcp: set[str] = set()
+    external_other: set[str] = set()
 
     def resolve_leaf(name: str, spec: Dict[str, Any]) -> None:
         """Classify a non-agent tool entry (toolbox/class) as hostable or missing."""
@@ -252,7 +261,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
     for agent in plan.agents:
         for ref in agent.get("tools", []) or []:
             if _is_url(ref):
-                external.add(ref)
+                (external_mcp if _looks_like_mcp(ref) else external_other).add(ref)
             elif ref in agent_names:
                 continue  # sub-agent
             elif ref in specs_by_name:
@@ -267,7 +276,8 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
         port += 1
         plan.hostable_tools.append(tool)
     plan.missing_tools = sorted(referenced_missing)
-    plan.external_mcps = sorted(external)
+    plan.external_mcps = sorted(external_mcp)
+    plan.external_other = sorted(external_other)
     return plan
 
 
@@ -297,10 +307,16 @@ def format_report(plan: DeploymentPlan) -> str:
             out.append(f"   • {name}")
     if plan.external_mcps:
         out.append("")
-        out.append(f"⚠️  External MCP URLs — NOT hosted by nsdeploy ({len(plan.external_mcps)}):")
-        out.append("    dropped from the deployed network (a browser call would also need the remote")
-        out.append("    server to allow CORS). Re-add explicitly if the endpoint is browser-reachable.")
+        out.append(f"🔌 External MCP servers — PROXIED & callable ({len(plan.external_mcps)}): reached")
+        out.append("    via a same-origin proxy (so browser CORS is a non-issue); the call still")
+        out.append("    requires the remote server to be reachable + the user to consent at run time.")
         for url in plan.external_mcps:
+            out.append(f"   • {url}")
+    if plan.external_other:
+        out.append("")
+        out.append(f"⚠️  Other external URLs — NOT handled ({len(plan.external_other)}): not an MCP")
+        out.append("    endpoint (no /mcp path) and not a hostable tool — dropped from the network.")
+        for url in plan.external_other:
             out.append(f"   • {url}")
     if plan.missing_includes:
         out.append("")
