@@ -17,12 +17,40 @@ from typing import Any, Dict, List
 
 from nsdeploy.resolve import DeploymentPlan
 
+# Domain-agnostic CRUSE directive injected into each agent's instructions at deploy
+# time so any network produces generative-UI widgets — without editing the source
+# HOCON. The shapes match the neuro-san-web runtime's widget renderer. (Widgets are
+# emitted by the LLM following this guidance; the deterministic mock won't, so this
+# only takes visible effect with a real BYOK model.)
+CRUSE_DIRECTIVE = """\
+GENERATIVE UI (CRUSE): the app renders interactive widgets from a fenced ```cruse-ui```
+block of JSON in your reply and sends the user's interaction back as your next input.
+Prefer widgets over plain text when interacting:
+- need details from the user before proceeding → emit a FORM widget (don't ask in prose);
+- offering a set of options to choose from → emit a CHOICE widget;
+- about to finalize/commit an action → offer a CONFIRM widget;
+- summarizing key facts → optionally an INFO card.
+Rules: keep any prose short and OUTSIDE the block; at most ONE block per reply; valid
+JSON; build widgets ONLY from real data you actually have — never invent values.
+Shapes:
+```cruse-ui
+{"title":"…","icon":"📝","schema":{"type":"object","properties":{"field_name":{"type":"string","title":"Label","description":"hint"}},"required":["field_name"]},"submitLabel":"Continue"}
+```
+(form field types: string; integer/number with optional minimum/maximum; boolean;
+string with "format":"date"; "enum":["a","b"] for a dropdown; "x-ui":{"widget":"textarea"}
+or {"widget":"radio"}.) Other kinds:
+{"kind":"choice","title":"…","options":[{"title":"…","subtitle":"…","meta":"…","value":"…"}]}
+{"kind":"confirm","title":"…","confirmLabel":"Yes","cancelLabel":"No","confirmText":"…"}
+{"kind":"info","title":"…","fields":{"Label":"Value"}}
+"""
+
 
 def _brandize(network_name: str) -> str:
     return network_name.replace("_", " ").replace("-", " ").title()
 
 
-def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.0.1") -> Dict[str, Any]:
+def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.0.1",
+                   cruse: bool = True) -> Dict[str, Any]:
     """Produce the deployed network config: agents only, with tool references mapped
     to local MCP URLs (hostable tools) or same-origin MCP-proxy URLs (external MCP
     servers), and missing/other-external refs dropped."""
@@ -52,6 +80,8 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
                 mapped.append(ref)  # sub-agent reference
         if "tools" in agent:
             agent["tools"] = mapped
+        if cruse:  # augment instructions so the agent emits generative-UI widgets
+            agent["instructions"] = (agent.get("instructions", "") or "").rstrip() + "\n\n" + CRUSE_DIRECTIVE
         new_tools.append(agent)
     config["tools"] = new_tools
     return config
@@ -122,11 +152,11 @@ def _index_html(brand: str) -> str:
 
 
 def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_router: str,
-                  site_base: str, mcp_host: str = "127.0.0.1") -> Dict[str, Any]:
+                  site_base: str, mcp_host: str = "127.0.0.1", cruse: bool = True) -> Dict[str, Any]:
     """Write index.html, agent-manifest.json, and <network>.network.json into out_dir.
     Returns the manifest dict."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    network_config = rewrite_config(plan, site_base, mcp_host=mcp_host)
+    network_config = rewrite_config(plan, site_base, mcp_host=mcp_host, cruse=cruse)
     manifest = build_manifest(plan, network_config, mock_router, byok_router, site_base, mcp_host=mcp_host)
 
     (out_dir / f"{plan.network_name}.network.json").write_text(

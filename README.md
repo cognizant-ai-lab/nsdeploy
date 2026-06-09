@@ -70,6 +70,20 @@ reported and dropped. **External MCP servers are kept** — proxied same-origin 
 browser can call them; whether a given call succeeds then depends on that remote
 server (reachability/auth) and the user's run-time consent.
 
+## Generative UI (CRUSE)
+
+By default nsdeploy **injects a domain-agnostic CRUSE directive into every agent's
+instructions** (in the generated copy — your source HOCON is untouched), so any
+deployed network produces generative-UI widgets automatically: a **form** when an
+agent needs input, a **choice** when it offers options, a **confirm** before
+finalizing, an **info** card for summaries. The runtime extracts the fenced
+` ```cruse-ui ` JSON each agent emits and renders it, consolidating widgets up the
+agent chain. Opt out with `--no-cruse`.
+
+Widgets are emitted by the **LLM** following the directive, so they appear only with
+a real model (BYOK) — the deterministic mock router never emits them. Verified with a
+local `qwen2.5:7b`: the agents emitted `form` and `choice` widgets unprompted.
+
 ## Example: `travel_agent_system.hocon`
 
 The bundled example (`examples/travel_agent_system.hocon`) is a 10-agent AAOSA travel

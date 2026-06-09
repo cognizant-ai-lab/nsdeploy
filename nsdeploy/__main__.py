@@ -33,6 +33,8 @@ def main() -> int:
     ap.add_argument("--out", default=None, help="output site dir (default: ./.nsdeploy/<name>)")
     ap.add_argument("--upstream", default="https://api.openai.com/v1", help="BYOK proxy upstream")
     ap.add_argument("--runtime-dir", default=None, help="neuro-san-web runtime dir (default: vendored ./runtime)")
+    ap.add_argument("--no-cruse", action="store_true",
+                    help="don't inject the CRUSE generative-UI directive into agents")
     ap.add_argument("--no-serve", action="store_true", help="generate the site but don't launch")
     args = ap.parse_args()
 
@@ -64,8 +66,8 @@ def main() -> int:
     site_base = f"http://127.0.0.1:{args.port}"
     mock_router = f"{site_base}/v1"
     byok_router = f"{site_base}/byok/v1"
-    generate_site(plan, out_dir, mock_router, byok_router, site_base)
-    print(f"✅ Generated site → {out_dir}")
+    generate_site(plan, out_dir, mock_router, byok_router, site_base, cruse=not args.no_cruse)
+    print(f"✅ Generated site → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))
 
     if args.no_serve:
         print("   (--no-serve: not launching)")
