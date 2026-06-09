@@ -1,0 +1,14 @@
+# generated deploy output
+.nsdeploy/
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+venv/
+.venv/
+
+# misc
+.DS_Store

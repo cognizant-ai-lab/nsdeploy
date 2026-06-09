@@ -1,0 +1,56 @@
+// index.js — public entry point for the neuro-san-web runtime.
+//
+// A business's index.html imports `boot` and points it at its origin. boot loads
+// the origin's published network, compiles it, mounts the themeable UI, and is
+// ready to run — entirely in the browser, with no agent server.
+
+export { Engine } from "./engine.js";
+export { TraceBus } from "./trace.js";
+export { mountApp } from "./ui.js";
+export { AgentNetwork, validateNetwork, ChatMessageType } from "./kernel.js";
+export { parseHocon } from "./hocon.js";
+
+import { Engine } from "./engine.js";
+import { TraceBus } from "./trace.js";
+import { mountApp } from "./ui.js";
+
+export async function boot(rootSelector = "#app", opts = {}) {
+  const root = typeof rootSelector === "string" ? document.querySelector(rootSelector) : rootSelector;
+  const trace = new TraceBus();
+  const params = new URLSearchParams(location.search);
+  // BYOK key handling: a real API key must NEVER live in the URL/query string —
+  // that leaks it to the static origin (initial GET), browser history, server
+  // logs, and shared links. We keep it in sessionStorage (this tab only). If a
+  // key ever arrives via the URL (legacy/shared link), migrate it into
+  // sessionStorage and strip it from the address bar immediately.
+  if (params.has("key")) {
+    const urlKey = params.get("key");
+    if (urlKey && urlKey !== "demo") {
+      try { sessionStorage.setItem("nsweb-byok-key", urlKey); } catch {}
+    }
+    params.delete("key");
+    const qs = params.toString();
+    try { history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash); } catch {}
+  }
+  let storedKey = "";
+  try { storedKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
+  const engine = new Engine({
+    originUrl: location.origin,
+    trace,
+    sandboxWorkerUrl: "/runtime/sandbox-worker.js",
+    byokKey: opts.byokKey || storedKey || "demo",
+    routerOverride: opts.router || params.get("router") || "",
+    modelOverride: opts.model || params.get("model") || "",
+  });
+  // Select the agent loop: ?runner=langchain drives the LLM via LangChain.js
+  // (neuro-san-web owns the loop). 'langgraph' kept as an alias for older links.
+  const runnerChoice = opts.runner || params.get("runner");
+  if (runnerChoice === "langchain" || runnerChoice === "langgraph") {
+    await engine.enableLangChain();
+  }
+  const { manifest } = await engine.loadTop();
+  mountApp(root, { engine, trace, manifest });
+  // expose for debugging / e2e tests
+  if (typeof window !== "undefined") window.__nsweb = { engine, trace };
+  return { engine, trace };
+}

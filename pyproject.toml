@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nsdeploy"
+version = "0.1.0"
+description = "Deploy a neuro-san agent-network HOCON as a serverless website: resolve dependencies, host tools as MCP servers, generate a site, and serve it — no neuro-san server."
+requires-python = ">=3.10"
+dependencies = [
+    # HOCON resolution (also a neuro-san dependency).
+    "pyhocon>=0.3.59",
+    # FastMCP + ASGI server for hosting coded tools as MCP servers.
+    "mcp>=1.0.0",
+    "uvicorn>=0.30",
+    "starlette>=0.40",
+]
+
+# Optional: the neuro-san interfaces + a neuro-san-studio checkout supply the
+# CodedTool base class and the actual tool implementations. Point `--studio` at a
+# neuro-san-studio checkout (and run in an env that can import its tools, e.g. the
+# studio's own venv). See README.
+[project.optional-dependencies]
+studio = ["neuro-san>=0.5"]
+
+[project.scripts]
+nsdeploy = "nsdeploy.__main__:main"
+
+[tool.setuptools]
+packages = ["nsdeploy"]
