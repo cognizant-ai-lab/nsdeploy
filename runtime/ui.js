@@ -101,11 +101,19 @@ const BASE_CSS = `
 .ns-node{display:inline-block;margin:3px;padding:4px 8px;border-radius:8px;border:1px solid var(--ns-border,#ddd);font-family:ui-monospace,monospace;font-size:12px}
 .ns-node.active{background:var(--ns-primary,#2563eb);color:#fff;border-color:var(--ns-primary,#2563eb)}
 .ns-node.origin{background:#fef3c7;border-color:#f59e0b}
-.ns-tnode{font-family:ui-monospace,monospace;font-size:12px;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ns-fg,#222)}
-.ns-tnode.root{font-weight:600}
-.ns-tnode.leaf{color:var(--ns-muted,#888)}
-.ns-tnode .ns-tconn{color:var(--ns-muted,#bbb)}
-.ns-tnode.active{color:var(--ns-primary,#2563eb);font-weight:600}
+/* hierarchical agent graph: boxes joined by elbow connectors, active box glows */
+.ns-tree,.ns-tchildren{list-style:none;margin:0;padding:0}
+.ns-tree li{position:relative}
+.ns-tchildren{margin-left:11px;padding-left:16px;border-left:1.5px solid var(--ns-border,#dde3ea)}
+.ns-tchildren>li::before{content:"";position:absolute;left:-16px;top:17px;width:13px;height:1.5px;background:var(--ns-border,#dde3ea)}
+.ns-tchildren>li:last-child::after{content:"";position:absolute;left:-17.5px;top:18px;bottom:0;width:1.5px;background:var(--ns-panelbg,#fbfcfe)}
+.ns-tbox{display:inline-flex;align-items:center;gap:6px;margin:3px 0;padding:5px 10px;border:1px solid var(--ns-border,#dde3ea);border-radius:10px;background:#fff;font-family:ui-monospace,monospace;font-size:12px;position:relative;transition:box-shadow .15s,border-color .15s,background .15s}
+.ns-tbox .ns-ticon{font-size:13px;line-height:1}
+.ns-tbox .ns-tdot{width:8px;height:8px;border-radius:50%;background:#cbd5e1;margin-left:2px}
+.ns-tbox.root{font-weight:700;border-color:var(--ns-primary,#2563eb)}
+.ns-tbox.leaf{color:var(--ns-muted,#7a869a);border-style:dashed;background:var(--ns-panelbg,#fafbfe)}
+.ns-tbox.active{border-color:var(--ns-primary,#2563eb);background:color-mix(in srgb,var(--ns-primary,#2563eb) 10%,#fff);box-shadow:0 0 0 3px color-mix(in srgb,var(--ns-primary,#2563eb) 20%,transparent)}
+.ns-tbox.active .ns-tdot{background:var(--ns-primary,#2563eb);animation:ns-pulse 1s ease-in-out infinite}
 .ns-log{flex:1;border:1px solid var(--ns-border,#e2e2e2);border-radius:10px;padding:10px;overflow:auto;min-height:0}
 .ns-row{font-family:ui-monospace,monospace;font-size:12px;border-left:3px solid #cbd5e1;padding:4px 8px;margin:3px 0;background:#fafafa;border-radius:4px;cursor:pointer}
 .ns-row .ns-tag{font-weight:700;margin-right:6px}
@@ -731,52 +739,52 @@ function renderWidget(container, spec, onSubmit) {
   return card;
 }
 
-// Render the network as a hierarchy: front-man at the root, each agent's `tools`
-// nested beneath it (sub-agents recurse; MCP/remote/coded tools are typed leaves).
-// A shared sub-agent is expanded once; later references show as "↩ name (above)" to
-// avoid duplicating subtrees and to break cycles. The active agent/origin is bolded.
+// Render the network as a hierarchy of boxes joined by elbow connectors: the
+// front-man is the root, each agent's `tools` nest beneath it (sub-agents recurse;
+// MCP/remote/coded tools are typed leaf boxes). A shared sub-agent is expanded once;
+// later references show as "↩ name" (also breaks cycles). The active agent/origin
+// box glows + its dot pulses.
 function renderNodes(el, net, activeAgents, activeOrigins = new Set()) {
   if (!net) return;
   const tools = net.config.tools || [];
   const specByName = new Map(tools.filter((a) => a && a.name).map((a) => [a.name, a]));
   const isAgent = (n) => { const s = specByName.get(n); return !!(s && s.instructions && !s.class && !s.toolbox); };
-  const rows = [];
+  const hostOfRef = (ref) => { try { return new URL(ref).host; } catch { return String(ref); } };
+  const front = net.findFrontMan();
   const rendered = new Set();
 
-  const hostOfRef = (ref) => { try { return new URL(ref).host; } catch { return String(ref); } };
-  const indent = (d) => `padding-left:${d * 16}px`;
-  const conn = (d) => (d === 0 ? "" : `<span class="ns-tconn">↳ </span>`);
-
-  function row(depth, cls, icon, label, title) {
-    rows.push(`<div class="ns-tnode ${cls}" style="${indent(depth)}"${title ? ` title="${escapeHtml(title)}"` : ""}>` +
-      `${conn(depth)}${icon ? icon + " " : ""}${escapeHtml(label)}</div>`);
+  function box(cls, icon, label, { active = false, dot = false, title = "" } = {}) {
+    return `<div class="ns-tbox ${cls}${active ? " active" : ""}"${title ? ` title="${escapeHtml(title)}"` : ""}>` +
+      `${icon ? `<span class="ns-ticon">${icon}</span>` : ""}<span>${escapeHtml(label)}</span>` +
+      `${dot ? '<span class="ns-tdot"></span>' : ""}</div>`;
   }
 
-  function walk(name, depth) {
+  function node(name) {
     const spec = specByName.get(name);
-    row(depth, "agent" + (depth === 0 ? " root" : "") + (activeAgents.has(name) ? " active" : ""),
-        "", name, spec?.function?.description || "");
     rendered.add(name);
+    const kids = [];
     for (const ref of spec?.tools || []) {
       let kind = "missing";
       try { kind = net.classifyTool(ref).kind; } catch {}
       if (kind === "agent" && isAgent(ref)) {
-        if (rendered.has(ref)) row(depth + 1, "leaf", "↩", `${ref} (above)`);
-        else walk(ref, depth + 1);
+        kids.push(`<li>${rendered.has(ref) ? box("leaf", "↩", ref, { title: "defined above" }) : node(ref)}</li>`);
       } else if (kind === "mcp") {
-        const h = hostOfRef(ref); row(depth + 1, "leaf" + (activeOrigins.has(h) ? " active" : ""), "🌐", h);
+        const h = hostOfRef(ref); kids.push(`<li>${box("leaf", "🌐", h, { active: activeOrigins.has(h) })}</li>`);
       } else if (kind === "remote") {
-        const h = hostOfRef(ref); row(depth + 1, "leaf" + (activeOrigins.has(h) ? " active" : ""), "🏢", h);
+        const h = hostOfRef(ref); kids.push(`<li>${box("leaf", "🏢", h, { active: activeOrigins.has(h) })}</li>`);
       } else if (kind === "coded" || kind === "toolbox") {
-        row(depth + 1, "leaf", "⚙", typeof ref === "string" ? ref : (ref.url || "tool"));
+        kids.push(`<li>${box("leaf", "⚙", typeof ref === "string" ? ref : (ref.url || "tool"))}</li>`);
       }
     }
+    const self = box("agent" + (name === front ? " root" : ""), "", name,
+      { active: activeAgents.has(name), dot: true, title: spec?.function?.description || "" });
+    return self + (kids.length ? `<ul class="ns-tchildren">${kids.join("")}</ul>` : "");
   }
 
-  const front = net.findFrontMan();
-  if (front) walk(front, 0);
-  for (const n of specByName.keys()) if (isAgent(n) && !rendered.has(n)) walk(n, 0);  // any orphans
-  el.innerHTML = rows.join("");
+  const top = [];
+  if (front) top.push(`<li>${node(front)}</li>`);
+  for (const n of specByName.keys()) if (isAgent(n) && !rendered.has(n)) top.push(`<li>${node(n)}</li>`);  // orphans
+  el.innerHTML = `<ul class="ns-tree">${top.join("")}</ul>`;
 }
 
 function rowLabel(ev) {
