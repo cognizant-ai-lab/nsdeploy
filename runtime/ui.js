@@ -281,8 +281,10 @@ export function mountApp(root, { engine, trace, manifest }) {
       // as "widget" trace events; we render the clean text + the consolidated widgets.
       const answer = await engine.run(text, { slyData: { backend_token: "demo-customer-token-123" } });
       const clean = visibleText(answer);
-      if (!currentBot) currentBot = addBubble(msgs, "bot", clean || (pendingWidgets.length ? "" : answer));
-      else currentBot.textContent = clean || currentBot.textContent;
+      // Always show the cleaned text — never the raw answer or retained streamed text
+      // (which could be an AAOSA envelope / cruse-ui JSON). Empty is fine: widgets carry the turn.
+      if (!currentBot) currentBot = addBubble(msgs, "bot", clean);
+      else currentBot.textContent = clean;
       for (const w of pendingWidgets) renderWidget(msgs, w, runUserTurn);
     } catch (err) {
       addBubble(msgs, "bot", "⚠️ " + err.message);
@@ -587,15 +589,21 @@ function visibleText(s) {
 function unwrapAaosa(s) {
   if (!s) return s;
   const t = s.replace(/<\/?tool_(?:response|call)>/gi, "").trim();
-  if (/"Response"\s*:/.test(t) && t.includes("{")) {
-    const start = t.indexOf("{");
-    const end = t.lastIndexOf("}");
-    if (end > start) {
-      const obj = tolerantParse(t.slice(start, end + 1));
-      if (obj && typeof obj.Response === "string") return obj.Response.trim();
-    }
+  // Only act on an AAOSA envelope: a JSON object with a "Mode" plus "Name"/"Inquiry".
+  if (!/"Mode"\s*:/.test(t) || !t.includes("{")) return t;
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  if (end <= start) return t;
+  const obj = tolerantParse(t.slice(start, end + 1));
+  if (!obj || obj.Mode === undefined || (obj.Name === undefined && obj.Inquiry === undefined)) return t;
+  // Fulfill / clarify mode: the human-facing answer.
+  if (typeof obj.Response === "string" && obj.Response.trim()) return obj.Response.trim();
+  // Determine mode: a request for info — surface the requirement prompts as a question.
+  if (Array.isArray(obj.Requirements)) {
+    const qs = obj.Requirements.map((r) => r && (r.description || r.title)).filter(Boolean);
+    if (qs.length) return qs.join("\n");
   }
-  return t;
+  return "";  // pure protocol with nothing user-facing → show nothing (never the raw JSON)
 }
 
 function tolerantParse(s) {
