@@ -147,27 +147,30 @@ def _looks_like_mcp(url: str) -> bool:
 
 
 def _import_with_autoinstall(module: str):
-    """Import `module`, pip-installing a missing third-party dependency once and
-    retrying (so the user needs no studio install). Returns the module or None."""
-    try:
-        return importlib.import_module(module)
-    except ModuleNotFoundError as e:
-        missing = e.name
-        # Don't try to install the tool module itself, only its deps.
-        if not AUTO_INSTALL_TOOL_DEPS or not missing or missing.startswith("coded_tools"):
-            return None
-        print(f"   …installing dependency '{missing}' for a coded tool", flush=True)
+    """Import `module`, pip-installing missing third-party dependencies (chained —
+    a tool may need several) and retrying, so the user needs no studio install.
+    Returns the module or None."""
+    tried: set[str] = set()
+    for _ in range(8):
         try:
-            subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", missing],
-                           check=True)
-        except subprocess.CalledProcessError:
-            return None
-        try:
+            importlib.invalidate_caches()  # see packages installed during this loop
             return importlib.import_module(module)
+        except ModuleNotFoundError as e:
+            missing = e.name
+            # Only install the tool's deps, and only once each; never the tool itself.
+            if (not AUTO_INSTALL_TOOL_DEPS or not missing
+                    or missing.startswith("coded_tools") or missing in tried):
+                return None
+            tried.add(missing)
+            print(f"   …installing dependency '{missing}' for a coded tool", flush=True)
+            try:
+                subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", missing],
+                               check=True)
+            except subprocess.CalledProcessError:
+                return None
         except Exception:
             return None
-    except Exception:
-        return None
+    return None
 
 
 def _resolve_class(class_path: str, source: StudioSource) -> Optional[tuple[str, str]]:

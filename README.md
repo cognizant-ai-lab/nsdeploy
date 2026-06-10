@@ -107,11 +107,12 @@ python -m nsdeploy net.hocon --theme --theme-model qwen2.5:7b --theme-key x \
 python -m nsdeploy net.hocon --theme-file theme.json
 ```
 
-Theming is **deploy-time only and fully independent of the runtime**. It uses
-`--theme-upstream` (default OpenAI) + the deploy-time key (`$OPENAI_API_KEY` /
-`--theme-key`) — *not* `--upstream`, which is solely the runtime BYOK proxy target
-(where the page forwards the end user's key). So you can theme with a local Ollama
-while the deployed app still calls OpenAI (or whatever) at runtime via BYOK.
+Theming is a **deploy-time** step. It uses `--theme-upstream` (which **defaults to
+`--upstream`**) + the deploy-time key (`$OPENAI_API_KEY` / `--theme-key`). So a single
+`--upstream …` covers both theming and runtime; set `--theme-upstream` explicitly only
+when you want theming on a *different* provider than the runtime — e.g. theme with a
+local Ollama (`--theme-upstream http://127.0.0.1:11434/v1`) while the deployed app
+still calls OpenAI at runtime via BYOK (leave `--upstream` at its default).
 
 The LLM never writes HTML/CSS — it fills a **validated token spec** (colors must be
 valid CSS colors, fonts sanitized, etc.), which nsdeploy bakes into the fixed

@@ -42,9 +42,9 @@ def main() -> int:
     ap.add_argument("--theme", action="store_true",
                     help="polish index.html via an LLM (needs $OPENAI_API_KEY or --theme-key)")
     ap.add_argument("--theme-model", default="gpt-4o-mini", help="model for --theme (default gpt-4o-mini)")
-    ap.add_argument("--theme-upstream", default="https://api.openai.com/v1",
-                    help="endpoint for the --theme call (default OpenAI; e.g. a local Ollama). "
-                         "Separate from --upstream — theming never affects the runtime.")
+    ap.add_argument("--theme-upstream", default=None,
+                    help="endpoint for the --theme call (defaults to --upstream; set it to "
+                         "theme via a different provider than the runtime, e.g. a local Ollama)")
     ap.add_argument("--theme-key", default=None, help="API key for --theme (else $OPENAI_API_KEY)")
     ap.add_argument("--theme-file", default=None, help="use a pinned theme.json (no LLM, no key)")
     ap.add_argument("--theme-refresh", action="store_true", help="ignore the theme cache and re-ask the LLM")
@@ -87,7 +87,7 @@ def main() -> int:
             print("   theme: --theme set but no key ($OPENAI_API_KEY / --theme-key) — using the default look")
         else:
             theme = propose_theme(plan, model=args.theme_model, api_key=key,
-                                  upstream=args.theme_upstream, refresh=args.theme_refresh)
+                                  upstream=(args.theme_upstream or args.upstream), refresh=args.theme_refresh)
             print(f"   theme: proposed via {args.theme_model} (brand: {theme.brand or '—'})")
 
     out_dir = Path(args.out).resolve() if args.out else (Path.cwd() / ".nsdeploy" / network_name)
