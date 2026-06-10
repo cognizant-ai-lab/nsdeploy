@@ -28,7 +28,8 @@ python -m nsdeploy examples/travel_agent_system.hocon --port 8080
 Then open <http://127.0.0.1:8080/>. Flags: `--repo`/`--ref` (GitHub source, default
 `cognizant-ai-lab/neuro-san-studio@main`), `--studio DIR` (use a local checkout
 instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
-`--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime).
+`--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime),
+`--no-cruse` (skip generative-UI injection), and the theming flags below.
 
 By default it runs on a deterministic **mock** LLM (no key needed). For real output,
 open **⚙ BYOK settings** in the page and enter your API key + model — calls route
@@ -54,7 +55,8 @@ through the same-origin `/byok/v1` CORS proxy to your provider.
    (`/ext-mcp/<i>/mcp`) so the browser can call it without CORS; missing tools and
    non-MCP external URLs are dropped. This removes any assumption of a local neuro-san
    server — tools are reached purely over MCP.
-5. **Generate** `index.html` + `agent-manifest.json` + `<network>.network.json`.
+5. **Generate** `index.html` + `agent-manifest.json` + `<network>.network.json`
+   (+ `theme.json` when theming is used — see "Look & feel").
 6. **Serve** one static origin (site + the `neuro-san-web` runtime, with the
    sandbox-worker CSP), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
    external-MCP proxy at `/ext-mcp/<i>/mcp`, plus the local MCP server subprocesses.
@@ -83,6 +85,33 @@ agent chain. Opt out with `--no-cruse`.
 Widgets are emitted by the **LLM** following the directive, so they appear only with
 a real model (BYOK) — the deterministic mock router never emits them. Verified with a
 local `qwen2.5:7b`: the agents emitted `form` and `choice` widgets unprompted.
+
+## Look & feel (optional LLM theming)
+
+By default the site uses a fixed template. With a key you can have an LLM **polish the
+look** from the network's identity — palette, font, radius, brand/icon/tagline, and an
+optional branded welcome form:
+
+```bash
+# default look (no key) — unchanged
+python -m nsdeploy net.hocon
+
+# LLM-polished (deploy-time key; uses --upstream as the endpoint)
+OPENAI_API_KEY=sk-…  python -m nsdeploy net.hocon --theme [--theme-model gpt-4o-mini]
+
+# pin a theme (no LLM, no key, reproducible) — edit it by hand or reuse a prior run
+python -m nsdeploy net.hocon --theme-file theme.json
+```
+
+The LLM never writes HTML/CSS — it fills a **validated token spec** (colors must be
+valid CSS colors, fonts sanitized, etc.), which nsdeploy bakes into the fixed
+template. The boot script and `#app` mount are never touched, so theming can't break
+the app; on any problem (no key, error, invalid output) it **falls back to the default
+look**. The chosen spec is written to **`theme.json`** (inspectable, editable,
+re-usable via `--theme-file`) and cached under `~/.cache/nsdeploy/themes/`
+(`--theme-refresh` to re-ask). This is a deploy-time key supplied by *you*; end users
+still need no key. Flags: `--theme`, `--theme-model`, `--theme-key`, `--theme-file`,
+`--theme-refresh`.
 
 ## Example: `travel_agent_system.hocon`
 

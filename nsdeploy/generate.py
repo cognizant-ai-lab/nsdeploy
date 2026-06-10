@@ -11,11 +11,13 @@ neuro-san server are removed here: tools are reached purely over MCP.)
 from __future__ import annotations
 
 import copy
+import html
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from nsdeploy.resolve import DeploymentPlan
+from nsdeploy.theme import ThemeSpec
 
 # Domain-agnostic CRUSE directive injected into each agent's instructions at deploy
 # time so any network produces generative-UI widgets — without editing the source
@@ -87,17 +89,22 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
     return config
 
 
+def _brand_display(plan: DeploymentPlan, theme: ThemeSpec) -> str:
+    brand = theme.brand or _brandize(plan.network_name)
+    return f"{theme.icon} {brand}".strip() if theme.icon else brand
+
+
 def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
-                   mock_router: str, byok_router: str, site_base: str,
+                   mock_router: str, byok_router: str, site_base: str, theme: ThemeSpec,
                    mcp_host: str = "127.0.0.1") -> Dict[str, Any]:
     meta = plan.config.get("metadata", {}) or {}
     front_fn = next((a.get("function", {}) for a in plan.agents if a.get("name") == plan.front_man), {})
-    description = (front_fn.get("description") or meta.get("description") or plan.network_name).strip()
+    description = theme.tagline or (front_fn.get("description") or meta.get("description") or plan.network_name).strip()
     allowed_peers = [f"http://{mcp_host}:{t.port}" for t in plan.hostable_tools]
     if plan.external_mcps:  # the site itself hosts the external-MCP proxy
         allowed_peers.append(site_base)
-    return {
-        "brand": _brandize(plan.network_name),
+    manifest: Dict[str, Any] = {
+        "brand": _brand_display(plan, theme),
         "networks": [
             {
                 "name": plan.network_name,
@@ -113,32 +120,42 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
             "byok_router": byok_router,
         },
         "allowed_peers": allowed_peers,
-        "theme": {"primary": "#0ea5e9"},
+        "theme": {"primary": theme.colors["primary"]},
     }
+    if theme.welcome:  # LLM-proposed branded landing form (greeting + intake widget)
+        welcome = dict(theme.welcome)
+        welcome.setdefault("message", theme.hero or "")
+        manifest["welcome"] = welcome
+    return manifest
 
 
-def _index_html(brand: str) -> str:
+def _index_html(theme: ThemeSpec, brand_display: str) -> str:
+    c = theme.colors
+    title = html.escape(brand_display)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{brand}</title>
+  <title>{title}</title>
   <style>
     :root {{
-      --ns-font: "Segoe UI", system-ui, sans-serif;
-      --ns-bg: #eef7ff; --ns-fg: #0f2a43; --ns-muted: #5b7a97;
-      --ns-border: #cfe6fb; --ns-primary: #0ea5e9; --ns-accent: #14b8a6;
-      --ns-msgbg: #e0f2fe; --ns-panelbg: #f7fcff;
-      --ns-user-bg: linear-gradient(135deg, #0ea5e9, #14b8a6); --ns-radius: 16px;
+      --ns-font: {theme.font};
+      --ns-bg: {c['bg']}; --ns-fg: {c['fg']}; --ns-muted: {c['muted']};
+      --ns-border: {c['border']}; --ns-primary: {c['primary']}; --ns-accent: {c['accent']};
+      --ns-msgbg: {c['msgbg']}; --ns-panelbg: {c['panelbg']};
+      --ns-user-bg: linear-gradient(135deg, {c['primary']}, {c['accent']}); --ns-radius: {theme.radius}px;
     }}
     html, body {{ margin: 0; height: 100%; overflow: hidden; }}
-    body {{ background: radial-gradient(1200px 500px at 20% -10%, #d8f1ff 0%, #eef7ff 60%); }}
+    body {{
+      font-family: var(--ns-font);
+      background: radial-gradient(1200px 500px at 20% -10%, {c['bg_tint']} 0%, {c['bg']} 60%);
+    }}
     #app {{ height: 100vh; overflow: hidden; }}
   </style>
 </head>
 <body>
-  <div id="app">Loading {brand}…</div>
+  <div id="app">Loading {title}…</div>
   <script type="module">
     import {{ boot }} from "/runtime/index.js";
     boot("#app").catch((e) => {{
@@ -152,16 +169,19 @@ def _index_html(brand: str) -> str:
 
 
 def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_router: str,
-                  site_base: str, mcp_host: str = "127.0.0.1", cruse: bool = True) -> Dict[str, Any]:
-    """Write index.html, agent-manifest.json, and <network>.network.json into out_dir.
-    Returns the manifest dict."""
+                  site_base: str, mcp_host: str = "127.0.0.1", cruse: bool = True,
+                  theme: Optional[ThemeSpec] = None) -> Dict[str, Any]:
+    """Write index.html, agent-manifest.json, <network>.network.json, and theme.json
+    into out_dir. Returns the manifest dict."""
+    theme = theme or ThemeSpec()
     out_dir.mkdir(parents=True, exist_ok=True)
     network_config = rewrite_config(plan, site_base, mcp_host=mcp_host, cruse=cruse)
-    manifest = build_manifest(plan, network_config, mock_router, byok_router, site_base, mcp_host=mcp_host)
+    manifest = build_manifest(plan, network_config, mock_router, byok_router, site_base, theme, mcp_host=mcp_host)
 
     (out_dir / f"{plan.network_name}.network.json").write_text(
         json.dumps(network_config, indent=2), encoding="utf-8")
     (out_dir / "agent-manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8")
-    (out_dir / "index.html").write_text(_index_html(manifest["brand"]), encoding="utf-8")
+    (out_dir / "index.html").write_text(_index_html(theme, _brand_display(plan, theme)), encoding="utf-8")
+    (out_dir / "theme.json").write_text(json.dumps(theme.to_dict(), indent=2), encoding="utf-8")
     return manifest
