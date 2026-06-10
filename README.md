@@ -124,6 +124,25 @@ re-usable via `--theme-file`) and cached under `~/.cache/nsdeploy/themes/`
 end users still need no key. Flags: `--theme`, `--theme-model`, `--theme-upstream`,
 `--theme-key`, `--theme-file`, `--theme-refresh`.
 
+## Runtime UI
+
+The served page (the vendored neuro-san-web runtime) is consumer-grade, not a raw
+chatbot:
+
+- **Clean answers.** neuro-san agents reply in the AAOSA wire format (a JSON envelope
+  with `Mode`/`Inquiry`/`Response`/`Requirements`, sometimes wrapped in
+  `<tool_response>` tags). The chat unwraps it at display time — showing the
+  human-facing `Response` (or, for a `Determine` reply, the requirement prompt) —
+  instead of leaking the raw protocol JSON. Inter-agent messages keep their structure.
+- **Generative-UI widgets (CRUSE)** are extracted from each agent's reply and rendered
+  as forms/choices/confirms/info cards, consolidated up the agent chain (see above).
+- **Developer panel** (top-right toggle): an **agent graph** drawn as a hierarchy of
+  boxes joined by edges — the front-man at the root, sub-agents nested beneath, and
+  MCP/remote/coded tools as dashed leaf boxes; the active agent/origin **glows and its
+  dot pulses** as a run progresses. Plus a live, exportable **execution log**.
+- **BYOK / router settings** let the user pick a real model + key at run time (kept in
+  `sessionStorage`, never in the URL); cross-network/MCP call-outs are consent-gated.
+
 ## Example: `travel_agent_system.hocon`
 
 The bundled example (`examples/travel_agent_system.hocon`) is a 10-agent AAOSA travel
