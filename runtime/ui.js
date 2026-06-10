@@ -575,7 +575,33 @@ function visibleText(s) {
   let out = s.replace(/```cruse-ui[\s\S]*?```/g, "").trim();
   const i = out.indexOf("```cruse-ui");
   if (i >= 0) out = out.slice(0, i).trim();
-  return out;
+  return unwrapAaosa(out);
+}
+
+// neuro-san agents speak the AAOSA wire format: a JSON envelope with
+// Name/Inquiry/Mode/Response (sometimes wrapped in <tool_response> tags). Only the
+// "Response" field is meant for the user; the rest is inter-agent protocol the
+// framework normally unwraps. Surface Response and drop the envelope/tags so they
+// never leak into the chat. Applied only at display time — inter-agent results keep
+// their structure.
+function unwrapAaosa(s) {
+  if (!s) return s;
+  const t = s.replace(/<\/?tool_(?:response|call)>/gi, "").trim();
+  if (/"Response"\s*:/.test(t) && t.includes("{")) {
+    const start = t.indexOf("{");
+    const end = t.lastIndexOf("}");
+    if (end > start) {
+      const obj = tolerantParse(t.slice(start, end + 1));
+      if (obj && typeof obj.Response === "string") return obj.Response.trim();
+    }
+  }
+  return t;
+}
+
+function tolerantParse(s) {
+  try { return JSON.parse(s); } catch {}
+  try { return JSON.parse(s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/,\s*([}\]])/g, "$1")); } catch {}
+  return null;
 }
 function lockWidget(card) {
   card.querySelectorAll("button,input,select,textarea").forEach((el) => (el.disabled = true));
