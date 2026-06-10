@@ -96,12 +96,22 @@ optional branded welcome form:
 # default look (no key) — unchanged
 python -m nsdeploy net.hocon
 
-# LLM-polished (deploy-time key; uses --upstream as the endpoint)
+# LLM-polished with OpenAI (deploy-time key)
 OPENAI_API_KEY=sk-…  python -m nsdeploy net.hocon --theme [--theme-model gpt-4o-mini]
+
+# LLM-polished with a LOCAL model (Ollama) — does NOT touch the runtime
+python -m nsdeploy net.hocon --theme --theme-model qwen2.5:7b --theme-key x \
+    --theme-upstream http://127.0.0.1:11434/v1
 
 # pin a theme (no LLM, no key, reproducible) — edit it by hand or reuse a prior run
 python -m nsdeploy net.hocon --theme-file theme.json
 ```
+
+Theming is **deploy-time only and fully independent of the runtime**. It uses
+`--theme-upstream` (default OpenAI) + the deploy-time key (`$OPENAI_API_KEY` /
+`--theme-key`) — *not* `--upstream`, which is solely the runtime BYOK proxy target
+(where the page forwards the end user's key). So you can theme with a local Ollama
+while the deployed app still calls OpenAI (or whatever) at runtime via BYOK.
 
 The LLM never writes HTML/CSS — it fills a **validated token spec** (colors must be
 valid CSS colors, fonts sanitized, etc.), which nsdeploy bakes into the fixed
@@ -109,9 +119,9 @@ template. The boot script and `#app` mount are never touched, so theming can't b
 the app; on any problem (no key, error, invalid output) it **falls back to the default
 look**. The chosen spec is written to **`theme.json`** (inspectable, editable,
 re-usable via `--theme-file`) and cached under `~/.cache/nsdeploy/themes/`
-(`--theme-refresh` to re-ask). This is a deploy-time key supplied by *you*; end users
-still need no key. Flags: `--theme`, `--theme-model`, `--theme-key`, `--theme-file`,
-`--theme-refresh`.
+(`--theme-refresh` to re-ask). The theming key is supplied by *you* at deploy time;
+end users still need no key. Flags: `--theme`, `--theme-model`, `--theme-upstream`,
+`--theme-key`, `--theme-file`, `--theme-refresh`.
 
 ## Example: `travel_agent_system.hocon`
 
