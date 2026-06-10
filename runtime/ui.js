@@ -101,6 +101,11 @@ const BASE_CSS = `
 .ns-node{display:inline-block;margin:3px;padding:4px 8px;border-radius:8px;border:1px solid var(--ns-border,#ddd);font-family:ui-monospace,monospace;font-size:12px}
 .ns-node.active{background:var(--ns-primary,#2563eb);color:#fff;border-color:var(--ns-primary,#2563eb)}
 .ns-node.origin{background:#fef3c7;border-color:#f59e0b}
+.ns-tnode{font-family:ui-monospace,monospace;font-size:12px;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ns-fg,#222)}
+.ns-tnode.root{font-weight:600}
+.ns-tnode.leaf{color:var(--ns-muted,#888)}
+.ns-tnode .ns-tconn{color:var(--ns-muted,#bbb)}
+.ns-tnode.active{color:var(--ns-primary,#2563eb);font-weight:600}
 .ns-log{flex:1;border:1px solid var(--ns-border,#e2e2e2);border-radius:10px;padding:10px;overflow:auto;min-height:0}
 .ns-row{font-family:ui-monospace,monospace;font-size:12px;border-left:3px solid #cbd5e1;padding:4px 8px;margin:3px 0;background:#fafafa;border-radius:4px;cursor:pointer}
 .ns-row .ns-tag{font-weight:700;margin-right:6px}
@@ -726,30 +731,52 @@ function renderWidget(container, spec, onSubmit) {
   return card;
 }
 
+// Render the network as a hierarchy: front-man at the root, each agent's `tools`
+// nested beneath it (sub-agents recurse; MCP/remote/coded tools are typed leaves).
+// A shared sub-agent is expanded once; later references show as "↩ name (above)" to
+// avoid duplicating subtrees and to break cycles. The active agent/origin is bolded.
 function renderNodes(el, net, activeAgents, activeOrigins = new Set()) {
   if (!net) return;
-  const parts = [];
-  for (const a of net.config.tools || []) {
-    const cls = activeAgents.has(a.name) ? "ns-node active" : "ns-node";
-    const isRemote = (a.tools || []).some((t) => typeof t === "string" && /^https?:/.test(t));
-    parts.push(`<span class="${cls}" title="${escapeHtml(a.function?.description || "")}">${escapeHtml(a.name)}${a.class ? " ⚙" : ""}</span>`);
+  const tools = net.config.tools || [];
+  const specByName = new Map(tools.filter((a) => a && a.name).map((a) => [a.name, a]));
+  const isAgent = (n) => { const s = specByName.get(n); return !!(s && s.instructions && !s.class && !s.toolbox); };
+  const rows = [];
+  const rendered = new Set();
+
+  const hostOfRef = (ref) => { try { return new URL(ref).host; } catch { return String(ref); } };
+  const indent = (d) => `padding-left:${d * 16}px`;
+  const conn = (d) => (d === 0 ? "" : `<span class="ns-tconn">↳ </span>`);
+
+  function row(depth, cls, icon, label, title) {
+    rows.push(`<div class="ns-tnode ${cls}" style="${indent(depth)}"${title ? ` title="${escapeHtml(title)}"` : ""}>` +
+      `${conn(depth)}${icon ? icon + " " : ""}${escapeHtml(label)}</div>`);
   }
-  // remote origins
-  const origins = new Set();
-  for (const a of net.config.tools || []) {
-    for (const t of a.tools || []) {
-      if (typeof t === "string" && /^https?:/.test(t)) {
-        try {
-          origins.add(new URL(t).host);
-        } catch {}
+
+  function walk(name, depth) {
+    const spec = specByName.get(name);
+    row(depth, "agent" + (depth === 0 ? " root" : "") + (activeAgents.has(name) ? " active" : ""),
+        "", name, spec?.function?.description || "");
+    rendered.add(name);
+    for (const ref of spec?.tools || []) {
+      let kind = "missing";
+      try { kind = net.classifyTool(ref).kind; } catch {}
+      if (kind === "agent" && isAgent(ref)) {
+        if (rendered.has(ref)) row(depth + 1, "leaf", "↩", `${ref} (above)`);
+        else walk(ref, depth + 1);
+      } else if (kind === "mcp") {
+        const h = hostOfRef(ref); row(depth + 1, "leaf" + (activeOrigins.has(h) ? " active" : ""), "🌐", h);
+      } else if (kind === "remote") {
+        const h = hostOfRef(ref); row(depth + 1, "leaf" + (activeOrigins.has(h) ? " active" : ""), "🏢", h);
+      } else if (kind === "coded" || kind === "toolbox") {
+        row(depth + 1, "leaf", "⚙", typeof ref === "string" ? ref : (ref.url || "tool"));
       }
     }
   }
-  for (const o of origins) {
-    const cls = activeOrigins.has(o) ? "ns-node origin active" : "ns-node origin";
-    parts.push(`<span class="${cls}">🌐 ${escapeHtml(o)}</span>`);
-  }
-  el.innerHTML = parts.join("");
+
+  const front = net.findFrontMan();
+  if (front) walk(front, 0);
+  for (const n of specByName.keys()) if (isAgent(n) && !rendered.has(n)) walk(n, 0);  // any orphans
+  el.innerHTML = rows.join("");
 }
 
 function rowLabel(ev) {
