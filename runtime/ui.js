@@ -580,12 +580,12 @@ function visibleText(s) {
   return unwrapAaosa(out);
 }
 
-// neuro-san agents speak the AAOSA wire format: a JSON envelope with
-// Name/Inquiry/Mode/Response (sometimes wrapped in <tool_response> tags). Only the
-// "Response" field is meant for the user; the rest is inter-agent protocol the
-// framework normally unwraps. Surface Response and drop the envelope/tags so they
-// never leak into the chat. Applied only at display time — inter-agent results keep
-// their structure.
+// neuro-san agents speak the AAOSA wire format: a JSON envelope with a "Mode" plus
+// Name/Inquiry (and Response/Requirements/…), sometimes wrapped in <tool_response>
+// tags. Only the human-facing parts are meant for the user; the rest is inter-agent
+// protocol the framework normally unwraps. Surface that and drop the envelope/tags so
+// they never leak into the chat. Applied only at display time — inter-agent results
+// keep their structure.
 function unwrapAaosa(s) {
   if (!s) return s;
   const t = s.replace(/<\/?tool_(?:response|call)>/gi, "").trim();
