@@ -129,43 +129,52 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
     return manifest
 
 
-def _index_html(theme: ThemeSpec, brand_display: str) -> str:
+def _root_vars(theme: ThemeSpec) -> str:
     c = theme.colors
-    title = html.escape(brand_display)
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{title}</title>
-  <style>
-    :root {{
-      --ns-font: {theme.font};
-      --ns-bg: {c['bg']}; --ns-fg: {c['fg']}; --ns-muted: {c['muted']};
-      --ns-border: {c['border']}; --ns-primary: {c['primary']}; --ns-accent: {c['accent']};
-      --ns-msgbg: {c['msgbg']}; --ns-panelbg: {c['panelbg']};
-      --ns-user-bg: linear-gradient(135deg, {c['primary']}, {c['accent']}); --ns-radius: {theme.radius}px;
-    }}
-    html, body {{ margin: 0; height: 100%; overflow: hidden; }}
-    body {{
-      font-family: var(--ns-font);
-      background: radial-gradient(1200px 500px at 20% -10%, {c['bg_tint']} 0%, {c['bg']} 60%);
-    }}
-    #app {{ height: 100vh; overflow: hidden; }}
-  </style>
-</head>
-<body>
-  <div id="app">Loading {title}…</div>
-  <script type="module">
-    import {{ boot }} from "/runtime/index.js";
-    boot("#app").catch((e) => {{
-      document.querySelector("#app").textContent = "Boot error: " + e.message;
+    return (f":root{{--ns-font:{theme.font};--ns-bg:{c['bg']};--ns-fg:{c['fg']};--ns-muted:{c['muted']};"
+            f"--ns-border:{c['border']};--ns-primary:{c['primary']};--ns-accent:{c['accent']};"
+            f"--ns-msgbg:{c['msgbg']};--ns-panelbg:{c['panelbg']};"
+            f"--ns-user-bg:linear-gradient(135deg,{c['primary']},{c['accent']});--ns-radius:{theme.radius}px;}}")
+
+
+_BOOT = """<script type="module">
+    import { boot } from "/runtime/index.js";
+    boot("#app").catch((e) => {
+      const a = document.querySelector("#app"); if (a) a.textContent = "Boot error: " + e.message;
       console.error(e);
-    }});
-  </script>
-</body>
-</html>
-"""
+    });
+  </script>"""
+_META = ('<meta charset="utf-8" />\n'
+         '  <meta name="viewport" content="width=device-width, initial-scale=1" />')
+
+
+def _doc(title: str, style: str, body: str) -> str:
+    return (f"<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  {_META}\n  <title>{title}</title>\n"
+            f"  <style>\n{style}\n  </style>\n</head>\n<body>\n{body}\n  {_BOOT}\n</body>\n</html>\n")
+
+
+def _index_html(theme: ThemeSpec, brand_display: str) -> str:
+    title = html.escape(brand_display)
+    c = theme.colors
+    if theme.body:
+        # LLM-authored creative layout. We own the doctype/head and inject the palette
+        # vars first (so the assistant UI inherits the theme), then the LLM's sanitized
+        # CSS, then guard CSS that keeps the #app mount usable; the boot script and the
+        # #app element are ours — the LLM never writes scripts.
+        # Guarantee the assistant stays usable no matter how the LLM laid out the page
+        # (it must never be squeezed into a tiny sliver): enforce a sane minimum size.
+        guard = ("html,body{margin:0}"
+                 "#app{min-width:min(440px,92vw)!important;height:80vh!important;"
+                 "min-height:540px!important;overflow:hidden}"
+                 "@media(max-width:820px){#app{height:88vh!important}}")
+        return _doc(title, f"{_root_vars(theme)}\n{theme.style}\n{guard}", theme.body)
+    # Default fixed template (keyless / no creative layout).
+    style = (f"{_root_vars(theme)}\n"
+             f"    html, body {{ margin: 0; height: 100%; overflow: hidden; }}\n"
+             f"    body {{ font-family: var(--ns-font); "
+             f"background: radial-gradient(1200px 500px at 20% -10%, {c['bg_tint']} 0%, {c['bg']} 60%); }}\n"
+             f"    #app {{ height: 100vh; overflow: hidden; }}")
+    return _doc(title, style, f'<div id="app">Loading {title}…</div>')
 
 
 def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_router: str,

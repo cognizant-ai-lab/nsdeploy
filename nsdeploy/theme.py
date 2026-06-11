@@ -2,28 +2,166 @@
 Tier-1 LLM-assisted theming (optional, opt-in).
 
 Given a deployment plan's *identity* (name, description, sample queries, agent
-roles), an LLM proposes a small, validated **theme spec** — palette tokens, font,
-radius, brand/icon/tagline/hero copy, and an optional CRUSE welcome form. nsdeploy
-bakes that into the generated index.html + manifest.
+roles), an LLM proposes a validated theme: palette tokens, font, radius,
+brand/icon/tagline copy, an optional CRUSE welcome form, AND a creative, domain-fit
+page layout (CSS + HTML). nsdeploy bakes that into the generated index.html + manifest.
 
-The LLM never emits HTML/CSS: it fills a bounded JSON schema and every value is
-validated/sanitized here. On any problem (no key, network/LLM error, invalid or
-unsafe output) we fall back to the default theme — the keyless experience is
-unchanged. Results are cached + written to theme.json so builds are reproducible and
-hand-overridable (see --theme-file).
+The LLM's CSS/HTML is treated as untrusted: it is strictly sanitized here (allowlist
+of presentational tags/attrs; no scripts/handlers/iframes; CSS stripped of
+@import/expression/unsafe url()), the #app mount + boot script are injected by
+nsdeploy (never the LLM), and on any problem (no key, network/LLM error, invalid or
+unsafe output, missing #app) we fall back to the default fixed template — the keyless
+experience is unchanged. Results are cached + written to theme.json so builds are
+reproducible and hand-overridable (see --theme-file).
 """
 from __future__ import annotations
 
 import hashlib
+import html as _htmlmod
 import json
 import re
 import urllib.request
 from dataclasses import asdict, dataclass, field
+from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "4"
 CACHE_DIR = Path.home() / ".cache" / "nsdeploy" / "themes"
+
+# ---- HTML/CSS sanitization for LLM-authored creative layouts -----------------
+# Strict allowlist: the output can only ever contain these presentational tags +
+# attributes. Anything else (scripts, event handlers, iframes, forms, svg, …) is
+# dropped. The boot script and #app mount are injected by nsdeploy, never the LLM.
+_ALLOWED_TAGS = {
+    "div", "section", "header", "footer", "main", "aside", "nav", "article",
+    "span", "p", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6",
+    "ul", "ol", "li", "strong", "em", "b", "i", "u", "small", "blockquote",
+    "figure", "figcaption", "img", "style",
+}
+# Tags whose entire contents are discarded (not just the wrapper).
+_DROP_CONTENT_TAGS = {
+    "script", "iframe", "object", "embed", "template", "noscript", "svg", "canvas",
+    "audio", "video", "source", "head", "form", "select", "textarea", "button", "input",
+    "link", "meta", "base", "math", "a",
+}
+_VOID_TAGS = {"br", "hr", "img"}
+_GLOBAL_ATTRS = {"class", "id", "title", "role", "width", "height", "alt", "lang", "dir"}
+_MAX_HTML = 24000
+_MAX_CSS = 24000
+
+
+def _sanitize_css(css: str) -> str:
+    """Strip the only CSS constructs that can do harm: @import, expression(),
+    behaviors/bindings, javascript:/vbscript: URLs, and url() to unsafe schemes."""
+    if not isinstance(css, str):
+        return ""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)            # comments (can hide tricks)
+    css = re.sub(r"@import[^;]*;?", "", css, flags=re.I)
+    css = re.sub(r"@charset[^;]*;?", "", css, flags=re.I)
+    css = re.sub(r"expression\s*\(", "(", css, flags=re.I)
+    css = re.sub(r"-moz-binding[^;]*;?", "", css, flags=re.I)
+    css = re.sub(r"behavior\s*:[^;]*;?", "", css, flags=re.I)
+    css = re.sub(r"(javascript|vbscript)\s*:", "", css, flags=re.I)
+
+    def _url(m):
+        inner = m.group(1).strip().strip("\"'")
+        ok = inner.startswith("data:image/") or inner.startswith("https://") or inner == "" or inner.lower() == "none"
+        return f"url({m.group(1)})" if ok else "none"
+
+    css = re.sub(r"url\(([^)]*)\)", _url, css, flags=re.I)
+    return css[:_MAX_CSS]
+
+
+class _HtmlSanitizer(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out: List[str] = []
+        self.skip = 0          # >0 while inside a drop-content tag
+        self.skip_tag = ""
+        self.in_style = 0
+        self.app_seen = False  # emit the #app mount only once, empty
+
+    def _attrs(self, attrs: List[Tuple[str, Optional[str]]]) -> str:
+        parts = []
+        for name, val in attrs:
+            name = (name or "").lower()
+            val = val or ""
+            if name.startswith("on"):
+                continue
+            if name == "style":
+                css = _sanitize_css(val)
+                if css.strip():
+                    parts.append(f' style="{_htmlmod.escape(css, quote=True)}"')
+            elif name == "src":  # img only; allow inline data images or https
+                v = _htmlmod.unescape(val).strip().lower()
+                if v.startswith("data:image/") or v.startswith("https://"):
+                    parts.append(f' src="{_htmlmod.escape(val, quote=True)}"')
+            elif name in _GLOBAL_ATTRS or name.startswith("aria-") or name.startswith("data-"):
+                parts.append(f' {name}="{_htmlmod.escape(val, quote=True)}"')
+        return "".join(parts)
+
+    def _is_app(self, attrs) -> bool:
+        return not self.app_seen and any((n or "").lower() == "id" and (v or "") == "app" for n, v in attrs)
+
+    def handle_starttag(self, tag, attrs):
+        if self.skip:
+            if tag == self.skip_tag:
+                self.skip += 1
+            return
+        if tag in _DROP_CONTENT_TAGS:
+            self.skip, self.skip_tag = 1, tag
+        elif tag == "style":
+            self.in_style += 1
+            self.out.append("<style>")
+        elif tag in _ALLOWED_TAGS:
+            # The #app mount is emitted EMPTY and its content skipped — the runtime
+            # fills it, so any nesting the LLM put inside is dropped (and #app stays
+            # a clean mount point regardless of model mistakes).
+            if self._is_app(attrs):
+                self.out.append('<div id="app"></div>')
+                self.app_seen = True
+                self.skip, self.skip_tag = 1, tag
+                return
+            self.out.append("<" + tag + self._attrs(attrs) + (" />" if tag in _VOID_TAGS else ">"))
+
+    def handle_startendtag(self, tag, attrs):
+        if self.skip:
+            return
+        if self._is_app(attrs):
+            self.out.append('<div id="app"></div>')
+            self.app_seen = True
+        elif tag in _ALLOWED_TAGS and tag != "style":
+            self.out.append("<" + tag + self._attrs(attrs) + " />")
+
+    def handle_endtag(self, tag):
+        if self.skip:
+            if tag == self.skip_tag:
+                self.skip -= 1
+                if self.skip == 0:
+                    self.skip_tag = ""
+            return
+        if tag == "style" and self.in_style:
+            self.in_style -= 1
+            self.out.append("</style>")
+        elif tag in _ALLOWED_TAGS and tag not in _VOID_TAGS:
+            self.out.append("</" + tag + ">")
+
+    def handle_data(self, data):
+        if self.in_style:
+            self.out.append(_sanitize_css(data))
+        elif not self.skip:
+            self.out.append(_htmlmod.escape(data, quote=False))
+
+
+def _sanitize_html(s: str) -> str:
+    if not isinstance(s, str):
+        return ""
+    p = _HtmlSanitizer()
+    p.feed(s[:_MAX_HTML * 2])
+    p.close()
+    return "".join(p.out)[:_MAX_HTML]
+
 
 # A validated color: #hex, rgb()/hsl(), or a bare CSS keyword. Nothing else.
 _COLOR_RE = re.compile(r"^(#[0-9a-fA-F]{3,8}|(rgb|hsl)a?\([0-9.,%\s/]+\)|[a-zA-Z]+)$")
@@ -47,6 +185,10 @@ class ThemeSpec:
     radius: int = 16
     colors: Dict[str, str] = field(default_factory=lambda: dict(DEFAULT_COLORS))
     welcome: Optional[Dict[str, Any]] = None
+    # Optional LLM-authored creative layout (sanitized). When `body` is set (and
+    # contains the #app mount), the generator uses it instead of the fixed template.
+    style: str = ""
+    body: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -70,6 +212,13 @@ class ThemeSpec:
                 colors[key] = val.strip()
         spec.colors = colors
         spec.welcome = _clean_welcome(data.get("welcome"))
+        # Creative layout (sanitized). Keep it only if the body still has the #app
+        # mount after sanitizing — otherwise the layout would be unusable, so we drop
+        # it and fall back to the fixed template.
+        body = _sanitize_html(data.get("body") or "")
+        if 'id="app"' in body or "id='app'" in body:
+            spec.body = body
+            spec.style = _sanitize_css(data.get("style") or "")
         return spec
 
 
@@ -126,23 +275,44 @@ def _identity(plan) -> Dict[str, Any]:
     }
 
 
-_SYSTEM_PROMPT = """\
-You are a senior brand and UI designer. Given an agent network's identity, design a \
-cohesive visual theme for its web app. Respond with ONLY a JSON object (no prose, no \
-code fence) with these fields:
-  "brand": short product name (<= 5 words),
-  "icon": a single emoji that fits the domain,
-  "tagline": <= 10 words,
-  "hero": one friendly sentence shown as the opening message,
-  "font": a CSS font-family stack of widely-available/web-safe fonts,
-  "radius": integer corner radius in px (8-24),
-  "colors": { "primary","accent","bg","bg_tint","fg","muted","border","msgbg","panelbg" } as #hex,
-  "welcome": optional { "message": string, "widget": a CRUSE form that collects the \
-USER'S OWN intake details } where widget is \
-{"title","icon","schema":{"type":"object","properties":{"field":{"type":"string","title":"...","description":"..."}},"required":[...]},"submitLabel":"..."}.
-Rules: ensure strong contrast between fg (text) and bg (page); bg/bg_tint/msgbg/panelbg \
-light, fg dark (or vice-versa) — never low-contrast; the welcome form may ONLY collect \
-the user's own details, never invented options/prices. Output valid JSON only."""
+_WELCOME_SHAPE = ('{"message":"...","widget":{"title":"...","icon":"📝","schema":{"type":"object",'
+                  '"properties":{"field":{"type":"string","title":"...","description":"..."}},'
+                  '"required":["field"]},"submitLabel":"..."}}')
+
+_SYSTEM_PROMPT = (
+    "You are a world-class web designer. Design a DISTINCTIVE landing page for this "
+    "agent network whose layout, typography and mood clearly match its domain — a "
+    "sports assistant should feel sporty; a recipe app culinary; a banking tool like "
+    "serious fintech. Be genuinely creative with structure (hero, columns, banners, "
+    "decorative sections); do NOT produce a generic centered chatbot.\n\n"
+    "Reply in EXACTLY this format, with these three markers and nothing else "
+    "(no prose, no code fences):\n"
+    "===META===\n"
+    "{a JSON object: \"brand\"(<=5 words), \"icon\"(one emoji), \"tagline\"(<=10 words), "
+    "\"hero\"(one sentence), \"font\"(a web-safe CSS font stack), \"radius\"(int 6-28), "
+    "\"colors\":{\"primary\",\"accent\",\"bg\",\"bg_tint\",\"fg\",\"muted\",\"border\",\"msgbg\",\"panelbg\"} as #hex, "
+    f"and optionally \"welcome\":{_WELCOME_SHAPE} collecting the USER'S OWN intake details}}\n"
+    "===STYLE===\n"
+    "a COMPLETE CSS stylesheet for the page — backgrounds/gradients, layout (grid/flex), "
+    "the hero, typography, decorative effects, responsiveness. You may also restyle the "
+    "assistant UI via these classes (style them, don't redefine structure): .ns-header, "
+    ".ns-title, .ns-chat, .ns-msgs, .ns-msg, .ns-msg.user, .ns-inputbar, .ns-agents, "
+    ".ns-widget, .ns-w-btn. CSS ONLY — gradients/shapes/shadows/emoji; NO @import, NO "
+    "url() except data: or https: images.\n"
+    "===BODY===\n"
+    "the HTML body contents: build a domain-appropriate page — hero/header, decorative "
+    "sections, side panels, etc. — AROUND a single EMPTY <div id=\"app\"></div>. That "
+    "div is where the live chat assistant mounts itself; it is the PRIMARY content, so "
+    "make it the largest, most prominent area — a big main panel (roughly 55-70% of the "
+    "width, or full-width with your decorations above/below). NEVER put it in a narrow "
+    "column/sidebar. Leave it EMPTY. Do NOT put anything inside #app, "
+    "and do NOT build your own chat/messages/input — that's the assistant's job. Your "
+    "decorative elements must be SIBLINGS of #app, not children. Use your OWN class "
+    "names (do NOT reuse names starting with 'ns-', which belong to the assistant). "
+    "Plain presentational HTML only: NO <script>, NO on* handlers, NO <iframe>/<form>/<svg>.\n\n"
+    "Rules: strong fg/bg contrast; self-contained (no external fonts/scripts/images); the "
+    "body MUST contain exactly one empty <div id=\"app\"></div> with your design around it."
+)
 
 
 def _extract_json(content: str) -> Dict[str, Any]:
@@ -156,6 +326,26 @@ def _extract_json(content: str) -> Dict[str, Any]:
         if start >= 0 and end > start:
             return json.loads(text[start:end + 1])
         raise
+
+
+def _parse_sections(content: str) -> Dict[str, Any]:
+    """Parse the marker-delimited reply (===META===/===STYLE===/===BODY===). The big
+    CSS/HTML blobs are raw text — no JSON escaping needed, so even small models stay
+    valid. Falls back to plain-JSON parsing when no markers are present."""
+    if "===META===" not in content:
+        return _extract_json(content)
+    parts = re.split(r"===\s*(META|STYLE|BODY)\s*===", content)
+    sections: Dict[str, str] = {}
+    for i in range(1, len(parts) - 1, 2):
+        sections[parts[i].upper()] = parts[i + 1]
+    data = _extract_json(sections.get("META", "{}"))
+    if not isinstance(data, dict):
+        data = {}
+    if sections.get("STYLE", "").strip():
+        data["style"] = sections["STYLE"].strip()
+    if sections.get("BODY", "").strip():
+        data["body"] = sections["BODY"].strip()
+    return data
 
 
 def _chat(upstream: str, api_key: str, model: str, system: str, user: str) -> str:
@@ -187,7 +377,7 @@ def propose_theme(plan, *, model: str, api_key: str, upstream: str, refresh: boo
         except Exception:
             pass
     try:
-        spec = ThemeSpec.coerce(_extract_json(_chat(upstream, api_key, model, _SYSTEM_PROMPT, json.dumps(ident))))
+        spec = ThemeSpec.coerce(_parse_sections(_chat(upstream, api_key, model, _SYSTEM_PROMPT, json.dumps(ident))))
     except Exception as exc:
         print(f"   …theme: LLM step failed ({str(exc)[:80]}); using the default look", flush=True)
         return ThemeSpec()

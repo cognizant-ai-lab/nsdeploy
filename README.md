@@ -86,11 +86,12 @@ Widgets are emitted by the **LLM** following the directive, so they appear only 
 a real model (BYOK) — the deterministic mock router never emits them. Verified with a
 local `qwen2.5:7b`: the agents emitted `form` and `choice` widgets unprompted.
 
-## Look & feel (optional LLM theming)
+## Look & feel (optional LLM-designed layout)
 
-By default the site uses a fixed template. With a key you can have an LLM **polish the
-look** from the network's identity — palette, font, radius, brand/icon/tagline, and an
-optional branded welcome form:
+By default the site uses a fixed template. With a key, the LLM **designs a distinctive
+landing page** from the network's identity — not just a recolor: a domain-fit layout
+(hero, sections, panels), palette, typography, brand/icon/tagline, and an optional
+welcome form. A sports assistant feels sporty, a recipe app culinary, etc.:
 
 ```bash
 # default look (no key) — unchanged
@@ -114,15 +115,23 @@ when you want theming on a *different* provider than the runtime — e.g. theme 
 local Ollama (`--theme-upstream http://127.0.0.1:11434/v1`) while the deployed app
 still calls OpenAI at runtime via BYOK (leave `--upstream` at its default).
 
-The LLM never writes HTML/CSS — it fills a **validated token spec** (colors must be
-valid CSS colors, fonts sanitized, etc.), which nsdeploy bakes into the fixed
-template. The boot script and `#app` mount are never touched, so theming can't break
-the app; on any problem (no key, error, invalid output) it **falls back to the default
-look**. The chosen spec is written to **`theme.json`** (inspectable, editable,
-re-usable via `--theme-file`) and cached under `~/.cache/nsdeploy/themes/`
-(`--theme-refresh` to re-ask). The theming key is supplied by *you* at deploy time;
-end users still need no key. Flags: `--theme`, `--theme-model`, `--theme-upstream`,
-`--theme-key`, `--theme-file`, `--theme-refresh`.
+The LLM authors the page's **CSS + HTML around the assistant**, but it's treated as
+untrusted and **strictly sanitized**: only safe presentational tags/attributes survive
+(no `<script>`, `on*` handlers, `<iframe>`/`<form>`/`<svg>`; CSS stripped of `@import`,
+`expression()`, unsafe `url()`). nsdeploy injects the `boot()` script and the `#app`
+mount itself (the LLM never writes them), forces `#app` to stay **empty and a usable
+size** (so the chat is never squeezed into a sliver), and on any problem (no key,
+error, invalid/unsafe output, missing `#app`) **falls back to the default template** —
+so a creative layout can never break the app or the keyless experience. The full
+design is written to **`theme.json`** (inspectable, editable, re-usable via
+`--theme-file`) and cached under `~/.cache/nsdeploy/themes/` (`--theme-refresh` to
+re-ask). The theming key is supplied by *you* at deploy time; end users still need no
+key. Flags: `--theme`, `--theme-model`, `--theme-upstream`, `--theme-key`,
+`--theme-file`, `--theme-refresh`.
+
+> Layout richness scales with the model: `gpt-4o`/`gpt-4o-mini` produce far more
+> distinctive designs than a small local model like `qwen2.5:7b`. Whatever the model
+> emits, the assistant stays usable and the build is safe.
 
 ## Runtime UI
 
