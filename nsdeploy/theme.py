@@ -26,7 +26,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-PROMPT_VERSION = "4"
+PROMPT_VERSION = "5"
 CACHE_DIR = Path.home() / ".cache" / "nsdeploy" / "themes"
 
 # ---- HTML/CSS sanitization for LLM-authored creative layouts -----------------
@@ -310,8 +310,22 @@ _SYSTEM_PROMPT = (
     "decorative elements must be SIBLINGS of #app, not children. Use your OWN class "
     "names (do NOT reuse names starting with 'ns-', which belong to the assistant). "
     "Plain presentational HTML only: NO <script>, NO on* handlers, NO <iframe>/<form>/<svg>.\n\n"
-    "Rules: strong fg/bg contrast; self-contained (no external fonts/scripts/images); the "
-    "body MUST contain exactly one empty <div id=\"app\"></div> with your design around it."
+    "AESTHETICS — honor these so the result is tasteful and READABLE, never garish:\n"
+    "- Harmony: choose ONE coherent palette (analogous or a single complementary pair) "
+    "plus neutrals. Pick colors that genuinely look good TOGETHER; avoid clashing, "
+    "vibrating combos (e.g. saturated red beside saturated green/blue).\n"
+    "- Restraint: keep page \"bg\" and the chat surfaces \"msgbg\"/\"panelbg\" calm and "
+    "low-saturation (near-white or a deep neutral) — use your vivid \"primary\"/\"accent\" "
+    "as ACCENTS (buttons, hero, borders, the user-bubble gradient), NOT as large fills "
+    "behind reading text. Do NOT flood the conversation/message area with a saturated "
+    "color; the chat must read like a calm document, with the brand color as trim.\n"
+    "- Contrast/readability: body text must hit WCAG AA (~4.5:1) against whatever sits "
+    "behind it. Ensure \"fg\" on \"bg\", on \"msgbg\" and on \"panelbg\" are all clearly "
+    "legible; \"muted\" stays readable too; any text you place on \"primary\"/\"accent\" "
+    "must contrast with it. If unsure, make backgrounds lighter/darker until text is "
+    "comfortable to read.\n"
+    "Rules: self-contained (no external fonts/scripts/images); the body MUST contain "
+    "exactly one empty <div id=\"app\"></div> with your design around it."
 )
 
 

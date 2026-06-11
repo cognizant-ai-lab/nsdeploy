@@ -11,6 +11,17 @@ const BASE_CSS = `
 .ns-app{display:grid;grid-template-columns:1fr;grid-template-rows:auto 1fr;gap:12px;height:100%;min-height:0;overflow:hidden;
   font-family:var(--ns-font,system-ui,sans-serif);color:var(--ns-fg,#1a1a1a);background:var(--ns-bg,#fff);box-sizing:border-box;padding:12px}
 .ns-app[data-dev="true"]{grid-template-columns:minmax(0,1fr) minmax(0,44%)}
+#app{container-type:inline-size}
+/* When the Developer graph is open it supersedes the friendly activity panel — hide
+   that so the chat keeps the full main column instead of being squeezed to a sliver. */
+.ns-app[data-dev="true"] .ns-stage>.ns-agents{display:none}
+/* If the app area is narrow (e.g. a creative layout puts it in a smaller panel),
+   stack the dev pane below the chat and let it scroll instead of crushing the chat. */
+@container (max-width:900px){
+  .ns-app[data-dev="true"]{grid-template-columns:1fr;overflow:auto}
+  .ns-app[data-dev="true"] .ns-main{min-height:54vh}
+  .ns-app[data-dev="true"] .ns-dev{min-height:36vh}
+}
 .ns-header{grid-column:1/-1;display:flex;align-items:center;gap:12px;border-bottom:2px solid var(--ns-accent,var(--ns-primary,#2563eb));background:var(--ns-header-bg,transparent);color:var(--ns-header-fg,inherit);padding:var(--ns-header-pad,0 0 8px)}
 .ns-header .ns-logo{height:32px}
 .ns-title{font-weight:700;font-size:18px}
