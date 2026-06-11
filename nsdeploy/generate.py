@@ -163,9 +163,12 @@ def _index_html(theme: ThemeSpec, brand_display: str) -> str:
         # #app element are ours — the LLM never writes scripts.
         # Guarantee the assistant stays usable no matter how the LLM laid out the page
         # (it must never be squeezed into a tiny sliver): enforce a sane minimum size.
+        # The assistant now hosts two side-by-side, resizable panels, so give #app room
+        # to breathe; if a layout still makes it narrow, the runtime scrolls rather than
+        # crushing the panes.
         guard = ("html,body{margin:0}"
-                 "#app{min-width:min(440px,92vw)!important;height:80vh!important;"
-                 "min-height:540px!important;overflow:hidden}"
+                 "#app{min-width:min(620px,94vw)!important;height:80vh!important;"
+                 "min-height:560px!important;overflow:hidden}"
                  "@media(max-width:820px){#app{height:88vh!important}}")
         return _doc(title, f"{_root_vars(theme)}\n{theme.style}\n{guard}", theme.body)
     # Default fixed template (keyless / no creative layout).

@@ -145,6 +145,10 @@ chatbot:
   instead of leaking the raw protocol JSON. Inter-agent messages keep their structure.
 - **Generative-UI widgets (CRUSE)** are extracted from each agent's reply and rendered
   as forms/choices/confirms/info cards, consolidated up the agent chain (see above).
+- **Resizable layout.** The chat and the right rail sit **side by side** with a
+  **draggable splitter** between them (the rail width is remembered across reloads);
+  each pane scrolls its own overflow and the app scrolls rather than crushing a pane
+  into a sliver when space is tight.
 - **Developer panel** (top-right toggle): an **agent graph** drawn as a hierarchy of
   boxes joined by edges — the front-man at the root, sub-agents nested beneath, and
   MCP/remote/coded tools as dashed leaf boxes; the active agent/origin **glows and its

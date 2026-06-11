@@ -8,27 +8,25 @@
 import { ChatMessageType } from "./kernel.js";
 
 const BASE_CSS = `
-.ns-app{display:grid;grid-template-columns:1fr;grid-template-rows:auto 1fr;gap:12px;height:100%;min-height:0;overflow:hidden;
+/* Two resizable panes side by side: the chat and a right rail (the "agents working
+   for you" panel, or the Developer pane when toggled). A draggable gutter sits
+   between them; --ns-railw (persisted) sets the rail width. Each pane scrolls its
+   own overflow, and the whole app scrolls horizontally if the two can't fit — so
+   content is always reachable, never crushed into a sliver. */
+.ns-app{display:grid;
+  grid-template-columns:minmax(300px,var(--ns-mainw,1fr)) 8px minmax(220px,var(--ns-railw,340px));
+  grid-template-rows:auto 1fr;column-gap:8px;row-gap:12px;height:100%;min-height:0;
+  overflow-x:auto;overflow-y:hidden;
   font-family:var(--ns-font,system-ui,sans-serif);color:var(--ns-fg,#1a1a1a);background:var(--ns-bg,#fff);box-sizing:border-box;padding:12px}
-.ns-app[data-dev="true"]{grid-template-columns:minmax(0,1fr) minmax(0,44%)}
-#app{container-type:inline-size}
-/* When the Developer graph is open it supersedes the friendly activity panel — hide
-   that so the chat keeps the full main column instead of being squeezed to a sliver. */
-.ns-app[data-dev="true"] .ns-stage>.ns-agents{display:none}
-/* If the app area is narrow (e.g. a creative layout puts it in a smaller panel),
-   stack the dev pane below the chat and let it scroll instead of crushing the chat. */
-@container (max-width:900px){
-  .ns-app[data-dev="true"]{grid-template-columns:1fr;overflow:auto}
-  .ns-app[data-dev="true"] .ns-main{min-height:54vh}
-  .ns-app[data-dev="true"] .ns-dev{min-height:36vh}
-}
 .ns-header{grid-column:1/-1;display:flex;align-items:center;gap:12px;border-bottom:2px solid var(--ns-accent,var(--ns-primary,#2563eb));background:var(--ns-header-bg,transparent);color:var(--ns-header-fg,inherit);padding:var(--ns-header-pad,0 0 8px)}
 .ns-header .ns-logo{height:32px}
 .ns-title{font-weight:700;font-size:18px}
-.ns-main{min-height:0;overflow:hidden;display:flex;justify-content:center}
-.ns-stage{display:flex;gap:14px;width:100%;max-width:1140px;min-height:0;flex-wrap:nowrap}
-.ns-stage>.ns-chat{flex:1 1 460px;min-width:0;min-height:0}
-.ns-agents{flex:0 0 300px;display:flex;flex-direction:column;gap:10px;border:1px solid var(--ns-border,#e2e2e2);border-radius:12px;padding:12px;background:var(--ns-panelbg,#fbfcfe);min-height:0;overflow:auto}
+.ns-main{grid-column:1;grid-row:2;min-height:0;min-width:0;overflow:hidden;display:flex;justify-content:center}
+.ns-main>.ns-chat{flex:1 1 auto;width:100%;max-width:1100px;min-width:0;min-height:0}
+.ns-split{grid-column:2;grid-row:2;align-self:stretch;width:8px;justify-self:center;border-radius:6px;cursor:col-resize;background:var(--ns-border,#e2e2e2);opacity:.5;transition:opacity .15s,background .15s;touch-action:none}
+.ns-split:hover,.ns-split.dragging{opacity:1;background:var(--ns-primary,#2563eb)}
+.ns-agents{grid-column:3;grid-row:2;display:flex;flex-direction:column;gap:10px;border:1px solid var(--ns-border,#e2e2e2);border-radius:12px;padding:12px;background:var(--ns-panelbg,#fbfcfe);min-height:0;min-width:0;overflow:auto}
+.ns-app[data-dev="true"] .ns-agents{display:none}
 .ns-agents h3{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ns-muted,#888)}
 .ns-status{font-size:13px;color:var(--ns-fg,#333);display:flex;align-items:center;gap:8px;min-height:20px}
 .ns-status .ns-spin{width:12px;height:12px;border:2px solid var(--ns-primary,#2563eb);border-top-color:transparent;border-radius:50%;animation:ns-spin .8s linear infinite;display:none}
@@ -90,7 +88,7 @@ const BASE_CSS = `
 .ns-w-fv{font-weight:600}
 .ns-devtoggle{font-size:12px;padding:4px 10px;border:1px solid var(--ns-border,#ccc);border-radius:8px;background:transparent;color:var(--ns-muted,#666);cursor:pointer}
 .ns-devtoggle.on{background:#1e293b;color:#fff;border-color:#1e293b}
-.ns-dev{display:none;flex-direction:column;gap:12px;min-height:0}
+.ns-dev{grid-column:3;grid-row:2;display:none;flex-direction:column;gap:12px;min-height:0;min-width:0;overflow:auto}
 .ns-app[data-dev="true"] .ns-dev{display:flex}
 .ns-app:not([data-dev="true"]) .ns-breadcrumb{display:none}
 .ns-breadcrumb{font-size:12px;color:var(--ns-muted,#666);font-family:ui-monospace,monospace}
@@ -189,7 +187,6 @@ export function mountApp(root, { engine, trace, manifest }) {
         <button class="ns-devtoggle" id="ns-devtoggle" title="Show the technical execution trace">⚙ Developer</button>
       </div>
       <main class="ns-main">
-       <div class="ns-stage">
         <div class="ns-chat">
           <div class="ns-msgs" id="ns-msgs">
             <div class="ns-msg bot">${escapeHtml(title)}\n\nAsk me anything to see the web of agents in action.</div>
@@ -211,13 +208,13 @@ export function mountApp(root, { engine, trace, manifest }) {
             <button id="ns-newchat" title="Clear conversation history" style="background:transparent;color:var(--ns-muted,#888);border:1px solid var(--ns-border,#ccc)">New chat</button>
           </div>
         </div>
-        <aside class="ns-agents">
-          <h3>Agents working for you</h3>
-          <div class="ns-status" id="ns-status"><span class="ns-spin"></span><span id="ns-status-text">Ready when you are.</span></div>
-          <div id="ns-anodes"></div>
-        </aside>
-       </div>
       </main>
+      <div class="ns-split" id="ns-split" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize the panels"></div>
+      <aside class="ns-agents">
+        <h3>Agents working for you</h3>
+        <div class="ns-status" id="ns-status"><span class="ns-spin"></span><span id="ns-status-text">Ready when you are.</span></div>
+        <div id="ns-anodes"></div>
+      </aside>
       <div class="ns-modal" id="ns-modal" hidden><div class="ns-modal-card" id="ns-modal-card"></div></div>
       <aside class="ns-dev">
         <div class="ns-graph" id="ns-graph"><h3>Agent graph &amp; origins</h3><div id="ns-nodes"></div></div>
@@ -344,6 +341,55 @@ export function mountApp(root, { engine, trace, manifest }) {
     try { store?.setItem("nsweb-dev", devOn ? "1" : "0"); } catch {}
     applyDev();
   });
+
+  // --- Draggable splitter between the chat and the right rail ----------------
+  // Lets the user re-disperse the two panes by dragging the gutter; the rail
+  // width is clamped (chat keeps a usable minimum) and persisted across reloads.
+  const splitter = root.querySelector("#ns-split");
+  if (splitter) {
+    const RAIL_KEY = "nsweb-railw";
+    const clampRail = (px) => {
+      const total = app.clientWidth || 1000;     // content box (excludes padding)
+      const max = Math.max(260, total - 360);     // always leave the chat ~360px
+      return Math.round(Math.min(Math.max(px, 220), max));
+    };
+    const setRail = (px, persist) => {
+      const v = clampRail(px);
+      app.style.setProperty("--ns-railw", v + "px");
+      if (persist) { try { store?.setItem(RAIL_KEY, String(v)); } catch {} }
+      return v;
+    };
+    const curRail = () => parseInt(getComputedStyle(app).getPropertyValue("--ns-railw"), 10) || app.clientWidth * 0.34;
+    const saved = parseInt(store?.getItem(RAIL_KEY) || "", 10);
+    if (Number.isFinite(saved)) setRail(saved, false);
+    let dragging = false;
+    splitter.addEventListener("pointerdown", (e) => {
+      dragging = true; splitter.classList.add("dragging");
+      document.body.style.cursor = "col-resize";
+      try { splitter.setPointerCapture(e.pointerId); } catch {}
+      e.preventDefault();
+    });
+    splitter.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const rect = app.getBoundingClientRect();
+      setRail(rect.right - e.clientX - 12, false);   // 12 = app right padding
+      e.preventDefault();
+    });
+    const endDrag = () => {
+      if (!dragging) return;
+      dragging = false; splitter.classList.remove("dragging");
+      document.body.style.cursor = "";
+      setRail(curRail(), true);
+    };
+    splitter.addEventListener("pointerup", endDrag);
+    splitter.addEventListener("pointercancel", endDrag);
+    splitter.addEventListener("keydown", (e) => {     // a11y: arrows nudge the divide
+      if (e.key === "ArrowLeft") setRail(curRail() + 24, true);
+      else if (e.key === "ArrowRight") setRail(curRail() - 24, true);
+      else return;
+      e.preventDefault();
+    });
+  }
 
   // --- "Agents working for you" map (consumer transparency) ----------------
   const splitBrand = (brand) => {
