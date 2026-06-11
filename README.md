@@ -133,6 +133,45 @@ key. Flags: `--theme`, `--theme-model`, `--theme-upstream`, `--theme-key`,
 > distinctive designs than a small local model like `qwen2.5:7b`. Whatever the model
 > emits, the assistant stays usable and the build is safe.
 
+## Use a local model (Ollama) — no key, no cloud
+
+If you'd rather not use a cloud API key, run a model **locally** with
+[Ollama](https://ollama.com) and point nsdeploy at it. The same local endpoint works
+for **deploy-time theming** (`--theme-upstream`) and for **running the agents** (paste
+it into the page's BYOK settings) — nothing leaves your machine.
+
+The bundled helper installs nothing surprising: it checks for Ollama, starts the
+server if needed, pulls the model, and prints the exact deploy command.
+
+```bash
+# pull + serve qwen2.5:7b (default), or pass another model name
+scripts/serve-local-model.sh              # e.g. scripts/serve-local-model.sh llama3.2:3b
+```
+
+Prefer to do it by hand? Three steps:
+
+```bash
+# 1. Install Ollama
+#    macOS:  brew install ollama    (or download from https://ollama.com/download)
+#    Linux:  curl -fsSL https://ollama.com/install.sh | sh
+
+# 2. Serve it and pull a model (Ollama listens on 127.0.0.1:11434)
+ollama serve &                 # leave running; skip if the app already started it
+ollama pull qwen2.5:7b
+
+# 3. Deploy, theming with the local model (the key is ignored by Ollama)
+python -m nsdeploy examples/soccer_world_cup_assistant.hocon --port 8080 \
+    --theme --theme-model qwen2.5:7b --theme-key x \
+    --theme-upstream http://127.0.0.1:11434/v1
+```
+
+To also **run the deployed agents** on the local model, open **⚙ BYOK settings** in the
+page and set Router base URL `http://127.0.0.1:11434/v1`, Model `qwen2.5:7b`, and any
+non-empty API key. (`--theme-upstream` defaults to `--upstream`, so
+`--upstream http://127.0.0.1:11434/v1` alone covers both theming and the mock-router
+upstream in one flag.) Bigger local models give richer layouts; `qwen2.5:7b` is a good
+low-footprint default (~4.7 GB).
+
 ## Runtime UI
 
 The served page (the vendored neuro-san-web runtime) is consumer-grade, not a raw
