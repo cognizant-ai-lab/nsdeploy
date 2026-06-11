@@ -26,7 +26,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-PROMPT_VERSION = "6"
+PROMPT_VERSION = "7"
 CACHE_DIR = Path.home() / ".cache" / "nsdeploy" / "themes"
 
 # ---- HTML/CSS sanitization for LLM-authored creative layouts -----------------
@@ -297,7 +297,8 @@ _SYSTEM_PROMPT = (
     "DESIGNED, not merely themed — and visibly different from any other network.\n\n"
     "Reply in EXACTLY this format, with these three markers and nothing else "
     "(no prose, no code fences):\n"
-    "===META===\n"
+    "===META=== (STRICT, valid JSON on ONE line — inside every text value avoid the \" "
+    "character and never use a raw line break; use plain words or single quotes instead)\n"
     "{a JSON object: \"brand\"(<=5 words), \"icon\"(one emoji), \"tagline\"(<=10 words), "
     "\"hero\"(one sentence), \"font\"(a web-safe CSS font stack), \"radius\"(int 6-28), "
     "\"colors\":{\"primary\",\"accent\",\"bg\",\"bg_tint\",\"fg\",\"muted\",\"border\",\"msgbg\",\"panelbg\"} as #hex, "
@@ -358,6 +359,53 @@ def _extract_json(content: str) -> Dict[str, Any]:
         raise
 
 
+def _salvage_meta(text: str) -> Dict[str, Any]:
+    """Best-effort recovery of the META fields when it isn't valid JSON (e.g. the LLM
+    left an unescaped quote in a string). Pulls out the palette and identity by regex
+    so a malformed META still yields a usable theme instead of dropping to the default
+    template — the STYLE/BODY sections (raw text) are unaffected. The optional welcome
+    form is skipped (it's the most likely thing to be malformed)."""
+    data: Dict[str, Any] = {}
+    cm = re.search(r'"colors"\s*:\s*\{([^{}]*)\}', text, re.S)
+    if cm:
+        cols = {k: v for k, v in re.findall(r'"([a-z_]+)"\s*:\s*"(#[0-9a-fA-F]{3,8})"', cm.group(1))}
+        if cols:
+            data["colors"] = cols
+    for key in ("brand", "icon", "tagline", "hero", "font"):
+        m = re.search(r'"%s"\s*:\s*"((?:[^"\\]|\\.)*)"' % key, text)
+        if m:
+            try:
+                data[key] = json.loads('"%s"' % m.group(1))
+            except json.JSONDecodeError:
+                data[key] = m.group(1)
+    rm = re.search(r'"radius"\s*:\s*(\d+)', text)
+    if rm:
+        data["radius"] = int(rm.group(1))
+    return data
+
+
+def _lenient_meta(text: str) -> Dict[str, Any]:
+    """Parse the META JSON, tolerating the usual LLM slips: code fences, trailing
+    commas, and finally an unescaped quote/line break — in which case we salvage the
+    known fields by regex rather than failing the whole theme."""
+    text = (text or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
+    start, end = text.find("{"), text.rfind("}")
+    candidate = text[start:end + 1] if (start >= 0 and end > start) else text
+    for attempt in (candidate, re.sub(r",\s*([}\]])", r"\1", candidate)):
+        try:
+            d = json.loads(attempt)
+            if isinstance(d, dict):
+                return d
+        except json.JSONDecodeError:
+            pass
+    salvaged = _salvage_meta(candidate)
+    print(f"   …theme: META JSON was malformed; salvaged {len(salvaged)} field(s) by regex "
+          f"(palette/identity kept, design preserved)", flush=True)
+    return salvaged
+
+
 def _parse_sections(content: str) -> Dict[str, Any]:
     """Parse the marker-delimited reply (===META===/===STYLE===/===BODY===). The big
     CSS/HTML blobs are raw text — no JSON escaping needed, so even small models stay
@@ -368,7 +416,7 @@ def _parse_sections(content: str) -> Dict[str, Any]:
     sections: Dict[str, str] = {}
     for i in range(1, len(parts) - 1, 2):
         sections[parts[i].upper()] = parts[i + 1]
-    data = _extract_json(sections.get("META", "{}"))
+    data = _lenient_meta(sections.get("META", "{}"))
     if not isinstance(data, dict):
         data = {}
     if sections.get("STYLE", "").strip():
