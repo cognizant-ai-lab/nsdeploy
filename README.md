@@ -133,6 +133,24 @@ key. Flags: `--theme`, `--theme-model`, `--theme-upstream`, `--theme-key`,
 > distinctive designs than a small local model like `qwen2.5:7b`. Whatever the model
 > emits, the assistant stays usable and the build is safe.
 
+### Regenerating the theme (clearing the cache)
+
+Generated themes are cached under `~/.cache/nsdeploy/themes/` (one `<digest>.json`
+per design) so re-running a deploy doesn't re-ask the LLM. To force a fresh design:
+
+```bash
+# Re-ask the LLM for THIS network/model/prompt, ignoring (and overwriting) the cache
+python -m nsdeploy net.hocon --theme … --theme-refresh
+
+# Or wipe the cache entirely (all designs regenerate on the next run)
+rm -rf ~/.cache/nsdeploy/themes/
+```
+
+The cache key is a hash of the **network identity + model name + prompt version**, so
+a cached theme is reused only when all three match. Switching `--theme-model` (e.g. to
+a bigger model) regenerates automatically — no flag needed; `--theme-refresh` is only
+needed when you want a new take from the *same* model and prompt.
+
 ## Use a local model (Ollama) — no key, no cloud
 
 If you'd rather not use a cloud API key, run a model **locally** with
