@@ -108,12 +108,12 @@ python -m nsdeploy net.hocon --theme --theme-model qwen2.5:7b --theme-key x \
 python -m nsdeploy net.hocon --theme-file theme.json
 ```
 
-Theming is a **deploy-time** step. It uses `--theme-upstream` (which **defaults to
-`--upstream`**) + the deploy-time key (`$OPENAI_API_KEY` / `--theme-key`). So a single
-`--upstream …` covers both theming and runtime; set `--theme-upstream` explicitly only
-when you want theming on a *different* provider than the runtime — e.g. theme with a
-local Ollama (`--theme-upstream http://127.0.0.1:11434/v1`) while the deployed app
-still calls OpenAI at runtime via BYOK (leave `--upstream` at its default).
+Theming is a **deploy-time** step. It uses `--theme-upstream` (which defaults to
+OpenAI) + the deploy-time key (`$OPENAI_API_KEY` / `--theme-key`). Runtime
+`--upstream` is independent and only controls the deployed app's BYOK proxy. Set
+`--theme-upstream` explicitly when you want theming on a different provider — e.g.
+theme with a local Ollama (`--theme-upstream http://127.0.0.1:11434/v1`) while the
+deployed app still calls Docker Model Runner or OpenAI-compatible BYOK at runtime.
 
 The LLM authors the page's **CSS + HTML around the assistant**, but it's treated as
 untrusted and **strictly sanitized**: only safe presentational tags/attributes survive
@@ -185,9 +185,9 @@ python -m nsdeploy examples/soccer_world_cup_assistant.hocon --port 8080 \
 
 To also **run the deployed agents** on the local model, open **⚙ BYOK settings** in the
 page and set Router base URL `http://127.0.0.1:11434/v1`, Model `qwen2.5:7b`, and any
-non-empty API key. (`--theme-upstream` defaults to `--upstream`, so
-`--upstream http://127.0.0.1:11434/v1` alone covers both theming and the mock-router
-upstream in one flag.) Bigger local models give richer layouts; `qwen2.5:7b` is a good
+non-empty API key. For local deploy-time theming, pass
+`--theme-upstream http://127.0.0.1:11434/v1`; `--upstream` remains the runtime BYOK
+proxy target.) Bigger local models give richer layouts; `qwen2.5:7b` is a good
 low-footprint default (~4.7 GB).
 
 ## Runtime UI

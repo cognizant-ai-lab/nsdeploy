@@ -19,6 +19,7 @@ only, and the produced plan/config is plain data the browser runtime consumes.
 from __future__ import annotations
 
 import importlib
+import inspect
 import io
 import logging
 import re
@@ -159,7 +160,7 @@ def _import_with_autoinstall(module: str):
             missing = e.name
             # Only install the tool's deps, and only once each; never the tool itself.
             if (not AUTO_INSTALL_TOOL_DEPS or not missing
-                    or missing.startswith("coded_tools") or missing in tried):
+                    or missing.startswith(("coded_tools", "neuro_san_studio")) or missing in tried):
                 return None
             tried.add(missing)
             print(f"   …installing dependency '{missing}' for a coded tool", flush=True)
@@ -171,6 +172,19 @@ def _import_with_autoinstall(module: str):
         except Exception:
             return None
     return None
+
+
+def _can_construct_with_no_args(cls: Any) -> bool:
+    """Standalone MCP hosts can only wrap plain coded tools with zero-arg constructors."""
+    try:
+        sig = inspect.signature(cls)
+    except (TypeError, ValueError):
+        return True
+    return all(
+        param.default is not inspect.Parameter.empty
+        or param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        for param in sig.parameters.values()
+    )
 
 
 def _resolve_class(class_path: str, source: StudioSource) -> Optional[tuple[str, str]]:
@@ -189,9 +203,10 @@ def _resolve_class(class_path: str, source: StudioSource) -> Optional[tuple[str,
         return None
     if str(source.root) not in sys.path:
         sys.path.insert(0, str(source.root))
-    mod = _import_with_autoinstall(f"coded_tools.{module_leaf}")
-    if mod and hasattr(mod, class_name):
-        return f"coded_tools.{module_leaf}", class_name
+    module = f"coded_tools.{module_leaf}"
+    mod = _import_with_autoinstall(module)
+    if mod and hasattr(mod, class_name) and _can_construct_with_no_args(getattr(mod, class_name)):
+        return module, class_name
     return None
 
 
