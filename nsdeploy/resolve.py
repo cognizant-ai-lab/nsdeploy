@@ -18,6 +18,7 @@ only, and the produced plan/config is plain data the browser runtime consumes.
 """
 from __future__ import annotations
 
+import copy
 import importlib
 import inspect
 import io
@@ -45,6 +46,10 @@ _INCLUDE_RE = re.compile(r'include\s+(?:required\s*\(\s*|url\s*\(\s*)?["\']([^"\
 # needs no studio install). Toggle off by setting this to False.
 AUTO_INSTALL_TOOL_DEPS = True
 
+# Server-side Neuro-SAN adapters that are intentionally unnecessary in the
+# browser runtime. Peer agents are exposed directly as tools by name.
+BROWSER_OMITTED_TOOLS = {"call_agent"}
+
 
 @dataclass
 class HostableTool:
@@ -71,6 +76,7 @@ class DeploymentPlan:
     external_mcps: List[str] = field(default_factory=list)       # http(s) MCP URLs — proxied & callable
     external_other: List[str] = field(default_factory=list)      # other http(s) URLs — not handled
     missing_includes: List[str] = field(default_factory=list)
+    omitted_tools: List[str] = field(default_factory=list)      # recognized but not needed/hostable here
     notes: List[str] = field(default_factory=list)
 
 
@@ -95,10 +101,13 @@ def resolve_hocon(hocon_path: Path, source: StudioSource) -> tuple[Dict[str, Any
     Returns (config_dict, missing_includes). Missing includes are non-fatal (e.g. an
     absent llm_config.hocon just means the runtime falls back to its default model).
     """
-    content = hocon_path.read_text(encoding="utf-8")
+    return _parse_hocon_content(hocon_path.read_text(encoding="utf-8"), source)
+
+
+def _parse_hocon_content(content: str, source: StudioSource) -> tuple[Dict[str, Any], List[str]]:
+    """Parse HOCON text using source.root as the include base."""
     missing: List[str] = []
     _prefetch_includes(content, source, missing, set())
-
     captured: List[str] = []
 
     class _IncludeCapture(logging.Handler):
@@ -111,16 +120,113 @@ def resolve_hocon(hocon_path: Path, source: StudioSource) -> tuple[Dict[str, Any
     pyhocon_logger = logging.getLogger("pyhocon.config_parser")
     pyhocon_logger.addHandler(handler)
     try:
-        # Includes were pre-fetched into source.root above; basedir makes pyhocon
-        # resolve them there, regardless of where the input HOCON physically lives.
         with redirect_stderr(io.StringIO()):
             cfg = ConfigFactory.parse_string(content, basedir=str(source.root))
     finally:
         pyhocon_logger.removeHandler(handler)
     missing.extend(m for m in captured if m not in missing)
-
     config = cfg.as_plain_ordered_dict() if hasattr(cfg, "as_plain_ordered_dict") else dict(cfg)
     return config, missing
+
+
+def _network_ref_to_rel_path(ref: Any) -> Optional[str]:
+    """Map /industry/foo to registries/industry/foo.hocon."""
+    if not isinstance(ref, str) or not ref.startswith("/"):
+        return None
+    logical = ref.strip("/")
+    if not logical:
+        return None
+    if not logical.endswith(".hocon"):
+        logical += ".hocon"
+    if not logical.startswith("registries/"):
+        logical = f"registries/{logical}"
+    return logical
+
+
+def _agent_prefix(ref: str) -> str:
+    stem = ref.strip("/")
+    if stem.endswith(".hocon"):
+        stem = stem[:-6]
+    return re.sub(r"[^A-Za-z0-9_]+", "_", stem).strip("_") or "embedded"
+
+
+def _is_llm_agent(entry: Dict[str, Any]) -> bool:
+    return "instructions" in entry and "class" not in entry and "toolbox" not in entry
+
+
+def _find_front_man(config: Dict[str, Any]) -> str:
+    for entry in config.get("tools", []) or []:
+        if _is_llm_agent(entry):
+            return entry.get("name", "")
+    return ""
+
+
+def _expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
+                                  missing_includes: List[str]) -> Dict[str, str]:
+    """Fetch slash-referenced registry HOCONs and inline their agents.
+
+    Returns a mapping from the original slash ref to the generated embedded front-man
+    agent name. All imported agent names are prefixed to avoid collisions.
+    """
+    aliases: Dict[str, str] = {}
+    expanded: set[str] = set()
+
+    def expand_ref(ref: str) -> Optional[str]:
+        if ref in aliases:
+            return aliases[ref]
+        rel_path = _network_ref_to_rel_path(ref)
+        if not rel_path:
+            return None
+        path = source.ensure(rel_path)
+        if not path:
+            return None
+        if ref in expanded:
+            return aliases.get(ref)
+        expanded.add(ref)
+
+        child_config, child_missing = _parse_hocon_content(path.read_text(encoding="utf-8"), source)
+        missing_includes.extend(m for m in child_missing if m not in missing_includes)
+        child_aliases = _expand_embedded_network_refs(child_config, source, missing_includes)
+
+        child_tools = child_config.get("tools", []) or []
+        child_agents = [copy.deepcopy(t) for t in child_tools if _is_llm_agent(t)]
+        if not child_agents:
+            return None
+
+        prefix = _agent_prefix(ref)
+        name_map = {a.get("name", ""): f"{prefix}__{a.get('name', '')}" for a in child_agents if a.get("name")}
+        front_man = _find_front_man(child_config)
+        if front_man not in name_map:
+            return None
+
+        for agent in child_agents:
+            original_name = agent.get("name", "")
+            agent["name"] = name_map.get(original_name, original_name)
+            mapped_refs: List[Any] = []
+            for tool_ref in agent.get("tools", []) or []:
+                if tool_ref in name_map:
+                    mapped_refs.append(name_map[tool_ref])
+                elif tool_ref in child_aliases:
+                    mapped_refs.append(child_aliases[tool_ref])
+                else:
+                    mapped_refs.append(tool_ref)
+            if "tools" in agent:
+                agent["tools"] = mapped_refs
+            config.setdefault("tools", []).append(agent)
+
+        aliases[ref] = name_map[front_man]
+        return aliases[ref]
+
+    for entry in list(config.get("tools", []) or []):
+        if not _is_llm_agent(entry):
+            continue
+        mapped_refs: List[Any] = []
+        for ref in entry.get("tools", []) or []:
+            alias = expand_ref(ref) if isinstance(ref, str) and ref.startswith("/") else None
+            mapped_refs.append(alias or ref)
+        if "tools" in entry:
+            entry["tools"] = mapped_refs
+    return aliases
 
 
 def load_toolbox_info(source: StudioSource) -> Dict[str, Any]:
@@ -213,6 +319,9 @@ def _resolve_class(class_path: str, source: StudioSource) -> Optional[tuple[str,
 def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
                network_name: str, missing_includes: List[str], source: StudioSource) -> DeploymentPlan:
     """Classify the resolved config into a DeploymentPlan."""
+    config = copy.deepcopy(config)
+    all_missing_includes = list(missing_includes)
+    _expand_embedded_network_refs(config, source, all_missing_includes)
     tools = config.get("tools", []) or []
     agent_names = {t["name"] for t in tools if "name" in t and "instructions" in t}
 
@@ -220,7 +329,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
         network_name=network_name,
         config=config,
         front_man="",
-        missing_includes=list(missing_includes),
+        missing_includes=all_missing_includes,
     )
 
     # First agent with instructions and no class/toolbox is the front-man.
@@ -231,12 +340,16 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
 
     seen_hostable: Dict[str, HostableTool] = {}
     referenced_missing: set[str] = set()
+    referenced_omitted: set[str] = set()
     external_mcp: set[str] = set()
     external_other: set[str] = set()
 
     def resolve_leaf(name: str, spec: Dict[str, Any]) -> None:
         """Classify a non-agent tool entry (toolbox/class) as hostable or missing."""
-        if name in seen_hostable or name in referenced_missing:
+        if name in seen_hostable or name in referenced_missing or name in referenced_omitted:
+            return
+        if name in BROWSER_OMITTED_TOOLS:
+            referenced_omitted.add(name)
             return
         class_path = None
         description = (spec.get("function") or {}).get("description") or spec.get("description") or name
@@ -294,6 +407,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
         port += 1
         plan.hostable_tools.append(tool)
     plan.missing_tools = sorted(referenced_missing)
+    plan.omitted_tools = sorted(referenced_omitted)
     plan.external_mcps = sorted(external_mcp)
     plan.external_other = sorted(external_other)
     return plan
@@ -322,6 +436,13 @@ def format_report(plan: DeploymentPlan) -> str:
         out.append("    these references are dropped from the deployed network; the agents using them")
         out.append("    will run without them. Add them to neuro-san-studio to ground these paths.")
         for name in plan.missing_tools:
+            out.append(f"   • {name}")
+    if plan.omitted_tools:
+        out.append("")
+        out.append(f"ℹ️  Omitted browser-native adapters ({len(plan.omitted_tools)}):")
+        out.append("    these server-side Neuro-SAN adapters are not hosted as MCP tools because")
+        out.append("    the browser runtime calls peer agents directly.")
+        for name in plan.omitted_tools:
             out.append(f"   • {name}")
     if plan.external_mcps:
         out.append("")

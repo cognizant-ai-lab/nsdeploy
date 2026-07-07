@@ -60,7 +60,7 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
     # External MCP servers are reached through a same-origin proxy (avoids CORS) and
     # given a clean /mcp URL so the runtime classifies them as MCP.
     ext_url = {url: f"{site_base}/ext-mcp/{i}/mcp" for i, url in enumerate(plan.external_mcps)}
-    drop = set(plan.missing_tools) | set(plan.external_other)
+    drop = set(plan.missing_tools) | set(plan.omitted_tools) | set(plan.external_other)
 
     config = copy.deepcopy(plan.config)
     new_tools: List[Dict[str, Any]] = []
