@@ -169,7 +169,16 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             # Forward the MCP/JSON-RPC request + the headers the protocol needs.
             fwd = {"Content-Type": "application/json",
                    "Accept": self.headers.get("Accept", "application/json, text/event-stream"),
-                   "MCP-Protocol-Version": self.headers.get("MCP-Protocol-Version", "2025-06-18")}
+                   "MCP-Protocol-Version": self.headers.get("MCP-Protocol-Version", "2025-06-18"),
+                   # urllib's default Python-urllib/* user agent is blocked by
+                   # some Cloudflare-protected MCP providers (for example
+                   # api.you.com returns 1010). Forward the browser UA so the
+                   # same-origin proxy represents the browser-initiated request.
+                   "User-Agent": self.headers.get(
+                       "User-Agent",
+                       "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
+                   )}
             sid = self.headers.get("Mcp-Session-Id")
             if sid:
                 fwd["Mcp-Session-Id"] = sid
