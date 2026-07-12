@@ -6,6 +6,17 @@
 // imposes layout, not brand.
 
 import { ChatMessageType } from "./kernel.js";
+import {
+  canUseByokCookie,
+  deleteByokProfile,
+  getSelectedByokProfile,
+  guessByokProfileName,
+  loadByokStore,
+  portableByokRouter,
+  resolveByokRouter,
+  selectByokProfile,
+  upsertByokProfile,
+} from "./byok.js";
 
 const BASE_CSS = `
 /* Two resizable panes side by side: the chat and a right rail (the "agents working
@@ -144,9 +155,11 @@ const BASE_CSS = `
 .ns-settings summary{padding:6px 10px;cursor:pointer;color:var(--ns-muted,#666)}
 .ns-settings-body{padding:6px 10px;display:flex;flex-direction:column;gap:6px}
 .ns-settings-body label{display:flex;flex-direction:column;gap:2px;color:var(--ns-muted,#666)}
-.ns-settings-body input[type=text],.ns-settings-body input[type=password],.ns-settings-body input:not([type]){padding:5px 7px;border:1px solid var(--ns-border,#ccc);border-radius:6px;font-size:12px}
+.ns-settings-body input[type=text],.ns-settings-body input[type=password],.ns-settings-body input:not([type]),.ns-settings-body select{padding:5px 7px;border:1px solid var(--ns-border,#ccc);border-radius:6px;font-size:12px}
 .ns-settings-body .ns-row-inline{flex-direction:row;align-items:center;gap:6px}
 .ns-settings-body button{padding:6px 12px;background:var(--ns-primary,#2563eb);color:#fff;border:0;border-radius:6px;cursor:pointer;align-self:flex-start}
+.ns-settings-body button.ghost{background:transparent;color:var(--ns-muted,#666);border:1px solid var(--ns-border,#ccc)}
+.ns-profile-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .ns-hint{font-size:11px;color:var(--ns-muted,#777);margin-top:-2px}
 .ns-hint.warn{color:#b45309;font-weight:600}
 `;
@@ -194,12 +207,19 @@ export function mountApp(root, { engine, trace, manifest }) {
           <details class="ns-settings">
             <summary>⚙ BYOK / router settings</summary>
             <div class="ns-settings-body">
+              <label>Saved setup <select id="ns-profile"></select></label>
+              <label>Setup name <input id="ns-profile-name" placeholder="Local LLM, OpenAI, Anthropic router"></label>
               <label>API key <input id="ns-key" type="password" placeholder="sk-… (kept in this browser only — enables a REAL LLM)"></label>
               <label>Model <input id="ns-model" placeholder="e.g. gpt-4o, gpt-4o-mini"></label>
               <label>Router base URL <input id="ns-router" placeholder="OpenAI-compatible /v1"></label>
               <div id="ns-router-hint" class="ns-hint"></div>
               <label class="ns-row-inline"><input type="checkbox" id="ns-lg"> Drive the LLM via LangChain.js</label>
-              <button id="ns-apply">Apply &amp; reload</button>
+              <div class="ns-profile-actions">
+                <button id="ns-save-profile" class="ghost">Save setup</button>
+                <button id="ns-delete-profile" class="ghost">Delete setup</button>
+                <button id="ns-apply">Apply, save &amp; reload</button>
+              </div>
+              <div id="ns-profile-hint" class="ns-hint"></div>
             </div>
           </details>
           <div class="ns-inputbar">
@@ -552,22 +572,88 @@ export function mountApp(root, { engine, trace, manifest }) {
     modal.hidden = false;
   }
 
-  // BYOK / router settings: prefill from current state. The key lives ONLY in
-  // sessionStorage (this tab) and is never written to the URL; router/model are
-  // non-secret and ride in the query string so links stay shareable.
+  // BYOK / router settings. The active key is never written to the URL. Saved
+  // profiles make router/model/key reusable across agent networks; explicit URL
+  // router/model params still win so links remain shareable.
   const params = new URLSearchParams(location.search);
+  let profileStore = loadByokStore();
+  let selectedProfile = getSelectedByokProfile(profileStore);
+  const profileEl = root.querySelector("#ns-profile");
+  const profileNameEl = root.querySelector("#ns-profile-name");
   const routerEl = root.querySelector("#ns-router");
   const keyEl = root.querySelector("#ns-key");
+  const modelEl = root.querySelector("#ns-model");
+  const langchainEl = root.querySelector("#ns-lg");
   const hintEl = root.querySelector("#ns-router-hint");
+  const profileHintEl = root.querySelector("#ns-profile-hint");
+  const saveProfileBtn = root.querySelector("#ns-save-profile");
+  const deleteProfileBtn = root.querySelector("#ns-delete-profile");
   const mockUrl = engine.top?.llm?.baseUrl || "";
   const byokRouter = engine.byokRouter || "";
 
   routerEl.value = engine.routerOverride || mockUrl;
-  root.querySelector("#ns-model").value = engine.modelOverride || "";
+  modelEl.value = engine.modelOverride || "";
   let storedKey = "";
   try { storedKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
-  keyEl.value = storedKey;
-  root.querySelector("#ns-lg").checked = !!engine.agentRunner;
+  keyEl.value = storedKey || selectedProfile?.key || "";
+  profileNameEl.value = selectedProfile?.name || "";
+  langchainEl.checked = !!engine.agentRunner;
+
+  const profileStorageText = canUseByokCookie()
+    ? "Saved setups are kept in this browser and mirrored to a local cookie, so they follow nsDeploy across localhost ports."
+    : "Saved setups are kept in this browser for this site.";
+
+  const profileLabel = (p) => `${p.name || guessByokProfileName(p)}${p.model ? ` (${p.model})` : ""}`;
+  const refreshProfileOptions = (selectedId = profileStore.selectedId) => {
+    profileEl.innerHTML = `<option value="">Custom / unsaved</option>` +
+      profileStore.profiles.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(profileLabel(p))}</option>`).join("");
+    profileEl.value = profileStore.profiles.some((p) => p.id === selectedId) ? selectedId : "";
+    deleteProfileBtn.disabled = !profileEl.value;
+  };
+  const setProfileHint = (text = profileStorageText, cls = "") => {
+    profileHintEl.className = cls ? `ns-hint ${cls}` : "ns-hint";
+    profileHintEl.textContent = text;
+  };
+  const applyProfileToForm = (profile) => {
+    if (!profile) return;
+    profileNameEl.value = profile.name || "";
+    keyEl.value = profile.key || "";
+    modelEl.value = profile.model || "";
+    routerEl.value = resolveByokRouter(profile.router || "");
+    langchainEl.checked = !!profile.runner;
+    refreshHint();
+  };
+  const currentProfileDraft = (id) => {
+    let router = routerEl.value.trim();
+    const key = keyEl.value.trim();
+    const model = modelEl.value.trim();
+    if (key && byokRouter && isMockRouter(router)) {
+      router = byokRouter;
+      routerEl.value = router;
+    }
+    return {
+      id: id || "",
+      name: profileNameEl.value.trim() || guessByokProfileName({ router, model }),
+      key,
+      model,
+      router: portableByokRouter(router),
+      runner: langchainEl.checked,
+    };
+  };
+  const saveCurrentProfile = () => {
+    const draft = currentProfileDraft(profileEl.value);
+    if (!draft.key && !draft.model && !draft.router) return null;
+    const res = upsertByokProfile(draft, { select: true });
+    if (!res.profile) return null;
+    profileStore = res.store;
+    selectedProfile = res.profile;
+    profileNameEl.value = res.profile.name;
+    refreshProfileOptions(res.profile.id);
+    setProfileHint(`Saved setup "${res.profile.name}".`);
+    return res.profile;
+  };
+  refreshProfileOptions(selectedProfile?.id || "");
+  setProfileHint();
 
   const isMockRouter = (url) => !url || (engine.mockLLM && url === mockUrl) || /:8003(\/|$)/.test(url);
   const refreshHint = () => {
@@ -586,9 +672,39 @@ export function mountApp(root, { engine, trace, manifest }) {
   // When a key is entered against the mock router, auto-fill the real proxy.
   keyEl.addEventListener("input", () => {
     if (keyEl.value.trim() && byokRouter && isMockRouter(routerEl.value.trim())) routerEl.value = byokRouter;
+    if (profileEl.value && selectedProfile?.key !== keyEl.value.trim()) profileEl.value = "";
     refreshHint();
   });
   routerEl.addEventListener("input", refreshHint);
+  modelEl.addEventListener("input", () => {
+    if (!profileNameEl.value.trim()) profileNameEl.value = guessByokProfileName({ router: routerEl.value, model: modelEl.value });
+  });
+  profileEl.addEventListener("change", () => {
+    const id = profileEl.value;
+    profileStore = selectByokProfile(id);
+    selectedProfile = getSelectedByokProfile(profileStore);
+    if (selectedProfile) {
+      applyProfileToForm(selectedProfile);
+      setProfileHint(`Loaded setup "${selectedProfile.name}". Click Apply to use it for this page.`);
+    } else {
+      profileNameEl.value = "";
+      setProfileHint();
+    }
+    refreshProfileOptions(id);
+    refreshHint();
+  });
+  saveProfileBtn.addEventListener("click", () => {
+    saveCurrentProfile();
+  });
+  deleteProfileBtn.addEventListener("click", () => {
+    const id = profileEl.value;
+    if (!id) return;
+    const oldName = profileStore.profiles.find((p) => p.id === id)?.name || "setup";
+    profileStore = deleteByokProfile(id);
+    selectedProfile = getSelectedByokProfile(profileStore);
+    refreshProfileOptions(profileStore.selectedId);
+    setProfileHint(`Deleted setup "${oldName}".`);
+  });
   refreshHint();
 
   root.querySelector("#ns-apply").addEventListener("click", () => {
@@ -596,21 +712,23 @@ export function mountApp(root, { engine, trace, manifest }) {
     p.delete("key"); // the key must never appear in the URL
     let router = routerEl.value.trim();
     const key = keyEl.value.trim();
-    const model = root.querySelector("#ns-model").value.trim();
+    const model = modelEl.value.trim();
     // Safety net: a real key must never be sent to the mock router.
     if (key && byokRouter && isMockRouter(router)) router = byokRouter;
-    // The key is kept in sessionStorage (this tab only), never the query string.
+    const saved = saveCurrentProfile();
+    // The key is kept in browser storage, never the query string.
     try {
       if (key) sessionStorage.setItem("nsweb-byok-key", key);
       else sessionStorage.removeItem("nsweb-byok-key");
     } catch {}
     if (router) p.set("router", router); else p.delete("router");
     if (model) p.set("model", model); else p.delete("model");
-    if (root.querySelector("#ns-lg").checked) p.set("runner", "langchain"); else p.delete("runner");
+    if (langchainEl.checked) p.set("runner", "langchain"); else p.delete("runner");
     const qs = p.toString();
     // Rewrite the (key-free) query string, then reload so the change applies even
     // when only the key changed (router/model unchanged).
     try { history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash); } catch {}
+    if (saved) setProfileHint(`Saved setup "${saved.name}". Reloading...`);
     location.reload();
   });
   root.querySelector("#ns-export").addEventListener("click", () => {

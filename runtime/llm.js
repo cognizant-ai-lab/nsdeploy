@@ -7,8 +7,9 @@ function hostOf(url) {
 //
 // In production this is @langchain/openai's ChatOpenAI pointed at a router base
 // URL. Here it is a direct fetch to any OpenAI-compatible endpoint (LiteLLM,
-// OpenRouter, vLLM, Ollama, or the demo mock router). The BYOK key lives only in
-// the serving origin and is sent only to the router as Authorization.
+// OpenRouter, vLLM, Ollama, Docker Model Runner, or the demo mock router). The
+// BYOK key is never put in the URL and is sent only to the chosen router as
+// Authorization.
 
 export class LlmClient {
   constructor({ baseUrl, apiKey, trace, mock }) {
@@ -24,8 +25,8 @@ export class LlmClient {
   async chat({ model, messages, tools, origin, parentSpan, onContentDelta }) {
     // A real (non-mock) router with no API key: refuse rather than forward the
     // placeholder "demo" to a live provider (which returns a confusing 401). This
-    // happens e.g. when a shared/reloaded URL keeps the proxy router but the key —
-    // kept per-tab in sessionStorage — is absent.
+    // happens e.g. when a shared/reloaded URL keeps the proxy router but no saved
+    // BYOK profile/key is available in this browser.
     if (!this.mock && (!this.apiKey || this.apiKey === "demo")) {
       throw new Error(`The selected LLM router (${hostOf(this.baseUrl) || "a real provider"}) needs your API key. Open ⚙ BYOK settings and enter it — or switch the router back to the mock to run without a key.`);
     }

@@ -210,8 +210,12 @@ chatbot:
   boxes joined by edges — the front-man at the root, sub-agents nested beneath, and
   MCP/remote/coded tools as dashed leaf boxes; the active agent/origin **glows and its
   dot pulses** as a run progresses. Plus a live, exportable **execution log**.
-- **BYOK / router settings** let the user pick a real model + key at run time (kept in
-  `sessionStorage`, never in the URL); cross-network/MCP call-outs are consent-gated.
+- **BYOK / router settings** let the user pick a real model + key at run time and save
+  named setups (for example, Local LLM, OpenAI, or an Anthropic-compatible router).
+  Keys are never put in the URL; profiles are stored in the browser, with loopback
+  localhost/127.0.0.1 deployments mirrored to a local cookie so the same setups
+  prefill across nsDeploy ports and agent networks. Cross-network/MCP call-outs are
+  consent-gated.
 
 ## Example: `travel_agent_system.hocon`
 
