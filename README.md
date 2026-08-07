@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # nsdeploy
 
 Take a neuro-san(-studio) agent-network **HOCON**, check its dependencies, host its
@@ -29,6 +28,7 @@ python -m nsdeploy examples/travel_agent_system.hocon --port 8080
 Then open <http://127.0.0.1:8080/>. Flags: `--repo`/`--ref` (GitHub source, default
 `cognizant-ai-lab/neuro-san-studio@main`), `--studio DIR` (use a local checkout
 instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
+`--site-url` (public origin), `--link`/`--links` (outbound network bindings),
 `--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime),
 `--no-cruse` (skip generative-UI injection), and the theming flags below.
 
@@ -61,6 +61,58 @@ through the same-origin `/byok/v1` CORS proxy to your provider.
 6. **Serve** one static origin (site + the `neuro-san-web` runtime, with the
    sandbox-worker CSP), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
    external-MCP proxy at `/ext-mcp/<i>/mcp`, plus the local MCP server subprocesses.
+
+## Linking separately deployed agent networks
+
+Undefined agent names are retained as link slots. They can be bound to another
+nsDeploy site ahead of deployment or when the model first calls the dangling tool.
+Every site publishes `/.well-known/nsdeploy.json`; every binding is stored by the
+calling site only. There is no registry, discovery service, or required deployment
+order.
+
+Link local HOCONs by supplying the URL where each target will be hosted:
+
+```bash
+python -m nsdeploy link \
+  examples/link_demo_travel_agency.hocon \
+  examples/link_demo_airline.hocon \
+  --site link_demo_travel_agency=http://127.0.0.1:8091 \
+  --site link_demo_airline=http://127.0.0.1:8092
+```
+
+This writes `<source>.links.json` sidecars. Deploy normally; nsDeploy loads the
+matching sidecar automatically. To link a new HOCON to an already hosted peer:
+
+```bash
+python -m nsdeploy link examples/link_demo_travel_agency.hocon \
+  --peer http://127.0.0.1:8092
+```
+
+The reverse order works too. If the travel caller is already hosted and the airline
+is the newly supplied HOCON, the linker installs the outbound binding directly on
+the travel site:
+
+```bash
+python -m nsdeploy link examples/link_demo_airline.hocon --site link_demo_airline=http://127.0.0.1:8092 --peer http://127.0.0.1:8091
+```
+
+A binding can also be supplied directly:
+
+```bash
+python -m nsdeploy examples/link_demo_travel_agency.hocon --port 8091 \
+  --link airline_reservations=http://127.0.0.1:8092/link_demo_airline
+```
+
+For a non-local deployment, pass `--site-url https://public.example.com` so the
+published manifest contains the externally reachable origin. Links may also be
+hard-coded under a top-level HOCON
+`links { reference = "https://site.example/network" }` block.
+
+If a dangling tool is called without a binding, the browser asks the developer for
+the target site's URL, validates its published manifest, and saves the outbound
+link. The demo server persists it in its generated `links.json`; static hosts fall
+back to browser-local storage. Without a local HOCON, a hard-coded link, or an
+explicit peer URL, the linker cannot discover an unknown site.
 
 ## Grounding & `demo_mode`
 

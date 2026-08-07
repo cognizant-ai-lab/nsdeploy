@@ -71,6 +71,13 @@ const BASE_CSS = `
 .ns-consent-actions button{padding:6px 14px;border:0;border-radius:8px;background:var(--ns-primary,#2563eb);color:#fff;font-weight:600;cursor:pointer;font-size:13px}
 .ns-consent-actions button.ghost{background:transparent;color:#b45309;border:1px solid #f59e0b}
 .ns-consent-done{font-weight:700;color:#166534}
+.ns-linker{background:#f0f9ff;border:1px solid #38bdf8;max-width:95%}
+.ns-linker-title{font-size:14px;font-weight:700;margin-bottom:4px}
+.ns-linker-sub{font-size:12px;color:var(--ns-muted,#555);margin-bottom:8px}
+.ns-linker-form{display:flex;gap:8px;flex-wrap:wrap}
+.ns-linker-form input{flex:1 1 280px;min-width:0;padding:7px 9px;border:1px solid var(--ns-border,#bbb);border-radius:8px;font-size:13px}
+.ns-linker-form button{padding:7px 13px;border:0;border-radius:8px;background:var(--ns-primary,#2563eb);color:#fff;font-weight:600;cursor:pointer}
+.ns-linker-form button.ghost{background:transparent;color:var(--ns-muted,#555);border:1px solid var(--ns-border,#bbb)}
 .ns-widget{align-self:flex-start;max-width:95%;border:1px solid var(--ns-border,#e2e2e2);border-top:3px solid var(--w,var(--ns-primary,#2563eb));border-radius:12px;padding:14px;background:#fff;display:flex;flex-direction:column;gap:8px}
 .ns-widget.done{opacity:.7}
 .ns-w-head{display:flex;align-items:center;gap:8px;font-size:15px}
@@ -496,6 +503,46 @@ export function mountApp(root, { engine, trace, manifest }) {
       statusText.textContent = "Done — see your answer on the left.";
       renderANodes();
     }
+  });
+
+  // A dangling agent reference becomes a tool-call-time linker. The entered URL
+  // is validated against the peer's published manifest by Engine before storage.
+  engine.onLinkRequired = (info) => new Promise((resolve) => {
+    statusEl.classList.remove("busy");
+    statusText.textContent = `Waiting for the ${info.reference} network URL…`;
+    const el = document.createElement("div");
+    el.className = "ns-msg bot ns-linker";
+    el.innerHTML =
+      `<div class="ns-linker-title">Link ${escapeHtml(info.reference)}</div>` +
+      `<div class="ns-linker-sub">Enter the root URL of the nsDeploy site that provides this network.</div>` +
+      `<form class="ns-linker-form"><input type="url" required placeholder="https://airline.example.com" aria-label="Target nsDeploy site URL">` +
+      `<button type="submit">Link</button><button type="button" class="ghost">Cancel</button></form>`;
+    msgs.appendChild(el);
+    msgs.scrollTop = msgs.scrollHeight;
+    const form = el.querySelector("form");
+    const input = el.querySelector("input");
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const target = input.value.trim();
+      let host = "";
+      try { host = new URL(target).host; } catch {}
+      if (!host) { input.setCustomValidity("Enter a complete http:// or https:// URL."); input.reportValidity(); return; }
+      input.setCustomValidity("");
+      if (!nodeMeta.has(host)) {
+        nodeMeta.set(host, { label: host, role: "linked partner network", icon: "🏢", kind: "remote", origin: new URL(target).origin });
+        renderANodes();
+      }
+      form.innerHTML = `<div class="ns-consent-done">Linked to ${escapeHtml(host)}. Validating…</div>`;
+      statusEl.classList.add("busy");
+      statusText.textContent = `Validating ${host}…`;
+      resolve(target);
+    }, { once: true });
+    el.querySelector("button.ghost").addEventListener("click", () => {
+      form.innerHTML = `<div class="ns-consent-done">Linking cancelled.</div>`;
+      statusText.textContent = "Continuing without that network…";
+      resolve(null);
+    }, { once: true });
+    input.focus();
   });
 
   // --- cross-network consent (approve calls to other hosted networks) ------
@@ -947,6 +994,8 @@ function renderNodes(el, net, activeAgents, activeOrigins = new Set()) {
         const h = hostOfRef(ref); kids.push(`<li>${box("leaf", "🌐", h, { active: activeOrigins.has(h) })}</li>`);
       } else if (kind === "remote") {
         const h = hostOfRef(ref); kids.push(`<li>${box("leaf", "🏢", h, { active: activeOrigins.has(h) })}</li>`);
+      } else if (kind === "link") {
+        kids.push(`<li>${box("leaf", "🔗", ref, { title: "pending agent-network link" })}</li>`);
       } else if (kind === "coded" || kind === "toolbox") {
         kids.push(`<li>${box("leaf", "⚙", typeof ref === "string" ? ref : (ref.url || "tool"))}</li>`);
       }

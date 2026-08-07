@@ -27,6 +27,8 @@ export class Engine {
     this.history = []; // top-level conversation turns ([{role,content}]) across runs
     this.consent = new Map(); // peerOrigin -> "always" (remembered approvals)
     this.onConsent = null; // UI hook: async (info) => "allow"|"always"|"decline"
+    this.onLinkRequired = null; // UI hook: async ({reference,...}) => peer URL|null
+    this.runtimeAllowedPeers = new Set(); // user-entered, validated link origins
   }
 
   // Clear the multi-turn conversation history (start a new chat).
@@ -81,6 +83,8 @@ export class Engine {
     const hoconUrl = resolveUrl(base, entry.hocon);
     const text = await fetchText(hoconUrl);
     const config = parseHocon(text);
+    const publishedLinks = await this._loadPublishedLinks(base, entry.name || entry.hocon);
+    config.links = { ...(config.links || {}), ...publishedLinks };
     const network = new AgentNetwork(config, entry.name || entry.hocon);
     // Validation gate: a network with structural errors must never run. (Warnings
     // are non-fatal and surfaced in the trace/UI.) This applies to the top network
@@ -130,9 +134,107 @@ export class Engine {
   _assertAllowedPeer(target) {
     const norm = (u) => { try { return new URL(u).origin; } catch { return String(u || ""); } };
     const allowed = (this.top?.manifest?.allowed_peers || []).map(norm);
-    if (!allowed.includes(norm(target))) {
+    if (!allowed.includes(norm(target)) && !this.runtimeAllowedPeers.has(norm(target))) {
       throw new Error(`Policy: ${hostOf(target)} is not in this network's allowed_peers; refusing to contact it.`);
     }
+  }
+
+  async _loadPublishedLinks(base, networkName) {
+    try {
+      const resp = await fetch(resolveUrl(base, "/links.json"), { cache: "no-store" });
+      if (!resp.ok) return {};
+      const doc = await resp.json();
+      return doc?.networks?.[networkName] || {};
+    } catch {
+      return {};
+    }
+  }
+
+  _linkKey(base, networkName, reference) {
+    return `nsdeploy-link-v1::${base}::${networkName}::${reference}`;
+  }
+
+  _storedLink(base, networkName, reference) {
+    try { return localStorage.getItem(this._linkKey(base, networkName, reference)) || ""; }
+    catch { return ""; }
+  }
+
+  async _persistLink(base, networkName, reference, target) {
+    try { localStorage.setItem(this._linkKey(base, networkName, reference), target); } catch {}
+    try {
+      await fetch(resolveUrl(base, "/_nsdeploy/links"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ network: networkName, reference, target }),
+      });
+    } catch {
+      // Static hosts have no mutable endpoint; browser-local persistence remains.
+    }
+  }
+
+  async _normalizeLinkTarget(reference, rawTarget) {
+    let parsed;
+    try { parsed = new URL(String(rawTarget || "").trim()); }
+    catch { throw new Error("Enter a complete http:// or https:// nsDeploy site URL."); }
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      throw new Error("Linked network URLs must use http or https.");
+    }
+    const origin = parsed.origin;
+    const requested = parsed.pathname.split("/").filter(Boolean).pop() || "";
+    const { manifest } = await fetchManifest(origin);
+    const networks = manifest.networks || [];
+    const norm = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    let entry = requested ? networks.find((item) => item.name === requested) : null;
+    if (!entry) entry = networks.find((item) => norm(item.name) === norm(reference));
+    if (!entry) {
+      const matchedExport = (manifest.linking?.exports || []).find((item) =>
+        (item.aliases || []).some((alias) => norm(alias) === norm(reference))
+      );
+      if (matchedExport) entry = networks.find((item) => item.name === matchedExport.network);
+    }
+    if (!entry && networks.length === 1) entry = networks[0];
+    if (!entry) {
+      const choices = networks.map((item) => item.name).join(", ") || "none";
+      throw new Error(`No unique network matching '${reference}' at ${origin}. Published networks: ${choices}.`);
+    }
+    return `${origin}/${entry.name}`;
+  }
+
+  async resolveLink(reference, network, base, parentSpan) {
+    let target = network.getLink(reference) || this._storedLink(base, network.name, reference);
+    let needsValidation = false;
+    if (!target) {
+      if (typeof this.onLinkRequired !== "function") {
+        throw new Error(`Agent-network link '${reference}' is unresolved. Supply a peer nsDeploy URL.`);
+      }
+      target = await this.onLinkRequired({
+        reference,
+        sourceNetwork: network.name,
+        sourceOrigin: base,
+        parentSpan,
+      });
+      if (!target) return null;
+      needsValidation = true;
+    }
+    let normalized = target;
+    if (needsValidation) {
+      // Entering a URL is the developer's explicit request to contact that site
+      // for validation. Persisted links wait for the normal call-consent gate.
+      normalized = await this._normalizeLinkTarget(reference, target);
+    } else {
+      let parsed;
+      try { parsed = new URL(String(target)); } catch {}
+      if (!parsed || !["http:", "https:"].includes(parsed.protocol)) {
+        throw new Error(`Stored link '${reference}' is not a valid http(s) URL.`);
+      }
+    }
+    this.runtimeAllowedPeers.add(new URL(normalized).origin);
+    network.setLink(reference, normalized);
+    await this._persistLink(base, network.name, reference, normalized);
+    this.trace.note("link", {
+      origin: hostOf(base), network: network.name, reference, target: normalized,
+    });
+    return normalized;
   }
 
   _makeCtx({ network, base, bundleUrl, integrity, llm, slyData, chain, isTop, history }) {
@@ -155,6 +257,7 @@ export class Engine {
       onAnswerDelta: isTop ? (t) => self.onAnswerDelta?.(t) : undefined,
       resolveRemote: (ref, callChain, parentSpan) => self.resolveRemote(ref, callChain || chain, parentSpan),
       resolveMcp: (ref, parentSpan) => self.resolveMcp(ref, parentSpan, slyData),
+      resolveLink: (ref, parentSpan) => self.resolveLink(ref, network, base, parentSpan),
       requestConsent: (info) => self.requestConsent(info),
       // LangChain.js AgentRunner intrinsic (neuro-san-web owns the loop)
       externalRunner: self.agentRunner,

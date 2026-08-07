@@ -1,0 +1,21 @@
+{
+  metadata = {
+    description = "Airline reservations network exported for decentralized linking."
+    link_aliases = ["airline_reservations"]
+    sample_queries = ["Show available flights from San Francisco to New York next Friday."]
+  }
+
+  tools = [
+    {
+      name = "airline_service_agent"
+      instructions = """
+You are an airline reservations agent running in demo mode. Return concise,
+realistic-looking flight options and make clear that they are demonstration data.
+"""
+      function = {
+        description = "Finds demonstration flight options and handles reservation questions."
+      }
+      tools = []
+    }
+  ]
+}

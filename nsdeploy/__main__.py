@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 from nsdeploy.generate import generate_site
+from nsdeploy.linker import load_deploy_links, run_link_command
 from nsdeploy.launcher import serve
 from nsdeploy.resolve import build_plan, format_report, load_toolbox_info, resolve_hocon
 from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio
@@ -26,16 +27,24 @@ from nsdeploy.theme import load_theme_file, propose_theme
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "link":
+        return run_link_command(sys.argv[2:])
+
     ap = argparse.ArgumentParser(prog="nsdeploy", description=__doc__)
     ap.add_argument("hocon", help="path to the agent-network HOCON")
     ap.add_argument("--studio", default=None, help="local neuro-san-studio checkout (overrides GitHub)")
     ap.add_argument("--repo", default=DEFAULT_REPO, help=f"GitHub repo for tool files (default {DEFAULT_REPO})")
     ap.add_argument("--ref", default=DEFAULT_REF, help=f"git ref/branch/tag (default {DEFAULT_REF})")
     ap.add_argument("--port", type=int, default=8080, help="site port (default 8080)")
+    ap.add_argument("--site-url", default=None,
+                    help="public site origin used in manifests/links (default: local --port URL)")
     ap.add_argument("--out", default=None, help="output site dir (default: ./.nsdeploy/<name>)")
     ap.add_argument("--upstream", default="https://api.openai.com/v1",
                     help="RUNTIME BYOK proxy upstream — where the page's key is forwarded (default OpenAI)")
     ap.add_argument("--runtime-dir", default=None, help="neuro-san-web runtime dir (default: vendored ./runtime)")
+    ap.add_argument("--links", default=None, help="link sidecar JSON (default: <hocon>.links.json when present)")
+    ap.add_argument("--link", action="append", default=[], metavar="REF=URL",
+                    help="bind a dangling agent reference to a remote nsDeploy network (repeatable)")
     ap.add_argument("--no-cruse", action="store_true",
                     help="don't inject the CRUSE generative-UI directive into agents")
     # Tier-1 LLM theming (opt-in, DEPLOY-TIME only — independent of the runtime BYOK).
@@ -65,6 +74,18 @@ def main() -> int:
 
     network_name = hocon_path.stem
     config, missing_includes = resolve_hocon(hocon_path, source)
+    try:
+        links_path = Path(args.links).resolve() if args.links else None
+        if links_path is not None and not links_path.is_file():
+            raise ValueError(f"link file not found: {links_path}")
+        deploy_links = load_deploy_links(hocon_path, network_name, links_path, args.link)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if deploy_links:
+        configured = dict(config.get("links", {}) or {})
+        configured.update(deploy_links)
+        config["links"] = configured
     toolbox_info = load_toolbox_info(source)
     plan = build_plan(config, toolbox_info, network_name, missing_includes, source)
 
@@ -92,7 +113,7 @@ def main() -> int:
             print(f"   theme: proposed via {args.theme_model} (brand: {theme.brand or '—'})")
 
     out_dir = Path(args.out).resolve() if args.out else (Path.cwd() / ".nsdeploy" / network_name)
-    site_base = f"http://127.0.0.1:{args.port}"
+    site_base = (args.site_url or f"http://127.0.0.1:{args.port}").rstrip("/")
     mock_router = f"{site_base}/v1"
     byok_router = f"{site_base}/byok/v1"
     generate_site(plan, out_dir, mock_router, byok_router, site_base, cruse=not args.no_cruse, theme=theme)

@@ -12,7 +12,9 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -49,6 +51,7 @@ def _called_tool_names(messages: List[Dict[str, Any]]) -> set:
 
 def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: List[str]):
     ext_mcp_re = re.compile(r"^/ext-mcp/(\d+)/mcp$")
+    link_lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -75,10 +78,48 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 return self._mock_router(raw)
             if path == "/byok/v1/chat/completions":
                 return self._byok_proxy(raw)
+            if path == "/_nsdeploy/links":
+                return self._save_link(raw)
             m = ext_mcp_re.match(path)
             if m:
                 return self._ext_mcp_proxy(int(m.group(1)), raw)
             self._send(404, b"not found", "text/plain")
+
+        def _save_link(self, raw: bytes):
+            """Persist one outbound demo link on this site; no shared registry."""
+            try:
+                body = json.loads(raw or b"{}")
+                network = body.get("network", "")
+                reference = body.get("reference", "")
+                target = body.get("target", "").rstrip("/")
+                parsed = urllib.parse.urlparse(target)
+                if (not isinstance(network, str) or not isinstance(reference, str)
+                        or not network or not reference or len(reference) > 200
+                        or parsed.scheme not in ("http", "https") or not parsed.netloc):
+                    raise ValueError("network, reference, and an http(s) target are required")
+
+                config_path = site_dir / f"{network}.network.json"
+                if not config_path.is_file():
+                    return self._send(404, b'{"error":"unknown network"}', "application/json")
+                config = json.loads(config_path.read_text(encoding="utf-8"))
+                if reference not in (config.get("link_slots", {}) or {}):
+                    return self._send(404, b'{"error":"unknown link slot"}', "application/json")
+
+                links_path = site_dir / "links.json"
+                with link_lock:
+                    try:
+                        doc = json.loads(links_path.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        doc = {"version": 1, "networks": {}}
+                    doc.setdefault("networks", {}).setdefault(network, {})[reference] = target
+                    temp_path = site_dir / ".links.json.tmp"
+                    temp_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+                    temp_path.replace(links_path)
+                result = json.dumps({"linked": reference, "target": target}).encode("utf-8")
+                return self._send(200, result, "application/json")
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                result = json.dumps({"error": str(exc)}).encode("utf-8")
+                return self._send(400, result, "application/json")
 
         # --- deterministic, name-agnostic mock LLM router (no key needed) ---------
         def _mock_router(self, raw: bytes):
@@ -276,6 +317,9 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
             print(f"      • {t.name}  →  http://127.0.0.1:{t.port}/mcp")
     for i, target in enumerate(ext_mcps):
         print(f"    External MCP (proxied): /ext-mcp/{i}/mcp  →  {target}")
+    if plan.link_slots:
+        pending = len(set(plan.link_slots) - set(plan.links))
+        print(f"    Linker: {pending} pending agent-network link(s); outbound bindings stay on this site")
     print("    Ctrl-C to stop.\n")
     try:
         httpd.serve_forever()

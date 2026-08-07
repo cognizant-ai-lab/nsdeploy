@@ -77,6 +77,8 @@ class DeploymentPlan:
     external_other: List[str] = field(default_factory=list)      # other http(s) URLs — not handled
     missing_includes: List[str] = field(default_factory=list)
     omitted_tools: List[str] = field(default_factory=list)      # recognized but not needed/hostable here
+    link_slots: Dict[str, List[str]] = field(default_factory=dict)  # dangling agent ref -> callers
+    links: Dict[str, str] = field(default_factory=dict)         # dangling ref -> remote network URL
     notes: List[str] = field(default_factory=list)
 
 
@@ -161,8 +163,8 @@ def _find_front_man(config: Dict[str, Any]) -> str:
     return ""
 
 
-def _expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
-                                  missing_includes: List[str]) -> Dict[str, str]:
+def expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
+                                 missing_includes: List[str]) -> Dict[str, str]:
     """Fetch slash-referenced registry HOCONs and inline their agents.
 
     Returns a mapping from the original slash ref to the generated embedded front-man
@@ -186,7 +188,7 @@ def _expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
 
         child_config, child_missing = _parse_hocon_content(path.read_text(encoding="utf-8"), source)
         missing_includes.extend(m for m in child_missing if m not in missing_includes)
-        child_aliases = _expand_embedded_network_refs(child_config, source, missing_includes)
+        child_aliases = expand_embedded_network_refs(child_config, source, missing_includes)
 
         child_tools = child_config.get("tools", []) or []
         child_agents = [copy.deepcopy(t) for t in child_tools if _is_llm_agent(t)]
@@ -251,6 +253,16 @@ def _looks_like_mcp(url: str) -> bool:
     from urllib.parse import urlparse
     path = urlparse(url).path.lower()
     return path.endswith("/mcp") or "/mcp/" in path or path.endswith("/sse")
+
+
+def _configured_links(config: Dict[str, Any]) -> Dict[str, str]:
+    """Normalize optional HOCON `links` entries into ref -> remote URL."""
+    links: Dict[str, str] = {}
+    for ref, value in (config.get("links", {}) or {}).items():
+        url = value if isinstance(value, str) else (value or {}).get("url")
+        if isinstance(ref, str) and isinstance(url, str) and _is_url(url):
+            links[ref] = url.rstrip("/")
+    return links
 
 
 def _import_with_autoinstall(module: str):
@@ -321,7 +333,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
     """Classify the resolved config into a DeploymentPlan."""
     config = copy.deepcopy(config)
     all_missing_includes = list(missing_includes)
-    _expand_embedded_network_refs(config, source, all_missing_includes)
+    expand_embedded_network_refs(config, source, all_missing_includes)
     tools = config.get("tools", []) or []
     agent_names = {t["name"] for t in tools if "name" in t and "instructions" in t}
 
@@ -341,8 +353,10 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
     seen_hostable: Dict[str, HostableTool] = {}
     referenced_missing: set[str] = set()
     referenced_omitted: set[str] = set()
+    referenced_links: Dict[str, set[str]] = {}
     external_mcp: set[str] = set()
     external_other: set[str] = set()
+    configured_links = _configured_links(config)
 
     def resolve_leaf(name: str, spec: Dict[str, Any]) -> None:
         """Classify a non-agent tool entry (toolbox/class) as hostable or missing."""
@@ -398,7 +412,12 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
             elif ref in specs_by_name:
                 resolve_leaf(ref, specs_by_name[ref])
             else:
-                referenced_missing.add(ref)
+                # Undefined names are intentional, linkable agent-network slots.
+                # Broken declared coded/toolbox entries remain missing tools above.
+                if isinstance(ref, str):
+                    referenced_links.setdefault(ref, set()).add(agent.get("name", ""))
+                else:
+                    referenced_missing.add(str(ref))
 
     # Assign ports to hostable tools (one MCP server each, for tool-scoping).
     port = 9101
@@ -410,6 +429,11 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
     plan.omitted_tools = sorted(referenced_omitted)
     plan.external_mcps = sorted(external_mcp)
     plan.external_other = sorted(external_other)
+    plan.link_slots = {
+        ref: sorted(name for name in callers if name)
+        for ref, callers in sorted(referenced_links.items())
+    }
+    plan.links = {ref: configured_links[ref] for ref in plan.link_slots if ref in configured_links}
     return plan
 
 
@@ -437,6 +461,15 @@ def format_report(plan: DeploymentPlan) -> str:
         out.append("    will run without them. Add them to neuro-san-studio to ground these paths.")
         for name in plan.missing_tools:
             out.append(f"   • {name}")
+    if plan.link_slots:
+        linked = set(plan.links)
+        out.append("")
+        out.append(f"🔗 Agent-network link slots ({len(plan.link_slots)}):")
+        out.append("    undefined agent references are retained as callable links, not dropped.")
+        for ref, callers in plan.link_slots.items():
+            status = f"linked → {plan.links[ref]}" if ref in linked else "pending (link at deploy time or on first call)"
+            owner = f"; called by {', '.join(callers)}" if callers else ""
+            out.append(f"   • {ref}: {status}{owner}")
     if plan.omitted_tools:
         out.append("")
         out.append(f"ℹ️  Omitted browser-native adapters ({len(plan.omitted_tools)}):")

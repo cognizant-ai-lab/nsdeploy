@@ -1,0 +1,20 @@
+{
+  metadata = {
+    description = "Travel agency demo with a link to a separately deployed airline network."
+    sample_queries = ["Find me a flight from San Francisco to New York next Friday."]
+  }
+
+  tools = [
+    {
+      name = "travel_concierge"
+      instructions = """
+You are a travel concierge. Use airline_reservations whenever the traveler needs
+flight availability, pricing, or a reservation. Summarize its answer clearly.
+"""
+      function = {
+        description = "Plans travel and delegates flight work to an airline network."
+      }
+      tools = ["airline_reservations"]
+    }
+  ]
+}

@@ -15,6 +15,7 @@ import html
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.theme import ThemeSpec
@@ -76,22 +77,66 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
                 mapped.append(hostable_url[ref])
             elif ref in ext_url:
                 mapped.append(ext_url[ref])
+            elif ref in plan.links:
+                mapped.append(plan.links[ref])
             elif ref in drop:
                 continue  # missing tool / non-MCP external URL — dropped (reported separately)
             else:
-                mapped.append(ref)  # sub-agent reference
+                mapped.append(ref)  # sub-agent or unresolved link-slot reference
         if "tools" in agent:
             agent["tools"] = mapped
         if cruse:  # augment instructions so the agent emits generative-UI widgets
             agent["instructions"] = (agent.get("instructions", "") or "").rstrip() + "\n\n" + CRUSE_DIRECTIVE
         new_tools.append(agent)
     config["tools"] = new_tools
+    config["link_slots"] = {
+        ref: {"callers": callers}
+        for ref, callers in plan.link_slots.items()
+        if ref not in plan.links
+    }
     return config
 
 
 def _brand_display(plan: DeploymentPlan, theme: ThemeSpec) -> str:
     brand = theme.brand or _brandize(plan.network_name)
     return f"{theme.icon} {brand}".strip() if theme.icon else brand
+
+
+def _origin(url: str) -> str:
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
+
+
+def build_linking_metadata(plan: DeploymentPlan, site_base: str) -> Dict[str, Any]:
+    """Public, decentralized import/export description for peer linkers."""
+    meta = plan.config.get("metadata", {}) or {}
+    aliases: List[str] = [plan.network_name, plan.front_man]
+    configured_aliases = meta.get("link_aliases", []) or plan.config.get("link_exports", []) or []
+    if isinstance(configured_aliases, str):
+        configured_aliases = [configured_aliases]
+    for item in configured_aliases:
+        alias = item if isinstance(item, str) else (item or {}).get("alias") or (item or {}).get("name")
+        if alias:
+            aliases.append(alias)
+    aliases = list(dict.fromkeys(a for a in aliases if a))
+    return {
+        "protocol": "nsdeploy-link/v1",
+        "site": site_base.rstrip("/"),
+        "exports": [{
+            "network": plan.network_name,
+            "front_man": plan.front_man,
+            "aliases": aliases,
+            "url": f"{site_base.rstrip('/')}/{plan.network_name}",
+        }],
+        "imports": [{
+            "network": plan.network_name,
+            "reference": ref,
+            "callers": callers,
+            "status": "linked" if ref in plan.links else "pending",
+            **({"target": plan.links[ref]} if ref in plan.links else {}),
+        } for ref, callers in plan.link_slots.items()],
+        "links_endpoint": "/_nsdeploy/links",
+    }
 
 
 def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
@@ -103,6 +148,8 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
     allowed_peers = [f"http://{mcp_host}:{t.port}" for t in plan.hostable_tools]
     if plan.external_mcps:  # the site itself hosts the external-MCP proxy
         allowed_peers.append(site_base)
+    allowed_peers.extend(origin for origin in (_origin(url) for url in plan.links.values()) if origin)
+    allowed_peers = list(dict.fromkeys(allowed_peers))
     manifest: Dict[str, Any] = {
         "brand": _brand_display(plan, theme),
         "networks": [
@@ -121,6 +168,7 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
         },
         "allowed_peers": allowed_peers,
         "theme": {"primary": theme.colors["primary"]},
+        "linking": build_linking_metadata(plan, site_base),
     }
     if theme.welcome:  # LLM-proposed branded landing form (greeting + intake widget)
         welcome = dict(theme.welcome)
@@ -194,6 +242,25 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
         json.dumps(network_config, indent=2), encoding="utf-8")
     (out_dir / "agent-manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8")
+    well_known = out_dir / ".well-known"
+    well_known.mkdir(parents=True, exist_ok=True)
+    (well_known / "nsdeploy.json").write_text(
+        json.dumps(manifest["linking"], indent=2), encoding="utf-8")
+
+    # Preserve valid runtime-created bindings across regeneration. Each site owns
+    # only its own outbound map; this file is not a registry or discovery service.
+    links_path = out_dir / "links.json"
+    existing: Dict[str, Any] = {}
+    if links_path.is_file():
+        try:
+            existing = json.loads(links_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            existing = {}
+    old = ((existing.get("networks") or {}).get(plan.network_name) or {})
+    bindings = {ref: url for ref, url in old.items() if ref in plan.link_slots and isinstance(url, str)}
+    bindings.update(plan.links)
+    links_doc = {"version": 1, "networks": {plan.network_name: bindings}}
+    links_path.write_text(json.dumps(links_doc, indent=2), encoding="utf-8")
     (out_dir / "index.html").write_text(_index_html(theme, _brand_display(plan, theme)), encoding="utf-8")
     (out_dir / "theme.json").write_text(json.dumps(theme.to_dict(), indent=2), encoding="utf-8")
     return manifest

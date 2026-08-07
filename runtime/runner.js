@@ -153,6 +153,14 @@ export async function buildToolTable(ctx, spec, chain, parentSpan) {
       const host = hostOfUrl(ref);
       toolByName.set(name, { kind: "remote", url: ref });
       toolSchemas.push(schemaFor(name, { description: `Hand off to the ${host} network ("${name}"). Provide a natural-language request.` }));
+    } else if (c.kind === "link") {
+      // A dangling HOCON reference remains callable. Resolution is deferred until
+      // the model actually selects it, at which point the UI asks for a peer URL.
+      const name = safeName(ref);
+      toolByName.set(name, { kind: "link", reference: ref });
+      toolSchemas.push(schemaFor(name, {
+        description: `Hand off to the linked agent network "${ref}". If it is not linked yet, ask the developer for its nsDeploy site URL.`,
+      }));
     } else {
       const name = safeName(c.ref);
       toolByName.set(name, c);
@@ -226,6 +234,12 @@ export async function dispatchToolCall(ctx, entry, args, parentSpan, chain) {
       return `The user declined to send this request to ${host}. Continue without it.`;
     }
     return entry.client.callTool(entry.mcpName, args, parentSpan);
+  }
+
+  if (entry.kind === "link") {
+    const target = await ctx.resolveLink(entry.reference, parentSpan);
+    if (!target) return `The user did not link '${entry.reference}'. Continue without it.`;
+    return dispatchToolCall(ctx, { kind: "remote", url: target }, args, parentSpan, chain);
   }
 
   if (entry.kind === "remote") {

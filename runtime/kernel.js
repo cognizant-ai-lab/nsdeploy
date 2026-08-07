@@ -161,6 +161,8 @@ export class AgentNetwork {
   constructor(config, name) {
     this.config = filterConfig(config);
     this.name = name;
+    this.linkSlots = new Set(Object.keys(this.config.link_slots || {}));
+    this.links = { ...(this.config.links || {}) };
     this.specMap = new Map();
     for (const agent of this.config.tools || []) {
       if (agent && typeof agent.name === "string") this.specMap.set(agent.name, agent);
@@ -179,9 +181,18 @@ export class AgentNetwork {
   // Delegates classification to the cross-compiled kernel, then attaches the
   // local agent spec (needed by the runner) for non-remote/non-mcp kinds.
   classifyTool(ref) {
-    const kind = classify_tool(this.config, ref);
+    let kind = classify_tool(this.config, ref);
+    if (kind === "missing" && typeof ref === "string" && this.linkSlots.has(ref)) kind = "link";
     const spec = typeof ref === "string" ? this.specMap.get(ref) : undefined;
     return { kind, ref, spec };
+  }
+
+  getLink(ref) {
+    return this.links[ref] || null;
+  }
+
+  setLink(ref, target) {
+    if (this.linkSlots.has(ref)) this.links[ref] = target;
   }
 
   metadata() {
@@ -193,7 +204,9 @@ export class AgentNetwork {
 
 export function validateNetwork(network) {
   // Errors come from the cross-compiled kernel (neuro_san/kernel/validation.py).
-  const errors = validate_network(network.config);
+  const errors = validate_network(network.config).filter((message) =>
+    ![...network.linkSlots].some((ref) => message.includes(`references missing tool '${ref}'.`))
+  );
   const warnings = [];
 
   // The externals/mcps list (for the trace's cross-origin permission view) is a
