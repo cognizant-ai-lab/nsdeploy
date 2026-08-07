@@ -96,6 +96,13 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
         for ref, callers in plan.link_slots.items()
         if ref not in plan.links
     }
+    # Preserve the developer-facing reference for pre-consent UI. The peer
+    # manifest cannot be fetched until after consent, so the URL alone is not
+    # enough to name a linked network at prompt time.
+    config["link_labels"] = {
+        plan.links[ref]: _brandize(ref)
+        for ref in plan.links
+    }
     return config
 
 

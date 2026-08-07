@@ -163,6 +163,7 @@ export class AgentNetwork {
     this.name = name;
     this.linkSlots = new Set(Object.keys(this.config.link_slots || {}));
     this.links = { ...(this.config.links || {}) };
+    this.linkLabels = { ...(this.config.link_labels || {}) };
     this.specMap = new Map();
     for (const agent of this.config.tools || []) {
       if (agent && typeof agent.name === "string") this.specMap.set(agent.name, agent);
