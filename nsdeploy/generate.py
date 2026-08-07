@@ -70,6 +70,8 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
         # MCP URLs inside the agents that reference them.
         if not ("instructions" in entry and "class" not in entry and "toolbox" not in entry):
             continue
+        if entry.get("name") in plan.replaced_agents:
+            continue
         agent = copy.deepcopy(entry)
         mapped: List[str] = []
         for ref in agent.get("tools", []) or []:

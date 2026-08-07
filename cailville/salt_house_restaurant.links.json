@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "networks": {
+    "salt_house_restaurant": {
+      "greenbank_farm": "http://127.0.0.1:8094/greenbank_farm",
+      "harbor_town_hall": "http://127.0.0.1:8103/harbor_town_hall",
+      "main_street_exchange": "http://127.0.0.1:8097/main_street_exchange",
+      "tide_and_table_fishery": "http://127.0.0.1:8099/tide_and_table_fishery"
+    }
+  }
+}

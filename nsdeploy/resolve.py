@@ -79,6 +79,8 @@ class DeploymentPlan:
     omitted_tools: List[str] = field(default_factory=list)      # recognized but not needed/hostable here
     link_slots: Dict[str, List[str]] = field(default_factory=dict)  # dangling agent ref -> callers
     links: Dict[str, str] = field(default_factory=dict)         # dangling ref -> remote network URL
+    demo_link_fallbacks: List[str] = field(default_factory=list)  # local demo leaves usable until linked
+    replaced_agents: List[str] = field(default_factory=list)    # demo leaves removed in favor of links
     notes: List[str] = field(default_factory=list)
 
 
@@ -244,6 +246,11 @@ def _is_demo_mode(agent: Dict[str, Any]) -> bool:
     return DEMO_MODE_MARKER in (agent.get("instructions") or "")
 
 
+def _is_demo_leaf(agent: Dict[str, Any]) -> bool:
+    """A local fake-data agent that can be replaced by a same-named network."""
+    return _is_llm_agent(agent) and _is_demo_mode(agent) and not (agent.get("tools") or [])
+
+
 def _is_url(ref: Any) -> bool:
     return isinstance(ref, str) and (ref.startswith("http://") or ref.startswith("https://"))
 
@@ -357,6 +364,18 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
     external_mcp: set[str] = set()
     external_other: set[str] = set()
     configured_links = _configured_links(config)
+    demo_leaf_names = {
+        t.get("name", "") for t in tools
+        if t.get("name") and _is_demo_leaf(t)
+    }
+    referenced_demo_leaves: Dict[str, set[str]] = {}
+    for owner in tools:
+        if not _is_llm_agent(owner):
+            continue
+        for ref in owner.get("tools", []) or []:
+            if ref in demo_leaf_names and ref != owner.get("name"):
+                referenced_demo_leaves.setdefault(ref, set()).add(owner.get("name", ""))
+    replaced_demo_leaves = set(configured_links) & set(referenced_demo_leaves)
 
     def resolve_leaf(name: str, spec: Dict[str, Any]) -> None:
         """Classify a non-agent tool entry (toolbox/class) as hostable or missing."""
@@ -396,6 +415,8 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
     for t in tools:
         name = t.get("name", "")
         if "instructions" in t and "class" not in t and "toolbox" not in t:
+            if name in replaced_demo_leaves:
+                continue
             plan.agents.append(t)
             if _is_demo_mode(t):
                 plan.demo_mode_agents.append(name)
@@ -407,6 +428,8 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
         for ref in agent.get("tools", []) or []:
             if _is_url(ref):
                 (external_mcp if _looks_like_mcp(ref) else external_other).add(ref)
+            elif ref in referenced_demo_leaves:
+                referenced_links.setdefault(ref, set()).add(agent.get("name", ""))
             elif ref in agent_names:
                 continue  # sub-agent
             elif ref in specs_by_name:
@@ -434,6 +457,8 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
         for ref, callers in sorted(referenced_links.items())
     }
     plan.links = {ref: configured_links[ref] for ref in plan.link_slots if ref in configured_links}
+    plan.demo_link_fallbacks = sorted(set(referenced_demo_leaves) - set(plan.links))
+    plan.replaced_agents = sorted(set(referenced_demo_leaves) & set(plan.links))
     return plan
 
 
@@ -465,9 +490,14 @@ def format_report(plan: DeploymentPlan) -> str:
         linked = set(plan.links)
         out.append("")
         out.append(f"🔗 Agent-network link slots ({len(plan.link_slots)}):")
-        out.append("    undefined agent references are retained as callable links, not dropped.")
+        out.append("    demo leaf fallbacks remain local until linked; undefined references remain callable.")
         for ref, callers in plan.link_slots.items():
-            status = f"linked → {plan.links[ref]}" if ref in linked else "pending (link at deploy time or on first call)"
+            if ref in linked:
+                status = f"linked → {plan.links[ref]} (demo leaf replaced)"
+            elif ref in plan.demo_link_fallbacks:
+                status = "demo fallback active (replaceable at link time)"
+            else:
+                status = "pending (link at deploy time or on first call)"
             owner = f"; called by {', '.join(callers)}" if callers else ""
             out.append(f"   • {ref}: {status}{owner}")
     if plan.omitted_tools:

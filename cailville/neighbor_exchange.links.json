@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "networks": {
+    "neighbor_exchange": {
+      "butterpink_family": "http://127.0.0.1:8096/butterpink_family",
+      "deneman_place": "http://127.0.0.1:8095/deneman_place",
+      "rivera_household": "http://127.0.0.1:8092/rivera_household"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "networks": {
+    "seabreeze_inn": {
+      "fix_and_found": "http://127.0.0.1:8102/fix_and_found",
+      "greenbank_farm": "http://127.0.0.1:8094/greenbank_farm",
+      "harbor_town_hall": "http://127.0.0.1:8103/harbor_town_hall",
+      "harbor_wheels_cooperative": "http://127.0.0.1:8101/harbor_wheels_cooperative",
+      "main_street_exchange": "http://127.0.0.1:8097/main_street_exchange",
+      "tide_and_table_fishery": "http://127.0.0.1:8099/tide_and_table_fishery"
+    }
+  }
+}

@@ -36,6 +36,28 @@ By default it runs on a deterministic **mock** LLM (no key needed). For real out
 open **⚙ BYOK settings** in the page and enter your API key + model — calls route
 through the same-origin `/byok/v1` CORS proxy to your provider.
 
+## Cailville multi-site demo
+
+[`cailville/`](cailville) contains thirteen independently deployed household,
+business, broker, and civic agent networks, their decentralized link sidecars, and
+an interactive town map. Start the complete demo from the repository root:
+
+```bash
+./cailville/launch_all.sh
+```
+
+The launcher uses `venv/bin/python` when available, starts the sites on ports
+8091-8103, waits for every site, and then opens `cailville/cailville.html`. Logs are
+written to `.nsdeploy/cailville-logs/`. It defaults to the local OpenAI-compatible
+upstream at `http://localhost:12434/engines/v1` and the `gpt-4o` theme model; override
+those with `NSDEPLOY_UPSTREAM`, `NSDEPLOY_THEME_MODEL`, or `NSDEPLOY_PYTHON`.
+
+Stop the complete demo from another terminal:
+
+```bash
+./cailville/stop_all.sh
+```
+
 ## What it does (pipeline)
 
 1. **Resolve** the HOCON with pyhocon, includes relative to the studio root, so
@@ -64,11 +86,37 @@ through the same-origin `/byok/v1` CORS proxy to your provider.
 
 ## Linking separately deployed agent networks
 
-Undefined agent names are retained as link slots. They can be bound to another
-nsDeploy site ahead of deployment or when the model first calls the dangling tool.
-Every site publishes `/.well-known/nsdeploy.json`; every binding is stored by the
-calling site only. There is no registry, discovery service, or required deployment
-order.
+A caller represents a prospective remote network as a referenced, leaf
+`demo_mode` agent. Before linking, that leaf provides the local fake-data demo.
+At link time nsDeploy removes the demo leaf and rewrites all references to the
+callee site's network URL. The demo leaf's name must match the callee's HOCON
+filename/network name or its front-man name.
+
+The callee is an ordinary standalone network. It needs no import declaration,
+caller name, `link_aliases`, or other knowledge of who might link to it. Every
+site publishes only its own identity in `/.well-known/nsdeploy.json`, and every
+binding is stored by the calling site. There is no registry, discovery service, or
+required deployment order.
+
+For example, the caller can contain:
+
+```hocon
+tools = [
+  {
+    name = "travel_concierge"
+    instructions = "Plan travel and call link_demo_airline for flights."
+    tools = ["link_demo_airline"]
+  },
+  {
+    name = "link_demo_airline"
+    instructions = ${demo_mode} "Act as the airline for this local demo."
+    tools = []
+  }
+]
+```
+
+The callee can simply be `link_demo_airline.hocon`; it does not mention the
+caller or linking at all.
 
 Link local HOCONs by supplying the URL where each target will be hosted:
 
@@ -100,19 +148,20 @@ A binding can also be supplied directly:
 
 ```bash
 python -m nsdeploy examples/link_demo_travel_agency.hocon --port 8091 \
-  --link airline_reservations=http://127.0.0.1:8092/link_demo_airline
+  --link link_demo_airline=http://127.0.0.1:8092/link_demo_airline
 ```
 
 For a non-local deployment, pass `--site-url https://public.example.com` so the
 published manifest contains the externally reachable origin. Links may also be
 hard-coded under a top-level HOCON
-`links { reference = "https://site.example/network" }` block.
+`links { link_demo_airline = "https://site.example/link_demo_airline" }` block.
 
-If a dangling tool is called without a binding, the browser asks the developer for
-the target site's URL, validates its published manifest, and saves the outbound
-link. The demo server persists it in its generated `links.json`; static hosts fall
-back to browser-local storage. Without a local HOCON, a hard-coded link, or an
-explicit peer URL, the linker cannot discover an unknown site.
+A referenced demo leaf continues to run locally until `nsdeploy link`, `--link`,
+or a HOCON `links` entry replaces it. Truly undefined references are still
+supported as interactive link slots: when called, the browser asks for the target
+site URL and stores the resulting outbound link. Without a local HOCON, a
+hard-coded link, or an explicit peer URL, the linker cannot discover an unknown
+site.
 
 ## Grounding & `demo_mode`
 

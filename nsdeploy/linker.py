@@ -16,7 +16,12 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urljoin, urlparse
 
-from nsdeploy.resolve import BROWSER_OMITTED_TOOLS, expand_embedded_network_refs, resolve_hocon
+from nsdeploy.resolve import (
+    BROWSER_OMITTED_TOOLS,
+    DEMO_MODE_MARKER,
+    expand_embedded_network_refs,
+    resolve_hocon,
+)
 from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio, StudioSource
 
 
@@ -54,10 +59,18 @@ def describe_config(config: Dict[str, Any], network: str, path: Optional[Path] =
     ]
     front_man = agents[0].get("name", "") if agents else ""
     linked = _configured_links(config)
+    demo_leaves = {
+        item.get("name") for item in agents
+        if item.get("name")
+        and DEMO_MODE_MARKER in (item.get("instructions") or "")
+        and not (item.get("tools") or [])
+    }
     imports: Dict[str, set[str]] = {}
     for agent in agents:
         for ref in agent.get("tools", []) or []:
-            if not isinstance(ref, str) or _is_url(ref) or ref in names or ref in BROWSER_OMITTED_TOOLS:
+            if not isinstance(ref, str) or _is_url(ref) or ref in BROWSER_OMITTED_TOOLS:
+                continue
+            if ref in names and ref not in demo_leaves:
                 continue
             if ref not in linked:
                 imports.setdefault(ref, set()).add(agent.get("name", ""))

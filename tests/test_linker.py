@@ -5,7 +5,7 @@ from pathlib import Path
 
 from nsdeploy.generate import rewrite_config
 from nsdeploy.linker import NetworkDescription, describe_config, load_link_file, write_link_file
-from nsdeploy.resolve import build_plan
+from nsdeploy.resolve import DEMO_MODE_MARKER, build_plan
 from nsdeploy.studio import LocalStudio
 
 
@@ -51,6 +51,56 @@ class LinkerTests(unittest.TestCase):
         )
         self.assertEqual(deployed["link_slots"], {})
 
+    def test_unlinked_demo_leaf_remains_as_local_fallback(self):
+        config = {
+            "tools": [
+                {
+                    "name": "travel_concierge",
+                    "instructions": "Arrange a trip.",
+                    "tools": ["link_demo_airline"],
+                },
+                {
+                    "name": "link_demo_airline",
+                    "instructions": DEMO_MODE_MARKER,
+                    "tools": [],
+                },
+            ],
+        }
+        plan = build_plan(config, {}, "travel_agency", [], self.source)
+        deployed = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
+
+        self.assertEqual(plan.demo_link_fallbacks, ["link_demo_airline"])
+        self.assertEqual(plan.replaced_agents, [])
+        self.assertEqual([item["name"] for item in deployed["tools"]],
+                         ["travel_concierge", "link_demo_airline"])
+        self.assertEqual(deployed["tools"][0]["tools"], ["link_demo_airline"])
+
+    def test_link_replaces_same_named_demo_leaf(self):
+        config = {
+            "links": {"link_demo_airline": "http://127.0.0.1:8092/link_demo_airline"},
+            "tools": [
+                {
+                    "name": "travel_concierge",
+                    "instructions": "Arrange a trip.",
+                    "tools": ["link_demo_airline"],
+                },
+                {
+                    "name": "link_demo_airline",
+                    "instructions": DEMO_MODE_MARKER,
+                    "tools": [],
+                },
+            ],
+        }
+        plan = build_plan(config, {}, "travel_agency", [], self.source)
+        deployed = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
+
+        self.assertEqual(plan.replaced_agents, ["link_demo_airline"])
+        self.assertEqual([item["name"] for item in deployed["tools"]], ["travel_concierge"])
+        self.assertEqual(
+            deployed["tools"][0]["tools"],
+            ["http://127.0.0.1:8092/link_demo_airline"],
+        )
+
     def test_sidecar_round_trip(self):
         path = self.root / "travel.links.json"
         expected = {"airline_reservations": "http://127.0.0.1:8092/link_demo_airline"}
@@ -58,17 +108,30 @@ class LinkerTests(unittest.TestCase):
         self.assertEqual(load_link_file(path, "travel"), expected)
         self.assertEqual(json.loads(path.read_text())["version"], 1)
 
-    def test_exports_include_configured_alias(self):
+    def test_callee_exports_only_its_own_identity_by_default(self):
         config = {
-            "metadata": {"link_aliases": ["airline_reservations"]},
             "tools": [{"name": "airline_front", "instructions": "Book flights."}],
         }
         desc = describe_config(config, "link_demo_airline")
         self.assertIsInstance(desc, NetworkDescription)
-        self.assertEqual(
-            desc.aliases,
-            ["link_demo_airline", "airline_front", "airline_reservations"],
-        )
+        self.assertEqual(desc.aliases, ["link_demo_airline", "airline_front"])
+
+    def test_linker_discovers_referenced_demo_leaf(self):
+        config = {
+            "tools": [
+                {
+                    "name": "travel_concierge",
+                    "instructions": "Arrange a trip.",
+                    "tools": ["link_demo_airline"],
+                },
+                {
+                    "name": "link_demo_airline",
+                    "instructions": DEMO_MODE_MARKER,
+                },
+            ],
+        }
+        desc = describe_config(config, "travel_agency")
+        self.assertEqual(desc.imports, {"link_demo_airline": ["travel_concierge"]})
 
 
 if __name__ == "__main__":

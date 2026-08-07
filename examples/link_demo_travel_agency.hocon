@@ -3,18 +3,30 @@
     description = "Travel agency demo with a link to a separately deployed airline network."
     sample_queries = ["Find me a flight from San Francisco to New York next Friday."]
   }
+  demo_mode = "You are part of a demo system, so when queried, make up a realistic response as if you are actually grounded in real data or you are operating a real application API or microservice."
 
   tools = [
     {
       name = "travel_concierge"
       instructions = """
-You are a travel concierge. Use airline_reservations whenever the traveler needs
+You are a travel concierge. Use link_demo_airline whenever the traveler needs
 flight availability, pricing, or a reservation. Summarize its answer clearly.
 """
       function = {
         description = "Plans travel and delegates flight work to an airline network."
       }
-      tools = ["airline_reservations"]
+      tools = ["link_demo_airline"]
+    },
+    {
+      name = "link_demo_airline"
+      instructions = ${demo_mode} """
+Act as a demonstration airline network. Return realistic-looking flight options
+without contacting a real airline.
+"""
+      function = {
+        description = "Demo fallback for the separately deployed airline network."
+      }
+      tools = []
     }
   ]
 }

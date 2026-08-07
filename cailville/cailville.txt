@@ -1,0 +1,90 @@
+python -m nsdeploy link \
+  cailville/harbor_guide.hocon \
+  cailville/rivera_household.hocon \
+  cailville/deneman_place.hocon \
+  cailville/butterpink_family.hocon \
+  cailville/seabreeze_inn.hocon \
+  cailville/greenbank_farm.hocon \
+  cailville/main_street_exchange.hocon \
+  cailville/neighbor_exchange.hocon \
+  cailville/tide_and_table_fishery.hocon \
+  cailville/salt_house_restaurant.hocon \
+  cailville/harbor_wheels_cooperative.hocon \
+  cailville/fix_and_found.hocon \
+  cailville/harbor_town_hall.hocon \
+  --site harbor_guide=http://127.0.0.1:8091 \
+  --site rivera_household=http://127.0.0.1:8092 \
+  --site deneman_place=http://127.0.0.1:8095 \
+  --site butterpink_family=http://127.0.0.1:8096 \
+  --site seabreeze_inn=http://127.0.0.1:8093 \
+  --site greenbank_farm=http://127.0.0.1:8094 \
+  --site main_street_exchange=http://127.0.0.1:8097 \
+  --site neighbor_exchange=http://127.0.0.1:8098 \
+  --site tide_and_table_fishery=http://127.0.0.1:8099 \
+  --site salt_house_restaurant=http://127.0.0.1:8100 \
+  --site harbor_wheels_cooperative=http://127.0.0.1:8101 \
+  --site fix_and_found=http://127.0.0.1:8102 \
+  --site harbor_town_hall=http://127.0.0.1:8103
+
+python -m nsdeploy cailville/rivera_household.hocon --port 8092
+python -m nsdeploy cailville/harbor_guide.hocon --port 8091
+python -m nsdeploy cailville/deneman_place.hocon --port 8095
+python -m nsdeploy cailville/butterpink_family.hocon --port 8096
+python -m nsdeploy cailville/seabreeze_inn.hocon --port 8093
+python -m nsdeploy cailville/greenbank_farm.hocon --port 8094
+python -m nsdeploy cailville/main_street_exchange.hocon --port 8097
+python -m nsdeploy cailville/neighbor_exchange.hocon --port 8098
+python -m nsdeploy cailville/tide_and_table_fishery.hocon --port 8099
+python -m nsdeploy cailville/salt_house_restaurant.hocon --port 8100
+python -m nsdeploy cailville/harbor_wheels_cooperative.hocon --port 8101
+python -m nsdeploy cailville/fix_and_found.hocon --port 8102
+python -m nsdeploy cailville/harbor_town_hall.hocon --port 8103
+
+
+harbor_guide:
+Create an agent network as part of a coastal town called cailville. Call the agent network harbor_guide, a tourism and local-services marketplace that helps visitors discover lodging, dining, activities, and transportation without owning those services. Include leaf-node agents representing the following businesses that the harbor guide can invoke: greenbank_farm (A nearby farm supplying vegetables, flowers, eggs, and seasonal products through wholesale and direct-to-consumer sales), salt_house_restaurant (An independent waterfront restaurant handling reservations, catering, menus, procurement, and special dietary requests), seabreeze_inn (A locally owned hotel managing rooms, group bookings, event space, guest services, and relationships with local activity providers), and harbor_wheels_cooperative (A worker-owned transportation company providing passenger trips, accessible vehicles, deliveries, and event shuttles).
+
+rivera_household:
+Create an agent network as part of a coastal town called cailville. Call the agent network rivera_household, a citizen-controlled personal site representing a family’s preferences, calendar, budget, accessibility needs, possessions, and purchasing authority. This agent network should be able to call leaf node agents called harbor_guide (a tourism and local-services marketplace that helps visitors discover lodging, dining, activities, and transportation without owning those services), and neighbor_exchange (a C2C market where residents offer used goods, equipment, temporary work, spare space, rides, and mutual-aid assistance), harbor_town_hall (the municipal site for permits, inspections, benefits, public facilities, road closures, emergency notices, and government purchasing), and their neighbors, deneman_place and butterpink_family.
+
+deneman_place:
+Create an agent network as part of a coastal town called cailville. Call the agent network deneman_place, a citizen-controlled personal site representing a family’s preferences, calendar, budget, accessibility needs, possessions, and purchasing authority. This agent network should be able to call leaf node agents called harbor_guide (a tourism and local-services marketplace that helps visitors discover lodging, dining, activities, and transportation without owning those services), and neighbor_exchange (a C2C market where residents offer used goods, equipment, temporary work, spare space, rides, and mutual-aid assistance), harbor_town_hall (the municipal site for permits, inspections, benefits, public facilities, road closures, emergency notices, and government purchasing), and their neighbor, rivera_household.
+
+butterpink_family:
+Create an agent network as part of a coastal town called cailville. Call the agent network butterpink_family, a citizen-controlled personal site representing a family’s preferences, calendar, budget, accessibility needs, possessions, and purchasing authority. This agent network should be able to call leaf node agents called harbor_guide (a tourism and local-services marketplace that helps visitors discover lodging, dining, activities, and transportation without owning those services), and neighbor_exchange (a C2C market where residents offer used goods, equipment, temporary work, spare space, rides, and mutual-aid assistance), harbor_town_hall (the municipal site for permits, inspections, benefits, public facilities, road closures, emergency notices, and government purchasing), and their neighbor, rivera_household.
+
+main_street_exchange:
+Create an agent network as part of a coastal town called cailville. Call the agent network main_street_exchange, a discovery and procurement market for local businesses. It publishes offers and requests while leaving fulfillment and contracts with participating companies. This agent network should be able to call leaf node agents called tide_and_table_fishery (a family fishing business selling fresh and processed seafood to restaurants, shops, events, and households), greenbank_farm (a nearby farm supplying vegetables, flowers, eggs, and seasonal products through wholesale and direct-to-consumer sales), salt_house_restaurant (an independent waterfront restaurant handling reservations, catering, menus, procurement, and special dietary requests), seabreeze_inn (a locally owned hotel managing rooms, group bookings, event space, guest services, and relationships with local activity providers), harbor_wheels_cooperative (a worker-owned transportation company providing passenger trips, accessible vehicles, deliveries, and event shuttles), and fix_and_found (a repair and reuse business that restores appliances, furniture, bicycles, and equipment and sells reclaimed materials).
+
+neighbor_exchange:
+Create an agent network as part of a coastal town called cailville. Call the agent network neighbor_exchange, a C2C market where residents offer used goods, equipment, temporary work, spare space, rides, and mutual-aid assistance. This agent network should be able to call leaf node agents representing registered citizen agents. The current list includes: rivera_household, deneman_place, and butterpink_family.
+
+tide_and_table_fishery:
+Create an agent network as part of a coastal town called cailville. Call the agent network tide_and_table_fishery, a family fishing business selling fresh and processed seafood to restaurants, shops, events, and households. This agent network should be able to call leaf node agents called main_street_exchange (a discovery and procurement market for local businesses. It publishes offers and requests while leaving fulfillment and contracts with participating companies), and harbor_town_hall (the municipal site for permits, inspections, benefits, public facilities, road closures, emergency notices, and government purchasing). Other leaf node agents this agent network connects to, which are businesses they sell to, include salt_house_restaurant (an independent waterfront restaurant handling reservations, catering, menus, procurement, and special dietary requests), and seabreeze_inn (a locally owned hotel managing rooms, group bookings, event space, guest services, and relationships with local activity providers).
+
+greenbank_farm:
+Create an agent network as part of a coastal town called cailville. Call the agent network greenbank_farm, a nearby farm supplying vegetables, flowers, eggs, and seasonal products through wholesale and direct-to-consumer sales. This agent network should be able to call leaf node agents called main_street_exchange (a discovery and procurement market for local businesses. It publishes offers and requests while leaving fulfillment and contracts with participating companies), and harbor_town_hall (the municipal site for permits, inspections, benefits, public facilities, road closures, emergency notices, and government purchasing). Other leaf node agents this agent network connects to, which are businesses they sell to, include salt_house_restaurant (an independent waterfront restaurant handling reservations, catering, menus, procurement, and special dietary requests), and seabreeze_inn (a locally owned hotel managing rooms, group bookings, event space, guest services, and relationships with local activity providers).
+
+salt_house_restaurant:
+Create an agent network as part of a coastal town called cailville. Call the agent network salt_house_restaurant, an independent waterfront restaurant handling reservations, catering, menus, procurement, and special dietary requests. This agent network should be able to call leaf node agents called main_street_exchange (a discovery and procurement market for local businesses. It publishes offers and requests while leaving fulfillment and contracts with participating companies), and harbor_town_hall (the municipal site for permits, inspections, benefits, public facilities, road closures, emergency notices, and government purchasing). Other leaf node agents this agent network connects to, which are businesses they buy from, include greenbank_farm (a nearby farm supplying vegetables, flowers, eggs, and seasonal products through wholesale and direct-to-consumer sales), and tide_and_table_fishery (a family fishing business selling fresh and processed seafood to restaurants, shops, events, and households).
+
+seabreeze_inn:
+Create an agent network as part of a coastal town called cailville. Call the agent network seabreeze_inn, a locally owned hotel managing rooms, group bookings, event space, guest services, and relationships with local activity providers. This agent network should be able to call leaf node agents called main_street_exchange (a discovery and procurement market for local businesses. It publishes offers and requests while leaving fulfillment and contracts with participating companies), and harbor_town_hall (the municipal site for permits, inspections, benefits, public facilities, road closures, emergency notices, and government purchasing). Other leaf node agents this agent network connects to, which are businesses they buy from, include greenbank_farm (a nearby farm supplying vegetables, flowers, eggs, and seasonal products through wholesale and direct-to-consumer sales), and tide_and_table_fishery (a family fishing business selling fresh and processed seafood to restaurants, shops, events, and households), as well as harbor_wheels_cooperative (a worker-owned transportation company providing passenger trips, accessible vehicles, deliveries, and event shuttles), and fix_and_found (a repair and reuse business that restores appliances, furniture, bicycles, and equipment and sells reclaimed materials).
+
+harbor_wheels_cooperative:
+Create an agent network as part of a coastal town called cailville. Call the agent network harbor_wheels_cooperative, a worker-owned transportation company providing passenger trips, accessible vehicles, deliveries, and event shuttles. This agent network should be able to call leaf node agents called main_street_exchange (a discovery and procurement market for local businesses. It publishes offers and requests while leaving fulfillment and contracts with participating companies), and harbor_town_hall (the municipal site for permits, inspections, benefits, public facilities, road closures, emergency notices, and government purchasing). The other leaf node agent this agent network connects to is fix_and_found (a repair and reuse business that restores appliances, furniture, bicycles, and equipment and sells reclaimed materials).
+
+fix_and_found:
+Create an agent network as part of a coastal town called cailville. Call the agent network fix_and_found, a repair and reuse business that restores appliances, furniture, bicycles, and equipment and sells reclaimed materials. This agent network should be able to call leaf node agents called main_street_exchange (a discovery and procurement market for local businesses. It publishes offers and requests while leaving fulfillment and contracts with participating companies), and harbor_town_hall (the municipal site for permits, inspections, benefits, public facilities, road closures, emergency notices, and government purchasing).
+
+harbor_town_hall:
+Create an agent network as part of a coastal town called cailville. Call the agent network harbor_town_hall, a repair and reuse business that restores appliances, furniture, bicycles, and equipment and sells reclaimed materials. This agent network should be able to call the following leaf node agents:
+•	harbor_guide — A tourism and local-services marketplace that helps visitors discover lodging, dining, activities, and transportation without owning those services.
+•	main_street_exchange — A discovery and procurement market for local businesses. It publishes offers and requests while leaving fulfillment and contracts with participating companies.
+•	neighbor_exchange — A C2C market where residents offer used goods, equipment, temporary work, spare space, rides, and mutual-aid assistance.
+•	tide_and_table_fishery — A family fishing business selling fresh and processed seafood to restaurants, shops, events, and households.
+•	greenbank_farm — A nearby farm supplying vegetables, flowers, eggs, and seasonal products through wholesale and direct-to-consumer sales.
+•	salt_house_restaurant — An independent waterfront restaurant handling reservations, catering, menus, procurement, and special dietary requests.
+•	seabreeze_inn — A locally owned hotel managing rooms, group bookings, event space, guest services, and relationships with local activity providers.
+•	harbor_wheels_cooperative — A worker-owned transportation company providing passenger trips, accessible vehicles, deliveries, and event shuttles.
+•	fix_and_found — A repair and reuse business that restores appliances, furniture, bicycles, and equipment and sells reclaimed materials.

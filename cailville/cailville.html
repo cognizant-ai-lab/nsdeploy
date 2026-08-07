@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cailville Agentic Economy</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #173247;
+      --muted: #587080;
+      --paper: #f8fbf7;
+      --sea: #9bd6df;
+      --sea-deep: #67b5c4;
+      --land: #dce9c9;
+      --park: #b7d49b;
+      --road: #f8f1d5;
+      --road-edge: #c8bd91;
+      --citizen: #d96b67;
+      --broker: #d49b24;
+      --business: #187d82;
+      --civic: #435a9b;
+      --connection: #466b77;
+      --focus: #0f5665;
+      --shadow: rgba(23, 50, 71, 0.18);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--sea);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button, select, a { font: inherit; }
+
+    .topbar {
+      position: relative;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      min-height: 76px;
+      padding: 12px 20px;
+      color: #f7fbfc;
+      background: #153e4e;
+      border-bottom: 3px solid #e3b34d;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 230px;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      flex: 0 0 auto;
+      color: #153e4e;
+      background: #f0c45e;
+      border-radius: 50%;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .brand p {
+      margin: 2px 0 0;
+      color: #cce2e7;
+      font-size: 12px;
+    }
+
+    .site-readout {
+      min-width: 250px;
+      max-width: 480px;
+      text-align: center;
+    }
+
+    .site-readout strong {
+      display: block;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .site-readout span {
+      display: block;
+      margin-top: 2px;
+      overflow: hidden;
+      color: #cce2e7;
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      min-width: 300px;
+    }
+
+    .control-label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: #e4f1f3;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .control-label select {
+      min-height: 36px;
+      padding: 0 30px 0 10px;
+      color: var(--ink);
+      background: #f8fbf7;
+      border: 1px solid #b9d1d7;
+      border-radius: 5px;
+    }
+
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 36px;
+      padding: 0 10px;
+      color: var(--ink);
+      background: #f8fbf7;
+      border: 1px solid #b9d1d7;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    .toggle input { accent-color: var(--business); }
+
+    .town-map {
+      position: relative;
+      min-height: 700px;
+      height: calc(100dvh - 76px);
+      overflow: hidden;
+      isolation: isolate;
+      background: var(--land);
+    }
+
+    .map-art,
+    .connections {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .map-art { z-index: 0; }
+
+    .map-art .land { fill: var(--land); }
+    .map-art .sea { fill: var(--sea); }
+    .map-art .deep-water { fill: var(--sea-deep); opacity: 0.35; }
+    .map-art .park { fill: var(--park); }
+    .map-art .sand { fill: #eadb9b; }
+    .map-art .block { fill: #cbd9bd; stroke: #b0c39f; stroke-width: 1.5; }
+    .map-art .road-edge { fill: none; stroke: var(--road-edge); stroke-width: 16; opacity: 0.65; }
+    .map-art .road { fill: none; stroke: var(--road); stroke-width: 11; }
+    .map-art .minor-road { fill: none; stroke: var(--road); stroke-width: 7; }
+    .map-art .pier { fill: none; stroke: #9a7759; stroke-width: 10; }
+    .map-art .wave { fill: none; stroke: #d9f2f4; stroke-width: 2; opacity: 0.8; }
+    .map-art .map-label { fill: #526b66; font-size: 15px; font-weight: 700; letter-spacing: 1px; }
+    .map-art .water-label { fill: #337b87; font-size: 18px; font-style: italic; font-weight: 600; letter-spacing: 1px; }
+
+    .connections {
+      z-index: 4;
+      overflow: visible;
+      pointer-events: none;
+      transition: opacity 160ms ease;
+    }
+
+    .connections.is-hidden { opacity: 0; }
+
+    .connection {
+      fill: none;
+      stroke: var(--connection);
+      stroke-width: 1.7;
+      stroke-linecap: round;
+      opacity: 0.34;
+      vector-effect: non-scaling-stroke;
+      transition: opacity 130ms ease, stroke-width 130ms ease, stroke 130ms ease;
+    }
+
+    .town-map.is-focusing .connection { opacity: 0.055; }
+
+    .town-map.is-focusing .connection.is-active {
+      stroke: var(--focus);
+      stroke-width: 3;
+      opacity: 0.9;
+    }
+
+    .site {
+      --site-color: var(--business);
+      position: absolute;
+      z-index: 8;
+      left: var(--x);
+      top: var(--y);
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) 16px;
+      align-items: center;
+      gap: 7px;
+      width: 164px;
+      min-height: 52px;
+      padding: 7px 8px;
+      color: var(--ink);
+      text-decoration: none;
+      background: rgba(248, 251, 247, 0.96);
+      border: 1px solid rgba(23, 50, 71, 0.22);
+      border-left: 5px solid var(--site-color);
+      border-radius: 7px;
+      box-shadow: 0 4px 12px var(--shadow);
+      transform: translate(-50%, -50%);
+      transition: transform 130ms ease, box-shadow 130ms ease, opacity 130ms ease;
+    }
+
+    .site[data-type="citizen"] { --site-color: var(--citizen); }
+    .site[data-type="broker"] { --site-color: var(--broker); }
+    .site[data-type="business"] { --site-color: var(--business); }
+    .site[data-type="civic"] { --site-color: var(--civic); }
+
+    .site:hover,
+    .site:focus-visible {
+      z-index: 12;
+      transform: translate(-50%, -50%) translateY(-3px);
+      box-shadow: 0 8px 18px rgba(23, 50, 71, 0.28);
+      outline: 3px solid rgba(255, 255, 255, 0.9);
+      outline-offset: 2px;
+    }
+
+    .site.is-dimmed { opacity: 0.28; }
+    .site[hidden] { display: none; }
+
+    .site-icon {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      color: #ffffff;
+      background: var(--site-color);
+      border-radius: 50%;
+    }
+
+    .site-icon svg,
+    .open-icon svg,
+    .brand-mark svg { width: 18px; height: 18px; stroke-width: 2; }
+
+    .site-copy { min-width: 0; }
+
+    .site-name {
+      display: block;
+      overflow: hidden;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.15;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .site-kind {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+
+    .open-icon {
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+    }
+
+    .legend {
+      position: absolute;
+      z-index: 15;
+      right: 16px;
+      bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 10px;
+      color: var(--ink);
+      background: rgba(248, 251, 247, 0.94);
+      border: 1px solid rgba(23, 50, 71, 0.2);
+      border-radius: 6px;
+      box-shadow: 0 3px 10px var(--shadow);
+      font-size: 11px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+
+    .swatch {
+      width: 9px;
+      height: 9px;
+      background: var(--swatch);
+      border-radius: 50%;
+    }
+
+    .map-note {
+      position: absolute;
+      z-index: 15;
+      left: 16px;
+      bottom: 14px;
+      padding: 7px 9px;
+      color: var(--ink);
+      background: rgba(248, 251, 247, 0.9);
+      border-radius: 5px;
+      font-size: 11px;
+    }
+
+    @media (max-width: 960px) {
+      .topbar { align-items: flex-start; flex-wrap: wrap; }
+      .site-readout { order: 3; width: 100%; max-width: none; text-align: left; }
+      .controls { min-width: 0; }
+      .town-map { height: auto; min-height: 920px; }
+      .site { width: 148px; }
+      .legend { flex-wrap: wrap; max-width: 310px; }
+    }
+
+    @media (max-width: 640px) {
+      .topbar { padding: 10px 12px; }
+      .brand { min-width: 0; }
+      .brand p { display: none; }
+      .controls { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+      .control-label { flex: 1 1 170px; }
+      .control-label select { width: 100%; }
+      .town-map { min-height: 1450px; }
+      .site { left: var(--mx); top: var(--my); width: 142px; }
+      .map-art .map-label, .map-art .water-label { display: none; }
+      .map-note { bottom: 70px; max-width: 190px; }
+      .legend { left: 12px; right: 12px; bottom: 12px; justify-content: center; max-width: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .site, .connection, .connections { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"><i data-lucide="anchor" aria-hidden="true"></i></span>
+      <div>
+        <h1>Cailville</h1>
+        <p>A connected harbor-town agentic economy</p>
+      </div>
+    </div>
+
+    <div class="site-readout" aria-live="polite">
+      <strong id="readout-name">Explore 13 independent agentic sites</strong>
+      <span id="readout-description">Hover to trace relationships. Select a location to open its site.</span>
+    </div>
+
+    <div class="controls">
+      <label class="control-label" for="site-filter">
+        <span>Show</span>
+        <select id="site-filter">
+          <option value="all">All sites</option>
+          <option value="citizen">Citizen sites</option>
+          <option value="broker">Broker sites</option>
+          <option value="business">Business sites</option>
+          <option value="civic">Government site</option>
+        </select>
+      </label>
+      <label class="toggle" for="connections-toggle">
+        <input id="connections-toggle" type="checkbox" checked>
+        <span>Connections</span>
+      </label>
+    </div>
+  </header>
+
+  <main class="town-map" id="town-map" aria-label="Interactive map of Cailville agentic sites">
+    <svg class="map-art" viewBox="0 0 1400 800" preserveAspectRatio="none" aria-hidden="true">
+      <rect class="land" width="1400" height="800" />
+      <path class="sea" d="M0,0 H310 C330,115 285,220 344,321 C403,421 378,505 295,583 C219,655 136,690 0,708 Z" />
+      <path class="deep-water" d="M0,0 H90 C132,152 97,305 159,426 C210,526 143,605 0,630 Z" />
+      <path class="sand" d="M300,0 C322,113 280,219 340,326 C394,422 374,496 290,581 L323,604 C423,514 436,414 379,311 C331,224 371,111 352,0 Z" />
+
+      <path class="park" d="M1030,62 C1175,32 1322,74 1375,185 L1328,268 C1205,235 1103,255 1014,199 Z" />
+      <path class="park" d="M863,557 C1005,500 1176,546 1232,685 C1125,752 975,762 842,704 Z" />
+      <path class="block" d="M410,92 H628 V216 H402 Z" />
+      <path class="block" d="M684,82 H931 V198 H687 Z" />
+      <path class="block" d="M1002,296 H1255 V432 H1007 Z" />
+      <path class="block" d="M500,564 H733 V710 H488 Z" />
+
+      <path class="road-edge" d="M327,193 C590,234 790,280 1100,343 C1240,372 1330,424 1400,469" />
+      <path class="road" d="M327,193 C590,234 790,280 1100,343 C1240,372 1330,424 1400,469" />
+      <path class="road-edge" d="M346,504 C595,475 780,425 1025,337 C1167,285 1284,227 1400,149" />
+      <path class="road" d="M346,504 C595,475 780,425 1025,337 C1167,285 1284,227 1400,149" />
+      <path class="minor-road" d="M735,0 C736,150 723,277 754,401 C780,504 818,625 819,800" />
+      <path class="minor-road" d="M1005,79 C964,214 960,340 987,469 C1008,566 1039,671 1031,800" />
+      <path class="minor-road" d="M429,651 C663,635 891,638 1138,696" />
+
+      <path class="pier" d="M312,566 L92,674" />
+      <path class="pier" d="M304,612 L130,735" />
+      <path class="wave" d="M27,223 C75,199 118,243 166,219" />
+      <path class="wave" d="M18,285 C69,261 116,305 170,280" />
+      <path class="wave" d="M25,348 C76,324 122,368 176,343" />
+
+      <text class="water-label" x="40" y="145">Cailville Bay</text>
+      <text class="map-label" x="474" y="117">OLD HARBOR</text>
+      <text class="map-label" x="775" y="108">CIVIC CENTER</text>
+      <text class="map-label" x="1110" y="104">HARBOR HEIGHTS</text>
+      <text class="map-label" x="1085" y="635">GREENBANK</text>
+      <text class="map-label" x="417" y="746">WORKING WATERFRONT</text>
+    </svg>
+
+    <svg class="connections" id="connections" aria-hidden="true">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--connection)" />
+        </marker>
+      </defs>
+      <g id="connection-paths"></g>
+    </svg>
+
+    <a class="site" id="site-seabreeze_inn" data-site="seabreeze_inn" data-type="business" href="http://127.0.0.1:8093" target="_blank" rel="noopener" style="--x:18%;--y:17%;--mx:25%;--my:7%;" aria-label="Open Seabreeze Inn in a new tab">
+      <span class="site-icon"><i data-lucide="hotel" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Seabreeze Inn</span><span class="site-kind">Hospitality</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
+    </a>
+    <a class="site" id="site-harbor_guide" data-site="harbor_guide" data-type="broker" href="http://127.0.0.1:8091" target="_blank" rel="noopener" style="--x:31%;--y:29%;--mx:73%;--my:10%;" aria-label="Open Harbor Guide in a new tab">
+      <span class="site-icon"><i data-lucide="compass" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Harbor Guide</span><span class="site-kind">Tourism broker</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
+    </a>
+    <a class="site" id="site-rivera_household" data-site="rivera_household" data-type="citizen" href="http://127.0.0.1:8092" target="_blank" rel="noopener" style="--x:73%;--y:14%;--mx:25%;--my:19%;" aria-label="Open Rivera Household in a new tab">
+      <span class="site-icon"><i data-lucide="house" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Rivera Household</span><span class="site-kind">Citizen site</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
+    </a>
+    <a class="site" id="site-deneman_place" data-site="deneman_place" data-type="citizen" href="http://127.0.0.1:8095" target="_blank" rel="noopener" style="--x:88%;--y:17%;--mx:73%;--my:22%;" aria-label="Open Deneman Place in a new tab">
+      <span class="site-icon"><i data-lucide="house" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Deneman Place</span><span class="site-kind">Citizen site</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
+    </a>
+    <a class="site" id="site-butterpink_family" data-site="butterpink_family" data-type="citizen" href="http://127.0.0.1:8096" target="_blank" rel="noopener" style="--x:88%;--y:34%;--mx:25%;--my:31%;" aria-label="Open Butterpink Family in a new tab">
+      <span class="site-icon"><i data-lucide="house" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Butterpink Family</span><span class="site-kind">Citizen site</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
+    </a>
+    <a class="site" id="site-neighbor_exchange" data-site="neighbor_exchange" data-type="broker" href="http://127.0.0.1:8098" target="_blank" rel="noopener" style="--x:72%;--y:31%;--mx:73%;--my:34%;" aria-label="Open Neighbor Exchange in a new tab">
+      <span class="site-icon"><i data-lucide="handshake" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Neighbor Exchange</span><span class="site-kind">C2C broker</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
+    </a>
+    <a class="site" id="site-harbor_town_hall" data-site="harbor_town_hall" data-type="civic" href="http://127.0.0.1:8103" target="_blank" rel="noopener" style="--x:54%;--y:36%;--mx:25%;--my:43%;" aria-label="Open Harbor Town Hall in a new tab">
+      <span class="site-icon"><i data-lucide="landmark" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Harbor Town Hall</span><span class="site-kind">Government</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
+    </a>
+    <a class="site" id="site-main_street_exchange" data-site="main_street_exchange" data-type="broker" href="http://127.0.0.1:8097" target="_blank" rel="noopener" style="--x:48%;--y:54%;--mx:73%;--my:46%;" aria-label="Open Main Street Exchange in a new tab">
+      <span class="site-icon"><i data-lucide="store" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Main Street Exchange</span><span class="site-kind">B2B broker</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
+    </a>
+    <a class="site" id="site-salt_house_restaurant" data-site="salt_house_restaurant" data-type="business" href="http://127.0.0.1:8100" target="_blank" rel="noopener" style="--x:27%;--y:52%;--mx:25%;--my:55%;" aria-label="Open Salt House Restaurant in a new tab">
+      <span class="site-icon"><i data-lucide="utensils" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Salt House Restaurant</span><span class="site-kind">Restaurant</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
+    </a>
+    <a class="site" id="site-tide_and_table_fishery" data-site="tide_and_table_fishery" data-type="business" href="http://127.0.0.1:8099" target="_blank" rel="noopener" style="--x:13%;--y:72%;--mx:73%;--my:59%;" aria-label="Open Tide and Table Fishery in a new tab">
+      <span class="site-icon"><i data-lucide="fish" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Tide &amp; Table Fishery</span><span class="site-kind">Producer</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
+    </a>
+    <a class="site" id="site-harbor_wheels_cooperative" data-site="harbor_wheels_cooperative" data-type="business" href="http://127.0.0.1:8101" target="_blank" rel="noopener" style="--x:38%;--y:77%;--mx:25%;--my:69%;" aria-label="Open Harbor Wheels Cooperative in a new tab">
+      <span class="site-icon"><i data-lucide="bus" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Harbor Wheels Co-op</span><span class="site-kind">Transportation</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
+    </a>
+    <a class="site" id="site-fix_and_found" data-site="fix_and_found" data-type="business" href="http://127.0.0.1:8102" target="_blank" rel="noopener" style="--x:60%;--y:73%;--mx:73%;--my:77%;" aria-label="Open Fix and Found in a new tab">
+      <span class="site-icon"><i data-lucide="wrench" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Fix &amp; Found</span><span class="site-kind">Repair &amp; reuse</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
+    </a>
+    <a class="site" id="site-greenbank_farm" data-site="greenbank_farm" data-type="business" href="http://127.0.0.1:8094" target="_blank" rel="noopener" style="--x:84%;--y:74%;--mx:25%;--my:88%;" aria-label="Open Greenbank Farm in a new tab">
+      <span class="site-icon"><i data-lucide="sprout" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Greenbank Farm</span><span class="site-kind">Producer</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
+    </a>
+
+    <p class="map-note">Arrows point from caller to callable site.</p>
+    <div class="legend" aria-label="Site type legend">
+      <span class="legend-item"><span class="swatch" style="--swatch:var(--citizen)"></span>Citizen</span>
+      <span class="legend-item"><span class="swatch" style="--swatch:var(--broker)"></span>Broker</span>
+      <span class="legend-item"><span class="swatch" style="--swatch:var(--business)"></span>Business</span>
+      <span class="legend-item"><span class="swatch" style="--swatch:var(--civic)"></span>Government</span>
+    </div>
+  </main>
+
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script>
+    const sites = {
+      harbor_guide: { name: "Harbor Guide", description: "Tourism and local-services marketplace", url: "http://127.0.0.1:8091" },
+      rivera_household: { name: "Rivera Household", description: "Citizen-controlled family representative", url: "http://127.0.0.1:8092" },
+      seabreeze_inn: { name: "Seabreeze Inn", description: "Hotel, group bookings, events, and guest services", url: "http://127.0.0.1:8093" },
+      greenbank_farm: { name: "Greenbank Farm", description: "Local produce, flowers, eggs, and seasonal goods", url: "http://127.0.0.1:8094" },
+      deneman_place: { name: "Deneman Place", description: "Citizen-controlled family representative", url: "http://127.0.0.1:8095" },
+      butterpink_family: { name: "Butterpink Family", description: "Citizen-controlled family representative", url: "http://127.0.0.1:8096" },
+      main_street_exchange: { name: "Main Street Exchange", description: "Business discovery and procurement marketplace", url: "http://127.0.0.1:8097" },
+      neighbor_exchange: { name: "Neighbor Exchange", description: "Citizen-to-citizen goods, work, rides, and mutual aid", url: "http://127.0.0.1:8098" },
+      tide_and_table_fishery: { name: "Tide & Table Fishery", description: "Fresh and processed seafood producer", url: "http://127.0.0.1:8099" },
+      salt_house_restaurant: { name: "Salt House Restaurant", description: "Waterfront dining, reservations, and catering", url: "http://127.0.0.1:8100" },
+      harbor_wheels_cooperative: { name: "Harbor Wheels Cooperative", description: "Passenger trips, deliveries, and event shuttles", url: "http://127.0.0.1:8101" },
+      fix_and_found: { name: "Fix & Found", description: "Repair, restoration, reuse, and reclaimed materials", url: "http://127.0.0.1:8102" },
+      harbor_town_hall: { name: "Harbor Town Hall", description: "Permits, services, public facilities, and civic coordination", url: "http://127.0.0.1:8103" }
+    };
+
+    const relationships = [
+      ["harbor_guide", "greenbank_farm"], ["harbor_guide", "salt_house_restaurant"], ["harbor_guide", "seabreeze_inn"], ["harbor_guide", "harbor_wheels_cooperative"],
+      ["rivera_household", "harbor_guide"], ["rivera_household", "neighbor_exchange"], ["rivera_household", "harbor_town_hall"], ["rivera_household", "deneman_place"], ["rivera_household", "butterpink_family"],
+      ["deneman_place", "harbor_guide"], ["deneman_place", "neighbor_exchange"], ["deneman_place", "harbor_town_hall"], ["deneman_place", "rivera_household"],
+      ["butterpink_family", "harbor_guide"], ["butterpink_family", "neighbor_exchange"], ["butterpink_family", "harbor_town_hall"], ["butterpink_family", "rivera_household"],
+      ["main_street_exchange", "tide_and_table_fishery"], ["main_street_exchange", "greenbank_farm"], ["main_street_exchange", "salt_house_restaurant"], ["main_street_exchange", "seabreeze_inn"], ["main_street_exchange", "harbor_wheels_cooperative"], ["main_street_exchange", "fix_and_found"],
+      ["neighbor_exchange", "rivera_household"], ["neighbor_exchange", "deneman_place"], ["neighbor_exchange", "butterpink_family"],
+      ["tide_and_table_fishery", "main_street_exchange"], ["tide_and_table_fishery", "harbor_town_hall"], ["tide_and_table_fishery", "salt_house_restaurant"], ["tide_and_table_fishery", "seabreeze_inn"],
+      ["greenbank_farm", "main_street_exchange"], ["greenbank_farm", "harbor_town_hall"], ["greenbank_farm", "salt_house_restaurant"], ["greenbank_farm", "seabreeze_inn"],
+      ["salt_house_restaurant", "main_street_exchange"], ["salt_house_restaurant", "harbor_town_hall"], ["salt_house_restaurant", "greenbank_farm"], ["salt_house_restaurant", "tide_and_table_fishery"],
+      ["seabreeze_inn", "main_street_exchange"], ["seabreeze_inn", "harbor_town_hall"], ["seabreeze_inn", "greenbank_farm"], ["seabreeze_inn", "tide_and_table_fishery"], ["seabreeze_inn", "harbor_wheels_cooperative"], ["seabreeze_inn", "fix_and_found"],
+      ["harbor_wheels_cooperative", "main_street_exchange"], ["harbor_wheels_cooperative", "harbor_town_hall"], ["harbor_wheels_cooperative", "fix_and_found"],
+      ["fix_and_found", "main_street_exchange"], ["fix_and_found", "harbor_town_hall"],
+      ["harbor_town_hall", "harbor_guide"], ["harbor_town_hall", "main_street_exchange"], ["harbor_town_hall", "neighbor_exchange"], ["harbor_town_hall", "tide_and_table_fishery"], ["harbor_town_hall", "greenbank_farm"], ["harbor_town_hall", "salt_house_restaurant"], ["harbor_town_hall", "seabreeze_inn"], ["harbor_town_hall", "harbor_wheels_cooperative"], ["harbor_town_hall", "fix_and_found"]
+    ];
+
+    const townMap = document.getElementById("town-map");
+    const connectionSvg = document.getElementById("connections");
+    const pathGroup = document.getElementById("connection-paths");
+    const filter = document.getElementById("site-filter");
+    const connectionToggle = document.getElementById("connections-toggle");
+    const readoutName = document.getElementById("readout-name");
+    const readoutDescription = document.getElementById("readout-description");
+    const siteElements = [...document.querySelectorAll(".site")];
+
+    function edgeCurve(source, target) {
+      const pair = [source, target].sort().join("|");
+      let hash = 0;
+      for (const char of pair) hash = ((hash << 5) - hash) + char.charCodeAt(0);
+      const reverseExists = relationships.some(([a, b]) => a === target && b === source);
+      const sign = reverseExists ? (source < target ? 1 : -1) : (Math.abs(hash) % 2 ? 1 : -1);
+      return sign * (reverseExists ? 27 : 18 + (Math.abs(hash) % 26));
+    }
+
+    function drawConnections() {
+      const bounds = townMap.getBoundingClientRect();
+      connectionSvg.setAttribute("viewBox", `0 0 ${bounds.width} ${bounds.height}`);
+      pathGroup.replaceChildren();
+
+      relationships.forEach(([sourceId, targetId]) => {
+        const source = document.getElementById(`site-${sourceId}`);
+        const target = document.getElementById(`site-${targetId}`);
+        if (!source || !target || source.hidden || target.hidden) return;
+
+        const sourceBox = source.getBoundingClientRect();
+        const targetBox = target.getBoundingClientRect();
+        const sx0 = sourceBox.left + sourceBox.width / 2 - bounds.left;
+        const sy0 = sourceBox.top + sourceBox.height / 2 - bounds.top;
+        const tx0 = targetBox.left + targetBox.width / 2 - bounds.left;
+        const ty0 = targetBox.top + targetBox.height / 2 - bounds.top;
+        const dx = tx0 - sx0;
+        const dy = ty0 - sy0;
+        const distance = Math.max(Math.hypot(dx, dy), 1);
+        const ux = dx / distance;
+        const uy = dy / distance;
+        const sourceBoundary = 1 / Math.max(Math.abs(ux) / (sourceBox.width / 2), Math.abs(uy) / (sourceBox.height / 2));
+        const targetBoundary = 1 / Math.max(Math.abs(ux) / (targetBox.width / 2), Math.abs(uy) / (targetBox.height / 2));
+        const startInset = Math.min(sourceBoundary + 7, distance * 0.42);
+        const endInset = Math.min(targetBoundary + 10, distance * 0.42);
+        const sx = sx0 + ux * startInset;
+        const sy = sy0 + uy * startInset;
+        const tx = tx0 - ux * endInset;
+        const ty = ty0 - uy * endInset;
+        const bend = edgeCurve(sourceId, targetId);
+        const cx = (sx + tx) / 2 - uy * bend;
+        const cy = (sy + ty) / 2 + ux * bend;
+
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("class", "connection");
+        path.setAttribute("d", `M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${tx.toFixed(1)} ${ty.toFixed(1)}`);
+        path.setAttribute("marker-end", "url(#arrow)");
+        path.dataset.source = sourceId;
+        path.dataset.target = targetId;
+        pathGroup.append(path);
+      });
+    }
+
+    function focusSite(siteId) {
+      townMap.classList.add("is-focusing");
+      const related = new Set([siteId]);
+      document.querySelectorAll(".connection").forEach(path => {
+        const active = path.dataset.source === siteId || path.dataset.target === siteId;
+        path.classList.toggle("is-active", active);
+        if (active) {
+          related.add(path.dataset.source);
+          related.add(path.dataset.target);
+        }
+      });
+      siteElements.forEach(site => site.classList.toggle("is-dimmed", !related.has(site.dataset.site)));
+      readoutName.textContent = sites[siteId].name;
+      readoutDescription.textContent = `${sites[siteId].description} · ${sites[siteId].url}`;
+    }
+
+    function clearFocus() {
+      townMap.classList.remove("is-focusing");
+      document.querySelectorAll(".connection").forEach(path => path.classList.remove("is-active"));
+      siteElements.forEach(site => site.classList.remove("is-dimmed"));
+      readoutName.textContent = "Explore 13 independent agentic sites";
+      readoutDescription.textContent = "Hover to trace relationships. Select a location to open its site.";
+    }
+
+    function applyFilter() {
+      const selected = filter.value;
+      siteElements.forEach(site => {
+        site.hidden = selected !== "all" && site.dataset.type !== selected;
+      });
+      clearFocus();
+      requestAnimationFrame(drawConnections);
+    }
+
+    siteElements.forEach(site => {
+      site.addEventListener("mouseenter", () => focusSite(site.dataset.site));
+      site.addEventListener("mouseleave", clearFocus);
+      site.addEventListener("focus", () => focusSite(site.dataset.site));
+      site.addEventListener("blur", clearFocus);
+    });
+
+    filter.addEventListener("change", applyFilter);
+    connectionToggle.addEventListener("change", () => {
+      connectionSvg.classList.toggle("is-hidden", !connectionToggle.checked);
+    });
+
+    new ResizeObserver(drawConnections).observe(townMap);
+    window.addEventListener("load", drawConnections);
+    if (window.lucide) window.lucide.createIcons();
+  </script>
+</body>
+</html>

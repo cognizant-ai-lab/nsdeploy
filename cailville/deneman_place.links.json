@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "networks": {
+    "deneman_place": {
+      "harbor_guide": "http://127.0.0.1:8091/harbor_guide",
+      "harbor_town_hall": "http://127.0.0.1:8103/harbor_town_hall",
+      "neighbor_exchange": "http://127.0.0.1:8098/neighbor_exchange",
+      "rivera_household": "http://127.0.0.1:8092/rivera_household"
+    }
+  }
+}

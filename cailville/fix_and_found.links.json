@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "networks": {
+    "fix_and_found": {
+      "harbor_town_hall": "http://127.0.0.1:8103/harbor_town_hall",
+      "main_street_exchange": "http://127.0.0.1:8097/main_street_exchange"
+    }
+  }
+}

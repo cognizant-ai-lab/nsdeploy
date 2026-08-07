@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "networks": {
+    "harbor_guide": {
+      "greenbank_farm": "http://127.0.0.1:8094/greenbank_farm",
+      "harbor_wheels_cooperative": "http://127.0.0.1:8101/harbor_wheels_cooperative",
+      "salt_house_restaurant": "http://127.0.0.1:8100/salt_house_restaurant",
+      "seabreeze_inn": "http://127.0.0.1:8093/seabreeze_inn"
+    }
+  }
+}
