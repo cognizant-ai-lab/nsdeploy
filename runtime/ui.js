@@ -449,6 +449,27 @@ export function mountApp(root, { engine, trace, manifest }) {
   const statusEl = root.querySelector("#ns-status");
   const statusText = root.querySelector("#ns-status-text");
   const labelOf = (host) => nodeMeta.get(host)?.label || host;
+  const ensureRemoteNode = (host, { brand = "", network = "" } = {}) => {
+    if (!host || host === localHost) return null;
+    let meta = nodeMeta.get(host);
+    if (!meta) {
+      const display = brand || network || host;
+      const b = splitBrand(display);
+      meta = {
+        label: b.label || display,
+        role: "partner network",
+        icon: b.icon || "🏢",
+        kind: "remote",
+        origin: host.startsWith("http") ? host : `http://${host}`,
+      };
+      nodeMeta.set(host, meta);
+    } else if (brand || network) {
+      const b = splitBrand(brand || network);
+      meta.label = b.label || network || meta.label;
+      if (brand) meta.icon = b.icon;
+    }
+    return meta;
+  };
 
   function renderANodes() {
     anodesEl.innerHTML = "";
@@ -473,6 +494,7 @@ export function mountApp(root, { engine, trace, manifest }) {
 
   const setActive = (host, busyText) => {
     for (const k of nodeStatus.keys()) if (nodeStatus.get(k) === "active") nodeStatus.set(k, "done");
+    if (host && host !== localHost) ensureRemoteNode(host);
     if (host && nodeMeta.has(host)) nodeStatus.set(host, "active");
     if (busyText) { statusText.textContent = busyText; statusEl.classList.add("busy"); }
     renderANodes();
@@ -483,20 +505,33 @@ export function mountApp(root, { engine, trace, manifest }) {
     if (ev.phase === "start") {
       switch (ev.kind) {
         case "run": for (const k of nodeStatus.keys()) nodeStatus.set(k, "idle"); setActive(localHost, "Planning your trip…"); break;
-        case "remote_fetch": setActive(ev.peerOrigin, `Loading ${labelOf(ev.peerOrigin)}…`); break;
-        case "remote_call": setActive(ev.peerOrigin, `Contacting ${labelOf(ev.peerOrigin)}…`); break;
+        case "remote_fetch":
+          ensureRemoteNode(ev.peerOrigin, { network: ev.network });
+          setActive(ev.peerOrigin, `Loading ${labelOf(ev.peerOrigin)}…`);
+          break;
+        case "remote_call":
+          ensureRemoteNode(ev.peerOrigin, { brand: ev.brand, network: ev.network });
+          setActive(ev.peerOrigin, `Contacting ${labelOf(ev.peerOrigin)}…`);
+          break;
         case "mcp_call": setActive(ev.peerOrigin, `Asking ${labelOf(ev.peerOrigin)}…`); break;
         case "rest_call": statusText.textContent = `Checking ${labelOf(ev.origin)} systems…`; break;
         case "tool_call": statusText.textContent = `Running ${ev.tool}…`; break;
         case "model_call": if (nodeMeta.has(ev.origin)) setActive(ev.origin, ev.origin === localHost ? "Thinking…" : undefined); break;
         default: break;
       }
-    } else if (ev.phase === "end" && ev.kind === "remote_fetch" && ev.brand) {
+    } else if (ev.phase === "end" && ev.kind === "remote_fetch") {
       // The peer was just fetched (after the user consented). Upgrade its label
       // from the now-available published brand — no pre-consent network call.
       const host = ev.peerOrigin;
-      const meta = host && nodeMeta.get(host);
-      if (meta) { const b = splitBrand(ev.brand); meta.label = b.label; meta.icon = b.icon; renderANodes(); }
+      const meta = ensureRemoteNode(host, { brand: ev.brand, network: ev.network });
+      if (meta) {
+        if (ev.brand) {
+          const b = splitBrand(ev.brand);
+          meta.label = b.label || ev.network || meta.label;
+          meta.icon = b.icon;
+        }
+        renderANodes();
+      }
     } else if (ev.phase === "end" && ev.kind === "run") {
       for (const k of nodeStatus.keys()) if (nodeStatus.get(k) === "active") nodeStatus.set(k, "done");
       statusEl.classList.remove("busy");
@@ -1025,8 +1060,8 @@ function rowLabel(ev) {
     }
     case "tool_call": detail = `${escapeHtml(ev.tool || "")} <span class="ns-meta">(${escapeHtml(ev.toolKind || "")})</span>`; break;
     case "rest_call": detail = `${escapeHtml(ev.method || "GET")} ${escapeHtml(ev.url || "")}`; break;
-    case "remote_fetch": detail = `${escapeHtml(ev.peerOrigin || "")} <span class="ns-meta">${escapeHtml(ev.url || "")}</span>`; break;
-    case "remote_call": detail = `${escapeHtml(ev.peerOrigin || "")}/${escapeHtml(ev.network || "")} <span class="ns-meta">via ${escapeHtml(ev.method || "")}</span>`; break;
+    case "remote_fetch": detail = `${escapeHtml(ev.brand || ev.network || ev.peerOrigin || "")} <span class="ns-meta">${escapeHtml(ev.peerOrigin || ev.url || "")}</span>`; break;
+    case "remote_call": detail = `${escapeHtml(ev.brand || ev.network || ev.peerOrigin || "")} <span class="ns-meta">@ ${escapeHtml(ev.peerOrigin || "")} · via ${escapeHtml(ev.method || "")}</span>`; break;
     case "mcp_call": detail = `${escapeHtml(ev.method || "")} <span class="ns-meta">@ ${escapeHtml(ev.peerOrigin || "")}</span>`; break;
     case "tool_result": detail = `${escapeHtml(ev.tool || "")} <span class="ns-meta">${escapeHtml((ev.preview || "").slice(0, 80))}</span>`; break;
     default: detail = "";

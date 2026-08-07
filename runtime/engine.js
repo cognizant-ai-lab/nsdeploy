@@ -387,6 +387,7 @@ class Session {
       fetchedUrls: this.fetchedUrls,
       requestPayload: { ...request, sly_data: redactSlyData(request.sly_data) },
       network: this.network.name,
+      brand: this.brand,
     });
     try {
       const ctx = this.engine._makeCtx({
