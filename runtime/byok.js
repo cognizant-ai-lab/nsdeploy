@@ -5,6 +5,8 @@
 // localhost/127.0.0.1 ports. Do not enable cookie mirroring for non-local hosts:
 // cookies are sent to the serving host on every request.
 
+import { normalizeModelName } from "./model.js";
+
 const STORE_KEY = "nsweb-byok-profiles-v1";
 const COOKIE_NAME = "nsweb_byok_profiles_v1";
 const VERSION = 1;
@@ -158,7 +160,7 @@ function normalizeProfile(raw) {
   if (!raw || typeof raw !== "object") return null;
   const id = String(raw.id || "").trim() || newProfileId();
   const key = String(raw.key || "");
-  const model = String(raw.model || "").trim();
+  const model = normalizeModelName(raw.model);
   const router = String(raw.router || "").trim();
   const runner = !!raw.runner;
   const name = String(raw.name || guessByokProfileName({ router, model })).trim().slice(0, 80);

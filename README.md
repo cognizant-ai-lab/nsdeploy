@@ -34,7 +34,10 @@ instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
 
 By default it runs on a deterministic **mock** LLM (no key needed). For real output,
 open **⚙ BYOK settings** in the page and enter your API key + model — calls route
-through the same-origin `/byok/v1` CORS proxy to your provider.
+through the same-origin `/byok/v1` CORS proxy to your provider. A saved profile with
+a real key is automatically moved off the site's mock `/v1` route. The header reports
+a real LLM only after the endpoint returns a verifiable, non-mock model response;
+routing errors are shown as errors rather than silently falling back to mock.
 
 ## Cailville multi-site demo
 
@@ -48,9 +51,30 @@ an interactive town map. Start the complete demo from the repository root:
 
 The launcher uses `venv/bin/python` when available, starts the sites on ports
 8091-8103, waits for every site, and then opens `cailville/cailville.html`. Logs are
-written to `.nsdeploy/cailville-logs/`. It defaults to the local OpenAI-compatible
-upstream at `http://localhost:12434/engines/v1` and the `gpt-5.6` theme model; override
-those with `NSDEPLOY_UPSTREAM`, `NSDEPLOY_THEME_MODEL`, or `NSDEPLOY_PYTHON`.
+written to `.nsdeploy/cailville-logs/`. Its runtime BYOK proxy defaults to OpenAI and
+theme generation defaults to `gpt-5.6`; override those with `NSDEPLOY_UPSTREAM`,
+`NSDEPLOY_THEME_MODEL`, or `NSDEPLOY_PYTHON`.
+
+To run the agents with Docker Model Runner instead, explicitly select its upstream
+and enter one of the exact IDs returned by its `/models` endpoint in BYOK settings:
+
+```bash
+NSDEPLOY_UPSTREAM=http://localhost:12434/engines/v1 ./cailville/launch_all.sh
+```
+
+For a fast functional test, skip theme generation entirely:
+
+```bash
+NSDEPLOY_THEME=0 ./cailville/launch_all.sh
+```
+
+To keep theming enabled but reuse cached themes without calling the theme LLM again:
+
+```bash
+NSDEPLOY_THEME_REFRESH=0 ./cailville/launch_all.sh
+```
+
+`NSDEPLOY_THEME=0` takes precedence over the theme model and refresh settings.
 
 Stop the complete demo from another terminal:
 
@@ -72,9 +96,10 @@ Stop the complete demo from another terminal:
      URLs**.
 3. **Host** each hostable tool as a standalone **FastMCP** streamable-HTTP server
    (with CORS), exposing its `CodedTool.invoke(args, sly_data)` as an MCP tool whose
-   input schema is built from the tool's JSON-Schema parameters.
+   input schema is built from the tool's JSON-Schema parameters. The launcher picks
+   an available private port for each process, avoiding collisions between sites.
 4. **Rewrite** the resolved network (a copy): each hostable tool reference becomes its
-   local MCP URL; each **external MCP** URL becomes a same-origin proxy URL
+   stable same-origin `/_mcp/<i>/mcp` URL; each **external MCP** URL becomes a proxy URL
    (`/ext-mcp/<i>/mcp`) so the browser can call it without CORS; missing tools and
    non-MCP external URLs are dropped. This removes any assumption of a local neuro-san
    server — tools are reached purely over MCP.
@@ -82,7 +107,8 @@ Stop the complete demo from another terminal:
    (+ `theme.json` when theming is used — see "Look & feel").
 6. **Serve** one static origin (site + the `neuro-san-web` runtime, with the
    sandbox-worker CSP), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
-   external-MCP proxy at `/ext-mcp/<i>/mcp`, plus the local MCP server subprocesses.
+   local-MCP proxy at `/_mcp/<i>/mcp`, an external-MCP proxy at
+   `/ext-mcp/<i>/mcp`, plus the private local MCP server subprocesses.
 
 ## Linking separately deployed agent networks
 
@@ -91,6 +117,14 @@ A caller represents a prospective remote network as a referenced, leaf
 At link time nsDeploy removes the demo leaf and rewrites all references to the
 callee site's network URL. The demo leaf's name must match the callee's HOCON
 filename/network name or its front-man name.
+
+The runtime uses a **fetch-and-run-locally** composition model: after consent it
+fetches the target site's public manifest and network definition, interprets that
+network inside the caller's browser, and returns the result through the caller's
+existing orchestration loop. A linked network is never invoked as a remote agent
+execution service. It inherits the caller's active LLM router and model settings
+(including the caller's mock router for keyless demos); BYOK keys are never sent to
+the callee site.
 
 The callee is an ordinary standalone network. It needs no import declaration,
 caller name, `link_aliases`, or other knowledge of who might link to it. Every
@@ -216,6 +250,13 @@ OpenAI) + the deploy-time key (`$OPENAI_API_KEY` / `--theme-key`). Runtime
 `--theme-upstream` explicitly when you want theming on a different provider — e.g.
 theme with a local Ollama (`--theme-upstream http://127.0.0.1:11434/v1`) while the
 deployed app still calls Docker Model Runner or OpenAI-compatible BYOK at runtime.
+The model entered in the runtime settings must be an exact model ID published by
+that runtime upstream; a theme model being available does not make it available to
+the runtime. For Docker Model Runner, inspect the catalog with:
+
+```bash
+curl http://localhost:12434/engines/v1/models
+```
 
 The LLM authors the page's **CSS + HTML around the assistant**, but it's treated as
 untrusted and **strictly sanitized**: only safe presentational tags/attributes survive
@@ -317,8 +358,8 @@ chatbot:
   named setups (for example, Local LLM, OpenAI, or an Anthropic-compatible router).
   Keys are never put in the URL; profiles are stored in the browser, with loopback
   localhost/127.0.0.1 deployments mirrored to a local cookie so the same setups
-  prefill across nsDeploy ports and agent networks. Cross-network/MCP call-outs are
-  consent-gated.
+  prefill across nsDeploy ports and agent networks. The LLM badge stays unverified
+  until a real response identifies its model. Cross-network/MCP call-outs are consent-gated.
 
 ## Example: `travel_agent_system.hocon`
 
@@ -346,4 +387,5 @@ resolve. The point is the report tells you precisely what is grounded vs not.)
   with a real LLM via BYOK. The mock exists so the site runs end-to-end with no key.
 - Hosting a studio tool imports its `CodedTool` class (a lightweight neuro-san
   interface) — that's a build/host-time library import, **not** a neuro-san server.
-- One MCP server per hostable tool (separate port) preserves per-agent tool scoping.
+- One MCP server per hostable tool preserves per-agent tool scoping. Private ports are
+  assigned dynamically and exposed through stable same-origin proxy paths.

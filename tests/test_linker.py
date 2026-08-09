@@ -3,10 +3,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nsdeploy.generate import rewrite_config
+from nsdeploy.generate import build_manifest, rewrite_config
 from nsdeploy.linker import NetworkDescription, describe_config, load_link_file, write_link_file
-from nsdeploy.resolve import DEMO_MODE_MARKER, build_plan
+from nsdeploy.resolve import DEMO_MODE_MARKER, DeploymentPlan, HostableTool, build_plan
 from nsdeploy.studio import LocalStudio
+from nsdeploy.theme import ThemeSpec
 
 
 class LinkerTests(unittest.TestCase):
@@ -132,6 +133,21 @@ class LinkerTests(unittest.TestCase):
         }
         desc = describe_config(config, "travel_agency")
         self.assertEqual(desc.imports, {"link_demo_airline": ["travel_concierge"]})
+
+    def test_hosted_tool_uses_same_origin_proxy_and_manifest_allows_it(self):
+        tool = HostableTool("search", "x.Search", "coded_tools.x", "Search", "Search", {})
+        plan = DeploymentPlan(
+            network_name="demo", config={"tools": []}, front_man="front",
+            hostable_tools=[tool],
+        )
+        site = "http://127.0.0.1:8091"
+        plan.config = {
+            "tools": [{"name": "front", "instructions": "Help.", "tools": ["search"]}]
+        }
+        config = rewrite_config(plan, site, cruse=False)
+        self.assertEqual(config["tools"][0]["tools"], [f"{site}/_mcp/0/mcp"])
+        manifest = build_manifest(plan, config, f"{site}/v1", f"{site}/byok/v1", site, ThemeSpec())
+        self.assertIn(site, manifest["allowed_peers"])
 
 
 if __name__ == "__main__":

@@ -9,16 +9,18 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from nsdeploy.resolve import DeploymentPlan
 
@@ -49,8 +51,11 @@ def _called_tool_names(messages: List[Dict[str, Any]]) -> set:
     return {m.get("name") for m in messages if m.get("role") == "tool" and m.get("name")}
 
 
-def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: List[str]):
+def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: List[str],
+                 local_mcps: Optional[List[str]] = None):
     ext_mcp_re = re.compile(r"^/ext-mcp/(\d+)/mcp$")
+    local_mcp_re = re.compile(r"^/_mcp/(\d+)/mcp$")
+    local_mcps = local_mcps or []
     link_lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
@@ -63,6 +68,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "*")
+            self.send_header("Access-Control-Expose-Headers", "Mcp-Session-Id, X-Nsdeploy-LLM-Route")
 
         def do_OPTIONS(self):
             self.send_response(204)
@@ -80,6 +86,9 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 return self._byok_proxy(raw)
             if path == "/_nsdeploy/links":
                 return self._save_link(raw)
+            m = local_mcp_re.match(path)
+            if m:
+                return self._local_mcp_proxy(int(m.group(1)), raw)
             m = ext_mcp_re.match(path)
             if m:
                 return self._ext_mcp_proxy(int(m.group(1)), raw)
@@ -138,6 +147,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             self._cors()
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Nsdeploy-LLM-Route", "mock")
             # No Content-Length: signal end-of-stream by closing the connection so the
             # browser's SSE reader gets `done` (mirrors res.end() in the Node demo).
             self.send_header("Connection", "close")
@@ -193,6 +203,10 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             self._cors()
             self.send_header("Content-Type", up.headers.get("Content-Type", "text/event-stream"))
             self.send_header("Cache-Control", "no-cache")
+            self.send_header(
+                "X-Nsdeploy-LLM-Route",
+                up.headers.get("X-Nsdeploy-LLM-Route", "byok"),
+            )
             self.send_header("Connection", "close")
             self.close_connection = True
             self.end_headers()
@@ -202,11 +216,18 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                     break
                 self.wfile.write(chunk)
 
-        # --- same-origin proxy to an external MCP server (avoids browser CORS) ----
+        # --- same-origin proxies to private local/external MCP servers -------------
+        def _local_mcp_proxy(self, index: int, raw: bytes):
+            if index < 0 or index >= len(local_mcps):
+                return self._send(404, b"unknown local MCP", "text/plain")
+            return self._mcp_proxy(local_mcps[index], raw, "local")
+
         def _ext_mcp_proxy(self, index: int, raw: bytes):
             if index < 0 or index >= len(ext_mcps):
                 return self._send(404, b"unknown external MCP", "text/plain")
-            target = ext_mcps[index]
+            return self._mcp_proxy(ext_mcps[index], raw, "external")
+
+        def _mcp_proxy(self, target: str, raw: bytes, kind: str):
             # Forward the MCP/JSON-RPC request + the headers the protocol needs.
             fwd = {"Content-Type": "application/json",
                    "Accept": self.headers.get("Accept", "application/json, text/event-stream"),
@@ -232,7 +253,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 return
             except Exception as e:  # network/DNS/timeout — report as an MCP-readable error
                 msg = json.dumps({"jsonrpc": "2.0", "error": {"code": -32000,
-                                  "message": f"external MCP unreachable: {e}"}}).encode("utf-8")
+                                  "message": f"{kind} MCP unreachable: {e}"}}).encode("utf-8")
                 self._send(502, msg, "application/json")
                 return
             self.send_response(200)
@@ -254,6 +275,8 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
         # --- static files: /runtime/* from the runtime, else from the site -------
         def do_GET(self):
             path = self.path.split("?")[0]
+            if path == "/byok/v1/models":
+                return self._byok_models_proxy()
             if path == "/":
                 path = "/index.html"
             if path.startswith("/runtime/"):
@@ -268,6 +291,30 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 extra["Content-Security-Policy"] = WORKER_CSP
             self._send(200, data, MIME.get(file_path.suffix, "application/octet-stream"), extra)
 
+        def _byok_models_proxy(self):
+            """Expose the active upstream catalog for browser-side model validation."""
+            auth = self.headers.get("Authorization", "")
+            req = urllib.request.Request(
+                f"{upstream}/models", method="GET",
+                headers={"Authorization": auth, "Accept": "application/json"},
+            )
+            try:
+                up = urllib.request.urlopen(req, timeout=30)
+                detail = up.read()
+                return self._send(
+                    up.status, detail,
+                    up.headers.get("Content-Type", "application/json"),
+                )
+            except urllib.error.HTTPError as exc:
+                detail = exc.read()
+                return self._send(
+                    exc.code, detail,
+                    exc.headers.get("Content-Type", "application/json"),
+                )
+            except Exception as exc:
+                detail = json.dumps({"error": f"model catalog unavailable: {exc}"}).encode("utf-8")
+                return self._send(502, detail, "application/json")
+
         def _send(self, code: int, body: bytes, ctype: str, extra: Optional[Dict[str, str]] = None):
             self.send_response(code)
             self._cors()
@@ -281,23 +328,70 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
     return Handler
 
 
-def spawn_mcp_servers(plan: DeploymentPlan, studio_root: Path, python_exe: str) -> List[subprocess.Popen]:
-    """Start one FastMCP server subprocess per hostable tool."""
-    procs: List[subprocess.Popen] = []
+def _free_tcp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _wait_for_listener(proc: subprocess.Popen, port: int, timeout: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(f"MCP subprocess exited with status {proc.returncode}")
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+                return
+        except OSError:
+            time.sleep(0.1)
+    raise RuntimeError(f"MCP subprocess did not listen on port {port} within {timeout:g}s")
+
+
+def _stop_process(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def spawn_mcp_servers(plan: DeploymentPlan, studio_root: Path, python_exe: str) -> List[Tuple[subprocess.Popen, int]]:
+    """Start one FastMCP server per tool on an available private runtime port."""
+    bindings: List[Tuple[subprocess.Popen, int]] = []
     env = dict(os.environ)
     repo_root = str(Path(__file__).resolve().parents[1])
     env["PYTHONPATH"] = os.pathsep.join([repo_root, str(studio_root), env.get("PYTHONPATH", "")])
-    for tool in plan.hostable_tools:
-        spec = {"name": tool.name, "module": tool.module, "class_name": tool.class_name,
-                "description": tool.description, "parameters": tool.parameters, "port": tool.port}
-        spec_file = Path(tempfile.gettempdir()) / f"nsdeploy_{tool.name}_{tool.port}.json"
-        spec_file.write_text(json.dumps(spec), encoding="utf-8")
-        proc = subprocess.Popen(
-            [python_exe, "-m", "nsdeploy.mcp_host", "--studio", str(studio_root), "--spec", str(spec_file)],
-            env=env, cwd=repo_root,
-        )
-        procs.append(proc)
-    return procs
+    try:
+        for index, tool in enumerate(plan.hostable_tools):
+            last_error: Optional[Exception] = None
+            for attempt in range(5):
+                port = _free_tcp_port()
+                spec = {"name": tool.name, "module": tool.module, "class_name": tool.class_name,
+                        "description": tool.description, "parameters": tool.parameters, "port": port}
+                spec_file = Path(tempfile.gettempdir()) / (
+                    f"nsdeploy_{os.getpid()}_{index}_{attempt}.json")
+                spec_file.write_text(json.dumps(spec), encoding="utf-8")
+                proc = subprocess.Popen(
+                    [python_exe, "-m", "nsdeploy.mcp_host", "--studio", str(studio_root),
+                     "--spec", str(spec_file)], env=env, cwd=repo_root,
+                )
+                try:
+                    _wait_for_listener(proc, port)
+                    bindings.append((proc, port))
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    _stop_process(proc)
+            else:
+                raise RuntimeError(f"Could not start MCP tool {tool.name}: {last_error}")
+    except Exception:
+        for proc, _ in bindings:
+            _stop_process(proc)
+        raise
+    return bindings
 
 
 def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int = 8080,
@@ -306,26 +400,30 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
     python_exe = python_exe or sys.executable
     runtime_dir = runtime_dir or DEFAULT_RUNTIME_DIR
     ext_mcps = ext_mcps or []
-    procs = spawn_mcp_servers(plan, studio_root, python_exe)
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(site_dir, upstream, runtime_dir, ext_mcps))
-    url = f"http://127.0.0.1:{port}/"
-    print(f"\n🌐  {plan.network_name} is live:  {url}")
-    print(f"    LLM: mock router (no key) at /v1  ·  BYOK proxy at /byok/v1 → {upstream}")
-    if plan.hostable_tools:
-        print("    MCP tool servers:")
-        for t in plan.hostable_tools:
-            print(f"      • {t.name}  →  http://127.0.0.1:{t.port}/mcp")
-    for i, target in enumerate(ext_mcps):
-        print(f"    External MCP (proxied): /ext-mcp/{i}/mcp  →  {target}")
-    if plan.link_slots:
-        pending = len(set(plan.link_slots) - set(plan.links))
-        print(f"    Linker: {pending} pending agent-network link(s); outbound bindings stay on this site")
-    print("    Ctrl-C to stop.\n")
+    bindings = spawn_mcp_servers(plan, studio_root, python_exe)
     try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        pass
+        local_mcps = [f"http://127.0.0.1:{private_port}/mcp" for _, private_port in bindings]
+        httpd = ThreadingHTTPServer(
+            ("127.0.0.1", port), make_handler(site_dir, upstream, runtime_dir, ext_mcps, local_mcps))
+        url = f"http://127.0.0.1:{port}/"
+        print(f"\n🌐  {plan.network_name} is live:  {url}")
+        print(f"    LLM: mock router (no key) at /v1  ·  BYOK proxy at /byok/v1 → {upstream}")
+        if plan.hostable_tools:
+            print("    MCP tool servers (same-origin proxy → private subprocess):")
+            for i, (tool, (_, private_port)) in enumerate(zip(plan.hostable_tools, bindings)):
+                print(f"      • {tool.name}  →  /_mcp/{i}/mcp  →  127.0.0.1:{private_port}")
+        for i, target in enumerate(ext_mcps):
+            print(f"    External MCP (proxied): /ext-mcp/{i}/mcp  →  {target}")
+        if plan.link_slots:
+            pending = len(set(plan.link_slots) - set(plan.links))
+            print(f"    Linker: {pending} pending agent-network link(s); outbound bindings stay on this site")
+        print("    Ctrl-C to stop.\n")
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            httpd.server_close()
     finally:
-        httpd.server_close()
-        for p in procs:
-            p.terminate()
+        for proc, _ in bindings:
+            _stop_process(proc)

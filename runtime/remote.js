@@ -47,10 +47,14 @@ export class RemoteRegistry {
   checkCycle(chain, origin, agentName) {
     const key = this.cacheKey(origin, agentName);
     if (chain.includes(key)) {
-      throw new Error(`composition cycle detected: ${[...chain, key].join(" -> ")}`);
+      const error = new Error(`composition cycle detected: ${[...chain, key].join(" -> ")}`);
+      error.code = "COMPOSITION_CYCLE";
+      throw error;
     }
     if (chain.length >= this.maxDepth) {
-      throw new Error(`composition depth limit (${this.maxDepth}) exceeded`);
+      const error = new Error(`composition depth limit (${this.maxDepth}) exceeded`);
+      error.code = "COMPOSITION_DEPTH";
+      throw error;
     }
   }
 }

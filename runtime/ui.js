@@ -17,6 +17,7 @@ import {
   selectByokProfile,
   upsertByokProfile,
 } from "./byok.js";
+import { normalizeModelName } from "./model.js";
 
 const BASE_CSS = `
 /* Two resizable panes side by side: the chat and a right rail (the "agents working
@@ -113,6 +114,8 @@ const BASE_CSS = `
 .ns-llmbadge{margin-left:auto;font-size:12px;font-weight:700;padding:3px 10px;border-radius:12px}
 .ns-llmbadge.mock{background:#fef3c7;color:#b45309;border:1px solid #f59e0b}
 .ns-llmbadge.real{background:#dcfce7;color:#166534;border:1px solid #16a34a}
+.ns-llmbadge.pending{background:#e0f2fe;color:#075985;border:1px solid #38bdf8}
+.ns-llmbadge.error{background:#fee2e2;color:#991b1b;border:1px solid #ef4444}
 .ns-chat{display:flex;flex-direction:column;border:1px solid var(--ns-border,#e2e2e2);border-radius:10px;overflow:hidden;min-height:0}
 .ns-msgs{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
 .ns-msg{max-width:85%;padding:8px 12px;border-radius:var(--ns-radius,12px);white-space:pre-wrap;line-height:1.4}
@@ -202,7 +205,7 @@ export function mountApp(root, { engine, trace, manifest }) {
         <div class="ns-title">${escapeHtml(manifest?.brand || net?.name || "neuro-san-web")}</div>
         ${engine.mockLLM
           ? `<div class="ns-llmbadge mock" title="The default router is a deterministic mock — it ignores the model name. Add a real key + router in ⚙ settings.">⚠ MOCK LLM — no real model</div>`
-          : `<div class="ns-llmbadge real" title="Real LLM via ${escapeHtml(engine.top?.llm?.baseUrl || "")}">● real LLM</div>`}
+          : `<div class="ns-llmbadge pending" title="Configured router: ${escapeHtml(engine.top?.llm?.baseUrl || "")}. It will be verified by the first response.">LLM configured — awaiting verification</div>`}
         <div class="ns-breadcrumb" id="ns-breadcrumb">${escapeHtml(location.host)}</div>
         <button class="ns-devtoggle" id="ns-devtoggle" title="Show the technical execution trace">⚙ Developer</button>
       </div>
@@ -217,7 +220,8 @@ export function mountApp(root, { engine, trace, manifest }) {
               <label>Saved setup <select id="ns-profile"></select></label>
               <label>Setup name <input id="ns-profile-name" placeholder="Local LLM, OpenAI, Anthropic router"></label>
               <label>API key <input id="ns-key" type="password" placeholder="sk-… (kept in this browser only — enables a REAL LLM)"></label>
-              <label>Model <input id="ns-model" placeholder="e.g. gpt-4o, gpt-4o-mini"></label>
+              <label>Model <input id="ns-model" list="ns-model-options" placeholder="exact ID published by the upstream"></label>
+              <datalist id="ns-model-options"></datalist>
               <label>Router base URL <input id="ns-router" placeholder="OpenAI-compatible /v1"></label>
               <div id="ns-router-hint" class="ns-hint"></div>
               <label class="ns-row-inline"><input type="checkbox" id="ns-lg"> Drive the LLM via LangChain.js</label>
@@ -269,6 +273,7 @@ export function mountApp(root, { engine, trace, manifest }) {
   // --- trace rendering -------------------------------------------------------
   const activeOrigins = new Set();
   const activeAgents = new Set();
+  let routingViolation = false;
   let count = 0;
   // Widgets contributed by ANY agent during the current turn, consolidated and
   // rendered after the final answer.
@@ -288,11 +293,38 @@ export function mountApp(root, { engine, trace, manifest }) {
     } else if (ev.phase === "end") {
       if (ev.kind === "agent" && ev.agent) activeAgents.delete(ev.agent);
       // Authoritative badge: derived from what the LLM endpoint actually returned.
-      if (ev.kind === "model_call" && typeof ev.mock === "boolean") {
+      if (ev.kind === "model_call") {
         const badge = root.querySelector(".ns-llmbadge");
         if (badge) {
-          if (ev.mock) { badge.className = "ns-llmbadge mock"; badge.textContent = "⚠ MOCK LLM — no real model"; }
-          else { badge.className = "ns-llmbadge real"; badge.textContent = `● real LLM (${ev.respModel || ev.model || "?"})`; }
+          if (ev.status === "error") {
+            badge.className = "ns-llmbadge error";
+            badge.textContent = "LLM ERROR — not verified";
+            badge.title = ev.error || "The configured LLM request failed.";
+          } else if (ev.mock) {
+            if (!engine.mockLLM) {
+              routingViolation = true;
+              badge.className = "ns-llmbadge error";
+              badge.textContent = "LLM ROUTING ERROR — peer used mock";
+              badge.title = `A model call from ${ev.origin || "a linked network"} reached the mock router.`;
+            } else {
+              badge.className = "ns-llmbadge mock";
+              badge.textContent = "⚠ MOCK LLM — no real model";
+              badge.title = "The endpoint returned the nsDeploy mock model.";
+            }
+          } else if (routingViolation) {
+            // Keep the violation visible; a later successful call must not hide it.
+          } else if (ev.verifiedReal || ev.respModel) {
+            badge.className = "ns-llmbadge real";
+            badge.textContent = `● real LLM (${ev.respModel || ev.model})`;
+            badge.title = `Verified response from ${ev.respModel || ev.model}.`;
+          } else if (ev.phase === "end") {
+            badge.className = "ns-llmbadge real";
+            const requestedModel = ev.model || engine.modelOverride || "unknown";
+            badge.textContent = requestedModel === "unknown"
+              ? "LLM active — provider omitted model"
+              : `LLM active (requested: ${requestedModel})`;
+            badge.title = "The configured non-mock router returned a successful response, but the provider did not identify the actual model.";
+          }
         }
       }
       updateRow(rows, ev);
@@ -308,6 +340,7 @@ export function mountApp(root, { engine, trace, manifest }) {
   // --- streaming answer + generative UI (CRUSE widgets) ----------------------
   let currentBot = null;
   let botBuffer = "";
+  let validateConfiguredModel = async () => true;
   engine.onAnswerDelta = (t) => {
     botBuffer += t;
     if (!currentBot) currentBot = addBubble(msgs, "bot", "");
@@ -318,6 +351,7 @@ export function mountApp(root, { engine, trace, manifest }) {
   async function runUserTurn(text) {
     text = (text || "").trim();
     if (!text || sendBtn.disabled) return;
+    if (!await validateConfiguredModel()) return;
     input.value = "";
     sendBtn.disabled = true;
     addBubble(msgs, "user", text);
@@ -665,12 +699,15 @@ export function mountApp(root, { engine, trace, manifest }) {
   const routerEl = root.querySelector("#ns-router");
   const keyEl = root.querySelector("#ns-key");
   const modelEl = root.querySelector("#ns-model");
+  const modelOptionsEl = root.querySelector("#ns-model-options");
   const langchainEl = root.querySelector("#ns-lg");
   const hintEl = root.querySelector("#ns-router-hint");
   const profileHintEl = root.querySelector("#ns-profile-hint");
   const saveProfileBtn = root.querySelector("#ns-save-profile");
   const deleteProfileBtn = root.querySelector("#ns-delete-profile");
-  const mockUrl = engine.top?.llm?.baseUrl || "";
+  // The compiled LLM may already point at BYOK after a saved-profile upgrade.
+  // Compare settings against the route the manifest explicitly declares as mock.
+  const mockUrl = manifest?.llm_router?.base_url || "";
   const byokRouter = engine.byokRouter || "";
 
   routerEl.value = engine.routerOverride || mockUrl;
@@ -708,8 +745,8 @@ export function mountApp(root, { engine, trace, manifest }) {
   const currentProfileDraft = (id) => {
     let router = routerEl.value.trim();
     const key = keyEl.value.trim();
-    const model = modelEl.value.trim();
-    if (key && byokRouter && isMockRouter(router)) {
+    const model = normalizeModelName(modelEl.value);
+    if ((key || model) && byokRouter && isMockRouter(router)) {
       router = byokRouter;
       routerEl.value = router;
     }
@@ -737,7 +774,16 @@ export function mountApp(root, { engine, trace, manifest }) {
   refreshProfileOptions(selectedProfile?.id || "");
   setProfileHint();
 
-  const isMockRouter = (url) => !url || (engine.mockLLM && url === mockUrl) || /:8003(\/|$)/.test(url);
+  const normalizedRouter = (url) => {
+    try {
+      const parsed = new URL(url, location.origin);
+      const loopback = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+      const host = loopback ? "loopback" : parsed.hostname.toLowerCase();
+      return `${parsed.protocol}//${host}:${parsed.port}${parsed.pathname.replace(/\/$/, "")}${parsed.search}`;
+    }
+    catch { return String(url || "").replace(/\/$/, ""); }
+  };
+  const isMockRouter = (url) => !url || normalizedRouter(url) === normalizedRouter(mockUrl) || /:8003(\/|$)/.test(url);
   const refreshHint = () => {
     const hasKey = keyEl.value.trim().length > 0;
     if (hasKey && isMockRouter(routerEl.value.trim())) {
@@ -751,6 +797,54 @@ export function mountApp(root, { engine, trace, manifest }) {
       hintEl.textContent = "Real LLM router. Your key is sent only here (a CORS pass-through to your provider).";
     }
   };
+  const fetchAvailableModels = async (router, key) => {
+    if (!router || isMockRouter(router)) return null;
+    try {
+      const response = await fetch(`${router.replace(/\/$/, "")}/models`, {
+        cache: "no-store",
+        headers: key ? { Authorization: `Bearer ${key}` } : {},
+      });
+      if (!response.ok) return null;
+      const body = await response.json();
+      const models = (Array.isArray(body?.data) ? body.data : [])
+        .map((item) => normalizeModelName(item?.id))
+        .filter(Boolean);
+      modelOptionsEl.innerHTML = "";
+      for (const id of models) {
+        const option = document.createElement("option");
+        option.value = id;
+        modelOptionsEl.appendChild(option);
+      }
+      return models;
+    } catch {
+      // Not every OpenAI-compatible provider publishes a model catalog.
+      return null;
+    }
+  };
+  validateConfiguredModel = async () => {
+    let router = routerEl.value.trim();
+    const key = keyEl.value.trim();
+    const model = normalizeModelName(modelEl.value);
+    modelEl.value = model;
+    if (!model) return true;
+    if ((key || model) && byokRouter && isMockRouter(router)) {
+      router = byokRouter;
+      routerEl.value = router;
+      refreshHint();
+    }
+    const availableModels = await fetchAvailableModels(router, key);
+    if (!availableModels?.length || availableModels.includes(model)) return true;
+
+    const shown = availableModels.slice(0, 6);
+    const remainder = availableModels.length - shown.length;
+    setProfileHint(
+      `Model "${model}" is not published by this upstream. Available: ${shown.join(", ")}${remainder > 0 ? `, and ${remainder} more` : ""}.`,
+      "warn",
+    );
+    root.querySelector(".ns-settings").open = true;
+    modelEl.focus();
+    return false;
+  };
   // When a key is entered against the mock router, auto-fill the real proxy.
   keyEl.addEventListener("input", () => {
     if (keyEl.value.trim() && byokRouter && isMockRouter(routerEl.value.trim())) routerEl.value = byokRouter;
@@ -759,7 +853,11 @@ export function mountApp(root, { engine, trace, manifest }) {
   });
   routerEl.addEventListener("input", refreshHint);
   modelEl.addEventListener("input", () => {
+    const normalized = normalizeModelName(modelEl.value);
+    if (normalized !== modelEl.value.trim() && normalized) modelEl.value = normalized;
+    if (modelEl.value.trim() && byokRouter && isMockRouter(routerEl.value.trim())) routerEl.value = byokRouter;
     if (!profileNameEl.value.trim()) profileNameEl.value = guessByokProfileName({ router: routerEl.value, model: modelEl.value });
+    refreshHint();
   });
   profileEl.addEventListener("change", () => {
     const id = profileEl.value;
@@ -789,14 +887,16 @@ export function mountApp(root, { engine, trace, manifest }) {
   });
   refreshHint();
 
-  root.querySelector("#ns-apply").addEventListener("click", () => {
+  root.querySelector("#ns-apply").addEventListener("click", async () => {
     const p = new URLSearchParams(location.search);
     p.delete("key"); // the key must never appear in the URL
     let router = routerEl.value.trim();
     const key = keyEl.value.trim();
-    const model = modelEl.value.trim();
+    const model = normalizeModelName(modelEl.value);
+    modelEl.value = model;
     // Safety net: a real key must never be sent to the mock router.
-    if (key && byokRouter && isMockRouter(router)) router = byokRouter;
+    if ((key || model) && byokRouter && isMockRouter(router)) router = byokRouter;
+    if (!await validateConfiguredModel()) return;
     const saved = saveCurrentProfile();
     // The key is kept in browser storage, never the query string.
     try {

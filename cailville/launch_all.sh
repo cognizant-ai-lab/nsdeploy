@@ -5,8 +5,18 @@ CAILVILLE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "$CAILVILLE_DIR/.." && pwd)"
 LOG_DIR="${NSDEPLOY_LOG_DIR:-$PROJECT_DIR/.nsdeploy/cailville-logs}"
 RUN_DIR="${NSDEPLOY_RUN_DIR:-$PROJECT_DIR/.nsdeploy/cailville-pids}"
-UPSTREAM="${NSDEPLOY_UPSTREAM:-http://localhost:12434/engines/v1}"
+UPSTREAM="${NSDEPLOY_UPSTREAM:-https://api.openai.com/v1}"
 THEME_MODEL="${NSDEPLOY_THEME_MODEL:-gpt-5.6}"
+THEME_ENABLED="${NSDEPLOY_THEME:-1}"
+THEME_REFRESH="${NSDEPLOY_THEME_REFRESH:-1}"
+
+theme_args=()
+if [[ ! "$THEME_ENABLED" =~ ^(0|false|no)$ ]]; then
+  theme_args=(--theme --theme-model "$THEME_MODEL")
+  if [[ ! "$THEME_REFRESH" =~ ^(0|false|no)$ ]]; then
+    theme_args+=(--theme-refresh)
+  fi
+fi
 
 if [[ -n "${NSDEPLOY_PYTHON:-}" ]]; then
   PYTHON_BIN="$NSDEPLOY_PYTHON"
@@ -70,9 +80,7 @@ for i in "${!sites[@]}"; do
   PYTHONUNBUFFERED=1 "$PYTHON_BIN" -m nsdeploy "$CAILVILLE_DIR/$site.hocon" \
     --port "$port" \
     --upstream "$UPSTREAM" \
-    --theme \
-    --theme-model "$THEME_MODEL" \
-    --theme-refresh >"$log" 2>&1 &
+    "${theme_args[@]}" >"$log" 2>&1 &
   pid="$!"
   pids+=("$pid")
   printf '%s\n' "$pid" >"$RUN_DIR/$site.pid"

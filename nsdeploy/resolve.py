@@ -61,7 +61,7 @@ class HostableTool:
     class_name: str          # e.g. "DdgsSearch"
     description: str
     parameters: Dict[str, Any]
-    port: int = 0            # assigned by the planner
+    port: int = 0            # private runtime port; assigned by the launcher
 
 
 @dataclass
@@ -442,12 +442,10 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
                 else:
                     referenced_missing.add(str(ref))
 
-    # Assign ports to hostable tools (one MCP server each, for tool-scoping).
-    port = 9101
-    for name, tool in seen_hostable.items():
-        tool.port = port
-        port += 1
-        plan.hostable_tools.append(tool)
+    # Runtime ports are deliberately not part of the deployment plan. The launcher
+    # assigns an available private port and exposes each tool at a stable same-origin
+    # /_mcp/<index>/mcp URL, so independently launched sites cannot collide.
+    plan.hostable_tools.extend(seen_hostable.values())
     plan.missing_tools = sorted(referenced_missing)
     plan.omitted_tools = sorted(referenced_omitted)
     plan.external_mcps = sorted(external_mcp)
@@ -470,8 +468,8 @@ def format_report(plan: DeploymentPlan) -> str:
     out.append(f"Agents:    {len(plan.agents)}")
     out.append("")
     out.append(f"✅ Hostable tools (will run as local MCP servers): {len(plan.hostable_tools)}")
-    for tool in plan.hostable_tools:
-        out.append(f"   • {tool.name}  →  {tool.class_path}  (MCP :{tool.port}/mcp)")
+    for index, tool in enumerate(plan.hostable_tools):
+        out.append(f"   • {tool.name}  →  {tool.class_path}  (MCP /_mcp/{index}/mcp)")
     if plan.demo_mode_agents:
         out.append("")
         out.append(f"⚠️  DEMO-MODE agents — NOT GROUNDED ({len(plan.demo_mode_agents)}): these fabricate")

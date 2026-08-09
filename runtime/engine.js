@@ -11,6 +11,71 @@ import { TraceBus } from "./trace.js";
 import { fetchManifest, fetchText, resolveUrl, RemoteRegistry } from "./remote.js";
 import { runAgent } from "./runner.js";
 import { McpClient } from "./mcp.js";
+import { normalizeModelName } from "./model.js";
+
+function normOrigin(url) {
+  try { return new URL(url).origin; } catch { return String(url || ""); }
+}
+
+function sameRouter(left, right) {
+  try {
+    const normalize = (value) => {
+      const url = new URL(value);
+      const loopback = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+      const host = loopback ? "loopback" : url.hostname.toLowerCase();
+      return `${url.protocol}//${host}:${url.port}${url.pathname.replace(/\/$/, "")}${url.search}`;
+    };
+    return normalize(left) === normalize(right);
+  } catch {
+    return String(left || "").replace(/\/$/, "") === String(right || "").replace(/\/$/, "");
+  }
+}
+
+export async function isPublishedMockRouter(router, fetchImpl = fetch) {
+  try {
+    const url = new URL(router);
+    const response = await fetchImpl(`${url.origin}/agent-manifest.json`, { cache: "no-store" });
+    if (!response.ok) return false;
+    const manifest = await response.json();
+    const declared = manifest?.llm_router || {};
+    return declared.mock === true && sameRouter(router, declared.base_url);
+  } catch {
+    return false;
+  }
+}
+
+export function selectTopRouter(manifest, routerOverride, byokKey, modelOverride = "") {
+  const declared = manifest?.llm_router || {};
+  const hasRealKey = !!(byokKey && byokKey !== "demo");
+  const hasExplicitModel = !!String(modelOverride || "").trim();
+  let requested = String(routerOverride || "").replace(/\/$/, "");
+  const requestedMock = requested && declared.mock === true && sameRouter(requested, declared.base_url);
+
+  if ((hasRealKey || hasExplicitModel) && (!requested || requestedMock)) {
+    if (!declared.byok_router) {
+      throw new Error("A real API key is configured, but this site publishes no BYOK router.");
+    }
+    requested = declared.byok_router;
+    return { baseUrl: requested, mock: false, upgradedToByok: true };
+  }
+  if (requested) {
+    return { baseUrl: requested, mock: declared.mock === true && sameRouter(requested, declared.base_url), upgradedToByok: false };
+  }
+  return { baseUrl: declared.base_url || "", mock: declared.mock === true, upgradedToByok: false };
+}
+
+export function manifestAllowsPeer(target, manifest, runtimeAllowedPeers = new Set()) {
+  const targetOrigin = normOrigin(target);
+  const declared = (manifest?.allowed_peers || []).map(normOrigin);
+  return declared.includes(targetOrigin) || runtimeAllowedPeers.has(targetOrigin);
+}
+
+export function selectPeerRouter(callerRouter) {
+  if (!callerRouter?.baseUrl) {
+    throw new Error("The caller has no active LLM router to use for this peer network.");
+  }
+  return { baseUrl: callerRouter.baseUrl, mock: callerRouter.mock === true };
+}
 
 export class Engine {
   constructor({ originUrl, trace, sandboxWorkerUrl, byokKey, routerOverride } = {}) {
@@ -19,7 +84,7 @@ export class Engine {
     this.sandboxWorkerUrl = sandboxWorkerUrl || "/runtime/sandbox-worker.js";
     this.byokKey = byokKey || "";
     this.routerOverride = routerOverride || "";
-    this.modelOverride = (arguments[0] && arguments[0].modelOverride) || "";
+    this.modelOverride = normalizeModelName(arguments[0] && arguments[0].modelOverride);
     this.registry = new RemoteRegistry({ trace: this.trace });
     this.sandbox = new ToolSandbox({ workerUrl: this.sandboxWorkerUrl, trace: this.trace });
     this.top = null; // {network, base, bundleUrl, manifest, llm}
@@ -61,6 +126,18 @@ export class Engine {
       const entry = manifest.networks[0];
       // Set manifest early so resolveRemote/resolveMcp policy checks have it.
       this.top = { manifest, base };
+      const hasConfiguredModel = !!String(this.modelOverride || "").trim();
+      const hasRealKey = !!(this.byokKey && this.byokKey !== "demo");
+      if ((hasConfiguredModel || hasRealKey) && this.routerOverride
+          && !sameRouter(this.routerOverride, manifest.llm_router?.base_url)
+          && await isPublishedMockRouter(this.routerOverride)) {
+        const oldRouter = this.routerOverride;
+        this.routerOverride = manifest.llm_router?.byok_router || "";
+        this.trace.note("router_correction", {
+          origin: hostOf(base), from: oldRouter, to: this.routerOverride,
+          reason: "saved router is another nsDeploy site's published mock endpoint",
+        });
+      }
       const { network, bundleUrl, integrity, llm, validation: v } = await this._compile(base, manifest, entry, { isTop: true });
       this.top = { network, base, bundleUrl, integrity, manifest, llm };
       this.mockLLM = llm.mock; // true when using the deterministic mock router
@@ -95,47 +172,35 @@ export class Engine {
     }
     const bundleUrl = manifest.coded_tools?.bundle ? resolveUrl(base, manifest.coded_tools.bundle) : null;
     const integrity = manifest.coded_tools?.integrity || null; // optional SRI digest
-    // Router selection guards the BYOK key. The user's key may ONLY be sent to a
-    // router the user approved: an explicit override, or the TOP origin's router
-    // (the site the user chose to visit). A PEER manifest's llm_router.base_url is
-    // untrusted — a malicious peer must not be able to redirect the key to its own
-    // server — so it is used only when there is no real key (nothing to leak).
-    const hasRealKey = !!(this.byokKey && this.byokKey !== "demo");
+    // LLM routing boundary. The top site chooses the active router. Peer manifests
+    // contribute network definitions only and can never redirect execution or keys.
     let routerBase;
     let mock;
-    if (this.routerOverride) {
-      routerBase = this.routerOverride;
-      mock = false;
-    } else if (isTop) {
-      routerBase = manifest.llm_router?.base_url;
-      mock = manifest.llm_router?.mock === true;
-      this.userRouter = { baseUrl: routerBase, mock }; // remember for peer calls
-    } else if (hasRealKey) {
-      // Peer + real key: the key may go ONLY to a user-approved router (override or
-      // the top site's), NEVER the peer's own llm_router. If no approved router
-      // exists, fail closed — do not fall back to the peer-chosen URL.
-      if (!this.userRouter?.baseUrl) {
-        throw new Error(`Refusing to run ${hostOf(base)} with your API key: no user-approved LLM router is configured (the top site declared none and you set no override). Set a router in BYOK settings.`);
-      }
-      routerBase = this.userRouter.baseUrl;
-      mock = this.userRouter.mock ?? false;
+    if (isTop) {
+      const selected = selectTopRouter(manifest, this.routerOverride, this.byokKey, this.modelOverride);
+      routerBase = selected.baseUrl;
+      mock = selected.mock;
+      this.routerOverride = selected.upgradedToByok ? routerBase : this.routerOverride;
+      this.userRouter = { baseUrl: routerBase, mock };
     } else {
-      routerBase = manifest.llm_router?.base_url;
-      mock = manifest.llm_router?.mock === true;
+      // A peer contributes its network definition, not its execution environment.
+      // It always runs in this browser with the top caller's active router, even
+      // for keyless/mock sessions. Never send execution or a BYOK key to the peer.
+      const selected = selectPeerRouter(this.userRouter);
+      routerBase = selected.baseUrl;
+      mock = selected.mock;
     }
     const llm = new LlmClient({ baseUrl: routerBase, apiKey: this.byokKey, trace: this.trace, mock });
     return { network, bundleUrl, integrity, llm, hoconUrl, validation };
   }
 
-  // Policy gate: a network may only fetch-and-run / call peers whose origin is
-  // declared in the TOP manifest's `allowed_peers`. Fails closed otherwise — so a
-  // fetched peer can't pull in arbitrary third origins, and a hostile/typo'd URL
-  // is refused before anything is fetched.
-  _assertAllowedPeer(target) {
-    const norm = (u) => { try { return new URL(u).origin; } catch { return String(u || ""); } };
-    const allowed = (this.top?.manifest?.allowed_peers || []).map(norm);
-    if (!allowed.includes(norm(target)) && !this.runtimeAllowedPeers.has(norm(target))) {
-      throw new Error(`Policy: ${hostOf(target)} is not in this network's allowed_peers; refusing to contact it.`);
+  // Every hop is constrained by the immediate caller's published manifest. The
+  // user still approves each remote call, so a peer cannot silently expand access.
+  _assertAllowedPeer(target, sourceManifest) {
+    const manifest = sourceManifest || this.top?.manifest;
+    if (!manifestAllowsPeer(target, manifest, this.runtimeAllowedPeers)) {
+      const source = manifest?.networks?.[0]?.name || "calling network";
+      throw new Error(`Policy: ${hostOf(target)} is not in ${source}'s allowed_peers; refusing to contact it.`);
     }
   }
 
@@ -237,10 +302,11 @@ export class Engine {
     return normalized;
   }
 
-  _makeCtx({ network, base, bundleUrl, integrity, llm, slyData, chain, isTop, history }) {
+  _makeCtx({ network, base, bundleUrl, integrity, manifest, llm, slyData, chain, composition, isTop, history }) {
     const self = this;
     const ctx = {
       network,
+      manifest,
       baseOrigin: base,
       displayOrigin: hostOf(base),
       codedToolBundleUrl: bundleUrl,
@@ -249,14 +315,15 @@ export class Engine {
       sandbox: this.sandbox,
       trace: this.trace,
       slyData,
+      composition,
       // Prior conversation turns ([{role,content}]), only for the top front-man.
       history: history || [],
       defaultModel: network.config.llm_config?.model_name || "mock-1",
       isTop: !!isTop,
       frontMan: network.findFrontMan(),
       onAnswerDelta: isTop ? (t) => self.onAnswerDelta?.(t) : undefined,
-      resolveRemote: (ref, callChain, parentSpan) => self.resolveRemote(ref, callChain || chain, parentSpan),
-      resolveMcp: (ref, parentSpan) => self.resolveMcp(ref, parentSpan, slyData),
+      resolveRemote: (ref, callChain, parentSpan) => self.resolveRemote(ref, callChain || chain, parentSpan, manifest),
+      resolveMcp: (ref, parentSpan) => self.resolveMcp(ref, parentSpan, slyData, manifest),
       resolveLink: (ref, parentSpan) => self.resolveLink(ref, network, base, parentSpan),
       requestConsent: (info) => self.requestConsent(info),
       // LangChain.js AgentRunner intrinsic (neuro-san-web owns the loop)
@@ -270,9 +337,9 @@ export class Engine {
   }
 
   // fetch-and-run-locally: turn a peer URL into a runnable Session.
-  async resolveRemote(ref, chain, parentSpan) {
+  async resolveRemote(ref, chain, parentSpan, sourceManifest) {
     const { origin } = parseExternalAgent(ref, this.top?.base);
-    this._assertAllowedPeer(origin); // publish-time policy gate; fails closed
+    this._assertAllowedPeer(origin, sourceManifest); // per-hop publish-time policy gate
     const lastSeg = ref.split("/").filter(Boolean).pop();
     this.registry.checkCycle(chain, origin, lastSeg);
 
@@ -301,7 +368,7 @@ export class Engine {
       };
       const { network, bundleUrl, integrity, llm } = await this._compile(base, manifest, entry);
       this.trace.end(fetchSpan, { network: network.name, fetchedUrls, peerOrigin: hostOf(origin), brand: manifest.brand });
-      session = new Session(this, { network, base, bundleUrl, integrity, llm, fetchedUrls, brand: manifest.brand, chain: [...chain, `${origin}::${lastSeg}`] });
+      session = new Session(this, { network, base, bundleUrl, integrity, manifest, llm, fetchedUrls, brand: manifest.brand });
       this.registry.set(origin, lastSeg, session);
       return session;
     } catch (err) {
@@ -312,9 +379,9 @@ export class Engine {
 
   // Resolve an MCP tool reference (string URL or { url, tools }) to a cached
   // MCP client. The browser acts as MCP client to a hosted MCP server.
-  async resolveMcp(ref, parentSpan, slyData) {
+  async resolveMcp(ref, parentSpan, slyData, sourceManifest) {
     const url = typeof ref === "string" ? ref : ref.url;
-    this._assertAllowedPeer(url); // same publish-time policy gate as peer networks
+    this._assertAllowedPeer(url, sourceManifest); // same per-hop policy gate as peer networks
     if (!this._mcpClients) this._mcpClients = new Map();
     let client = this._mcpClients.get(url);
     if (!client) {
@@ -334,11 +401,21 @@ export class Engine {
         base: this.top.base,
         bundleUrl: this.top.bundleUrl,
         integrity: this.top.integrity,
+        manifest: this.top.manifest,
         llm: this.top.llm,
         slyData: { ...(slyData || {}) },
-        chain: [`${this.top.base}::${this.top.network.findFrontMan()}`],
+        chain: [`${this.top.base}::${this.top.network.name}`],
         isTop: true,
         history: this.history,
+        composition: {
+          remoteCalls: 0,
+          peerCalls: new Map(),
+          maxRemoteCalls: 4,
+          maxCallsPerPeer: 1,
+          agentCalls: 0,
+          maxAgentCalls: 24,
+          deadline: Date.now() + 90_000,
+        },
       });
       const text = await runAgent(ctx, this.top.network.findFrontMan(), userText, runSpan, ctx_chain(ctx, this.top));
       // Persist this turn so the next turn has conversation context.
@@ -355,21 +432,21 @@ export class Engine {
 }
 
 function ctx_chain(ctx, top) {
-  return [`${top.base}::${top.network.findFrontMan()}`];
+  return [`${top.base}::${top.network.name}`];
 }
 
 // A peer network made runnable locally, exposed through the uniform Session API.
 class Session {
-  constructor(engine, { network, base, bundleUrl, integrity, llm, fetchedUrls, brand, chain }) {
+  constructor(engine, { network, base, bundleUrl, integrity, manifest, llm, fetchedUrls, brand }) {
     this.engine = engine;
     this.network = network;
     this.brand = brand;
     this.base = base;
     this.bundleUrl = bundleUrl;
     this.integrity = integrity || null;
+    this.manifest = manifest;
     this.llm = llm;
     this.fetchedUrls = fetchedUrls;
-    this.chain = chain;
   }
 
   async func() {
@@ -377,7 +454,7 @@ class Session {
     return front?.function || { description: this.network.name };
   }
 
-  async invoke(request, { parentSpan } = {}) {
+  async invoke(request, { parentSpan, chain = [], composition } = {}) {
     const trace = this.engine.trace;
     const span = trace.start("remote_call", {
       parent: parentSpan,
@@ -390,17 +467,20 @@ class Session {
       brand: this.brand,
     });
     try {
+      const invocationChain = [...chain, `${this.base}::${this.network.name}`];
       const ctx = this.engine._makeCtx({
         network: this.network,
         base: this.base,
         bundleUrl: this.bundleUrl,
         integrity: this.integrity,
+        manifest: this.manifest,
         llm: this.llm,
         slyData: { ...(request.sly_data || {}) },
-        chain: this.chain,
+        chain: invocationChain,
+        composition,
         isTop: false,
       });
-      const text = await runAgent(ctx, this.network.findFrontMan(), request.user_message.text, span, this.chain);
+      const text = await runAgent(ctx, this.network.findFrontMan(), request.user_message.text, span, invocationChain);
       trace.end(span, { responsePreview: text.slice(0, 300), type: ChatMessageType.AGENT });
       return text;
     } catch (err) {

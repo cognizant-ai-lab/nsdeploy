@@ -27,6 +27,38 @@ function hostOfUrl(url) {
   try { return new URL(url).host; } catch { return url; }
 }
 
+export function remoteIsInChain(ref, baseOrigin, chain = []) {
+  try {
+    const parsed = parseExternalAgent(ref, baseOrigin);
+    return chain.includes(`${parsed.origin}::${parsed.agentName}`);
+  } catch {
+    return false;
+  }
+}
+
+export function consumeRemoteBudget(composition, targetKey, now = Date.now()) {
+  if (!composition) return null;
+  if (now >= composition.deadline) return "the composition deadline was reached";
+  if (composition.remoteCalls >= composition.maxRemoteCalls) {
+    return `the per-query limit of ${composition.maxRemoteCalls} third-party calls was reached`;
+  }
+  const prior = composition.peerCalls.get(targetKey) || 0;
+  if (prior >= composition.maxCallsPerPeer) return "that network was already consulted for this query";
+  composition.remoteCalls += 1;
+  composition.peerCalls.set(targetKey, prior + 1);
+  return null;
+}
+
+export function consumeAgentBudget(composition, now = Date.now()) {
+  if (!composition) return null;
+  if (now >= composition.deadline) return "the 90-second query deadline was reached";
+  if (composition.agentCalls >= composition.maxAgentCalls) {
+    return `the per-query limit of ${composition.maxAgentCalls} agent invocations was reached`;
+  }
+  composition.agentCalls += 1;
+  return null;
+}
+
 // Pull any ```cruse-ui {json}``` widget(s) out of an agent's answer, emit each as a
 // "widget" trace event (so it surfaces to the UI), and return the text with the
 // blocks removed. This lets ANY agent in the chain contribute widgets, generated on
@@ -146,6 +178,13 @@ export async function buildToolTable(ctx, spec, chain, parentSpan) {
         toolSchemas.push(schemaFor(name, { description: t.description, parameters: t.inputSchema }));
       }
     } else if (c.kind === "remote") {
+      if (remoteIsInChain(ref, ctx.baseOrigin, chain)) {
+        ctx.trace.note("composition_skip", {
+          parent: parentSpan, origin: ctx.displayOrigin, target: ref,
+          reason: "already visited in this request",
+        });
+        continue;
+      }
       // Do NOT contact the peer here. Advertise a generic schema and defer the
       // fetch-and-run (manifest + HOCON + tool bundle) until the user consents at
       // call time — so consent truly precedes any contact with the partner origin.
@@ -255,19 +294,36 @@ export async function dispatchToolCall(ctx, entry, args, parentSpan, chain) {
     const decision = await ctx.requestConsent?.({
       kind: "network", peerLabel: entry.label || host, peerOrigin: host, requestText, est,
     });
-    if (decision === "decline") {
-      ctx.trace.note("consent", { parent: parentSpan, origin: ctx.displayOrigin, peerOrigin: host, decision: "declined" });
-      return `The user declined to contact ${host}. Proceed without it and note that to the user.`;
+   if (decision === "decline") {
+     ctx.trace.note("consent", { parent: parentSpan, origin: ctx.displayOrigin, peerOrigin: host, decision: "declined" });
+     return `The user declined to contact ${host}. Proceed without it and note that to the user.`;
+   }
+    const parsed = parseExternalAgent(entry.url, ctx.baseOrigin);
+    const budgetReason = consumeRemoteBudget(ctx.composition, `${parsed.origin}::${parsed.agentName}`);
+    if (budgetReason) {
+      ctx.trace.note("composition_limit", {
+        parent: parentSpan, origin: ctx.displayOrigin, target: entry.url,
+        reason: budgetReason, remoteCalls: ctx.composition?.remoteCalls,
+      });
+      return `Skipped ${entry.label || host}: ${budgetReason}. Continue with available results and do not retry it.`;
     }
     // Approved — only now fetch-and-run the peer network.
-    const session = await ctx.resolveRemote(entry.url, chain, parentSpan);
+    let session;
+    try {
+      session = await ctx.resolveRemote(entry.url, chain, parentSpan);
+    } catch (err) {
+      if (err?.code === "COMPOSITION_CYCLE" || err?.code === "COMPOSITION_DEPTH") {
+        return `Skipped ${entry.label || host}: that network is already in this request's call chain. Continue with available results and do not retry it.`;
+      }
+      throw err;
+    }
     const downstreamSly = filterSlyData(ctx.slyData, allowedDownstreamSly(ctx.network.getAgentSpec(ctx.frontMan)) || []);
     const request = {
       user_message: { type: ChatMessageType.HUMAN, text: requestText },
       sly_data: downstreamSly,
       chat_filter: { chat_filter_type: "MINIMAL" },
     };
-    return session.invoke(request, { parentSpan, chain });
+    return session.invoke(request, { parentSpan, chain, composition: ctx.composition });
   }
 
   return `Error: unsupported tool kind '${entry.kind}'`;
@@ -276,6 +332,14 @@ export async function dispatchToolCall(ctx, entry, args, parentSpan, chain) {
 // Dispatcher: the LangChain.js runner when enabled, else the dependency-free
 // reference loop. Either way neuro-san-web owns multi-agent orchestration.
 export async function runAgent(ctx, agentName, userText, parentSpan, chain) {
+  const budgetReason = consumeAgentBudget(ctx.composition);
+  if (budgetReason) {
+    ctx.trace.note("composition_limit", {
+      parent: parentSpan, origin: ctx.displayOrigin, agent: agentName,
+      reason: budgetReason, agentCalls: ctx.composition?.agentCalls,
+    });
+    return `Skipped ${agentName}: ${budgetReason}. Continue with available results and do not retry it.`;
+  }
   if (ctx.externalRunner) {
     return ctx.externalRunner(ctx, agentName, userText, parentSpan, chain, {
       buildToolTable, dispatchToolCall, schemaFor, argsToText, extractWidgets,

@@ -1,7 +1,13 @@
 // llm.js — the LlmClient intrinsic: an OpenAI-compatible chat-completions client.
 
+import { normalizeModelName } from "./model.js";
+
 function hostOf(url) {
   try { return new URL(url).host; } catch { return url || "?"; }
+}
+
+export function isMockResponse(configuredMock, routeKind, model) {
+  return !!configuredMock || routeKind === "mock" || /neuro-san-mock/.test(model || "");
 }
 
 //
@@ -23,6 +29,7 @@ export class LlmClient {
   // tools: [{type:'function', function:{name, description, parameters}}]
   // onContentDelta: (text) => void  — streamed natural-language tokens
   async chat({ model, messages, tools, origin, parentSpan, onContentDelta }) {
+    model = normalizeModelName(model);
     // A real (non-mock) router with no API key: refuse rather than forward the
     // placeholder "demo" to a live provider (which returns a confusing 401). This
     // happens e.g. when a shared/reloaded URL keeps the proxy router but no saved
@@ -65,15 +72,18 @@ export class LlmClient {
         throw new Error(`LLM HTTP ${resp.status}: ${txt.slice(0, 300)}`);
       }
 
+      const routeKind = resp.headers.get("X-Nsdeploy-LLM-Route") || "";
       const result = await this._readSse(resp, onContentDelta, span);
-      const respMock = this.mock || /neuro-san-mock/.test(result.model || "");
+      const respMock = isMockResponse(this.mock, routeKind, result.model);
       this.trace?.end(span, {
         finishReason: result.finishReason,
         contentChars: result.content.length,
         toolCalls: result.toolCalls.map((t) => t.function.name),
         usage: result.usage,
         mock: respMock,
+        verifiedReal: !respMock && !!result.model,
         respModel: result.model,
+        routeKind,
       });
       return result;
     } catch (err) {
