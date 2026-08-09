@@ -23,7 +23,7 @@ from nsdeploy.linker import load_deploy_links, run_link_command
 from nsdeploy.launcher import serve
 from nsdeploy.resolve import build_plan, format_report, load_toolbox_info, resolve_hocon
 from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio
-from nsdeploy.theme import load_theme_file, propose_theme
+from nsdeploy.theme import DEFAULT_THEME_MODEL, load_theme_file, propose_theme
 
 
 def main() -> int:
@@ -50,7 +50,8 @@ def main() -> int:
     # Tier-1 LLM theming (opt-in, DEPLOY-TIME only — independent of the runtime BYOK).
     ap.add_argument("--theme", action="store_true",
                     help="polish index.html via an LLM (needs $OPENAI_API_KEY or --theme-key)")
-    ap.add_argument("--theme-model", default="gpt-4o-mini", help="model for --theme (default gpt-4o-mini)")
+    ap.add_argument("--theme-model", default=DEFAULT_THEME_MODEL,
+                    help=f"model for --theme (default {DEFAULT_THEME_MODEL})")
     ap.add_argument("--theme-upstream", default=None,
                     help="endpoint for the --theme call (defaults to OpenAI; set this when "
                          "theming via a different provider, e.g. a local Ollama)")

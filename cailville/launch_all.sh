@@ -6,7 +6,7 @@ PROJECT_DIR="$(cd -- "$CAILVILLE_DIR/.." && pwd)"
 LOG_DIR="${NSDEPLOY_LOG_DIR:-$PROJECT_DIR/.nsdeploy/cailville-logs}"
 RUN_DIR="${NSDEPLOY_RUN_DIR:-$PROJECT_DIR/.nsdeploy/cailville-pids}"
 UPSTREAM="${NSDEPLOY_UPSTREAM:-http://localhost:12434/engines/v1}"
-THEME_MODEL="${NSDEPLOY_THEME_MODEL:-gpt-4o}"
+THEME_MODEL="${NSDEPLOY_THEME_MODEL:-gpt-5.6}"
 
 if [[ -n "${NSDEPLOY_PYTHON:-}" ]]; then
   PYTHON_BIN="$NSDEPLOY_PYTHON"

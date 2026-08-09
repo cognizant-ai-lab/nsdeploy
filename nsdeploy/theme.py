@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 PROMPT_VERSION = "7"
 CACHE_DIR = Path.home() / ".cache" / "nsdeploy" / "themes"
+DEFAULT_THEME_MODEL = "gpt-5.6"
 
 # ---- HTML/CSS sanitization for LLM-authored creative layouts -----------------
 # Strict allowlist: the output can only ever contain these presentational tags +
@@ -427,14 +428,17 @@ def _parse_sections(content: str) -> Dict[str, Any]:
 
 
 def _chat(upstream: str, api_key: str, model: str, system: str, user: str) -> str:
-    body = json.dumps({
-        "model": model, "temperature": 0.2, "stream": False,
+    payload = {
+        "model": model, "stream": False,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-    }).encode("utf-8")
+    }
+    if not re.match(r"^gpt-5(?:[.-]|$)", model, flags=re.I):
+        payload["temperature"] = 0.2
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         f"{upstream.rstrip('/')}/chat/completions", data=body, method="POST",
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"})
-    with urllib.request.urlopen(req, timeout=90) as resp:
+    with urllib.request.urlopen(req, timeout=180) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     return data["choices"][0]["message"]["content"]
 

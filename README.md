@@ -49,7 +49,7 @@ an interactive town map. Start the complete demo from the repository root:
 The launcher uses `venv/bin/python` when available, starts the sites on ports
 8091-8103, waits for every site, and then opens `cailville/cailville.html`. Logs are
 written to `.nsdeploy/cailville-logs/`. It defaults to the local OpenAI-compatible
-upstream at `http://localhost:12434/engines/v1` and the `gpt-4o` theme model; override
+upstream at `http://localhost:12434/engines/v1` and the `gpt-5.6` theme model; override
 those with `NSDEPLOY_UPSTREAM`, `NSDEPLOY_THEME_MODEL`, or `NSDEPLOY_PYTHON`.
 
 Stop the complete demo from another terminal:
@@ -200,7 +200,7 @@ welcome form. A sports assistant feels sporty, a recipe app culinary, etc.:
 python -m nsdeploy net.hocon
 
 # LLM-polished with OpenAI (deploy-time key)
-OPENAI_API_KEY=sk-…  python -m nsdeploy net.hocon --theme [--theme-model gpt-4o-mini]
+OPENAI_API_KEY=sk-…  python -m nsdeploy net.hocon --theme [--theme-model gpt-5.6]
 
 # LLM-polished with a LOCAL model (Ollama) — does NOT touch the runtime
 python -m nsdeploy net.hocon --theme --theme-model qwen2.5:7b --theme-key x \
@@ -231,9 +231,10 @@ re-ask). The theming key is supplied by *you* at deploy time; end users still ne
 key. Flags: `--theme`, `--theme-model`, `--theme-upstream`, `--theme-key`,
 `--theme-file`, `--theme-refresh`.
 
-> Layout richness scales with the model: `gpt-4o`/`gpt-4o-mini` produce far more
-> distinctive designs than a small local model like `qwen2.5:7b`. Whatever the model
-> emits, the assistant stays usable and the build is safe.
+> Theme generation defaults to `gpt-5.6`, whose design judgment produces more polished
+> layouts. Use `gpt-5.6-terra` or `gpt-5.6-luna` for lower-cost generation, or a local
+> model such as `qwen2.5:7b`. Whatever the model emits, the assistant stays usable and
+> the build is safe.
 
 ### Regenerating the theme (clearing the cache)
 
