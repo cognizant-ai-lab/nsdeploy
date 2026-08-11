@@ -1,0 +1,20 @@
+{
+  "brand": "Harbor Guide",
+  "icon": "\u2693",
+  "tagline": "One calm plan for Cailville",
+  "hero": "Your Cailville stay, thoughtfully charted from arrival to final reservation.",
+  "font": "Georgia, 'Times New Roman', serif",
+  "radius": 16,
+  "colors": {
+    "primary": "#0d5261",
+    "accent": "#a9422d",
+    "bg": "#f3efe6",
+    "bg_tint": "#e2ece8",
+    "fg": "#142c36",
+    "muted": "#52656b",
+    "border": "#bdcbc7",
+    "msgbg": "#f8f6ef",
+    "panelbg": "#fffdf8"
+  },
+  "welcome": null
+}

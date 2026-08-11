@@ -1,0 +1,540 @@
+:root {
+  --ink: #182824;
+  --teal: #145C58;
+  --teal-dark: #0D4542;
+  --clay: #D66A3A;
+  --paper: #F3EFE5;
+  --paper-light: #FCFAF4;
+  --paper-deep: #E7E0D2;
+  --line: #C8C0AF;
+  --muted: #5E6D67;
+  --shadow: 0 24px 70px rgba(36, 48, 42, .13);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: light;
+  background: #D9D2C4;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background:
+    linear-gradient(rgba(24, 40, 36, .035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(24, 40, 36, .035) 1px, transparent 1px),
+    var(--paper);
+  background-size: 32px 32px;
+  font-family: Arial, Helvetica, sans-serif;
+  line-height: 1.5;
+}
+
+button,
+textarea,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+#app {
+  isolation: isolate;
+}
+
+.workshop {
+  padding: clamp(18px, 3vw, 46px);
+}
+
+.workshop-grid {
+  max-width: 1500px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(255px, .64fr) minmax(360px, 1.65fr);
+  gap: clamp(18px, 3vw, 44px);
+  align-items: start;
+}
+
+.identity-sheet {
+  position: sticky;
+  top: 24px;
+  min-height: 700px;
+  padding: clamp(28px, 4vw, 58px) clamp(24px, 3vw, 44px);
+  border: 1px solid rgba(20, 92, 88, .34);
+  background:
+    radial-gradient(circle at 16% 13%, rgba(214, 106, 58, .17), transparent 26%),
+    linear-gradient(145deg, rgba(255,255,255,.7), rgba(231,224,210,.8));
+  box-shadow: 12px 12px 0 rgba(20, 92, 88, .12);
+}
+
+.identity-sheet::before {
+  content: "REPAIR  /  RESTORE  /  RESALE";
+  position: absolute;
+  top: 26px;
+  right: -1px;
+  padding: 7px 10px;
+  color: #FFF;
+  background: var(--clay);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .16em;
+  writing-mode: vertical-rl;
+}
+
+.identity-sheet::after {
+  content: "08";
+  position: absolute;
+  right: 25px;
+  bottom: 4px;
+  color: rgba(20, 92, 88, .08);
+  font-size: clamp(120px, 16vw, 240px);
+  font-weight: 900;
+  line-height: .8;
+  letter-spacing: -.1em;
+  pointer-events: none;
+}
+
+.eyebrow {
+  margin: 0 0 40px;
+  color: var(--teal);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+}
+
+.hero-title {
+  max-width: 8ch;
+  margin: 0;
+  font-size: clamp(54px, 7vw, 108px);
+  font-weight: 900;
+  line-height: .82;
+  letter-spacing: -.075em;
+  text-transform: uppercase;
+}
+
+.hero-title span {
+  color: var(--clay);
+}
+
+.hero-copy {
+  max-width: 32rem;
+  margin: 34px 0 0;
+  padding-top: 20px;
+  border-top: 3px solid var(--teal);
+  color: #42534D;
+  font-size: clamp(16px, 1.5vw, 20px);
+  line-height: 1.55;
+}
+
+.job-stamp {
+  position: relative;
+  z-index: 1;
+  margin-top: 58px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.stamp-row {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(200, 192, 175, .7);
+}
+
+.stamp-row:last-child {
+  border-bottom: 0;
+}
+
+.stamp-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+}
+
+.stamp-value {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .03em;
+}
+
+.work-surface {
+  min-width: 0;
+}
+
+.console-frame {
+  position: relative;
+  border: 1px solid #B9B1A0;
+  background: var(--paper-light);
+  box-shadow: var(--shadow);
+}
+
+.console-frame::before {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  top: -7px;
+  left: 38px;
+  width: 76px;
+  height: 13px;
+  background: var(--clay);
+  box-shadow: 84px 0 0 var(--teal);
+  transform: skewX(-18deg);
+  pointer-events: none;
+}
+
+.console-frame::after {
+  content: "ACTIVE WORK ORDER";
+  position: absolute;
+  z-index: 2;
+  top: 18px;
+  right: 22px;
+  color: var(--teal);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .18em;
+  pointer-events: none;
+}
+
+[data-ns-slot="header"] {
+  padding: 13px 20px 10px;
+  border-bottom: 1px solid var(--line);
+  background:
+    linear-gradient(90deg, rgba(20,92,88,.08), transparent 38%),
+    #EDE7DA;
+}
+
+[data-ns-slot="chat"] {
+  min-width: 360px;
+  min-height: 560px;
+  background: var(--paper-light);
+}
+
+.agents-drawer {
+  margin-top: 18px;
+  border: 1px solid #AFA795;
+  border-left: 7px solid var(--teal);
+  background: #ECE6DA;
+  box-shadow: 0 14px 34px rgba(36, 48, 42, .09);
+}
+
+.agents-drawer summary {
+  padding: 16px 20px;
+  color: var(--ink);
+  list-style: none;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.agents-drawer summary::-webkit-details-marker {
+  display: none;
+}
+
+.agents-drawer summary::before {
+  content: "＋";
+  margin-right: 12px;
+  color: var(--clay);
+  font-size: 18px;
+  vertical-align: -1px;
+}
+
+.agents-drawer[open] summary::before {
+  content: "−";
+}
+
+.agents-drawer[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+[data-ns-slot="agents"] {
+  min-width: 0;
+  padding: 10px;
+}
+
+.workshop-footer {
+  max-width: 1500px;
+  margin: 34px auto 0;
+  padding: 20px 0 6px;
+  display: grid;
+  grid-template-columns: 1.3fr repeat(3, auto);
+  gap: 24px;
+  align-items: center;
+  border-top: 2px solid var(--ink);
+}
+
+.footer-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.footer-mark {
+  color: var(--teal);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.ns-header {
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.ns-title {
+  color: var(--teal-dark);
+  font-weight: 900;
+  letter-spacing: -.025em;
+  text-transform: uppercase;
+}
+
+.ns-chat {
+  color: var(--ink);
+  background:
+    linear-gradient(90deg, transparent 0, transparent 31px, rgba(214,106,58,.15) 32px, transparent 33px),
+    var(--paper-light);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.ns-msgs {
+  padding: 26px clamp(18px, 4vw, 42px);
+  background: transparent;
+}
+
+.ns-msg {
+  color: var(--ink);
+  background: #F1ECE2;
+  border: 1px solid #D5CEBF;
+  border-radius: 3px 16px 16px 16px;
+  box-shadow: 0 6px 16px rgba(24, 40, 36, .055);
+  line-height: 1.58;
+}
+
+.ns-msg.user {
+  color: #FFFFFF;
+  background: linear-gradient(135deg, var(--teal), #1D7069);
+  border-color: var(--teal-dark);
+  border-radius: 16px 3px 16px 16px;
+  box-shadow: 5px 7px 0 rgba(214, 106, 58, .2);
+}
+
+.ns-msg a {
+  color: var(--teal-dark);
+  text-decoration-color: var(--clay);
+  text-decoration-thickness: 2px;
+}
+
+.ns-msg.user a {
+  color: #FFFFFF;
+}
+
+.ns-inputbar {
+  padding: 16px 18px 18px;
+  background: #EAE4D8;
+  border-top: 1px solid #C8C0AF;
+  border-radius: 0;
+  box-shadow: 0 -10px 28px rgba(24, 40, 36, .045);
+}
+
+.ns-inputbar textarea,
+.ns-inputbar input {
+  color: var(--ink);
+  background: #FFFEFA;
+  border: 1px solid #AFA796;
+  border-radius: 10px;
+  outline: none;
+  box-shadow: inset 0 1px 2px rgba(24,40,36,.05);
+}
+
+.ns-inputbar textarea:focus,
+.ns-inputbar input:focus {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px rgba(20, 92, 88, .14);
+}
+
+.ns-inputbar button {
+  color: #FFFFFF;
+  background: var(--clay);
+  border: 1px solid #B94E24;
+  border-radius: 8px;
+  font-weight: 900;
+  box-shadow: 3px 3px 0 var(--teal-dark);
+}
+
+.ns-inputbar button:hover {
+  background: #BE5429;
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 var(--teal-dark);
+}
+
+.ns-agents {
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.ns-agents button {
+  color: var(--ink);
+  background: #F9F6EF;
+  border: 1px solid #C3BAA8;
+  border-radius: 7px;
+}
+
+.ns-agents button:hover {
+  border-color: var(--teal);
+  background: #FFFFFF;
+}
+
+.ns-graph {
+  color: var(--ink);
+  background:
+    linear-gradient(rgba(20,92,88,.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(20,92,88,.06) 1px, transparent 1px),
+    #F5F1E8;
+  background-size: 20px 20px;
+  border: 1px solid #C8C0AF;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.ns-log {
+  color: #DDE9E5;
+  background: #21312D;
+  border: 1px solid #0D4542;
+  border-radius: 0;
+  box-shadow: inset 5px 0 0 var(--clay);
+  font-family: "Courier New", Courier, monospace;
+}
+
+.ns-widget {
+  color: var(--ink);
+  background: #F5F0E6;
+  border: 1px solid #BEB5A4;
+  border-top: 5px solid var(--clay);
+  border-radius: 5px;
+  box-shadow: 8px 8px 0 rgba(20, 92, 88, .1);
+}
+
+.ns-widget input,
+.ns-widget textarea,
+.ns-widget select {
+  color: var(--ink);
+  background: #FFFEFA;
+  border: 1px solid #AFA796;
+  border-radius: 7px;
+}
+
+.ns-w-btn {
+  color: #FFFFFF;
+  background: var(--teal);
+  border: 1px solid var(--teal-dark);
+  border-radius: 7px;
+  font-weight: 900;
+  letter-spacing: .02em;
+  box-shadow: 3px 3px 0 var(--clay);
+}
+
+.ns-w-btn:hover {
+  background: var(--teal-dark);
+}
+
+.ns-dev {
+  color: var(--muted);
+  background: transparent;
+  border-top: 1px dashed #B8AF9E;
+  border-radius: 0;
+}
+
+@media (max-width: 900px) {
+  .workshop {
+    padding: 16px;
+  }
+
+  .workshop-grid {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+
+  .identity-sheet {
+    position: relative;
+    top: auto;
+    min-height: auto;
+    padding: 32px 28px 36px;
+  }
+
+  .hero-title {
+    max-width: 10ch;
+    font-size: clamp(48px, 14vw, 82px);
+  }
+
+  .hero-copy {
+    max-width: 44rem;
+  }
+
+  .job-stamp {
+    margin-top: 34px;
+  }
+
+  [data-ns-slot="chat"] {
+    min-width: 0;
+    min-height: 520px;
+  }
+
+  .workshop-footer {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .identity-sheet::before {
+    content: "REPAIR / RESTORE / RESALE";
+  }
+
+  .hero-title {
+    font-size: 48px;
+  }
+
+  .console-frame::after {
+    content: "WORK ORDER";
+    top: 16px;
+    right: 12px;
+  }
+
+  [data-ns-slot="header"] {
+    padding: 12px;
+  }
+
+  [data-ns-slot="chat"] {
+    min-height: 500px;
+  }
+
+  .ns-msgs {
+    padding: 22px 14px;
+  }
+
+  .ns-inputbar {
+    padding: 12px;
+  }
+
+  .workshop-footer {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}

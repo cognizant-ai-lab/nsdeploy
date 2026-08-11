@@ -13,11 +13,13 @@ from __future__ import annotations
 import copy
 import html
 import json
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from nsdeploy.resolve import DeploymentPlan
+from nsdeploy.site_source import DEFAULT_SITE_JS
 from nsdeploy.theme import ThemeSpec
 
 # Domain-agnostic CRUSE directive injected into each agent's instructions at deploy
@@ -199,7 +201,14 @@ def _root_vars(theme: ThemeSpec) -> str:
 
 _BOOT = """<script type="module">
     import { boot } from "/runtime/index.js";
-    boot("#app").catch((e) => {
+    boot("#app").then(async (runtime) => {
+      try {
+        const site = await import("/site.js");
+        await site.customize?.({ root: document.querySelector("#app"), runtime });
+      } catch (e) {
+        console.error("Site customization error", e);
+      }
+    }).catch((e) => {
       const a = document.querySelector("#app"); if (a) a.textContent = "Boot error: " + e.message;
       console.error(e);
     });
@@ -208,45 +217,64 @@ _META = ('<meta charset="utf-8" />\n'
          '  <meta name="viewport" content="width=device-width, initial-scale=1" />')
 
 
-def _doc(title: str, style: str, body: str) -> str:
+def _doc(title: str, body: str) -> str:
     return (f"<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  {_META}\n  <title>{title}</title>\n"
-            f"  <style>\n{style}\n  </style>\n</head>\n<body>\n{body}\n  {_BOOT}\n</body>\n</html>\n")
+            f"  <link rel=\"stylesheet\" href=\"/theme.css\" />\n"
+            f"</head>\n<body>\n{body}\n  {_BOOT}\n</body>\n</html>\n")
 
 
 def _index_html(theme: ThemeSpec, brand_display: str) -> str:
     title = html.escape(brand_display)
-    c = theme.colors
     if theme.body:
-        # LLM-authored creative layout. We own the doctype/head and inject the palette
-        # vars first (so the assistant UI inherits the theme), then the LLM's sanitized
-        # CSS, then guard CSS that keeps the #app mount usable; the boot script and the
-        # #app element are ours — the LLM never writes scripts.
-        # Guarantee the assistant stays usable no matter how the LLM laid out the page
-        # (it must never be squeezed into a tiny sliver): enforce a sane minimum size.
-        # The assistant now hosts two side-by-side, resizable panels, so give #app room
-        # to breathe; if a layout still makes it narrow, the runtime scrolls rather than
-        # crushing the panes.
-        guard = ("html,body{margin:0}"
-                 "#app{min-width:min(620px,94vw)!important;height:80vh!important;"
-                 "min-height:560px!important;overflow:hidden}"
-                 "@media(max-width:820px){#app{height:88vh!important}}")
-        return _doc(title, f"{_root_vars(theme)}\n{theme.style}\n{guard}", theme.body)
+        return _doc(title, theme.body)
     # Default fixed template (keyless / no creative layout).
-    style = (f"{_root_vars(theme)}\n"
-             f"    html, body {{ margin: 0; height: 100%; overflow: hidden; }}\n"
-             f"    body {{ font-family: var(--ns-font); "
-             f"background: radial-gradient(1200px 500px at 20% -10%, {c['bg_tint']} 0%, {c['bg']} 60%); }}\n"
-             f"    #app {{ height: 100vh; overflow: hidden; }}")
-    return _doc(title, style, f'<div id="app">Loading {title}…</div>')
+    return _doc(title, f'<div id="app">Loading {title}...</div>')
+
+
+def _theme_css(theme: ThemeSpec) -> str:
+    """Assemble editable theme CSS with the runtime's non-editable safety guards."""
+    c = theme.colors
+    if theme.body and 'data-ns-layout="fixed"' not in theme.body:
+        # New themes compose the runtime's surfaces in mount slots; older themes still
+        # get the fixed shell. Keep the app and CRUSE forms reachable in either case.
+        guard = (
+            "html,body{margin:0;min-width:0}"
+            "body{min-height:100vh;overflow-y:auto!important;overflow-x:hidden}"
+            "#app{box-sizing:border-box;max-width:100%}"
+            "#app:not([data-ns-layout=\"composed\"]){min-width:min(620px,94vw)!important;"
+            "height:clamp(560px,80vh,900px);min-height:560px!important;overflow:visible}"
+            "#app[data-ns-layout=\"composed\"]{min-width:0!important;min-height:0!important;"
+            "height:auto!important;overflow:visible!important}"
+            "#app[data-ns-layout=\"composed\"] [data-ns-slot]{box-sizing:border-box;min-width:0}"
+            "#app[data-ns-layout=\"composed\"] [data-ns-slot=\"chat\"]{min-height:480px}"
+            ".ns-chat,.ns-agents,.ns-dev{min-width:0!important;min-height:0!important}"
+            ".ns-chat{overflow:hidden!important}.ns-agents,.ns-dev{overflow:auto!important}"
+            ".ns-msgs{min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important}"
+            ".ns-widget{box-sizing:border-box!important;max-width:100%!important}"
+            ".ns-widget *{box-sizing:border-box}"
+            ".ns-widget input,.ns-widget textarea,.ns-widget select{max-width:100%!important}"
+            "@media(max-width:820px){#app:not([data-ns-layout=\"composed\"]){height:88vh!important}"
+            "#app[data-ns-layout=\"composed\"] [data-ns-slot=\"chat\"]{min-height:68vh}}"
+        )
+        return f"{_root_vars(theme)}\n{theme.style}\n{guard}\n"
+    return (f"{_root_vars(theme)}\n{theme.style}\n"
+            "html,body{margin:0;height:100%;overflow:hidden}\n"
+            f"body{{font-family:var(--ns-font);background:radial-gradient(1200px 500px at 20% -10%,"
+            f"{c['bg_tint']} 0%,{c['bg']} 60%)}}\n"
+            "#app{height:100vh;overflow:hidden}\n")
 
 
 def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_router: str,
                   site_base: str, mcp_host: str = "127.0.0.1", cruse: bool = True,
-                  theme: Optional[ThemeSpec] = None) -> Dict[str, Any]:
-    """Write index.html, agent-manifest.json, <network>.network.json, and theme.json
-    into out_dir. Returns the manifest dict."""
+                  theme: Optional[ThemeSpec] = None,
+                  site_source_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Build the disposable static output from network data and editable site source."""
     theme = theme or ThemeSpec()
     out_dir.mkdir(parents=True, exist_ok=True)
+    if site_source_dir:
+        assets = site_source_dir / "assets"
+        if assets.is_dir():
+            shutil.copytree(assets, out_dir / "assets", dirs_exist_ok=True)
     network_config = rewrite_config(plan, site_base, mcp_host=mcp_host, cruse=cruse)
     manifest = build_manifest(plan, network_config, mock_router, byok_router, site_base, theme, mcp_host=mcp_host)
 
@@ -274,5 +302,10 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     links_doc = {"version": 1, "networks": {plan.network_name: bindings}}
     links_path.write_text(json.dumps(links_doc, indent=2), encoding="utf-8")
     (out_dir / "index.html").write_text(_index_html(theme, _brand_display(plan, theme)), encoding="utf-8")
+    (out_dir / "theme.css").write_text(_theme_css(theme), encoding="utf-8")
+    site_js = DEFAULT_SITE_JS
+    if site_source_dir and (site_source_dir / "site.js").is_file():
+        site_js = (site_source_dir / "site.js").read_text(encoding="utf-8")
+    (out_dir / "site.js").write_text(site_js, encoding="utf-8")
     (out_dir / "theme.json").write_text(json.dumps(theme.to_dict(), indent=2), encoding="utf-8")
     return manifest

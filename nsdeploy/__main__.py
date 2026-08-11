@@ -9,7 +9,8 @@ checkout required. Use --studio to point at a local checkout instead.
 
 Usage:
     python -m nsdeploy <network.hocon> [--repo R --ref REF | --studio DIR]
-                       [--port N] [--out DIR] [--no-serve] [--upstream URL]
+                       [--port N] [--out DIR] [--site-dir DIR] [--no-serve]
+                       [--upstream URL]
 """
 from __future__ import annotations
 
@@ -22,8 +23,9 @@ from nsdeploy.generate import generate_site
 from nsdeploy.linker import load_deploy_links, run_link_command
 from nsdeploy.launcher import serve
 from nsdeploy.resolve import build_plan, format_report, load_toolbox_info, resolve_hocon
+from nsdeploy.site_source import load_site_theme, seed_site_source, site_source_exists
 from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio
-from nsdeploy.theme import DEFAULT_THEME_MODEL, load_theme_file, propose_theme
+from nsdeploy.theme import DEFAULT_THEME_MODEL, ThemeSpec, load_theme_file, propose_theme
 
 
 def main() -> int:
@@ -39,6 +41,8 @@ def main() -> int:
     ap.add_argument("--site-url", default=None,
                     help="public site origin used in manifests/links (default: local --port URL)")
     ap.add_argument("--out", default=None, help="output site dir (default: ./.nsdeploy/<name>)")
+    ap.add_argument("--site-dir", default=None,
+                    help="editable site source dir (default: <hocon-dir>/sites/<name>)")
     ap.add_argument("--upstream", default="https://api.openai.com/v1",
                     help="RUNTIME BYOK proxy upstream — where the page's key is forwarded (default OpenAI)")
     ap.add_argument("--runtime-dir", default=None, help="neuro-san-web runtime dir (default: vendored ./runtime)")
@@ -57,7 +61,8 @@ def main() -> int:
                          "theming via a different provider, e.g. a local Ollama)")
     ap.add_argument("--theme-key", default=None, help="API key for --theme (else $OPENAI_API_KEY)")
     ap.add_argument("--theme-file", default=None, help="use a pinned theme.json (no LLM, no key)")
-    ap.add_argument("--theme-refresh", action="store_true", help="ignore the theme cache and re-ask the LLM")
+    ap.add_argument("--theme-refresh", action="store_true",
+                    help="re-ask the LLM and replace editable layout/CSS/theme metadata")
     ap.add_argument("--no-serve", action="store_true", help="generate the site but don't launch")
     args = ap.parse_args()
 
@@ -74,6 +79,8 @@ def main() -> int:
         print(f"▶ Resolving {hocon_path.name} (tools from github:{args.repo}@{args.ref}) …\n")
 
     network_name = hocon_path.stem
+    site_dir = (Path(args.site_dir).resolve() if args.site_dir
+                else hocon_path.parent / "sites" / network_name)
     config, missing_includes = resolve_hocon(hocon_path, source)
     try:
         links_path = Path(args.links).resolve() if args.links else None
@@ -100,24 +107,70 @@ def main() -> int:
     # Resolve the theme (Tier 1). Default look unless pinned (--theme-file) or LLM
     # theming (--theme) with a key; any failure falls back to the default.
     theme = None
+    has_site_source = site_source_exists(site_dir)
+    refresh_site_source = False
     if args.theme_file:
         theme = load_theme_file(Path(args.theme_file))
         print(f"   theme: using pinned {args.theme_file}")
     elif args.theme:
-        key = args.theme_key or os.environ.get("OPENAI_API_KEY", "")
-        if not key:
-            print("   theme: --theme set but no key ($OPENAI_API_KEY / --theme-key) — using the default look")
+        if has_site_source and not args.theme_refresh:
+            try:
+                theme = load_site_theme(site_dir)
+            except (OSError, ValueError) as exc:
+                print(f"error: cannot load editable site source: {exc}", file=sys.stderr)
+                return 2
+            print(f"   theme: using editable source → {site_dir}")
         else:
-            theme_upstream = args.theme_upstream or "https://api.openai.com/v1"
-            theme = propose_theme(plan, model=args.theme_model, api_key=key,
-                                  upstream=theme_upstream, refresh=args.theme_refresh)
-            print(f"   theme: proposed via {args.theme_model} (brand: {theme.brand or '—'})")
+            key = args.theme_key or os.environ.get("OPENAI_API_KEY", "")
+            if not key:
+                if has_site_source:
+                    print("   theme: no key ($OPENAI_API_KEY / --theme-key); refresh skipped")
+                    try:
+                        theme = load_site_theme(site_dir)
+                    except (OSError, ValueError) as exc:
+                        print(f"error: cannot load editable site source: {exc}", file=sys.stderr)
+                        return 2
+                    print(f"   theme: editable source preserved → {site_dir}")
+                else:
+                    print("   theme: --theme set but no key ($OPENAI_API_KEY / --theme-key) — using the default look")
+            else:
+                theme_upstream = args.theme_upstream or "https://api.openai.com/v1"
+                proposed = propose_theme(plan, model=args.theme_model, api_key=key,
+                                         upstream=theme_upstream, refresh=args.theme_refresh)
+                if has_site_source and args.theme_refresh and not proposed.body:
+                    try:
+                        theme = load_site_theme(site_dir)
+                    except (OSError, ValueError) as exc:
+                        print(f"error: cannot load editable site source: {exc}", file=sys.stderr)
+                        return 2
+                    print("   theme: refresh did not produce a valid layout; editable source preserved")
+                else:
+                    theme = proposed
+                    refresh_site_source = has_site_source and args.theme_refresh
+                    print(f"   theme: proposed via {args.theme_model} (brand: {theme.brand or '—'})")
+    elif has_site_source:
+        try:
+            theme = load_site_theme(site_dir)
+        except (OSError, ValueError) as exc:
+            print(f"error: cannot load editable site source: {exc}", file=sys.stderr)
+            return 2
+        print(f"   theme: using editable source → {site_dir}")
+
+    theme = theme or ThemeSpec()
+    if not has_site_source or refresh_site_source:
+        brand = theme.brand or network_name.replace("_", " ").replace("-", " ").title()
+        brand_display = f"{theme.icon} {brand}".strip() if theme.icon else brand
+        seed_site_source(site_dir, theme, brand_display, overwrite_theme=refresh_site_source)
+        action = "refreshed" if refresh_site_source else "created"
+        print(f"   editable site source {action} → {site_dir}")
+        theme = load_site_theme(site_dir)
 
     out_dir = Path(args.out).resolve() if args.out else (Path.cwd() / ".nsdeploy" / network_name)
     site_base = (args.site_url or f"http://127.0.0.1:{args.port}").rstrip("/")
     mock_router = f"{site_base}/v1"
     byok_router = f"{site_base}/byok/v1"
-    generate_site(plan, out_dir, mock_router, byok_router, site_base, cruse=not args.no_cruse, theme=theme)
+    generate_site(plan, out_dir, mock_router, byok_router, site_base, cruse=not args.no_cruse,
+                  theme=theme, site_source_dir=site_dir)
     print(f"✅ Generated site → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))
 
     if args.no_serve:

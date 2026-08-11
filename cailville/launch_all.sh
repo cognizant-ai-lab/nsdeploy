@@ -8,7 +8,7 @@ RUN_DIR="${NSDEPLOY_RUN_DIR:-$PROJECT_DIR/.nsdeploy/cailville-pids}"
 UPSTREAM="${NSDEPLOY_UPSTREAM:-https://api.openai.com/v1}"
 THEME_MODEL="${NSDEPLOY_THEME_MODEL:-gpt-5.6}"
 THEME_ENABLED="${NSDEPLOY_THEME:-1}"
-THEME_REFRESH="${NSDEPLOY_THEME_REFRESH:-1}"
+THEME_REFRESH="${NSDEPLOY_THEME_REFRESH:-0}"
 
 theme_args=()
 if [[ ! "$THEME_ENABLED" =~ ^(0|false|no)$ ]]; then

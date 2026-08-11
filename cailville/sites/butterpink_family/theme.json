@@ -1,0 +1,45 @@
+{
+  "brand": "Butterpink Family Desk",
+  "icon": "\ud83c\udfe1",
+  "tagline": "One thoughtful plan for every household task",
+  "hero": "Bring the moving parts of family life together in one calm, coordinated place.",
+  "font": "Georgia, 'Times New Roman', serif",
+  "radius": 16,
+  "colors": {
+    "primary": "#9f3f62",
+    "accent": "#d18a3d",
+    "bg": "#f5efe7",
+    "bg_tint": "#eee3d8",
+    "fg": "#292326",
+    "muted": "#6c5f63",
+    "border": "#d8c9be",
+    "msgbg": "#fffdfa",
+    "panelbg": "#faf6f1"
+  },
+  "welcome": {
+    "widget": {
+      "title": "Start a household request",
+      "icon": "\ud83d\udcdd",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "string",
+            "title": "What needs to happen?",
+            "description": "Describe the task, decision, outing, repair, purchase, or local request in your own words."
+          },
+          "constraints": {
+            "type": "string",
+            "title": "Important boundaries",
+            "description": "Add timing, budget, dietary, accessibility, privacy, or approval requirements."
+          }
+        },
+        "required": [
+          "request"
+        ]
+      },
+      "submitLabel": "Bring it to the desk"
+    },
+    "message": "What can the household desk help coordinate today? Share the goal, timing, budget, and anyone whose approval may be needed."
+  }
+}

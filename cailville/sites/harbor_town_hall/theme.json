@@ -1,0 +1,56 @@
+{
+  "brand": "Harbor Town Hall",
+  "icon": "\u2692\ufe0f",
+  "tagline": "Repair well. Reuse more. Waste less.",
+  "hero": "One practical front door for repairs, reclaimed materials, trade-ins, pickups, and safe next steps.",
+  "font": "'Trebuchet MS', 'Segoe UI', Arial, sans-serif",
+  "radius": 14,
+  "colors": {
+    "primary": "#B9492D",
+    "accent": "#E5A43A",
+    "bg": "#F1EEE5",
+    "bg_tint": "#E4E9DF",
+    "fg": "#26332F",
+    "muted": "#65716B",
+    "border": "#B8B9AA",
+    "msgbg": "#FCFBF6",
+    "panelbg": "#F7F4EC"
+  },
+  "welcome": {
+    "widget": {
+      "title": "Open a work ticket",
+      "icon": "\ud83d\udcdd",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "string",
+            "title": "What can we help with?",
+            "description": "Describe the item, project, trade-in, or reclaimed material you need."
+          },
+          "condition": {
+            "type": "string",
+            "title": "Current condition",
+            "description": "Share symptoms, damage, measurements, quantity, or known safety concerns."
+          },
+          "location": {
+            "type": "string",
+            "title": "Pickup or service area",
+            "description": "Provide your neighborhood or postal code and whether pickup is needed."
+          },
+          "timing": {
+            "type": "string",
+            "title": "Preferred timing",
+            "description": "Tell us your ideal date or any deadline."
+          }
+        },
+        "required": [
+          "request",
+          "condition"
+        ]
+      },
+      "submitLabel": "Send to the right crew"
+    },
+    "message": "Tell us what you are repairing, finding, trading, or moving. If there is smoke, heat, sparking, a melted plug, leaking fuel, or another immediate hazard, stop using the item and say so first."
+  }
+}

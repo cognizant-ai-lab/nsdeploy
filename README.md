@@ -28,6 +28,7 @@ python -m nsdeploy examples/travel_agent_system.hocon --port 8080
 Then open <http://127.0.0.1:8080/>. Flags: `--repo`/`--ref` (GitHub source, default
 `cognizant-ai-lab/neuro-san-studio@main`), `--studio DIR` (use a local checkout
 instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
+`--site-dir` (editable HTML/CSS/JS source),
 `--site-url` (public origin), `--link`/`--links` (outbound network bindings),
 `--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime),
 `--no-cruse` (skip generative-UI injection), and the theming flags below.
@@ -53,7 +54,8 @@ The launcher uses `venv/bin/python` when available, starts the sites on ports
 8091-8103, waits for every site, and then opens `cailville/cailville.html`. Logs are
 written to `.nsdeploy/cailville-logs/`. Its runtime BYOK proxy defaults to OpenAI and
 theme generation defaults to `gpt-5.6`; override those with `NSDEPLOY_UPSTREAM`,
-`NSDEPLOY_THEME_MODEL`, or `NSDEPLOY_PYTHON`.
+`NSDEPLOY_THEME_MODEL`, or `NSDEPLOY_PYTHON`. Existing editable themes are preserved;
+set `NSDEPLOY_THEME_REFRESH=1` only when you deliberately want to replace them.
 
 To run the agents with Docker Model Runner instead, explicitly select its upstream
 and enter one of the exact IDs returned by its `/models` endpoint in BYOK settings:
@@ -68,10 +70,10 @@ For a fast functional test, skip theme generation entirely:
 NSDEPLOY_THEME=0 ./cailville/launch_all.sh
 ```
 
-To keep theming enabled but reuse cached themes without calling the theme LLM again:
+To deliberately replace every editable theme with a fresh LLM design:
 
 ```bash
-NSDEPLOY_THEME_REFRESH=0 ./cailville/launch_all.sh
+NSDEPLOY_THEME_REFRESH=1 ./cailville/launch_all.sh
 ```
 
 `NSDEPLOY_THEME=0` takes precedence over the theme model and refresh settings.
@@ -103,8 +105,8 @@ Stop the complete demo from another terminal:
    (`/ext-mcp/<i>/mcp`) so the browser can call it without CORS; missing tools and
    non-MCP external URLs are dropped. This removes any assumption of a local neuro-san
    server — tools are reached purely over MCP.
-5. **Generate** `index.html` + `agent-manifest.json` + `<network>.network.json`
-   (+ `theme.json` when theming is used — see "Look & feel").
+5. **Generate** `index.html` + `theme.css` + `site.js` + `agent-manifest.json` +
+   `<network>.network.json` + `theme.json` from the editable site source and network.
 6. **Serve** one static origin (site + the `neuro-san-web` runtime, with the
    sandbox-worker CSP), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
    local-MCP proxy at `/_mcp/<i>/mcp`, an external-MCP proxy at
@@ -240,7 +242,7 @@ OPENAI_API_KEY=sk-…  python -m nsdeploy net.hocon --theme [--theme-model gpt-5
 python -m nsdeploy net.hocon --theme --theme-model qwen2.5:7b --theme-key x \
     --theme-upstream http://127.0.0.1:11434/v1
 
-# pin a theme (no LLM, no key, reproducible) — edit it by hand or reuse a prior run
+# pin a theme (no LLM, no key, reproducible)
 python -m nsdeploy net.hocon --theme-file theme.json
 ```
 
@@ -258,32 +260,56 @@ the runtime. For Docker Model Runner, inspect the catalog with:
 curl http://localhost:12434/engines/v1/models
 ```
 
-The LLM authors the page's **CSS + HTML around the assistant**, but it's treated as
-untrusted and **strictly sanitized**: only safe presentational tags/attributes survive
-(no `<script>`, `on*` handlers, `<iframe>`/`<form>`/`<svg>`; CSS stripped of `@import`,
-`expression()`, unsafe `url()`). nsdeploy injects the `boot()` script and the `#app`
-mount itself (the LLM never writes them), forces `#app` to stay **empty and a usable
-size** (so the chat is never squeezed into a sliver), and on any problem (no key,
-error, invalid/unsafe output, missing `#app`) **falls back to the default template** —
-so a creative layout can never break the app or the keyless experience. The full
-design is written to **`theme.json`** (inspectable, editable, re-usable via
-`--theme-file`) and cached under `~/.cache/nsdeploy/themes/` (`--theme-refresh` to
-re-ask). The theming key is supplied by *you* at deploy time; end users still need no
-key. Flags: `--theme`, `--theme-model`, `--theme-upstream`, `--theme-key`,
-`--theme-file`, `--theme-refresh`.
+The LLM authors the page's **CSS + HTML composition**, but it's treated as untrusted
+and **strictly sanitized**: only safe presentational tags/attributes survive (no
+`<script>`, `on*` handlers, `<iframe>`/`<form>`/`<svg>`; CSS stripped of `@import`,
+`expression()`, unsafe `url()`). A generated layout places three empty runtime mounts
+inside `#app`: the compact header, the primary chat, and agent activity. This lets the
+designer choose an inline rail, stacked panel, overlay, or native `<details>` pull-out
+instead of inheriting one fixed split. The runtime fills those mounts and protects page
+scrolling and CRUSE form reachability. Older cached themes with one empty `#app` keep
+the legacy resizable split layout. On any problem (no key, error, invalid/unsafe output,
+missing or incomplete mounts), nsdeploy **falls back to the default template**, so a
+creative layout cannot break the app or the keyless experience.
+
+The first deploy creates an **editable source package** beside the HOCON:
+
+```text
+sites/<network>/
+  layout.html   # page composition and runtime mount slots
+  theme.css     # site-owned visual design
+  site.js       # optional behavior, run after the agent UI boots
+  theme.json    # brand, palette, typography, and welcome metadata
+  assets/       # optional local images and other static assets
+```
+
+Use `--site-dir DIR` to put it elsewhere. Normal deploys read these files and never
+overwrite them; `.nsdeploy/<network>/` remains disposable build output. A normal
+`--theme` run also uses an existing package instead of calling the model again. The
+LLM result is therefore a starting point: edit the source package and redeploy. The
+generated `site.js` exports an optional `customize({ root, runtime })` hook, and any
+files under `assets/` are copied into the built site.
+
+Theme proposals are also cached under `~/.cache/nsdeploy/themes/`. `--theme-refresh`
+is the explicit destructive refresh for `layout.html`, `theme.css`, and `theme.json`;
+it preserves `site.js` and `assets/`, and it preserves the current design if the LLM
+does not return a valid replacement. The theming key is supplied by *you* at deploy
+time; end users still need no key. Flags: `--theme`, `--theme-model`,
+`--theme-upstream`, `--theme-key`, `--theme-file`, `--theme-refresh`, `--site-dir`.
 
 > Theme generation defaults to `gpt-5.6`, whose design judgment produces more polished
 > layouts. Use `gpt-5.6-terra` or `gpt-5.6-luna` for lower-cost generation, or a local
 > model such as `qwen2.5:7b`. Whatever the model emits, the assistant stays usable and
 > the build is safe.
 
-### Regenerating the theme (clearing the cache)
+### Regenerating the theme
 
 Generated themes are cached under `~/.cache/nsdeploy/themes/` (one `<digest>.json`
-per design) so re-running a deploy doesn't re-ask the LLM. To force a fresh design:
+per design). Once editable source exists, normal runs use it. To deliberately replace
+the editable HTML/CSS/metadata with a fresh design:
 
 ```bash
-# Re-ask the LLM for THIS network/model/prompt, ignoring (and overwriting) the cache
+# Re-ask the LLM, replace the cached proposal, and refresh the editable theme files
 python -m nsdeploy net.hocon --theme … --theme-refresh
 
 # Or wipe the cache entirely (all designs regenerate on the next run)
@@ -291,9 +317,9 @@ rm -rf ~/.cache/nsdeploy/themes/
 ```
 
 The cache key is a hash of the **network identity + model name + prompt version**, so
-a cached theme is reused only when all three match. Switching `--theme-model` (e.g. to
-a bigger model) regenerates automatically — no flag needed; `--theme-refresh` is only
-needed when you want a new take from the *same* model and prompt.
+a cached theme is reused only when all three match. Once source has been created,
+changing the model does not replace user edits; use `--theme-refresh` when that is
+really what you intend.
 
 ## Use a local model (Ollama) — no key, no cloud
 

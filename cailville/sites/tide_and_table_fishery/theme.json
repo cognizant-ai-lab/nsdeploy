@@ -1,0 +1,20 @@
+{
+  "brand": "Tide & Table",
+  "icon": "\u2693",
+  "tagline": "Every catch accounted for.",
+  "hero": "Coordinate catch, cold chain, customers, and cash from one waterfront command desk.",
+  "font": "Georgia, 'Times New Roman', serif",
+  "radius": 12,
+  "colors": {
+    "primary": "#0b5961",
+    "accent": "#d36a3a",
+    "bg": "#eef1eb",
+    "bg_tint": "#dbe8e2",
+    "fg": "#102c31",
+    "muted": "#52676a",
+    "border": "#b7c8c2",
+    "msgbg": "#fbfaf5",
+    "panelbg": "#f5f7f2"
+  },
+  "welcome": null
+}

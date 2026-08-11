@@ -1,0 +1,50 @@
+<div id="app" data-ns-layout="composed">
+  <header class="dispatch-header">
+    <div data-ns-slot="header"></div>
+  </header>
+
+  <section class="dispatch-stage">
+    <div class="dispatch-grid">
+      <section class="identity-panel" aria-labelledby="dispatch-heading">
+        <p class="kicker">Community mobility control</p>
+        <h1 id="dispatch-heading">Move with <span>certainty.</span></h1>
+        <p class="lede">Coordinate accessible rides, event shuttles, fleet readiness, rider support, and cooperative operations through one connected dispatch desk.</p>
+
+        <div class="route-strip" aria-label="Cooperative service workflow">
+          <span class="route-stop">Request</span>
+          <span class="route-stop">Coordinate</span>
+          <span class="route-stop">Deliver</span>
+        </div>
+
+        <div class="service-note">
+          <span class="service-icon" aria-hidden="true">♿</span>
+          <div>
+            <strong>Access is part of the route.</strong>
+            <small>Mobility equipment, companions, boarding time, and vehicle readiness can all be coordinated here.</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="console-column" aria-label="Cooperative dispatch console">
+        <div class="console-label">
+          <strong>Dispatch channel 01</strong>
+          <span class="live-status">Network ready</span>
+        </div>
+
+        <div class="chat-frame">
+          <main data-ns-slot="chat"></main>
+        </div>
+
+        <details class="agent-drawer">
+          <summary>Agents working behind dispatch</summary>
+          <aside data-ns-slot="agents"></aside>
+        </details>
+      </section>
+    </div>
+  </section>
+
+  <footer class="dispatch-footer">
+    <div><strong>Harbor Wheels Cooperative</strong> · Accessible transport, coordinated as one team.</div>
+    <div class="footer-marks" aria-hidden="true">●—●—●</div>
+  </footer>
+</div>

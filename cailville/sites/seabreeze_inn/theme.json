@@ -1,0 +1,20 @@
+{
+  "brand": "Seabreeze Inn",
+  "icon": "\ud83c\udf0a",
+  "tagline": "Calm command for every arrival",
+  "hero": "Coordinate rooms, revenue, service, and events from one clear innkeeper\u2019s desk.",
+  "font": "Georgia, Times New Roman, serif",
+  "radius": 14,
+  "colors": {
+    "primary": "#126B72",
+    "accent": "#D78456",
+    "bg": "#F3F0E8",
+    "bg_tint": "#E4ECE8",
+    "fg": "#173039",
+    "muted": "#5C6F71",
+    "border": "#B9C9C5",
+    "msgbg": "#FFFEFA",
+    "panelbg": "#F8F6F0"
+  },
+  "welcome": null
+}

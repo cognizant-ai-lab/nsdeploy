@@ -20,16 +20,19 @@ import {
 import { normalizeModelName } from "./model.js";
 
 const BASE_CSS = `
-/* Two resizable panes side by side: the chat and a right rail (the "agents working
-   for you" panel, or the Developer pane when toggled). A draggable gutter sits
-   between them; --ns-railw (persisted) sets the rail width. Each pane scrolls its
-   own overflow, and the whole app scrolls horizontally if the two can't fit — so
-   content is always reachable, never crushed into a sliver. */
+/* Legacy themes get two resizable panes side by side. Composed themes provide
+   header/chat/agents mount slots and own their placement; the runtime continues
+   to own the components' internal layout and behavior. */
 .ns-app{display:grid;
   grid-template-columns:minmax(300px,var(--ns-mainw,1fr)) 8px minmax(220px,var(--ns-railw,340px));
   grid-template-rows:auto 1fr;column-gap:8px;row-gap:12px;height:100%;min-height:0;
   overflow-x:auto;overflow-y:hidden;
   font-family:var(--ns-font,system-ui,sans-serif);color:var(--ns-fg,#1a1a1a);background:var(--ns-bg,#fff);box-sizing:border-box;padding:12px}
+.ns-composed-app{min-width:0;min-height:0;font-family:var(--ns-font,system-ui,sans-serif);color:var(--ns-fg,#1a1a1a)}
+.ns-composed-app [data-ns-slot]{box-sizing:border-box;min-width:0;min-height:0}
+.ns-composed-app [data-ns-slot="chat"]>.ns-chat{width:100%;height:100%;min-height:480px}
+.ns-composed-app [data-ns-slot="agents"]>.ns-agents,
+.ns-composed-app [data-ns-slot="agents"]>.ns-dev{box-sizing:border-box;width:100%;height:100%;min-height:0}
 .ns-header{grid-column:1/-1;display:flex;align-items:center;gap:12px;border-bottom:2px solid var(--ns-accent,var(--ns-primary,#2563eb));background:var(--ns-header-bg,transparent);color:var(--ns-header-fg,inherit);padding:var(--ns-header-pad,0 0 8px)}
 .ns-header .ns-logo{height:32px}
 .ns-title{font-weight:700;font-size:18px}
@@ -38,7 +41,7 @@ const BASE_CSS = `
 .ns-split{grid-column:2;grid-row:2;align-self:stretch;width:8px;justify-self:center;border-radius:6px;cursor:col-resize;background:var(--ns-border,#e2e2e2);opacity:.5;transition:opacity .15s,background .15s;touch-action:none}
 .ns-split:hover,.ns-split.dragging{opacity:1;background:var(--ns-primary,#2563eb)}
 .ns-agents{grid-column:3;grid-row:2;display:flex;flex-direction:column;gap:10px;border:1px solid var(--ns-border,#e2e2e2);border-radius:12px;padding:12px;background:var(--ns-panelbg,#fbfcfe);min-height:0;min-width:0;overflow:auto}
-.ns-app[data-dev="true"] .ns-agents{display:none}
+:is(.ns-app,.ns-composed-app)[data-dev="true"] .ns-agents{display:none}
 .ns-agents h3{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ns-muted,#888)}
 .ns-status{font-size:13px;color:var(--ns-fg,#333);display:flex;align-items:center;gap:8px;min-height:20px}
 .ns-status .ns-spin{width:12px;height:12px;border:2px solid var(--ns-primary,#2563eb);border-top-color:transparent;border-radius:50%;animation:ns-spin .8s linear infinite;display:none}
@@ -79,7 +82,8 @@ const BASE_CSS = `
 .ns-linker-form input{flex:1 1 280px;min-width:0;padding:7px 9px;border:1px solid var(--ns-border,#bbb);border-radius:8px;font-size:13px}
 .ns-linker-form button{padding:7px 13px;border:0;border-radius:8px;background:var(--ns-primary,#2563eb);color:#fff;font-weight:600;cursor:pointer}
 .ns-linker-form button.ghost{background:transparent;color:var(--ns-muted,#555);border:1px solid var(--ns-border,#bbb)}
-.ns-widget{align-self:flex-start;max-width:95%;border:1px solid var(--ns-border,#e2e2e2);border-top:3px solid var(--w,var(--ns-primary,#2563eb));border-radius:12px;padding:14px;background:#fff;display:flex;flex-direction:column;gap:8px}
+.ns-widget{box-sizing:border-box;align-self:flex-start;max-width:95%;min-width:0;overflow-wrap:anywhere;border:1px solid var(--ns-border,#e2e2e2);border-top:3px solid var(--w,var(--ns-primary,#2563eb));border-radius:12px;padding:14px;background:#fff;display:flex;flex-direction:column;gap:8px}
+.ns-widget *{box-sizing:border-box}
 .ns-widget.done{opacity:.7}
 .ns-w-head{display:flex;align-items:center;gap:8px;font-size:15px}
 .ns-w-icon{font-size:18px}
@@ -88,10 +92,10 @@ const BASE_CSS = `
 .ns-w-row{display:flex;flex-direction:column;gap:3px}
 .ns-w-label{font-size:13px;font-weight:600}
 .ns-w-fdesc{font-size:11px;color:var(--ns-muted,#999)}
-.ns-w-row input[type=text],.ns-w-row input[type=number],.ns-w-row input[type=date],.ns-w-row select,.ns-w-row textarea{padding:7px 9px;border:1px solid var(--ns-border,#ccc);border-radius:8px;font-size:14px;font-family:inherit}
+.ns-w-row input[type=text],.ns-w-row input[type=number],.ns-w-row input[type=date],.ns-w-row select,.ns-w-row textarea{width:100%;max-width:100%;padding:7px 9px;border:1px solid var(--ns-border,#ccc);border-radius:8px;font-size:14px;font-family:inherit}
 .ns-w-radio,.ns-w-multi{display:flex;flex-wrap:wrap;gap:10px;font-size:13px}
 .ns-w-radio label,.ns-w-multi label,.ns-w-toggle{display:flex;align-items:center;gap:4px}
-.ns-w-actions{display:flex;gap:8px;margin-top:4px}
+.ns-w-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
 .ns-w-btn{padding:8px 16px;border:0;border-radius:8px;background:var(--w,var(--ns-primary,#2563eb));color:#fff;font-weight:600;cursor:pointer;font-size:14px}
 .ns-w-btn.ghost{background:transparent;color:var(--ns-muted,#666);border:1px solid var(--ns-border,#ccc)}
 .ns-w-btn:disabled,.ns-w-choice:disabled{opacity:.55;cursor:default}
@@ -108,8 +112,8 @@ const BASE_CSS = `
 .ns-devtoggle{font-size:12px;padding:4px 10px;border:1px solid var(--ns-border,#ccc);border-radius:8px;background:transparent;color:var(--ns-muted,#666);cursor:pointer}
 .ns-devtoggle.on{background:#1e293b;color:#fff;border-color:#1e293b}
 .ns-dev{grid-column:3;grid-row:2;display:none;flex-direction:column;gap:12px;min-height:0;min-width:0;overflow:auto}
-.ns-app[data-dev="true"] .ns-dev{display:flex}
-.ns-app:not([data-dev="true"]) .ns-breadcrumb{display:none}
+:is(.ns-app,.ns-composed-app)[data-dev="true"] .ns-dev{display:flex}
+:is(.ns-app,.ns-composed-app):not([data-dev="true"]) .ns-breadcrumb{display:none}
 .ns-breadcrumb{font-size:12px;color:var(--ns-muted,#666);font-family:ui-monospace,monospace}
 .ns-llmbadge{margin-left:auto;font-size:12px;font-weight:700;padding:3px 10px;border-radius:12px}
 .ns-llmbadge.mock{background:#fef3c7;color:#b45309;border:1px solid #f59e0b}
@@ -121,8 +125,8 @@ const BASE_CSS = `
 .ns-msg{max-width:85%;padding:8px 12px;border-radius:var(--ns-radius,12px);white-space:pre-wrap;line-height:1.4}
 .ns-msg.user{align-self:flex-end;background:var(--ns-user-bg,var(--ns-primary,#2563eb));color:var(--ns-user-fg,#fff)}
 .ns-msg.bot{align-self:flex-start;background:var(--ns-msgbg,#f1f3f5)}
-.ns-inputbar{display:flex;gap:8px;padding:10px;border-top:1px solid var(--ns-border,#e2e2e2)}
-.ns-inputbar input{flex:1;padding:8px 10px;border:1px solid var(--ns-border,#ccc);border-radius:8px;font-size:14px}
+.ns-inputbar{display:flex;flex-wrap:wrap;gap:8px;padding:10px;border-top:1px solid var(--ns-border,#e2e2e2)}
+.ns-inputbar input{flex:1 1 220px;min-width:0;padding:8px 10px;border:1px solid var(--ns-border,#ccc);border-radius:8px;font-size:14px}
 .ns-inputbar button{padding:8px 16px;background:var(--ns-primary,#2563eb);color:#fff;border:0;border-radius:8px;cursor:pointer;font-weight:600}
 .ns-inputbar button:disabled{opacity:.5;cursor:default}
 .ns-right{display:flex;flex-direction:column;gap:12px;min-height:0}
@@ -198,67 +202,98 @@ export function mountApp(root, { engine, trace, manifest }) {
   const net = engine.top?.network;
   const title = manifest?.networks?.[0]?.description || net?.name || "Agent network";
 
-  root.innerHTML = `
-    <div class="ns-app" data-dev="false">
-      <div class="ns-header">
-        ${theme.logo ? `<img class="ns-logo" src="${theme.logo}" alt="logo">` : ""}
-        <div class="ns-title">${escapeHtml(manifest?.brand || net?.name || "neuro-san-web")}</div>
-        ${engine.mockLLM
-          ? `<div class="ns-llmbadge mock" title="The default router is a deterministic mock — it ignores the model name. Add a real key + router in ⚙ settings.">⚠ MOCK LLM — no real model</div>`
-          : `<div class="ns-llmbadge pending" title="Configured router: ${escapeHtml(engine.top?.llm?.baseUrl || "")}. It will be verified by the first response.">LLM configured — awaiting verification</div>`}
-        <div class="ns-breadcrumb" id="ns-breadcrumb">${escapeHtml(location.host)}</div>
-        <button class="ns-devtoggle" id="ns-devtoggle" title="Show the technical execution trace">⚙ Developer</button>
-      </div>
-      <main class="ns-main">
-        <div class="ns-chat">
-          <div class="ns-msgs" id="ns-msgs">
-            <div class="ns-msg bot">${escapeHtml(title)}\n\nAsk me anything to see the web of agents in action.</div>
-          </div>
-          <details class="ns-settings">
-            <summary>⚙ BYOK / router settings</summary>
-            <div class="ns-settings-body">
-              <label>Saved setup <select id="ns-profile"></select></label>
-              <label>Setup name <input id="ns-profile-name" placeholder="Local LLM, OpenAI, Anthropic router"></label>
-              <label>API key <input id="ns-key" type="password" placeholder="sk-… (kept in this browser only — enables a REAL LLM)"></label>
-              <label>Model <input id="ns-model" list="ns-model-options" placeholder="exact ID published by the upstream"></label>
-              <datalist id="ns-model-options"></datalist>
-              <label>Router base URL <input id="ns-router" placeholder="OpenAI-compatible /v1"></label>
-              <div id="ns-router-hint" class="ns-hint"></div>
-              <label class="ns-row-inline"><input type="checkbox" id="ns-lg"> Drive the LLM via LangChain.js</label>
-              <div class="ns-profile-actions">
-                <button id="ns-save-profile" class="ghost">Save setup</button>
-                <button id="ns-delete-profile" class="ghost">Delete setup</button>
-                <button id="ns-apply">Apply, save &amp; reload</button>
-              </div>
-              <div id="ns-profile-hint" class="ns-hint"></div>
-            </div>
-          </details>
-          <div class="ns-inputbar">
-            <input id="ns-input" placeholder="Type a request…" />
-            <button id="ns-send">Send</button>
-            <button id="ns-newchat" title="Clear conversation history" style="background:transparent;color:var(--ns-muted,#888);border:1px solid var(--ns-border,#ccc)">New chat</button>
-          </div>
-        </div>
-      </main>
-      <div class="ns-split" id="ns-split" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize the panels"></div>
-      <aside class="ns-agents">
-        <h3>Agents working for you</h3>
-        <div class="ns-status" id="ns-status"><span class="ns-spin"></span><span id="ns-status-text">Ready when you are.</span></div>
-        <div id="ns-anodes"></div>
-      </aside>
-      <div class="ns-modal" id="ns-modal" hidden><div class="ns-modal-card" id="ns-modal-card"></div></div>
-      <aside class="ns-dev">
-        <div class="ns-graph" id="ns-graph"><h3>Agent graph &amp; origins</h3><div id="ns-nodes"></div></div>
-        <div class="ns-log" id="ns-log">
-          <div class="ns-toolbar">
-            <h3 style="margin:0">Execution log</h3>
-            <span class="ns-pill" id="ns-count">0 events</span>
-            <button id="ns-export" style="margin-left:auto;font-size:11px">Export JSON</button>
-          </div>
-          <div id="ns-rows"></div>
-        </div>
-      </aside>
+  const headerHtml = `
+    <div class="ns-header">
+      ${theme.logo ? `<img class="ns-logo" src="${theme.logo}" alt="logo">` : ""}
+      <div class="ns-title">${escapeHtml(manifest?.brand || net?.name || "neuro-san-web")}</div>
+      ${engine.mockLLM
+        ? `<div class="ns-llmbadge mock" title="The default router is a deterministic mock — it ignores the model name. Add a real key + router in ⚙ settings.">⚠ MOCK LLM — no real model</div>`
+        : `<div class="ns-llmbadge pending" title="Configured router: ${escapeHtml(engine.top?.llm?.baseUrl || "")}. It will be verified by the first response.">LLM configured — awaiting verification</div>`}
+      <div class="ns-breadcrumb" id="ns-breadcrumb">${escapeHtml(location.host)}</div>
+      <button class="ns-devtoggle" id="ns-devtoggle" title="Show the technical execution trace">⚙ Developer</button>
     </div>`;
+  const chatHtml = `
+    <div class="ns-chat">
+      <div class="ns-msgs" id="ns-msgs">
+        <div class="ns-msg bot">${escapeHtml(title)}\n\nAsk me anything to see the web of agents in action.</div>
+      </div>
+      <details class="ns-settings">
+        <summary>⚙ BYOK / router settings</summary>
+        <div class="ns-settings-body">
+          <label>Saved setup <select id="ns-profile"></select></label>
+          <label>Setup name <input id="ns-profile-name" placeholder="Local LLM, OpenAI, Anthropic router"></label>
+          <label>API key <input id="ns-key" type="password" placeholder="sk-… (kept in this browser only — enables a REAL LLM)"></label>
+          <label>Model <input id="ns-model" list="ns-model-options" placeholder="exact ID published by the upstream"></label>
+          <datalist id="ns-model-options"></datalist>
+          <label>Router base URL <input id="ns-router" placeholder="OpenAI-compatible /v1"></label>
+          <div id="ns-router-hint" class="ns-hint"></div>
+          <label class="ns-row-inline"><input type="checkbox" id="ns-lg"> Drive the LLM via LangChain.js</label>
+          <div class="ns-profile-actions">
+            <button id="ns-save-profile" class="ghost">Save setup</button>
+            <button id="ns-delete-profile" class="ghost">Delete setup</button>
+            <button id="ns-apply">Apply, save &amp; reload</button>
+          </div>
+          <div id="ns-profile-hint" class="ns-hint"></div>
+        </div>
+      </details>
+      <div class="ns-inputbar">
+        <input id="ns-input" placeholder="Type a request…" />
+        <button id="ns-send">Send</button>
+        <button id="ns-newchat" title="Clear conversation history" style="background:transparent;color:var(--ns-muted,#888);border:1px solid var(--ns-border,#ccc)">New chat</button>
+      </div>
+    </div>`;
+  const agentsHtml = `
+    <aside class="ns-agents">
+      <h3>Agents working for you</h3>
+      <div class="ns-status" id="ns-status"><span class="ns-spin"></span><span id="ns-status-text">Ready when you are.</span></div>
+      <div id="ns-anodes"></div>
+    </aside>`;
+  const devHtml = `
+    <aside class="ns-dev">
+      <div class="ns-graph" id="ns-graph"><h3>Agent graph &amp; origins</h3><div id="ns-nodes"></div></div>
+      <div class="ns-log" id="ns-log">
+        <div class="ns-toolbar">
+          <h3 style="margin:0">Execution log</h3>
+          <span class="ns-pill" id="ns-count">0 events</span>
+          <button id="ns-export" style="margin-left:auto;font-size:11px">Export JSON</button>
+        </div>
+        <div id="ns-rows"></div>
+      </div>
+    </aside>`;
+  const modalHtml = `<div class="ns-modal" id="ns-modal" hidden><div class="ns-modal-card" id="ns-modal-card"></div></div>`;
+
+  const chatSlot = root.querySelector('[data-ns-slot="chat"]');
+  const agentsSlot = root.querySelector('[data-ns-slot="agents"]');
+  const composed = Boolean(chatSlot && agentsSlot);
+  let app;
+  if (composed) {
+    let headerSlot = root.querySelector('[data-ns-slot="header"]');
+    if (!headerSlot) {
+      headerSlot = document.createElement("div");
+      headerSlot.dataset.nsSlot = "header";
+      root.prepend(headerSlot);
+    }
+    root.classList.add("ns-composed-app");
+    root.dataset.nsLayout = "composed";
+    root.dataset.dev = "false";
+    headerSlot.innerHTML = headerHtml;
+    chatSlot.innerHTML = chatHtml;
+    agentsSlot.innerHTML = agentsHtml + devHtml;
+    root.insertAdjacentHTML("beforeend", modalHtml);
+    app = root;
+  } else {
+    root.removeAttribute("data-ns-layout");
+    root.innerHTML = `
+      <div class="ns-app" data-dev="false">
+        ${headerHtml}
+        <main class="ns-main">${chatHtml}</main>
+        <div class="ns-split" id="ns-split" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize the panels"></div>
+        ${agentsHtml}
+        ${modalHtml}
+        ${devHtml}
+      </div>`;
+    app = root.querySelector(".ns-app");
+  }
 
   const msgs = root.querySelector("#ns-msgs");
   const rows = root.querySelector("#ns-rows");
@@ -368,6 +403,7 @@ export function mountApp(root, { engine, trace, manifest }) {
       if (!currentBot) currentBot = addBubble(msgs, "bot", clean);
       else currentBot.textContent = clean;
       for (const w of pendingWidgets) renderWidget(msgs, w, runUserTurn);
+      requestAnimationFrame(() => { msgs.scrollTop = msgs.scrollHeight; });
     } catch (err) {
       addBubble(msgs, "bot", "⚠️ " + err.message);
     } finally {
@@ -391,11 +427,14 @@ export function mountApp(root, { engine, trace, manifest }) {
 
   // Developer mode: the technical execution trace is hidden by default. Reveal it
   // with the ⚙ Developer toggle or ?dev=1; the choice persists in this browser.
-  const app = root.querySelector(".ns-app");
   const devToggle = root.querySelector("#ns-devtoggle");
   const store = (() => { try { return window.localStorage; } catch { return null; } })();
   let devOn = new URLSearchParams(location.search).get("dev") === "1" || store?.getItem("nsweb-dev") === "1";
-  const applyDev = () => { app.dataset.dev = devOn ? "true" : "false"; devToggle.classList.toggle("on", devOn); };
+  const applyDev = () => {
+    app.dataset.dev = devOn ? "true" : "false";
+    devToggle.classList.toggle("on", devOn);
+    if (devOn) agentsSlot?.closest("details")?.setAttribute("open", "");
+  };
   applyDev();
   devToggle.addEventListener("click", () => {
     devOn = !devOn;

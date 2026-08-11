@@ -1,0 +1,20 @@
+{
+  "brand": "Main Street Exchange",
+  "icon": "\ud83d\udccc",
+  "tagline": "Local needs. Local offers. Better connections.",
+  "hero": "Turn community needs and offers into clear, trusted local connections.",
+  "font": "Georgia, 'Times New Roman', serif",
+  "radius": 12,
+  "colors": {
+    "primary": "#155E63",
+    "accent": "#D9A441",
+    "bg": "#F4F0E7",
+    "bg_tint": "#E8E2D5",
+    "fg": "#1F2927",
+    "muted": "#64706B",
+    "border": "#C8C1B2",
+    "msgbg": "#FBF9F3",
+    "panelbg": "#FFFEFA"
+  },
+  "welcome": null
+}

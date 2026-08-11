@@ -1,0 +1,56 @@
+{
+  "brand": "Cailville Neighbor Exchange",
+  "icon": "\ud83c\udfd8\ufe0f",
+  "tagline": "Useful things. Trusted neighbors. Clear agreements.",
+  "hero": "Borrow, share, hire, and help across Cailville with every detail coordinated.",
+  "font": "Arial, Helvetica, sans-serif",
+  "radius": 16,
+  "colors": {
+    "primary": "#176B57",
+    "accent": "#D76735",
+    "bg": "#F3EFE5",
+    "bg_tint": "#E6EBDD",
+    "fg": "#20251F",
+    "muted": "#5C675F",
+    "border": "#C8C9B9",
+    "msgbg": "#FFFCF5",
+    "panelbg": "#F8F5EC"
+  },
+  "welcome": {
+    "widget": {
+      "title": "Start a neighbor exchange",
+      "icon": "\ud83d\udcdd",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "string",
+            "title": "What are you looking for or offering?",
+            "description": "Describe the item, space, task, service, or concern."
+          },
+          "timing": {
+            "type": "string",
+            "title": "When is it needed?",
+            "description": "Include preferred dates, times, and flexibility."
+          },
+          "location": {
+            "type": "string",
+            "title": "Where in Cailville?",
+            "description": "Share a neighborhood or public meeting area, not a private address."
+          },
+          "terms": {
+            "type": "string",
+            "title": "Budget, deposit, or trade",
+            "description": "Note payment, deposit, trade, tools, or other proposed terms."
+          }
+        },
+        "required": [
+          "request",
+          "timing"
+        ]
+      },
+      "submitLabel": "Coordinate my exchange"
+    },
+    "message": "Tell us what you need or what you can offer, and the exchange team will coordinate matching, terms, timing, and safety checks."
+  }
+}

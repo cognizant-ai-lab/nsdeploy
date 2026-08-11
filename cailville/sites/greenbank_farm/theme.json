@@ -1,0 +1,20 @@
+{
+  "brand": "Greenbank Field Office",
+  "icon": "\ud83c\udf3f",
+  "tagline": "Field intelligence for every farm decision",
+  "hero": "Turn forecasts, orders, inventory, and constraints into one coordinated operating plan.",
+  "font": "'Trebuchet MS', Arial, sans-serif",
+  "radius": 14,
+  "colors": {
+    "primary": "#205846",
+    "accent": "#D99032",
+    "bg": "#EEEBDD",
+    "bg_tint": "#E3E8D7",
+    "fg": "#173229",
+    "muted": "#5B6D64",
+    "border": "#BFC8B7",
+    "msgbg": "#FBFAF4",
+    "panelbg": "#F5F3E9"
+  },
+  "welcome": null
+}

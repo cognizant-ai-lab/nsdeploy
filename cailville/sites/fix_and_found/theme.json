@@ -1,0 +1,20 @@
+{
+  "brand": "Fix & Found",
+  "icon": "\ud83d\udee0\ufe0f",
+  "tagline": "Repair wisely. Recover value. Keep moving.",
+  "hero": "Turn damaged goods, donated inventory, and complex bids into profitable next steps.",
+  "font": "Arial, Helvetica, sans-serif",
+  "radius": 14,
+  "colors": {
+    "primary": "#145C58",
+    "accent": "#D66A3A",
+    "bg": "#F3EFE5",
+    "bg_tint": "#E7E0D2",
+    "fg": "#182824",
+    "muted": "#5E6D67",
+    "border": "#C8C0AF",
+    "msgbg": "#FCFAF4",
+    "panelbg": "#F7F3EA"
+  },
+  "welcome": null
+}

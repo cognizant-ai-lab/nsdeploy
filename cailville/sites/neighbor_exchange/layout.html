@@ -1,0 +1,44 @@
+<div id="app" data-ns-layout="composed">
+  <div class="topline">
+    <div data-ns-slot="header"></div>
+  </div>
+
+  <div class="market-spread">
+    <div class="exchange-layout">
+      <section class="story-column" aria-labelledby="exchange-heading">
+        <p class="civic-kicker">The neighborhood exchange desk</p>
+        <h1 class="hero-title" id="exchange-heading">Borrow.<br /><em>Trade.</em><br /><span class="accent-word">Help out.</span></h1>
+        <p class="hero-copy">One clear place to find a neighbor, settle fair terms, coordinate the handoff, and keep every Cailville exchange on track.</p>
+
+        <ul class="exchange-types" aria-label="Exchange possibilities">
+          <li><strong>🔧 Borrow locally</strong><span>Tools, equipment, and useful extras.</span></li>
+          <li><strong>🧤 Hire a hand</strong><span>Short jobs with timing and terms aligned.</span></li>
+          <li><strong>🏠 Share space</strong><span>Temporary stays reviewed with care.</span></li>
+          <li><strong>🛡️ Check concerns</strong><span>Scam, safety, and policy guidance.</span></li>
+        </ul>
+
+        <aside class="local-note">Share only the neighborhood details needed to make a match. Exact addresses and private contact information can wait until the exchange is confirmed.</aside>
+      </section>
+
+      <section class="work-column" aria-label="Exchange coordinator">
+        <div class="desk-label"><span>Resident request desk</span><span>● Coordinators ready</span></div>
+        <div class="exchange-desk">
+          <main data-ns-slot="chat"></main>
+        </div>
+
+        <details class="collab-drawer" open="">
+          <summary>Agents working behind the exchange</summary>
+          <aside data-ns-slot="agents"></aside>
+        </details>
+      </section>
+    </div>
+  </div>
+
+  <footer class="market-footer">
+    <div>
+      <strong>Neighborly, with clear boundaries</strong>
+      <p>Matching, scheduling, resident communications, trust and safety, and town policy support are coordinated together. Never send bank credentials or move a suspicious payment off-platform.</p>
+    </div>
+    <div class="footer-mark">C ↔ C</div>
+  </footer>
+</div>

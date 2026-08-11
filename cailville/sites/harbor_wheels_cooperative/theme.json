@@ -1,0 +1,20 @@
+{
+  "brand": "Harbor Wheels Dispatch",
+  "icon": "\u267f",
+  "tagline": "Every ride connected. Every detail covered.",
+  "hero": "Coordinate accessible rides, fleet readiness, events, and rider support from one cooperative dispatch desk.",
+  "font": "Arial, Helvetica, sans-serif",
+  "radius": 16,
+  "colors": {
+    "primary": "#123B4A",
+    "accent": "#F3A712",
+    "bg": "#F5F1E8",
+    "bg_tint": "#E8F0EE",
+    "fg": "#142C35",
+    "muted": "#5C6E72",
+    "border": "#B9CBC8",
+    "msgbg": "#FCFBF7",
+    "panelbg": "#FFFFFF"
+  },
+  "welcome": null
+}

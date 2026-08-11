@@ -8,11 +8,11 @@ page layout (CSS + HTML). nsdeploy bakes that into the generated index.html + ma
 
 The LLM's CSS/HTML is treated as untrusted: it is strictly sanitized here (allowlist
 of presentational tags/attrs; no scripts/handlers/iframes; CSS stripped of
-@import/expression/unsafe url()), the #app mount + boot script are injected by
-nsdeploy (never the LLM), and on any problem (no key, network/LLM error, invalid or
-unsafe output, missing #app) we fall back to the default fixed template — the keyless
-experience is unchanged. Results are cached + written to theme.json so builds are
-reproducible and hand-overridable (see --theme-file).
+@import/expression/unsafe url()), nsdeploy owns the boot script and validates the
+#app mount-slot contract, and on any problem (no key, network/LLM error, invalid or
+unsafe output, missing mounts) we fall back to the default fixed template — the
+keyless experience is unchanged. Results are cached + written to theme.json so builds
+are reproducible and hand-overridable (see --theme-file).
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-PROMPT_VERSION = "7"
+PROMPT_VERSION = "8"
 CACHE_DIR = Path.home() / ".cache" / "nsdeploy" / "themes"
 DEFAULT_THEME_MODEL = "gpt-5.6"
 
@@ -38,7 +38,7 @@ _ALLOWED_TAGS = {
     "div", "section", "header", "footer", "main", "aside", "nav", "article",
     "span", "p", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6",
     "ul", "ol", "li", "strong", "em", "b", "i", "u", "small", "blockquote",
-    "figure", "figcaption", "img", "style",
+    "figure", "figcaption", "img", "style", "details", "summary",
 }
 # Tags whose entire contents are discarded (not just the wrapper).
 _DROP_CONTENT_TAGS = {
@@ -47,7 +47,7 @@ _DROP_CONTENT_TAGS = {
     "link", "meta", "base", "math", "a",
 }
 _VOID_TAGS = {"br", "hr", "img"}
-_GLOBAL_ATTRS = {"class", "id", "title", "role", "width", "height", "alt", "lang", "dir"}
+_GLOBAL_ATTRS = {"class", "id", "title", "role", "width", "height", "alt", "lang", "dir", "open"}
 _MAX_HTML = 24000
 _MAX_CSS = 24000
 
@@ -67,7 +67,9 @@ def _sanitize_css(css: str) -> str:
 
     def _url(m):
         inner = m.group(1).strip().strip("\"'")
-        ok = inner.startswith("data:image/") or inner.startswith("https://") or inner == "" or inner.lower() == "none"
+        ok = (inner.startswith("data:image/") or inner.startswith("https://") or
+              inner.startswith("/assets/") or inner.startswith("./assets/") or
+              inner.startswith("assets/") or inner == "" or inner.lower() == "none")
         return f"url({m.group(1)})" if ok else "none"
 
     css = re.sub(r"url\(([^)]*)\)", _url, css, flags=re.I)
@@ -81,7 +83,7 @@ class _HtmlSanitizer(HTMLParser):
         self.skip = 0          # >0 while inside a drop-content tag
         self.skip_tag = ""
         self.in_style = 0
-        self.app_seen = False  # emit the #app mount only once, empty
+        self.app_seen = False  # preserve the first #app mount; strip duplicate ids
 
     def _attrs(self, attrs: List[Tuple[str, Optional[str]]]) -> str:
         parts = []
@@ -89,6 +91,8 @@ class _HtmlSanitizer(HTMLParser):
             name = (name or "").lower()
             val = val or ""
             if name.startswith("on"):
+                continue
+            if name == "id" and val == "app" and self.app_seen:
                 continue
             if name == "style":
                 css = _sanitize_css(val)
@@ -116,13 +120,12 @@ class _HtmlSanitizer(HTMLParser):
             self.in_style += 1
             self.out.append("<style>")
         elif tag in _ALLOWED_TAGS:
-            # The #app mount is emitted EMPTY and its content skipped — the runtime
-            # fills it, so any nesting the LLM put inside is dropped (and #app stays
-            # a clean mount point regardless of model mistakes).
+            # Preserve the first #app and its sanitized children. New composed themes
+            # place empty runtime slots inside it; legacy themes still emit an empty
+            # #app and are populated with the fixed shell by the runtime.
             if self._is_app(attrs):
-                self.out.append('<div id="app"></div>')
+                self.out.append("<" + tag + self._attrs(attrs) + ">")
                 self.app_seen = True
-                self.skip, self.skip_tag = 1, tag
                 return
             self.out.append("<" + tag + self._attrs(attrs) + (" />" if tag in _VOID_TAGS else ">"))
 
@@ -130,7 +133,7 @@ class _HtmlSanitizer(HTMLParser):
         if self.skip:
             return
         if self._is_app(attrs):
-            self.out.append('<div id="app"></div>')
+            self.out.append("<" + tag + self._attrs(attrs) + "></" + tag + ">")
             self.app_seen = True
         elif tag in _ALLOWED_TAGS and tag != "style":
             self.out.append("<" + tag + self._attrs(attrs) + " />")
@@ -162,6 +165,13 @@ def _sanitize_html(s: str) -> str:
     p.feed(s[:_MAX_HTML * 2])
     p.close()
     return "".join(p.out)[:_MAX_HTML]
+
+
+def _valid_composed_layout(body: str) -> bool:
+    """A composed theme is usable only when every runtime surface has one target."""
+    if 'data-ns-layout="composed"' not in body:
+        return True
+    return all(body.count(f'data-ns-slot="{slot}"') == 1 for slot in ("header", "chat", "agents"))
 
 
 # A validated color: #hex, rgb()/hsl(), or a bare CSS keyword. Nothing else.
@@ -217,7 +227,7 @@ class ThemeSpec:
         # mount after sanitizing — otherwise the layout would be unusable, so we drop
         # it and fall back to the fixed template.
         body = _sanitize_html(data.get("body") or "")
-        if 'id="app"' in body or "id='app'" in body:
+        if ('id="app"' in body or "id='app'" in body) and _valid_composed_layout(body):
             spec.body = body
             spec.style = _sanitize_css(data.get("style") or "")
         return spec
@@ -307,27 +317,39 @@ _SYSTEM_PROMPT = (
     "===STYLE===\n"
     "a COMPLETE CSS stylesheet for the page — backgrounds/gradients, layout (grid/flex), "
     "the hero, typography, decorative effects, responsiveness. BOLDLY restyle the "
-    "assistant itself so it reads as part of your design (style these, don't redefine "
-    "their structure): .ns-header, .ns-title, .ns-chat, .ns-msgs, .ns-msg, .ns-msg.user, "
-    ".ns-inputbar, .ns-agents, .ns-dev, .ns-widget, .ns-w-btn — give the panels your "
-    "borders/shadows/fills, the bubbles your shape, the buttons your accent. NOTE: the "
-    "assistant renders its OWN compact brand bar (with a Developer toggle) at the top of "
-    "#app, so do NOT open the page with a second logo+name nav bar — lead with domain "
-    "ATMOSPHERE (hero, imagery, motif, bold type) instead, and let that inner bar blend "
-    "via .ns-header. CSS ONLY — gradients/shapes/shadows/emoji; NO @import, NO "
+    "assistant itself so it reads as part of your design: .ns-header, .ns-title, .ns-chat, "
+    ".ns-msgs, .ns-msg, .ns-msg.user, .ns-inputbar, .ns-agents, .ns-graph, .ns-log, "
+    ".ns-widget, .ns-w-btn. Give surfaces your borders/shadows/fills, bubbles their shape, "
+    "and buttons your accent. The runtime owns the INTERNAL behavior of every .ns-* "
+    "component: do not set display, position, grid placement, width, height, min-height, "
+    "or overflow on .ns-* classes. Control placement and sizing with your own wrappers and "
+    "the [data-ns-slot] elements instead. Never apply pill-like styling to the whole "
+    ".ns-dev, .ns-agents, .ns-graph, or .ns-log container. The assistant supplies its own "
+    "compact brand bar and Developer toggle, so do not add a duplicate logo/name nav bar. "
+    "Lead with domain atmosphere and let .ns-header blend into it. CSS ONLY — "
+    "gradients/shapes/shadows/emoji; NO @import, NO "
     "url() except data: or https: images.\n"
     "===BODY===\n"
-    "the HTML body contents: compose your chosen archetype AROUND a single EMPTY "
-    "<div id=\"app\"></div>. That div is where the live assistant mounts (it draws its "
-    "own header plus two side-by-side, user-resizable panels inside), so it is the "
-    "PRIMARY surface: make it prominent and comfortably wide — at least ~620px of usable "
-    "width — as a large card, a full-bleed stage, or one whole side of a split. Place it "
-    "inventively (centered, offset left/right, floating over a hero) but NEVER cram it "
-    "into a narrow sidebar/column. Leave it EMPTY: do NOT put anything inside #app and do "
-    "NOT build your own chat/messages/input — that's the assistant's job. Your decorative "
-    "elements must be SIBLINGS of #app, not children. Use your OWN class names (do NOT "
-    "reuse names starting with 'ns-', which belong to the assistant). "
-    "Plain presentational HTML only: NO <script>, NO on* handlers, NO <iframe>/<form>/<svg>.\n\n"
+    "the HTML body contents. Include exactly one composed runtime root with these THREE "
+    "empty mount slots, each exactly once:\n"
+    "<div id=\"app\" data-ns-layout=\"composed\">\n"
+    "  <div data-ns-slot=\"header\"></div>\n"
+    "  <main data-ns-slot=\"chat\"></main>\n"
+    "  <aside data-ns-slot=\"agents\"></aside>\n"
+    "</div>\n"
+    "This is a placement contract, NOT a required shape: add your own wrappers inside "
+    "#app, nest and position the three slots anywhere, and choose the relationship that "
+    "best fits the domain. The chat is the primary work surface and must remain comfortably "
+    "usable (roughly 360px minimum width and 480px minimum height). The agents slot may be "
+    "an inline rail, a panel below the chat, a floating overlay, or a native CSS-styled "
+    "<details><summary>Agents working</summary>...slot...</details> pull-out. On narrow "
+    "screens, stack the surfaces or collapse the agents slot so the page never scrolls "
+    "sideways. Do not force overflow:hidden on html, body, #app, the chat slot, or the "
+    "agents slot; page scrolling and CRUSE forms must remain reachable. Keep every slot "
+    "EMPTY and do not build chat messages, inputs, agent cards, settings, or developer "
+    "tools yourself — the runtime inserts them. Use your own class names for wrappers; "
+    "names beginning with ns- belong to the runtime. Plain presentational HTML only: "
+    "NO <script>, NO on* handlers, NO <iframe>/<form>/<svg>.\n\n"
     "AESTHETICS — honor these so the result is tasteful and READABLE, never garish:\n"
     "- Harmony: choose ONE coherent palette (analogous or a single complementary pair) "
     "plus neutrals. Pick colors that genuinely look good TOGETHER; avoid clashing, "
@@ -343,7 +365,8 @@ _SYSTEM_PROMPT = (
     "must contrast with it. If unsure, make backgrounds lighter/darker until text is "
     "comfortable to read.\n"
     "Rules: self-contained (no external fonts/scripts/images); the body MUST contain "
-    "exactly one empty <div id=\"app\"></div> with your design around it."
+    "exactly one #app with data-ns-layout=\"composed\" and exactly one empty header, chat, "
+    "and agents slot inside it."
 )
 
 
