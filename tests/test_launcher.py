@@ -7,16 +7,23 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from nsdeploy.byok import BYOK_AUTH_HEADER, BYOK_MODEL_HEADER
 from nsdeploy.launcher import make_handler
 
 
 class _SessionMcpHandler(BaseHTTPRequestHandler):
     session_id = "test-session-id"
+    get_session_id = ""
+    delete_session_id = ""
+    byok_authorization = ""
+    byok_model = ""
 
     def log_message(self, *args):
         pass
 
     def do_POST(self):
+        type(self).byok_authorization = self.headers.get(BYOK_AUTH_HEADER, "")
+        type(self).byok_model = self.headers.get(BYOK_MODEL_HEADER, "")
         length = int(self.headers.get("Content-Length", 0) or 0)
         body = json.loads(self.rfile.read(length) or b"{}")
         if body.get("method") == "initialize":
@@ -38,6 +45,21 @@ class _SessionMcpHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+    def do_GET(self):
+        type(self).get_session_id = self.headers.get("Mcp-Session-Id", "")
+        payload = b": keepalive\n\n"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_DELETE(self):
+        type(self).delete_session_id = self.headers.get("Mcp-Session-Id", "")
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
 
 class _ModelCatalogHandler(BaseHTTPRequestHandler):
@@ -109,6 +131,58 @@ class LauncherProxyTests(unittest.TestCase):
                     "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {},
                 }, session_id="test-session-id")
                 self.assertEqual(listed.status, 200)
+                with urllib.request.urlopen(urllib.request.Request(
+                    url, method="GET", headers={
+                        "Accept": "text/event-stream",
+                        "Mcp-Session-Id": "test-session-id",
+                        "MCP-Protocol-Version": "2025-06-18",
+                    }), timeout=5) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.headers.get("Content-Type"), "text/event-stream")
+                with urllib.request.urlopen(urllib.request.Request(
+                    url, method="DELETE", headers={
+                        "Mcp-Session-Id": "test-session-id",
+                        "MCP-Protocol-Version": "2025-06-18",
+                    }), timeout=5) as response:
+                    self.assertEqual(response.status, 200)
+                self.assertEqual(_SessionMcpHandler.get_session_id, "test-session-id")
+                self.assertEqual(_SessionMcpHandler.delete_session_id, "test-session-id")
+            finally:
+                proxy.shutdown()
+                proxy.server_close()
+                upstream.shutdown()
+                upstream.server_close()
+
+    def test_public_facade_proxy_forwards_caller_byok_headers(self):
+        _SessionMcpHandler.byok_authorization = ""
+        _SessionMcpHandler.byok_model = ""
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), _SessionMcpHandler)
+        upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        upstream_thread.start()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            handler = make_handler(
+                root, "http://unused", root, [], [],
+                f"http://127.0.0.1:{upstream.server_port}/mcp",
+            )
+            proxy = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+            proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+            proxy_thread.start()
+            try:
+                self._post(
+                    f"http://127.0.0.1:{proxy.server_port}/mcp",
+                    {
+                        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                        "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                                   "clientInfo": {"name": "test", "version": "1"}},
+                    },
+                    extra_headers={
+                        BYOK_AUTH_HEADER: "Bearer caller-secret",
+                        BYOK_MODEL_HEADER: "caller-model",
+                    },
+                )
+                self.assertEqual(_SessionMcpHandler.byok_authorization, "Bearer caller-secret")
+                self.assertEqual(_SessionMcpHandler.byok_model, "caller-model")
             finally:
                 proxy.shutdown()
                 proxy.server_close()
@@ -116,7 +190,7 @@ class LauncherProxyTests(unittest.TestCase):
                 upstream.server_close()
 
     @staticmethod
-    def _post(url, body, session_id=None):
+    def _post(url, body, session_id=None, extra_headers=None):
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
@@ -124,6 +198,7 @@ class LauncherProxyTests(unittest.TestCase):
         }
         if session_id:
             headers["Mcp-Session-Id"] = session_id
+        headers.update(extra_headers or {})
         return urllib.request.urlopen(urllib.request.Request(
             url, data=json.dumps(body).encode(), method="POST", headers=headers,
         ), timeout=5)

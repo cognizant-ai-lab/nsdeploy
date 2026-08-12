@@ -50,6 +50,36 @@ an interactive town map. Start the complete demo from the repository root:
 ./cailville/launch_all.sh
 ```
 
+For real public-facade execution, the private steward supplies the caller profile.
+Use the same OpenAI key already used by the private Neuro-SAN server, or set the
+steward-specific variables explicitly:
+
+```bash
+export NSDEPLOY_STEWARD_BYOK_API_KEY="your-key"
+export NSDEPLOY_STEWARD_BYOK_MODEL="gpt-4o"
+./cailville/launch_all.sh
+```
+
+The launcher does not install that key in any public facade. It is attached to each
+MCP request by the private steward and propagated only while that request traverses
+linked public sites.
+
+To verify the complete path, select
+`deneman_place/deneman_place_private_steward` in nsFlow and submit:
+
+```text
+Plan an 80-person wedding in Cailville. Find venue, catering, lodging,
+transportation, neighbor assistance, and any required permits.
+```
+
+Approve the steward's proposed contacts when prompted. A successful run creates MCP
+sessions in the contacted sites' logs, records `200 OK` responses from the configured
+LLM upstream, and completes without `tool_error: true`, authentication errors, or a
+steward timeout. The public logs must not contain the BYOK authorization header or
+key value. The sites contacted are chosen by the agent from its directory and the
+public links it discovers, so transport success does not guarantee that one turn
+will cover every requested business category.
+
 The launcher uses `.venv/bin/python` or `venv/bin/python` when available, starts the sites on ports
 8091-8103, waits for every site, and then opens `cailville/cailville.html`. Logs are
 written to `.nsdeploy/cailville-logs/`. Its runtime BYOK proxy defaults to OpenAI and
@@ -76,7 +106,10 @@ To run the agents with Docker Model Runner instead, explicitly select its upstre
 and enter one of the exact IDs returned by its `/models` endpoint in BYOK settings:
 
 ```bash
-NSDEPLOY_UPSTREAM=http://localhost:12434/engines/v1 ./cailville/launch_all.sh
+NSDEPLOY_UPSTREAM=http://localhost:12434/engines/v1 \
+NSDEPLOY_STEWARD_BYOK_API_KEY=x \
+NSDEPLOY_STEWARD_BYOK_MODEL="exact-model-id-from-models" \
+./cailville/launch_all.sh
 ```
 
 For a fast functional test, skip theme generation entirely:
@@ -145,9 +178,14 @@ the standard Neuro-SAN server, or add this repository to that server's `PYTHONPA
 When a network has linked public sites, the generated steward includes their exact
 URLs in its private directory and is instructed not to invent hostnames. Unknown
 public sites remain reachable by supplying their URL explicitly.
-Generated private stewards allow up to 900 seconds for multi-site fan-out requests;
+Generated private stewards allow up to 3600 seconds for multi-site fan-out requests;
 adjust `max_execution_seconds` in the generated steward HOCON if a deployment needs
-an even longer workflow.
+an even longer workflow. Each public-site call is bounded to 720 seconds by
+`launch_all.sh`; override that with `NSDEPLOY_STEWARD_SITE_TIMEOUT_SECONDS` when a
+trusted public network needs more time. The public facade bounds nested site calls
+to 480 seconds by default; override that with `NSDEPLOY_FACADE_SITE_TIMEOUT_SECONDS`.
+Those bounds are also applied to the MCP clients' long-lived SSE reads, replacing
+the library default of 300 seconds so an active request is not dropped mid-run.
 
 Public sites are open-web reachable by default, like ordinary HTML links. The
 generated manifest declares `peer_policy.mode = "open"`; it does not turn published
@@ -157,12 +195,15 @@ links into an authorization allow-list. A private steward can deny origins with:
 export NSDEPLOY_STEWARD_DENY_ORIGINS="https://untrusted.example,http://127.0.0.1:9999"
 ```
 
-The server-side facade uses the site's configured `--upstream` and
-`OPENAI_API_KEY` by default. Override them with `NSDEPLOY_FACADE_UPSTREAM` and
-`NSDEPLOY_FACADE_API_KEY`, or pass `--facade-upstream` and `--facade-key`. Set the
-facade upstream explicitly to `mock://nsdeploy` only for a deterministic keyless
-demo. The browser BYOK path is unchanged; a browser-entered key is never shared
-with a public facade.
+The server-side facade uses the site's configured `--facade-upstream`, but all real
+LLM execution is caller BYOK. A private steward sends its
+`NSDEPLOY_STEWARD_BYOK_API_KEY` (falling back to `OPENAI_API_KEY`) and
+`NSDEPLOY_STEWARD_BYOK_MODEL` as sensitive MCP transport headers. Every public
+facade uses those credentials and propagates them only when invoking another public
+facade; they are never included in tool arguments, prompts, results, or local and
+third-party MCP calls. A real facade request without caller credentials is rejected.
+Set the facade upstream explicitly to `mock://nsdeploy` only for a deterministic
+keyless demo. The browser `/byok/v1` path remains unchanged.
 
 ## Linking separately deployed agent networks
 

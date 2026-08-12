@@ -151,6 +151,8 @@ class LinkerTests(unittest.TestCase):
         self.assertIn(site, manifest["allowed_peers"])
         self.assertEqual(manifest["peer_policy"]["mode"], "open")
         self.assertEqual(manifest["agent_mcp"]["endpoint"], f"{site}/mcp")
+        self.assertEqual(manifest["agent_mcp"]["llm_credentials"]["mode"], "caller-byok")
+        self.assertTrue(manifest["agent_mcp"]["llm_credentials"]["required"])
 
     def test_private_steward_is_generated_for_any_public_site(self):
         plan = DeploymentPlan(
@@ -160,7 +162,7 @@ class LinkerTests(unittest.TestCase):
         )
         hocon = build_private_steward_hocon(plan, "https://harbor.example")
         self.assertIn('"class": "nsdeploy.steward.PublicAgentMcpGateway"', hocon)
-        self.assertIn('"max_execution_seconds": 900', hocon)
+        self.assertIn('"max_execution_seconds": 3600', hocon)
         self.assertIn('"mode": "open"', hocon)
         self.assertIn("https://harbor.example/mcp", hocon)
         self.assertIn("http://127.0.0.1:8091/harbor_guide", hocon)

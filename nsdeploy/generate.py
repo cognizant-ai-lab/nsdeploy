@@ -19,12 +19,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
+from nsdeploy.byok import BYOK_AUTH_HEADER, BYOK_MODEL_HEADER
 from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.site_source import DEFAULT_SITE_JS
 from nsdeploy.theme import ThemeSpec
 
 
-DEFAULT_PRIVATE_STEWARD_MAX_EXECUTION_SECONDS = 900
+DEFAULT_PRIVATE_STEWARD_MAX_EXECUTION_SECONDS = 3600
 
 # Domain-agnostic CRUSE directive injected into each agent's instructions at deploy
 # time so any network produces generative-UI widgets — without editing the source
@@ -168,6 +169,14 @@ def build_agent_mcp_metadata(plan: DeploymentPlan, site_base: str) -> Dict[str, 
         "tool": "invoke_network",
         "reachability": "open-web",
         "trust": "caller-controlled",
+        "llm_credentials": {
+            "mode": "caller-byok",
+            "required": True,
+            "transport": "http-headers",
+            "authorization_header": BYOK_AUTH_HEADER,
+            "model_header": BYOK_MODEL_HEADER,
+            "propagation": "public-mcp-hops",
+        },
         "deny_list": [],
     }
 

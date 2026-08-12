@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from nsdeploy.byok import BYOK_AUTH_HEADER, BYOK_MODEL_HEADER
 from nsdeploy.resolve import DeploymentPlan
 
 # The vendored neuro-san-web browser runtime (self-contained ES modules) lives at
@@ -33,6 +34,9 @@ MIME = {
     ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".map": "application/json",
 }
 WORKER_CSP = "default-src 'none'; script-src blob:; connect-src 'none'; worker-src 'none'"
+MCP_PROXY_TIMEOUT_SECONDS = 480
+UPSTREAM_REQUEST_TIMEOUT_SECONDS = 480
+MODEL_CATALOG_TIMEOUT_SECONDS = 120
 
 
 def _sse(obj: Dict[str, Any]) -> bytes:
@@ -67,7 +71,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
 
         def _cors(self):
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "*")
             self.send_header("Access-Control-Expose-Headers", "Mcp-Session-Id, X-Nsdeploy-LLM-Route")
 
@@ -88,13 +92,25 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             if path == "/_nsdeploy/links":
                 return self._save_link(raw)
             if path == "/mcp" and facade_mcp:
-                return self._mcp_proxy(facade_mcp, raw, "public facade")
+                return self._mcp_proxy(facade_mcp, raw, "public facade", "POST")
             m = local_mcp_re.match(path)
             if m:
-                return self._local_mcp_proxy(int(m.group(1)), raw)
+                return self._local_mcp_proxy(int(m.group(1)), raw, "POST")
             m = ext_mcp_re.match(path)
             if m:
-                return self._ext_mcp_proxy(int(m.group(1)), raw)
+                return self._ext_mcp_proxy(int(m.group(1)), raw, "POST")
+            self._send(404, b"not found", "text/plain")
+
+        def do_DELETE(self):
+            path = self.path.split("?")[0]
+            if path == "/mcp" and facade_mcp:
+                return self._mcp_proxy(facade_mcp, b"", "public facade", "DELETE")
+            m = local_mcp_re.match(path)
+            if m:
+                return self._local_mcp_proxy(int(m.group(1)), b"", "DELETE")
+            m = ext_mcp_re.match(path)
+            if m:
+                return self._ext_mcp_proxy(int(m.group(1)), b"", "DELETE")
             self._send(404, b"not found", "text/plain")
 
         def _save_link(self, raw: bytes):
@@ -192,7 +208,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 headers={"Content-Type": "application/json", "Authorization": auth, "Accept": "text/event-stream"},
             )
             try:
-                up = urllib.request.urlopen(req, timeout=120)
+                up = urllib.request.urlopen(req, timeout=UPSTREAM_REQUEST_TIMEOUT_SECONDS)
             except urllib.error.HTTPError as e:
                 detail = e.read()
                 self.send_response(e.code)
@@ -220,20 +236,19 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 self.wfile.write(chunk)
 
         # --- same-origin proxies to private local/external MCP servers -------------
-        def _local_mcp_proxy(self, index: int, raw: bytes):
+        def _local_mcp_proxy(self, index: int, raw: bytes, method: str):
             if index < 0 or index >= len(local_mcps):
                 return self._send(404, b"unknown local MCP", "text/plain")
-            return self._mcp_proxy(local_mcps[index], raw, "local")
+            return self._mcp_proxy(local_mcps[index], raw, "local", method)
 
-        def _ext_mcp_proxy(self, index: int, raw: bytes):
+        def _ext_mcp_proxy(self, index: int, raw: bytes, method: str):
             if index < 0 or index >= len(ext_mcps):
                 return self._send(404, b"unknown external MCP", "text/plain")
-            return self._mcp_proxy(ext_mcps[index], raw, "external")
+            return self._mcp_proxy(ext_mcps[index], raw, "external", method)
 
-        def _mcp_proxy(self, target: str, raw: bytes, kind: str):
+        def _mcp_proxy(self, target: str, raw: bytes, kind: str, method: str):
             # Forward the MCP/JSON-RPC request + the headers the protocol needs.
-            fwd = {"Content-Type": "application/json",
-                   "Accept": self.headers.get("Accept", "application/json, text/event-stream"),
+            fwd = {"Accept": self.headers.get("Accept", "application/json, text/event-stream"),
                    "MCP-Protocol-Version": self.headers.get("MCP-Protocol-Version", "2025-06-18"),
                    # urllib's default Python-urllib/* user agent is blocked by
                    # some Cloudflare-protected MCP providers (for example
@@ -244,12 +259,24 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
                    )}
+            if method == "POST":
+                fwd["Content-Type"] = "application/json"
             sid = self.headers.get("Mcp-Session-Id")
             if sid:
                 fwd["Mcp-Session-Id"] = sid
+            last_event_id = self.headers.get("Last-Event-ID")
+            if last_event_id:
+                fwd["Last-Event-ID"] = last_event_id
+            if kind == "public facade":
+                for header in (BYOK_AUTH_HEADER, BYOK_MODEL_HEADER):
+                    value = self.headers.get(header)
+                    if value:
+                        fwd[header] = value
             try:
                 up = urllib.request.urlopen(
-                    urllib.request.Request(target, data=raw, method="POST", headers=fwd), timeout=120)
+                    urllib.request.Request(
+                        target, data=raw if raw else None, method=method, headers=fwd),
+                    timeout=MCP_PROXY_TIMEOUT_SECONDS)
             except urllib.error.HTTPError as e:
                 detail = e.read()
                 self._send(e.code, detail, e.headers.get("Content-Type", "application/json"))
@@ -259,7 +286,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                                   "message": f"{kind} MCP unreachable: {e}"}}).encode("utf-8")
                 self._send(502, msg, "application/json")
                 return
-            self.send_response(200)
+            self.send_response(up.status)
             self._cors()
             self.send_header("Content-Type", up.headers.get("Content-Type", "application/json"))
             up_sid = up.headers.get("Mcp-Session-Id")
@@ -269,15 +296,30 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             self.send_header("Connection", "close")
             self.close_connection = True
             self.end_headers()
-            while True:
-                chunk = up.read(2048)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
+            try:
+                while True:
+                    chunk = up.read(2048)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+            except BrokenPipeError:
+                # The MCP client may cancel a long-lived GET stream after its
+                # session has completed. The upstream session is still valid.
+                pass
+            finally:
+                up.close()
 
         # --- static files: /runtime/* from the runtime, else from the site -------
         def do_GET(self):
             path = self.path.split("?")[0]
+            if path == "/mcp" and facade_mcp:
+                return self._mcp_proxy(facade_mcp, b"", "public facade", "GET")
+            m = local_mcp_re.match(path)
+            if m:
+                return self._local_mcp_proxy(int(m.group(1)), b"", "GET")
+            m = ext_mcp_re.match(path)
+            if m:
+                return self._ext_mcp_proxy(int(m.group(1)), b"", "GET")
             if path == "/byok/v1/models":
                 return self._byok_models_proxy()
             if path == "/":
@@ -302,7 +344,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 headers={"Authorization": auth, "Accept": "application/json"},
             )
             try:
-                up = urllib.request.urlopen(req, timeout=30)
+                up = urllib.request.urlopen(req, timeout=MODEL_CATALOG_TIMEOUT_SECONDS)
                 detail = up.read()
                 return self._send(
                     up.status, detail,
@@ -410,20 +452,21 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
         local_mcps = [f"http://127.0.0.1:{private_port}/mcp" for _, private_port in bindings]
         facade_port = _free_tcp_port()
         facade_upstream = facade_upstream or os.environ.get("NSDEPLOY_FACADE_UPSTREAM") or upstream
-        facade_api_key = (
-            facade_api_key
-            or os.environ.get("NSDEPLOY_FACADE_API_KEY", "")
-            or os.environ.get("OPENAI_API_KEY", "")
-        )
         repo_root = str(Path(__file__).resolve().parents[1])
         env = dict(os.environ)
+        for secret_name in (
+            "OPENAI_API_KEY",
+            "NSDEPLOY_FACADE_API_KEY",
+            "NSDEPLOY_STEWARD_BYOK_API_KEY",
+        ):
+            env.pop(secret_name, None)
         env["PYTHONPATH"] = os.pathsep.join([repo_root, str(studio_root), env.get("PYTHONPATH", "")])
         facade_proc = subprocess.Popen(
             [python_exe, "-m", "nsdeploy.facade", "--config",
              str(site_dir / f"{plan.network_name}.network.json"), "--site-base",
              f"http://127.0.0.1:{port}", "--front-man", plan.front_man,
-             "--port", str(facade_port), "--upstream", facade_upstream,
-             "--api-key", facade_api_key], env=env, cwd=repo_root,
+             "--port", str(facade_port), "--upstream", facade_upstream],
+            env=env, cwd=repo_root,
         )
         _wait_for_listener(facade_proc, facade_port)
         httpd = ThreadingHTTPServer(
@@ -432,7 +475,7 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
         url = f"http://127.0.0.1:{port}/"
         print(f"\n🌐  {plan.network_name} is live:  {url}")
         print(f"    LLM: mock router (no key) at /v1  ·  BYOK proxy at /byok/v1 → {upstream}")
-        print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: {facade_upstream}  ·  steward: {plan.network_name}_private_steward.hocon")
+        print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: caller BYOK → {facade_upstream}  ·  steward: {plan.network_name}_private_steward.hocon")
         if plan.hostable_tools:
             print("    MCP tool servers (same-origin proxy → private subprocess):")
             for i, (tool, (_, private_port)) in enumerate(zip(plan.hostable_tools, bindings)):

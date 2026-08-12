@@ -49,7 +49,7 @@ def main() -> int:
     ap.add_argument("--facade-upstream", default=None,
                     help="server-side facade LLM endpoint (default: $NSDEPLOY_FACADE_UPSTREAM or --upstream)")
     ap.add_argument("--facade-key", default=None,
-                    help="server-side facade API key (default: $NSDEPLOY_FACADE_API_KEY)")
+                    help="legacy compatibility option; real facade calls require caller BYOK over MCP")
     ap.add_argument("--runtime-dir", default=None, help="neuro-san-web runtime dir (default: vendored ./runtime)")
     ap.add_argument("--links", default=None, help="link sidecar JSON (default: <hocon>.links.json when present)")
     ap.add_argument("--link", action="append", default=[], metavar="REF=URL",

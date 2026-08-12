@@ -2,8 +2,7 @@
 
 The browser runtime remains the primary execution path.  This small server-side
 runner gives private stewards a machine-facing path with the same network JSON,
-using an OpenAI-compatible server key when configured and a deterministic mode
-when it is not.
+using caller-owned credentials propagated over MCP or a deterministic mock mode.
 """
 from __future__ import annotations
 
@@ -14,15 +13,23 @@ import binascii
 import hashlib
 import json
 import os
-import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import httpx
+
+from nsdeploy.byok import (
+    ByokContextMiddleware,
+    current_byok_credentials,
+    forwarding_headers,
+)
+
 
 PUBLIC_SITE_CALL_BUDGET = 12
-PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS = 30
+PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS = float(
+    os.environ.get("NSDEPLOY_FACADE_SITE_TIMEOUT_SECONDS", "480")
+)
 MOCK_TOOL_CALLS_PER_AGENT = 1
 _CONTEXT_MARKER = "\n\n__NSDEPLOY_PUBLIC_CONTEXT__:"
 
@@ -56,6 +63,11 @@ def _is_public_site_ref(value: str) -> bool:
         and "/_mcp/" not in path
         and "/ext-mcp/" not in path
     )
+
+
+def _mcp_http_timeout(seconds: float) -> httpx.Timeout:
+    short = min(30.0, seconds)
+    return httpx.Timeout(seconds, connect=short, pool=short)
 
 
 def _pack_context(request: str, visited_sites: set[str], remaining_calls: int) -> str:
@@ -107,6 +119,12 @@ class NetworkRunner:
     async def run(self, request: str, front_man: str) -> str:
         if front_man not in self.agents:
             return "Error: the deployed network has no front-man agent."
+        credentials = current_byok_credentials()
+        if not self.upstream.startswith("mock://") and not (credentials and credentials.available):
+            return (
+                "Error: caller BYOK credentials are required for this public agent site. "
+                "The private steward must provide them on the MCP transport."
+            )
         clean_request, visited_sites, remaining_calls = _unpack_context(request)
         current_site = _site_key(self.site_base)
         if current_site:
@@ -194,10 +212,16 @@ class NetworkRunner:
             from mcp.client.streamable_http import streamable_http_client
 
             async with asyncio.timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS):
-                async with streamable_http_client(endpoint) as (read, write, _):
-                    async with ClientSession(read, write) as session:
-                        await session.initialize()
-                        response = await session.list_tools()
+                async with httpx.AsyncClient(
+                    timeout=_mcp_http_timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS),
+                    follow_redirects=True,
+                ) as client:
+                    async with streamable_http_client(
+                        endpoint, http_client=client, terminate_on_close=False
+                    ) as (read, write, _):
+                        async with ClientSession(read, write) as session:
+                            await session.initialize()
+                            response = await session.list_tools()
             items = []
             for tool in response.tools:
                 name = f"{_safe_name(endpoint)}__{tool.name}"
@@ -238,10 +262,22 @@ class NetworkRunner:
             from mcp.client.streamable_http import streamable_http_client
 
             async with asyncio.timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS):
-                async with streamable_http_client(spec["endpoint"]) as (read, write, _):
-                    async with ClientSession(read, write) as session:
-                        await session.initialize()
-                        result = await session.call_tool(spec["remote_name"], arguments)
+                client_headers = (
+                    forwarding_headers()
+                    if spec.get("remote_name") == "invoke_network"
+                    else {}
+                )
+                async with httpx.AsyncClient(
+                    timeout=_mcp_http_timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS),
+                    follow_redirects=True,
+                    headers=client_headers,
+                ) as client:
+                    async with streamable_http_client(
+                        spec["endpoint"], http_client=client, terminate_on_close=False
+                    ) as (read, write, _):
+                        async with ClientSession(read, write) as session:
+                            await session.initialize()
+                            result = await session.call_tool(spec["remote_name"], arguments)
             return _text([getattr(item, "text", str(item)) for item in result.content])
         except TimeoutError:
             return (f"MCP tool call timed out after {PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS} seconds: "
@@ -266,22 +302,35 @@ class NetworkRunner:
             results = [_text(item.get("content", "")) for item in messages if item.get("role") == "tool"]
             return {"message": {"role": "assistant", "content":
                                  "(facade mock) " + " ".join(results)[:4000]}}
-        body = {"model": self.model,
+        credentials = current_byok_credentials()
+        if not credentials or not credentials.available:
+            return {"message": {"role": "assistant", "content":
+                    "Facade LLM failed: caller BYOK credentials are required."}}
+        body = {"model": credentials.model or self.model,
                 "messages": messages, "stream": False}
         if tools:
             body["tools"] = [{"type": "function", "function": {"name": item["name"],
                           "description": item.get("description", item["name"]),
                           "parameters": item.get("parameters") or {"type": "object"}}} for item in tools]
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        req = urllib.request.Request(self.upstream + "/chat/completions", data=json.dumps(body).encode(),
-                                     method="POST", headers=headers)
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": credentials.authorization,
+        }
         try:
-            with urllib.request.urlopen(req, timeout=120) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+            async with asyncio.timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS):
+                async with httpx.AsyncClient(
+                    timeout=_mcp_http_timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS),
+                    follow_redirects=True,
+                ) as client:
+                    response = await client.post(
+                        self.upstream + "/chat/completions",
+                        content=json.dumps(body).encode(),
+                        headers=headers,
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
             return {"message": payload.get("choices", [{}])[0].get("message", {})}
-        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
+        except (httpx.HTTPError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
             return {"message": {"role": "assistant", "content": f"Facade LLM failed: {exc}"}}
 
 
@@ -299,6 +348,7 @@ async def _serve(config: Dict[str, Any], site_base: str, upstream: str, api_key:
 
     mcp.tool(name="invoke_network", description="Invoke this public agent network on behalf of a caller.")(invoke_network)
     app = mcp.streamable_http_app()
+    app.add_middleware(ByokContextMiddleware)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
                        expose_headers=["Mcp-Session-Id", "mcp-session-id"])
     server = uvicorn.Server(uvicorn.Config(app, host=mcp.settings.host, port=port, log_level="warning"))
