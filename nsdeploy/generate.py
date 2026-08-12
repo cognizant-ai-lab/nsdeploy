@@ -179,10 +179,21 @@ def build_private_steward_hocon(plan: DeploymentPlan, site_base: str) -> str:
     import json as _json
 
     description = (plan.config.get("metadata", {}) or {}).get("description") or plan.network_name
+    public_sites = {plan.network_name: site_base.rstrip("/")}
+    public_sites.update({name: url.rstrip("/") for name, url in sorted(plan.links.items())})
+    public_site_lines = "\n".join(f"- {name}: {url}" for name, url in public_sites.items())
     gateway_parameters = {
         "type": "object",
         "properties": {
-            "site_url": {"type": "string", "description": "Public nsDeploy site URL or its /mcp endpoint."},
+            "site_url": {
+                "type": "string",
+                "description": (
+                    "Public nsDeploy site URL or its /mcp endpoint. Known public sites:\n"
+                    + public_site_lines
+                    + "\nUse an exact URL from this directory; never invent a hostname."
+                ),
+                "examples": list(public_sites.values()),
+            },
             "request": {"type": "string", "description": "The request to make on behalf of the site operator."},
         },
         "required": ["site_url", "request"],
@@ -193,6 +204,7 @@ def build_private_steward_hocon(plan: DeploymentPlan, site_base: str) -> str:
         "public_network": plan.network_name,
         "public_site": site_base.rstrip("/"),
         "public_mcp_endpoint": f"{site_base.rstrip('/')}/mcp",
+        "public_sites": public_sites,
         "private_web_policy": {
             "mode": "open",
             "denied_origins": [],
@@ -227,6 +239,12 @@ def build_private_steward_hocon(plan: DeploymentPlan, site_base: str) -> str:
         _json.dumps(
             "You are the private steward for the operator of the public network. "
             "You may reach any public agent site by URL through public_agent_mcp_gateway. "
+            "For known sites, use the exact URL in this directory:\n"
+            + public_site_lines
+            + "\nNever invent example domains or hostnames. If the needed site is not in the directory, "
+            "ask the operator for its public URL before calling it. "
+            "After the operator confirms an action, call the relevant known public sites rather than "
+            "returning a generic plan. "
             "Do not claim an action was completed unless the remote site returned a result. "
             "Ask for confirmation before irreversible actions.",
         ),

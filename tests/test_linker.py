@@ -156,11 +156,15 @@ class LinkerTests(unittest.TestCase):
         plan = DeploymentPlan(
             network_name="harbor_services", config={"metadata": {"description": "Harbor services"}},
             front_man="harbor_front",
+            links={"harbor_guide": "http://127.0.0.1:8091/harbor_guide"},
         )
         hocon = build_private_steward_hocon(plan, "https://harbor.example")
         self.assertIn('"class": "nsdeploy.steward.PublicAgentMcpGateway"', hocon)
         self.assertIn('"mode": "open"', hocon)
         self.assertIn("https://harbor.example/mcp", hocon)
+        self.assertIn("http://127.0.0.1:8091/harbor_guide", hocon)
+        self.assertIn("Never invent example domains or hostnames", hocon)
+        self.assertIn("After the operator confirms an action", hocon)
 
     def test_generated_steward_filename_includes_network_name(self):
         plan = DeploymentPlan(

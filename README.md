@@ -137,6 +137,9 @@ Neuro-SAN network for the site's operator, backed by the reusable
 nsDeploy site URL, discovers `/.well-known/nsdeploy-agent.json`, and invokes the
 site's `invoke_network` MCP tool. Install nsdeploy in the same Python environment as
 the standard Neuro-SAN server, or add this repository to that server's `PYTHONPATH`.
+When a network has linked public sites, the generated steward includes their exact
+URLs in its private directory and is instructed not to invent hostnames. Unknown
+public sites remain reachable by supplying their URL explicitly.
 
 Public sites are open-web reachable by default, like ordinary HTML links. The
 generated manifest declares `peer_policy.mode = "open"`; it does not turn published
