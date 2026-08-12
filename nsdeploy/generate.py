@@ -23,6 +23,9 @@ from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.site_source import DEFAULT_SITE_JS
 from nsdeploy.theme import ThemeSpec
 
+
+DEFAULT_PRIVATE_STEWARD_MAX_EXECUTION_SECONDS = 900
+
 # Domain-agnostic CRUSE directive injected into each agent's instructions at deploy
 # time so any network produces generative-UI widgets — without editing the source
 # HOCON. The shapes match the neuro-san-web runtime's widget renderer. (Widgets are
@@ -214,6 +217,7 @@ def build_private_steward_hocon(plan: DeploymentPlan, site_base: str) -> str:
     }
     return """{
   "llm_config": {"model_name": "gpt-4o"},
+  "max_execution_seconds": %d,
   "metadata": %s,
   "tools": [
     {
@@ -235,6 +239,7 @@ def build_private_steward_hocon(plan: DeploymentPlan, site_base: str) -> str:
   ]
 }
 """ % (
+        DEFAULT_PRIVATE_STEWARD_MAX_EXECUTION_SECONDS,
         _json.dumps(metadata, indent=2),
         _json.dumps(
             "You are the private steward for the operator of the public network. "

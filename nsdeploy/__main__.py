@@ -47,7 +47,7 @@ def main() -> int:
     ap.add_argument("--upstream", default="https://api.openai.com/v1",
                     help="RUNTIME BYOK proxy upstream — where the page's key is forwarded (default OpenAI)")
     ap.add_argument("--facade-upstream", default=None,
-                    help="server-side facade LLM endpoint (default: $NSDEPLOY_FACADE_UPSTREAM or mock)")
+                    help="server-side facade LLM endpoint (default: $NSDEPLOY_FACADE_UPSTREAM or --upstream)")
     ap.add_argument("--facade-key", default=None,
                     help="server-side facade API key (default: $NSDEPLOY_FACADE_API_KEY)")
     ap.add_argument("--runtime-dir", default=None, help="neuro-san-web runtime dir (default: vendored ./runtime)")

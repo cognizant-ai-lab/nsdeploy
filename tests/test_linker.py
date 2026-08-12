@@ -160,6 +160,7 @@ class LinkerTests(unittest.TestCase):
         )
         hocon = build_private_steward_hocon(plan, "https://harbor.example")
         self.assertIn('"class": "nsdeploy.steward.PublicAgentMcpGateway"', hocon)
+        self.assertIn('"max_execution_seconds": 900', hocon)
         self.assertIn('"mode": "open"', hocon)
         self.assertIn("https://harbor.example/mcp", hocon)
         self.assertIn("http://127.0.0.1:8091/harbor_guide", hocon)

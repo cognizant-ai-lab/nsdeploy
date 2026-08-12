@@ -128,6 +128,11 @@ Stop the complete demo from another terminal:
    local-MCP proxy at `/_mcp/<i>/mcp`, an external-MCP proxy at
    `/ext-mcp/<i>/mcp`, plus the private local MCP server subprocesses. Every site
    also publishes a server-side MCP facade at `/mcp` for private stewards.
+   The facade propagates a per-request visited-site trace and bounded public-call
+   budget, preventing cyclic public-site links from expanding indefinitely.
+   With the no-key mock upstream, each public agent takes one deterministic tool
+   hop so demo requests remain bounded; a configured LLM upstream controls normal
+   multi-step tool selection.
 
 ## Private stewards and open-web reachability
 
@@ -140,6 +145,9 @@ the standard Neuro-SAN server, or add this repository to that server's `PYTHONPA
 When a network has linked public sites, the generated steward includes their exact
 URLs in its private directory and is instructed not to invent hostnames. Unknown
 public sites remain reachable by supplying their URL explicitly.
+Generated private stewards allow up to 900 seconds for multi-site fan-out requests;
+adjust `max_execution_seconds` in the generated steward HOCON if a deployment needs
+an even longer workflow.
 
 Public sites are open-web reachable by default, like ordinary HTML links. The
 generated manifest declares `peer_policy.mode = "open"`; it does not turn published
@@ -149,10 +157,12 @@ links into an authorization allow-list. A private steward can deny origins with:
 export NSDEPLOY_STEWARD_DENY_ORIGINS="https://untrusted.example,http://127.0.0.1:9999"
 ```
 
-The facade's server-side LLM is opt-in. Set `NSDEPLOY_FACADE_UPSTREAM` and
-`NSDEPLOY_FACADE_API_KEY`, or pass `--facade-upstream` and `--facade-key`. Without a
-server key, the facade remains available in deterministic mock mode. The browser
-BYOK path is unchanged and never shares its key with a public facade.
+The server-side facade uses the site's configured `--upstream` and
+`OPENAI_API_KEY` by default. Override them with `NSDEPLOY_FACADE_UPSTREAM` and
+`NSDEPLOY_FACADE_API_KEY`, or pass `--facade-upstream` and `--facade-key`. Set the
+facade upstream explicitly to `mock://nsdeploy` only for a deterministic keyless
+demo. The browser BYOK path is unchanged; a browser-entered key is never shared
+with a public facade.
 
 ## Linking separately deployed agent networks
 

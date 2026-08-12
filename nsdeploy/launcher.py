@@ -409,8 +409,12 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
     try:
         local_mcps = [f"http://127.0.0.1:{private_port}/mcp" for _, private_port in bindings]
         facade_port = _free_tcp_port()
-        facade_upstream = facade_upstream or os.environ.get("NSDEPLOY_FACADE_UPSTREAM") or "mock://nsdeploy"
-        facade_api_key = facade_api_key or os.environ.get("NSDEPLOY_FACADE_API_KEY", "")
+        facade_upstream = facade_upstream or os.environ.get("NSDEPLOY_FACADE_UPSTREAM") or upstream
+        facade_api_key = (
+            facade_api_key
+            or os.environ.get("NSDEPLOY_FACADE_API_KEY", "")
+            or os.environ.get("OPENAI_API_KEY", "")
+        )
         repo_root = str(Path(__file__).resolve().parents[1])
         env = dict(os.environ)
         env["PYTHONPATH"] = os.pathsep.join([repo_root, str(studio_root), env.get("PYTHONPATH", "")])
@@ -428,7 +432,7 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
         url = f"http://127.0.0.1:{port}/"
         print(f"\n🌐  {plan.network_name} is live:  {url}")
         print(f"    LLM: mock router (no key) at /v1  ·  BYOK proxy at /byok/v1 → {upstream}")
-        print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  steward: {plan.network_name}_private_steward.hocon")
+        print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: {facade_upstream}  ·  steward: {plan.network_name}_private_steward.hocon")
         if plan.hostable_tools:
             print("    MCP tool servers (same-origin proxy → private subprocess):")
             for i, (tool, (_, private_port)) in enumerate(zip(plan.hostable_tools, bindings)):
