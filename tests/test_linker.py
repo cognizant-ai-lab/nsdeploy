@@ -3,7 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nsdeploy.generate import build_manifest, rewrite_config
+from nsdeploy.generate import (build_manifest, build_private_steward_hocon, generate_site,
+                               rewrite_config, write_private_steward_manifest)
 from nsdeploy.linker import NetworkDescription, describe_config, load_link_file, write_link_file
 from nsdeploy.resolve import DEMO_MODE_MARKER, DeploymentPlan, HostableTool, build_plan
 from nsdeploy.studio import LocalStudio
@@ -148,6 +149,48 @@ class LinkerTests(unittest.TestCase):
         self.assertEqual(config["tools"][0]["tools"], [f"{site}/_mcp/0/mcp"])
         manifest = build_manifest(plan, config, f"{site}/v1", f"{site}/byok/v1", site, ThemeSpec())
         self.assertIn(site, manifest["allowed_peers"])
+        self.assertEqual(manifest["peer_policy"]["mode"], "open")
+        self.assertEqual(manifest["agent_mcp"]["endpoint"], f"{site}/mcp")
+
+    def test_private_steward_is_generated_for_any_public_site(self):
+        plan = DeploymentPlan(
+            network_name="harbor_services", config={"metadata": {"description": "Harbor services"}},
+            front_man="harbor_front",
+        )
+        hocon = build_private_steward_hocon(plan, "https://harbor.example")
+        self.assertIn('"class": "nsdeploy.steward.PublicAgentMcpGateway"', hocon)
+        self.assertIn('"mode": "open"', hocon)
+        self.assertIn("https://harbor.example/mcp", hocon)
+
+    def test_generated_steward_filename_includes_network_name(self):
+        plan = DeploymentPlan(
+            network_name="harbor_services", config={"tools": [{"name": "front", "instructions": "Help."}]},
+            front_man="front",
+        )
+        out = self.root / "site"
+        generate_site(plan, out, "http://127.0.0.1:8091/v1", "http://127.0.0.1:8091/byok/v1",
+                      "http://127.0.0.1:8091", cruse=False)
+        self.assertTrue((out / "harbor_services_private_steward.hocon").is_file())
+        self.assertFalse((out / "private-steward.hocon").exists())
+        manifest = out.parent / "manifest.hocon"
+        self.assertTrue(manifest.is_file())
+        contents = manifest.read_text()
+        self.assertIn('"site/harbor_services_private_steward.hocon": true', contents)
+        self.assertNotIn(str(manifest.parent.resolve()), contents)
+
+    def test_private_steward_manifest_collects_multiple_bundles(self):
+        root = self.root / "cailville"
+        (root / "harbor_guide").mkdir(parents=True)
+        (root / "deneman_place").mkdir(parents=True)
+        (root / "harbor_guide" / "harbor_guide_private_steward.hocon").write_text("{}")
+        (root / "deneman_place" / "deneman_place_private_steward.hocon").write_text("{}")
+        manifest = write_private_steward_manifest(root)
+        contents = manifest.read_text()
+        self.assertIn('"harbor_guide/harbor_guide_private_steward.hocon": true', contents)
+        self.assertIn('"deneman_place/deneman_place_private_steward.hocon": true', contents)
+        self.assertNotIn(str(root.resolve()), contents)
+        self.assertLess(contents.index("deneman_place_private_steward"),
+                        contents.index("harbor_guide_private_steward"))
 
 
 if __name__ == "__main__":

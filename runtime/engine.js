@@ -66,6 +66,15 @@ export function selectTopRouter(manifest, routerOverride, byokKey, modelOverride
 
 export function manifestAllowsPeer(target, manifest, runtimeAllowedPeers = new Set()) {
   const targetOrigin = normOrigin(target);
+  const policy = manifest?.peer_policy || manifest?.web_policy;
+  if (policy?.mode === "open") {
+    let parsed;
+    try { parsed = new URL(target); } catch { return false; }
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+    const denied = (policy.deny_origins || policy.denied_origins || []).map(normOrigin);
+    if (denied.includes(targetOrigin)) return false;
+    return true;
+  }
   const declared = (manifest?.allowed_peers || []).map(normOrigin);
   return declared.includes(targetOrigin) || runtimeAllowedPeers.has(targetOrigin);
 }

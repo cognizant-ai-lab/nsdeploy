@@ -40,11 +40,16 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8080, help="site port (default 8080)")
     ap.add_argument("--site-url", default=None,
                     help="public site origin used in manifests/links (default: local --port URL)")
-    ap.add_argument("--out", default=None, help="output site dir (default: ./.nsdeploy/<name>)")
+    ap.add_argument("--out", default=None,
+                    help="output site dir (default: ./.nsdeploy/<source-dir>/<name>)")
     ap.add_argument("--site-dir", default=None,
                     help="editable site source dir (default: <hocon-dir>/sites/<name>)")
     ap.add_argument("--upstream", default="https://api.openai.com/v1",
                     help="RUNTIME BYOK proxy upstream — where the page's key is forwarded (default OpenAI)")
+    ap.add_argument("--facade-upstream", default=None,
+                    help="server-side facade LLM endpoint (default: $NSDEPLOY_FACADE_UPSTREAM or mock)")
+    ap.add_argument("--facade-key", default=None,
+                    help="server-side facade API key (default: $NSDEPLOY_FACADE_API_KEY)")
     ap.add_argument("--runtime-dir", default=None, help="neuro-san-web runtime dir (default: vendored ./runtime)")
     ap.add_argument("--links", default=None, help="link sidecar JSON (default: <hocon>.links.json when present)")
     ap.add_argument("--link", action="append", default=[], metavar="REF=URL",
@@ -165,13 +170,18 @@ def main() -> int:
         print(f"   editable site source {action} → {site_dir}")
         theme = load_site_theme(site_dir)
 
-    out_dir = Path(args.out).resolve() if args.out else (Path.cwd() / ".nsdeploy" / network_name)
+    if args.out:
+        out_dir = Path(args.out).resolve()
+    else:
+        bundle_parent = Path.cwd() / ".nsdeploy" / hocon_path.parent.name
+        out_dir = bundle_parent / network_name
     site_base = (args.site_url or f"http://127.0.0.1:{args.port}").rstrip("/")
     mock_router = f"{site_base}/v1"
     byok_router = f"{site_base}/byok/v1"
     generate_site(plan, out_dir, mock_router, byok_router, site_base, cruse=not args.no_cruse,
                   theme=theme, site_source_dir=site_dir)
     print(f"✅ Generated site → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))
+    print(f"   private steward manifest → {out_dir.parent / 'manifest.hocon'}")
 
     if args.no_serve:
         print("   (--no-serve: not launching)")
@@ -180,7 +190,8 @@ def main() -> int:
     runtime_dir = Path(args.runtime_dir).resolve() if args.runtime_dir else None
     # source.root holds the (materialized) coded-tool sources the MCP hosts import.
     serve(out_dir, plan, source.root, port=args.port, upstream=args.upstream,
-          runtime_dir=runtime_dir, ext_mcps=plan.external_mcps)
+          runtime_dir=runtime_dir, ext_mcps=plan.external_mcps,
+          facade_upstream=args.facade_upstream, facade_api_key=args.facade_key)
     return 0
 
 

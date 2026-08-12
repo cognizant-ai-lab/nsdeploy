@@ -54,6 +54,10 @@ const peerManifest = { allowed_peers: ["http://127.0.0.1:8097"] };
 assert.equal(manifestAllowsPeer("http://127.0.0.1:8092/network", topManifest), true);
 assert.equal(manifestAllowsPeer("http://127.0.0.1:8097/network", topManifest), false);
 assert.equal(manifestAllowsPeer("http://127.0.0.1:8097/network", peerManifest), true);
+assert.equal(manifestAllowsPeer("https://public.example/agent", {peer_policy: {mode: "open"}}), true);
+assert.equal(manifestAllowsPeer("https://blocked.example/agent", {
+  peer_policy: {mode: "open", deny_origins: ["https://blocked.example"]},
+}), false);
 
 const chain = [
   "http://127.0.0.1:8095::deneman_place",

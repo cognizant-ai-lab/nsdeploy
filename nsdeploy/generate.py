@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 import html
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -153,6 +154,129 @@ def build_linking_metadata(plan: DeploymentPlan, site_base: str) -> Dict[str, An
     }
 
 
+def build_agent_mcp_metadata(plan: DeploymentPlan, site_base: str) -> Dict[str, Any]:
+    """Describe the machine-facing facade published by every deployed site."""
+    return {
+        "protocol": "nsdeploy-agent-mcp/v1",
+        "network": plan.network_name,
+        "front_man": plan.front_man,
+        "transport": "streamable-http",
+        "endpoint": f"{site_base.rstrip('/')}/mcp",
+        "tool": "invoke_network",
+        "reachability": "open-web",
+        "trust": "caller-controlled",
+        "deny_list": [],
+    }
+
+
+def build_private_steward_hocon(plan: DeploymentPlan, site_base: str) -> str:
+    """Create the standard Neuro-SAN network used by the site's operator.
+
+    The gateway accepts a public site URL at run time.  This deliberately avoids
+    turning the steward into a generated allow-list: public sites are web
+    destinations, while the operator's environment owns the deny policy.
+    """
+    import json as _json
+
+    description = (plan.config.get("metadata", {}) or {}).get("description") or plan.network_name
+    gateway_parameters = {
+        "type": "object",
+        "properties": {
+            "site_url": {"type": "string", "description": "Public nsDeploy site URL or its /mcp endpoint."},
+            "request": {"type": "string", "description": "The request to make on behalf of the site operator."},
+        },
+        "required": ["site_url", "request"],
+    }
+    metadata = {
+        "description": f"Private steward for {plan.network_name}. {description}",
+        "steward_kind": "private",
+        "public_network": plan.network_name,
+        "public_site": site_base.rstrip("/"),
+        "public_mcp_endpoint": f"{site_base.rstrip('/')}/mcp",
+        "private_web_policy": {
+            "mode": "open",
+            "denied_origins": [],
+            "denied_networks": [],
+            "note": "Open web reachability. Set NSDEPLOY_STEWARD_DENY_ORIGINS for local policy.",
+        },
+    }
+    return """{
+  "llm_config": {"model_name": "gpt-4o"},
+  "metadata": %s,
+  "tools": [
+    {
+      "name": "private_steward",
+      "function": {
+        "description": "Represent the site operator in the public agent web. Delegate public-site work through the MCP gateway."
+      },
+      "instructions": %s,
+      "tools": ["public_agent_mcp_gateway"]
+    },
+    {
+      "name": "public_agent_mcp_gateway",
+      "function": {
+        "description": "Call any trusted public nsDeploy agent site over its MCP facade. The site URL is checked against the local deny policy.",
+        "parameters": %s
+      },
+      "class": "nsdeploy.steward.PublicAgentMcpGateway"
+    }
+  ]
+}
+""" % (
+        _json.dumps(metadata, indent=2),
+        _json.dumps(
+            "You are the private steward for the operator of the public network. "
+            "You may reach any public agent site by URL through public_agent_mcp_gateway. "
+            "Do not claim an action was completed unless the remote site returned a result. "
+            "Ask for confirmation before irreversible actions.",
+        ),
+        _json.dumps(gateway_parameters, indent=8),
+    )
+
+
+def write_private_steward_manifest(manifest_dir: Path) -> Path:
+    """Write a Neuro-SAN manifest for every generated steward below ``manifest_dir``.
+
+    Cailville launches several deployments concurrently, so the update is locked
+    across processes. Manifest entries are relative to the manifest directory,
+    which keeps the generated studio registry portable and readable.
+    """
+    manifest_dir = manifest_dir.resolve()
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = manifest_dir / "manifest.hocon"
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover - Windows has no fcntl.
+        fcntl = None
+    with manifest_path.open("a+", encoding="utf-8") as handle:
+        if fcntl:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            steward_files = sorted(
+                path.resolve()
+                for bundle_dir in manifest_dir.iterdir()
+                if bundle_dir.is_dir()
+                for path in bundle_dir.glob("*_private_steward.hocon")
+                if path.is_file()
+            )
+            lines = ["{"]
+            lines.extend(
+                f"  {json.dumps(path.relative_to(manifest_dir).as_posix())}: true,"
+                for path in steward_files
+            )
+            lines.append("}")
+            content = "\n".join(lines) + "\n"
+            handle.seek(0)
+            handle.truncate()
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        finally:
+            if fcntl:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    return manifest_path
+
+
 def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
                    mock_router: str, byok_router: str, site_base: str, theme: ThemeSpec,
                    mcp_host: str = "127.0.0.1") -> Dict[str, Any]:
@@ -160,7 +284,7 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
     front_fn = next((a.get("function", {}) for a in plan.agents if a.get("name") == plan.front_man), {})
     description = theme.tagline or (front_fn.get("description") or meta.get("description") or plan.network_name).strip()
     allowed_peers: List[str] = []
-    if plan.hostable_tools or plan.external_mcps:  # same-origin MCP proxies
+    if plan.hostable_tools or plan.external_mcps:  # legacy compatibility for older runtimes
         allowed_peers.append(site_base)
     allowed_peers.extend(origin for origin in (_origin(url) for url in plan.links.values()) if origin)
     allowed_peers = list(dict.fromkeys(allowed_peers))
@@ -181,6 +305,12 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
             "byok_router": byok_router,
         },
         "allowed_peers": allowed_peers,
+        "peer_policy": {
+            "mode": "open",
+            "deny_origins": [],
+            "note": "Public agent sites are reachable like web pages; credentials and capabilities do not transfer.",
+        },
+        "agent_mcp": build_agent_mcp_metadata(plan, site_base),
         "theme": {"primary": theme.colors["primary"]},
         "linking": build_linking_metadata(plan, site_base),
     }
@@ -282,10 +412,22 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
         json.dumps(network_config, indent=2), encoding="utf-8")
     (out_dir / "agent-manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8")
+    agent_mcp = build_agent_mcp_metadata(plan, site_base)
+    (out_dir / "agent-mcp.json").write_text(json.dumps(agent_mcp, indent=2), encoding="utf-8")
     well_known = out_dir / ".well-known"
     well_known.mkdir(parents=True, exist_ok=True)
     (well_known / "nsdeploy.json").write_text(
         json.dumps(manifest["linking"], indent=2), encoding="utf-8")
+    (well_known / "nsdeploy-agent.json").write_text(json.dumps(agent_mcp, indent=2), encoding="utf-8")
+    steward_path = out_dir / f"{plan.network_name}_private_steward.hocon"
+    legacy_steward_path = out_dir / "private-steward.hocon"
+    if legacy_steward_path.is_file() and not steward_path.is_file():
+        legacy_steward_path.replace(steward_path)
+    elif legacy_steward_path.is_file():
+        legacy_steward_path.unlink()
+    steward_path.write_text(
+        build_private_steward_hocon(plan, site_base), encoding="utf-8")
+    write_private_steward_manifest(out_dir.parent)
 
     # Preserve valid runtime-created bindings across regeneration. Each site owns
     # only its own outbound map; this file is not a registry or discovery service.

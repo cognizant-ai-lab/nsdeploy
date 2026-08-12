@@ -50,12 +50,27 @@ an interactive town map. Start the complete demo from the repository root:
 ./cailville/launch_all.sh
 ```
 
-The launcher uses `venv/bin/python` when available, starts the sites on ports
+The launcher uses `.venv/bin/python` or `venv/bin/python` when available, starts the sites on ports
 8091-8103, waits for every site, and then opens `cailville/cailville.html`. Logs are
 written to `.nsdeploy/cailville-logs/`. Its runtime BYOK proxy defaults to OpenAI and
 theme generation defaults to `gpt-5.6`; override those with `NSDEPLOY_UPSTREAM`,
 `NSDEPLOY_THEME_MODEL`, or `NSDEPLOY_PYTHON`. Existing editable themes are preserved;
 set `NSDEPLOY_THEME_REFRESH=1` only when you deliberately want to replace them.
+Public bundles are written under `.nsdeploy/cailville/`, and the generated private
+steward manifest is `.nsdeploy/cailville/manifest.hocon`. Its entries are relative
+to the manifest directory, for example
+`harbor_guide/harbor_guide_private_steward.hocon`, so the manifest remains readable
+and portable with the bundle directory. To run those stewards in a standard
+Neuro-SAN server, set `AGENT_MANIFEST_FILE` to that manifest.
+`launch_all.sh` also starts the private Neuro-SAN studio from
+`/Users/m_754339/PycharmProjects/cailville-private` (using its installed
+`neuro-san-studio` package), points its `AGENT_MANIFEST_FILE` at this generated
+manifest, and opens nsFlow on port `4174`.
+It waits for both the Neuro-SAN HTTP server and nsFlow to be ready before opening
+the demo, avoiding an initial concierge connection race.
+Override the private project or ports with `NSDEPLOY_PRIVATE_STUDIO_DIR`,
+`NSDEPLOY_PRIVATE_STUDIO_HTTP_PORT`, `NSDEPLOY_PRIVATE_STUDIO_GRPC_PORT`, and
+`NSDEPLOY_PRIVATE_STUDIO_NSFLOW_PORT`.
 
 To run the agents with Docker Model Runner instead, explicitly select its upstream
 and enter one of the exact IDs returned by its `/models` endpoint in BYOK settings:
@@ -106,11 +121,35 @@ Stop the complete demo from another terminal:
    non-MCP external URLs are dropped. This removes any assumption of a local neuro-san
    server — tools are reached purely over MCP.
 5. **Generate** `index.html` + `theme.css` + `site.js` + `agent-manifest.json` +
-   `<network>.network.json` + `theme.json` from the editable site source and network.
+   `<network>.network.json` + `agent-mcp.json` + `<network>_private_steward.hocon` +
+   `theme.json` from the editable site source and network.
 6. **Serve** one static origin (site + the `neuro-san-web` runtime, with the
    sandbox-worker CSP), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
    local-MCP proxy at `/_mcp/<i>/mcp`, an external-MCP proxy at
-   `/ext-mcp/<i>/mcp`, plus the private local MCP server subprocesses.
+   `/ext-mcp/<i>/mcp`, plus the private local MCP server subprocesses. Every site
+   also publishes a server-side MCP facade at `/mcp` for private stewards.
+
+## Private stewards and open-web reachability
+
+Every generated public site includes `<network>_private_steward.hocon`. It is a standard
+Neuro-SAN network for the site's operator, backed by the reusable
+`nsdeploy.steward.PublicAgentMcpGateway` coded tool. The gateway accepts any public
+nsDeploy site URL, discovers `/.well-known/nsdeploy-agent.json`, and invokes the
+site's `invoke_network` MCP tool. Install nsdeploy in the same Python environment as
+the standard Neuro-SAN server, or add this repository to that server's `PYTHONPATH`.
+
+Public sites are open-web reachable by default, like ordinary HTML links. The
+generated manifest declares `peer_policy.mode = "open"`; it does not turn published
+links into an authorization allow-list. A private steward can deny origins with:
+
+```bash
+export NSDEPLOY_STEWARD_DENY_ORIGINS="https://untrusted.example,http://127.0.0.1:9999"
+```
+
+The facade's server-side LLM is opt-in. Set `NSDEPLOY_FACADE_UPSTREAM` and
+`NSDEPLOY_FACADE_API_KEY`, or pass `--facade-upstream` and `--facade-key`. Without a
+server key, the facade remains available in deterministic mock mode. The browser
+BYOK path is unchanged and never shares its key with a public facade.
 
 ## Linking separately deployed agent networks
 
@@ -284,7 +323,10 @@ sites/<network>/
 ```
 
 Use `--site-dir DIR` to put it elsewhere. Normal deploys read these files and never
-overwrite them; `.nsdeploy/<network>/` remains disposable build output. A normal
+overwrite them; `.nsdeploy/<source-dir>/<network>/` remains disposable build output.
+The containing `.nsdeploy/<source-dir>/manifest.hocon` is regenerated to list every
+generated private steward in that bundle group. Set `AGENT_MANIFEST_FILE` directly to
+that file when running the standard Neuro-SAN server. A normal
 `--theme` run also uses an existing package instead of calling the model again. The
 LLM result is therefore a starting point: edit the source package and redeploy. The
 generated `site.js` exports an optional `customize({ root, runtime })` hook, and any

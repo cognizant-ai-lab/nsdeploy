@@ -26,19 +26,27 @@ python -m nsdeploy link \
   --site fix_and_found=http://127.0.0.1:8102 \
   --site harbor_town_hall=http://127.0.0.1:8103
 
-python -m nsdeploy cailville/rivera_household.hocon --port 8092
-python -m nsdeploy cailville/harbor_guide.hocon --port 8091
-python -m nsdeploy cailville/deneman_place.hocon --port 8095
-python -m nsdeploy cailville/butterpink_family.hocon --port 8096
-python -m nsdeploy cailville/seabreeze_inn.hocon --port 8093
-python -m nsdeploy cailville/greenbank_farm.hocon --port 8094
-python -m nsdeploy cailville/main_street_exchange.hocon --port 8097
-python -m nsdeploy cailville/neighbor_exchange.hocon --port 8098
-python -m nsdeploy cailville/tide_and_table_fishery.hocon --port 8099
-python -m nsdeploy cailville/salt_house_restaurant.hocon --port 8100
-python -m nsdeploy cailville/harbor_wheels_cooperative.hocon --port 8101
-python -m nsdeploy cailville/fix_and_found.hocon --port 8102
-python -m nsdeploy cailville/harbor_town_hall.hocon --port 8103
+# Each public site also starts its MCP facade at /mcp and writes
+# <network>_private_steward.hocon into its generated .nsdeploy/cailville/<network>/ directory.
+# The generated manifest is .nsdeploy/cailville/manifest.hocon.
+# Set these when the public facades should use a server-side model; otherwise
+# they remain available in deterministic mock mode.
+FACADE_UPSTREAM="${NSDEPLOY_FACADE_UPSTREAM:-mock://nsdeploy}"
+FACADE_KEY="${NSDEPLOY_FACADE_API_KEY:-}"
+
+python -m nsdeploy cailville/rivera_household.hocon --port 8092 --facade-upstream "$FACADE_UPSTREAM" --facade-key "$FACADE_KEY"
+python -m nsdeploy cailville/harbor_guide.hocon --port 8091 --facade-upstream "$FACADE_UPSTREAM" --facade-key "$FACADE_KEY"
+python -m nsdeploy cailville/deneman_place.hocon --port 8095 --facade-upstream "$FACADE_UPSTREAM" --facade-key "$FACADE_KEY"
+python -m nsdeploy cailville/butterpink_family.hocon --port 8096 --facade-upstream "$FACADE_UPSTREAM" --facade-key "$FACADE_KEY"
+python -m nsdeploy cailville/seabreeze_inn.hocon --port 8093 --facade-upstream "$FACADE_UPSTREAM" --facade-key "$FACADE_KEY"
+python -m nsdeploy cailville/greenbank_farm.hocon --port 8094 --facade-upstream "$FACADE_UPSTREAM" --facade-key "$FACADE_KEY"
+python -m nsdeploy cailville/main_street_exchange.hocon --port 8097 --facade-upstream "$FACADE_UPSTREAM" --facade-key "$FACADE_KEY"
+python -m nsdeploy cailville/neighbor_exchange.hocon --port 8098 --facade-upstream "$FACADE_UPSTREAM" --facade-key "$FACADE_KEY"
+python -m nsdeploy cailville/tide_and_table_fishery.hocon --port 8099 --facade-upstream "$FACADE_UPSTREAM" --facade-key "$FACADE_KEY"
+python -m nsdeploy cailville/salt_house_restaurant.hocon --port 8100 --facade-upstream "$FACADE_UPSTREAM" --facade-key "$FACADE_KEY"
+python -m nsdeploy cailville/harbor_wheels_cooperative.hocon --port 8101 --facade-upstream "$FACADE_UPSTREAM" --facade-key "$FACADE_KEY"
+python -m nsdeploy cailville/fix_and_found.hocon --port 8102 --facade-upstream "$FACADE_UPSTREAM" --facade-key "$FACADE_KEY"
+python -m nsdeploy cailville/harbor_town_hall.hocon --port 8103 --facade-upstream "$FACADE_UPSTREAM" --facade-key "$FACADE_KEY"
 
 
 harbor_guide:
