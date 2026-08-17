@@ -22,6 +22,8 @@
       --civic: #435a9b;
       --connection: #466b77;
       --focus: #0f5665;
+      --private: #6d4aa2;
+      --private-deep: #49306f;
       --shadow: rgba(23, 50, 71, 0.18);
     }
 
@@ -145,6 +147,14 @@
 
     .toggle input { accent-color: var(--business); }
 
+    .toggle:has(#stewards-toggle:checked) {
+      color: #ffffff;
+      background: var(--private);
+      border-color: #a78bc9;
+    }
+
+    .toggle:has(#stewards-toggle:checked) input { accent-color: #ffffff; }
+
     .town-map {
       position: relative;
       min-height: 700px;
@@ -155,7 +165,8 @@
     }
 
     .map-art,
-    .connections {
+    .connections,
+    .steward-reach {
       position: absolute;
       inset: 0;
       width: 100%;
@@ -187,6 +198,35 @@
 
     .connections.is-hidden { opacity: 0; }
 
+    .steward-reach {
+      z-index: 6;
+      overflow: visible;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 180ms ease;
+    }
+
+    .town-map.show-private-stewards .steward-reach { opacity: 1; }
+
+    .steward-connection {
+      fill: none;
+      stroke: var(--private);
+      stroke-width: 2.2;
+      stroke-linecap: round;
+      stroke-dasharray: 6 6;
+      opacity: 0.6;
+      vector-effect: non-scaling-stroke;
+      animation: steward-flow 1.25s linear infinite;
+    }
+
+    .steward-connection.is-owner {
+      stroke-width: 2.8;
+      stroke-dasharray: 3 4;
+      opacity: 0.95;
+    }
+
+    @keyframes steward-flow { to { stroke-dashoffset: -24; } }
+
     .connection {
       fill: none;
       stroke: var(--connection);
@@ -204,6 +244,8 @@
       stroke-width: 3;
       opacity: 0.9;
     }
+
+    .town-map.is-private-focusing .connection { opacity: 0.045; }
 
     .site {
       --site-color: var(--business);
@@ -245,6 +287,12 @@
 
     .site.is-dimmed { opacity: 0.28; }
     .site[hidden] { display: none; }
+
+    .town-map.is-private-focusing .site:not(.is-private-target) { opacity: 0.22; }
+
+    .town-map.is-private-focusing .site.is-private-target {
+      box-shadow: 0 0 0 2px rgba(109, 74, 162, 0.22), 0 5px 14px var(--shadow);
+    }
 
     .site-icon {
       display: grid;
@@ -288,6 +336,116 @@
       color: var(--muted);
     }
 
+    .private-stewards {
+      position: absolute;
+      inset: 0;
+      z-index: 11;
+      pointer-events: none;
+    }
+
+    .private-steward {
+      position: absolute;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 28px;
+      padding: 5px 8px;
+      color: #ffffff;
+      text-decoration: none;
+      background: linear-gradient(135deg, var(--private), var(--private-deep));
+      border: 1px solid rgba(255, 255, 255, 0.7);
+      border-radius: 999px;
+      box-shadow: 0 4px 12px rgba(73, 48, 111, 0.3);
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -50%) translateY(5px) scale(0.92);
+      visibility: hidden;
+      transition: opacity 150ms ease, transform 150ms ease, box-shadow 150ms ease;
+      white-space: nowrap;
+    }
+
+    .private-steward::after {
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      width: 2px;
+      height: 8px;
+      content: "";
+      background: var(--private);
+      transform: translateX(-50%);
+    }
+
+    .town-map.show-private-stewards .private-steward {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translate(-50%, -50%);
+      visibility: visible;
+    }
+
+    .private-steward:hover,
+    .private-steward:focus-visible,
+    .private-steward.is-active {
+      z-index: 2;
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9), 0 7px 18px rgba(73, 48, 111, 0.42);
+      outline: none;
+      transform: translate(-50%, -50%) translateY(-2px);
+    }
+
+    .private-steward svg {
+      width: 14px;
+      height: 14px;
+      stroke-width: 2.4;
+    }
+
+    .private-steward-label {
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: 0.15px;
+    }
+
+    .private-explainer {
+      position: absolute;
+      z-index: 14;
+      top: 12px;
+      left: 50%;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: min(430px, calc(100% - 28px));
+      padding: 9px 12px;
+      color: var(--private-deep);
+      background: rgba(248, 245, 253, 0.97);
+      border: 1px solid rgba(109, 74, 162, 0.38);
+      border-radius: 7px;
+      box-shadow: 0 4px 14px rgba(73, 48, 111, 0.2);
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -8px);
+      visibility: hidden;
+      transition: opacity 160ms ease, transform 160ms ease;
+    }
+
+    .town-map.show-private-stewards .private-explainer {
+      opacity: 1;
+      transform: translate(-50%, 0);
+      visibility: visible;
+    }
+
+    .private-explainer-icon {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      flex: 0 0 auto;
+      color: #ffffff;
+      background: var(--private);
+      border-radius: 50%;
+    }
+
+    .private-explainer-icon svg { width: 18px; height: 18px; }
+    .private-explainer strong { display: block; font-size: 12px; }
+    .private-explainer span:last-child { display: block; margin-top: 2px; font-size: 10px; line-height: 1.35; }
+
     .legend {
       position: absolute;
       z-index: 15;
@@ -319,6 +477,9 @@
       border-radius: 50%;
     }
 
+    .private-legend { display: none; }
+    .town-map.show-private-stewards .private-legend { display: inline-flex; }
+
     .map-note {
       position: absolute;
       z-index: 15;
@@ -349,13 +510,16 @@
       .control-label select { width: 100%; }
       .town-map { min-height: 1450px; }
       .site { left: var(--mx); top: var(--my); width: 142px; }
+      .private-steward-label { font-size: 0; }
+      .private-steward-label::after { content: "Private"; font-size: 9px; }
       .map-art .map-label, .map-art .water-label { display: none; }
       .map-note { bottom: 70px; max-width: 190px; }
       .legend { left: 12px; right: 12px; bottom: 12px; justify-content: center; max-width: none; }
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .site, .connection, .connections { transition: none; }
+      .site, .connection, .connections, .steward-reach, .private-steward, .private-explainer { transition: none; }
+      .steward-connection { animation: none; }
     }
   </style>
 </head>
@@ -388,6 +552,10 @@
       <label class="toggle" for="connections-toggle">
         <input id="connections-toggle" type="checkbox" checked>
         <span>Connections</span>
+      </label>
+      <label class="toggle" for="stewards-toggle">
+        <input id="stewards-toggle" type="checkbox" aria-controls="private-stewards steward-reach">
+        <span>Private stewards</span>
       </label>
     </div>
   </header>
@@ -437,6 +605,21 @@
       <g id="connection-paths"></g>
     </svg>
 
+    <svg class="steward-reach" id="steward-reach" aria-hidden="true">
+      <defs>
+        <marker id="private-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--private)" />
+        </marker>
+      </defs>
+      <g id="steward-paths"></g>
+    </svg>
+
+    <div class="private-stewards" id="private-stewards" aria-label="Privately hosted steward networks" aria-hidden="true"></div>
+    <aside class="private-explainer" aria-live="polite">
+      <span class="private-explainer-icon"><i data-lucide="shield-check" aria-hidden="true"></i></span>
+      <span><strong>Private stewards act on each entity's behalf</strong><span>Hosted privately in nsFlow · each steward can call any public agentic site on the open web.</span></span>
+    </aside>
+
     <a class="site" id="site-seabreeze_inn" data-site="seabreeze_inn" data-type="business" href="http://127.0.0.1:8093" target="_blank" rel="noopener" style="--x:18%;--y:17%;--mx:25%;--my:7%;" aria-label="Open Seabreeze Inn in a new tab">
       <span class="site-icon"><i data-lucide="hotel" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Seabreeze Inn</span><span class="site-kind">Hospitality</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
     </a>
@@ -483,6 +666,7 @@
       <span class="legend-item"><span class="swatch" style="--swatch:var(--broker)"></span>Broker</span>
       <span class="legend-item"><span class="swatch" style="--swatch:var(--business)"></span>Business</span>
       <span class="legend-item"><span class="swatch" style="--swatch:var(--civic)"></span>Government</span>
+      <span class="legend-item private-legend"><span class="swatch" style="--swatch:var(--private)"></span>Private steward</span>
     </div>
   </main>
 
@@ -525,9 +709,52 @@
     const pathGroup = document.getElementById("connection-paths");
     const filter = document.getElementById("site-filter");
     const connectionToggle = document.getElementById("connections-toggle");
+    const stewardsToggle = document.getElementById("stewards-toggle");
     const readoutName = document.getElementById("readout-name");
     const readoutDescription = document.getElementById("readout-description");
+    const stewardLayer = document.getElementById("private-stewards");
+    const stewardSvg = document.getElementById("steward-reach");
+    const stewardPathGroup = document.getElementById("steward-paths");
     const siteElements = [...document.querySelectorAll(".site")];
+    let activeStewardId = null;
+
+    function stewardUrl(siteId) {
+      const network = `${siteId}/${siteId}_private_steward`;
+      return `http://127.0.0.1:4174/?network=${encodeURIComponent(network)}`;
+    }
+
+    function createStewards() {
+      Object.keys(sites).forEach(siteId => {
+        const steward = document.createElement("a");
+        steward.className = "private-steward";
+        steward.dataset.steward = siteId;
+        steward.href = stewardUrl(siteId);
+        steward.target = "_blank";
+        steward.rel = "noopener";
+        steward.setAttribute("aria-label", `Open ${sites[siteId].name} private steward in nsFlow`);
+        steward.innerHTML = '<i data-lucide="shield-check" aria-hidden="true"></i><span class="private-steward-label">Private steward</span>';
+        steward.addEventListener("mouseenter", () => focusSteward(siteId));
+        steward.addEventListener("mouseleave", restoreDefaultSteward);
+        steward.addEventListener("focus", () => focusSteward(siteId));
+        steward.addEventListener("blur", restoreDefaultSteward);
+        stewardLayer.append(steward);
+      });
+    }
+
+    function positionStewards() {
+      const bounds = townMap.getBoundingClientRect();
+      document.querySelectorAll(".private-steward").forEach(steward => {
+        const owner = document.getElementById(`site-${steward.dataset.steward}`);
+        if (!owner || owner.hidden) {
+          steward.hidden = true;
+          return;
+        }
+        steward.hidden = false;
+        const ownerBox = owner.getBoundingClientRect();
+        steward.style.left = `${ownerBox.right - bounds.left - 49}px`;
+        steward.style.top = `${ownerBox.top - bounds.top - 7}px`;
+      });
+    }
 
     function edgeCurve(source, target) {
       const pair = [source, target].sort().join("|");
@@ -541,6 +768,7 @@
     function drawConnections() {
       const bounds = townMap.getBoundingClientRect();
       connectionSvg.setAttribute("viewBox", `0 0 ${bounds.width} ${bounds.height}`);
+      stewardSvg.setAttribute("viewBox", `0 0 ${bounds.width} ${bounds.height}`);
       pathGroup.replaceChildren();
 
       relationships.forEach(([sourceId, targetId]) => {
@@ -579,9 +807,82 @@
         path.dataset.target = targetId;
         pathGroup.append(path);
       });
+
+      positionStewards();
+      if (activeStewardId) drawStewardReach(activeStewardId);
+    }
+
+    function drawStewardReach(siteId) {
+      stewardPathGroup.replaceChildren();
+      if (!stewardsToggle.checked) return;
+
+      const steward = document.querySelector(`[data-steward="${siteId}"]`);
+      if (!steward || steward.hidden) return;
+      const bounds = townMap.getBoundingClientRect();
+      const sourceBox = steward.getBoundingClientRect();
+      const sx = sourceBox.left + sourceBox.width / 2 - bounds.left;
+      const sy = sourceBox.top + sourceBox.height / 2 - bounds.top;
+
+      siteElements.forEach((target, index) => {
+        if (target.hidden) return;
+        const targetBox = target.getBoundingClientRect();
+        const tx0 = targetBox.left + targetBox.width / 2 - bounds.left;
+        const ty0 = targetBox.top + targetBox.height / 2 - bounds.top;
+        const dx = tx0 - sx;
+        const dy = ty0 - sy;
+        const distance = Math.max(Math.hypot(dx, dy), 1);
+        const ux = dx / distance;
+        const uy = dy / distance;
+        const targetBoundary = 1 / Math.max(Math.abs(ux) / (targetBox.width / 2), Math.abs(uy) / (targetBox.height / 2));
+        const endInset = Math.min(targetBoundary + 9, distance * 0.62);
+        const tx = tx0 - ux * endInset;
+        const ty = ty0 - uy * endInset;
+        const bend = target.dataset.site === siteId ? 0 : ((index % 2 ? 1 : -1) * (12 + (index % 4) * 7));
+        const cx = (sx + tx) / 2 - uy * bend;
+        const cy = (sy + ty) / 2 + ux * bend;
+
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("class", `steward-connection${target.dataset.site === siteId ? " is-owner" : ""}`);
+        path.setAttribute("d", `M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${tx.toFixed(1)} ${ty.toFixed(1)}`);
+        path.setAttribute("marker-end", "url(#private-arrow)");
+        stewardPathGroup.append(path);
+      });
+    }
+
+    function focusSteward(siteId) {
+      if (!stewardsToggle.checked) return;
+      activeStewardId = siteId;
+      townMap.classList.remove("is-focusing");
+      townMap.classList.add("is-private-focusing");
+      document.querySelectorAll(".connection").forEach(path => path.classList.remove("is-active"));
+      siteElements.forEach(site => {
+        site.classList.remove("is-dimmed");
+        site.classList.toggle("is-private-target", !site.hidden);
+      });
+      document.querySelectorAll(".private-steward").forEach(steward => {
+        const selected = steward.dataset.steward === siteId;
+        steward.classList.toggle("is-active", selected);
+      });
+      drawStewardReach(siteId);
+      readoutName.textContent = `${sites[siteId].name} · Private steward`;
+      readoutDescription.textContent = `Privately hosted in nsFlow · can call any public site in Cailville · ${stewardUrl(siteId)}`;
+    }
+
+    function restoreDefaultSteward() {
+      if (!stewardsToggle.checked) return;
+      const defaultSite = document.getElementById("site-deneman_place");
+      const visibleSite = defaultSite && !defaultSite.hidden ? defaultSite : siteElements.find(site => !site.hidden);
+      if (visibleSite) focusSteward(visibleSite.dataset.site);
     }
 
     function focusSite(siteId) {
+      if (stewardsToggle.checked) {
+        activeStewardId = null;
+        townMap.classList.remove("is-private-focusing");
+        stewardPathGroup.replaceChildren();
+        siteElements.forEach(site => site.classList.remove("is-private-target"));
+        document.querySelectorAll(".private-steward").forEach(steward => steward.classList.remove("is-active"));
+      }
       townMap.classList.add("is-focusing");
       const related = new Set([siteId]);
       document.querySelectorAll(".connection").forEach(path => {
@@ -601,6 +902,10 @@
       townMap.classList.remove("is-focusing");
       document.querySelectorAll(".connection").forEach(path => path.classList.remove("is-active"));
       siteElements.forEach(site => site.classList.remove("is-dimmed"));
+      if (stewardsToggle.checked) {
+        restoreDefaultSteward();
+        return;
+      }
       readoutName.textContent = "Explore 13 independent agentic sites";
       readoutDescription.textContent = "Hover to trace relationships. Select a location to open its site.";
     }
@@ -625,7 +930,24 @@
     connectionToggle.addEventListener("change", () => {
       connectionSvg.classList.toggle("is-hidden", !connectionToggle.checked);
     });
+    stewardsToggle.addEventListener("change", () => {
+      townMap.classList.toggle("show-private-stewards", stewardsToggle.checked);
+      stewardLayer.setAttribute("aria-hidden", String(!stewardsToggle.checked));
+      if (stewardsToggle.checked) {
+        positionStewards();
+        restoreDefaultSteward();
+      } else {
+        activeStewardId = null;
+        stewardPathGroup.replaceChildren();
+        townMap.classList.remove("is-private-focusing");
+        siteElements.forEach(site => site.classList.remove("is-private-target"));
+        document.querySelectorAll(".private-steward").forEach(steward => steward.classList.remove("is-active"));
+        readoutName.textContent = "Explore 13 independent agentic sites";
+        readoutDescription.textContent = "Hover to trace relationships. Select a location to open its site.";
+      }
+    });
 
+    createStewards();
     new ResizeObserver(drawConnections).observe(townMap);
     window.addEventListener("load", drawConnections);
     if (window.lucide) window.lucide.createIcons();
