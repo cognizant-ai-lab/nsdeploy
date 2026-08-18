@@ -268,7 +268,7 @@
       border-radius: 7px;
       box-shadow: 0 4px 12px var(--shadow);
       transform: translate(-50%, -50%);
-      transition: transform 130ms ease, box-shadow 130ms ease, opacity 130ms ease;
+      transition: width 160ms ease, transform 130ms ease, box-shadow 130ms ease, opacity 130ms ease;
     }
 
     .site[data-type="citizen"] { --site-color: var(--citizen); }
@@ -279,10 +279,18 @@
     .site:hover,
     .site:focus-visible {
       z-index: 12;
+      width: 230px;
       transform: translate(-50%, -50%) translateY(-3px);
       box-shadow: 0 8px 18px rgba(23, 50, 71, 0.28);
       outline: 3px solid rgba(255, 255, 255, 0.9);
       outline-offset: 2px;
+    }
+
+    .site:hover .site-name,
+    .site:focus-visible .site-name {
+      overflow: visible;
+      text-overflow: clip;
+      white-space: normal;
     }
 
     .site.is-dimmed { opacity: 0.28; }
@@ -510,6 +518,7 @@
       .control-label select { width: 100%; }
       .town-map { min-height: 1450px; }
       .site { left: var(--mx); top: var(--my); width: 142px; }
+      .site:hover, .site:focus-visible { width: 168px; }
       .private-steward-label { font-size: 0; }
       .private-steward-label::after { content: "Private"; font-size: 9px; }
       .map-art .map-label, .map-art .water-label { display: none; }
