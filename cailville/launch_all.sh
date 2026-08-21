@@ -7,12 +7,15 @@ LOG_DIR="${NSDEPLOY_LOG_DIR:-$PROJECT_DIR/.nsdeploy/cailville-logs}"
 RUN_DIR="${NSDEPLOY_RUN_DIR:-$PROJECT_DIR/.nsdeploy/cailville-pids}"
 UPSTREAM="${NSDEPLOY_UPSTREAM:-https://api.openai.com/v1}"
 FACADE_UPSTREAM="${NSDEPLOY_FACADE_UPSTREAM:-$UPSTREAM}"
-PRIVATE_STUDIO_DIR="${NSDEPLOY_PRIVATE_STUDIO_DIR:-/Users/754339/projects/cailville-private}"
+NEURO_SAN_WEB_DIR="${NSDEPLOY_NEURO_SAN_WEB_DIR:-$PROJECT_DIR/../neuro-san-web}"
+RUNTIME_DIR="${NSDEPLOY_RUNTIME_DIR:-$NEURO_SAN_WEB_DIR/runtime}"
+PRIVATE_STUDIO_DIR="${NSDEPLOY_PRIVATE_STUDIO_DIR:-$PROJECT_DIR/../cailville-private}"
 PRIVATE_STUDIO_MANIFEST="${NSDEPLOY_PRIVATE_STUDIO_MANIFEST:-$PROJECT_DIR/.nsdeploy/cailville/manifest.hocon}"
 PRIVATE_STUDIO_HTTP_PORT="${NSDEPLOY_PRIVATE_STUDIO_HTTP_PORT:-8181}"
 PRIVATE_STUDIO_GRPC_PORT="${NSDEPLOY_PRIVATE_STUDIO_GRPC_PORT:-31021}"
 PRIVATE_STUDIO_NSFLOW_PORT="${NSDEPLOY_PRIVATE_STUDIO_NSFLOW_PORT:-4174}"
 PRIVATE_STUDIO_AGENT_TOOL_PATH="${NSDEPLOY_PRIVATE_STUDIO_AGENT_TOOL_PATH:-$PROJECT_DIR}"
+PRIVATE_STUDIO_ENABLED="${NSDEPLOY_PRIVATE_STUDIO:-1}"
 PRIVATE_STEWARD_SITE_TIMEOUT_SECONDS="${NSDEPLOY_STEWARD_SITE_TIMEOUT_SECONDS:-720}"
 PRIVATE_STEWARD_BYOK_API_KEY="${NSDEPLOY_STEWARD_BYOK_API_KEY:-${OPENAI_API_KEY:-}}"
 PRIVATE_STEWARD_BYOK_MODEL="${NSDEPLOY_STEWARD_BYOK_MODEL:-gpt-4o}"
@@ -35,10 +38,24 @@ fi
 
 if [[ -n "${NSDEPLOY_PYTHON:-}" ]]; then
   PYTHON_BIN="$NSDEPLOY_PYTHON"
+elif [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+  PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
 elif [[ -x "$PROJECT_DIR/venv/bin/python" ]]; then
   PYTHON_BIN="$PROJECT_DIR/venv/bin/python"
 else
-  PYTHON_BIN="$(command -v python3 || command -v python)"
+  PYTHON_BIN="$(command -v python3.12 || command -v python3 || command -v python)"
+fi
+
+if ! "$PYTHON_BIN" -c 'import nsdeploy, pyhocon' >/dev/null 2>&1; then
+  printf 'Python interpreter lacks nsdeploy dependencies: %s\n' "$PYTHON_BIN" >&2
+  printf 'Set NSDEPLOY_PYTHON to the Python 3.12 environment where nsdeploy is installed.\n' >&2
+  exit 1
+fi
+
+if [[ ! -f "$RUNTIME_DIR/index.js" || ! -f "$RUNTIME_DIR/generated/kernel.mjs" ]]; then
+  printf 'Built neuro-san-web runtime not found: %s\n' "$RUNTIME_DIR" >&2
+  printf 'Run npm ci and npm run generate in %s, then retry.\n' "$NEURO_SAN_WEB_DIR" >&2
+  exit 1
 fi
 
 sites=(
@@ -107,11 +124,15 @@ for i in "${!sites[@]}"; do
   port="${ports[$i]}"
   log="$LOG_DIR/$site.log"
   printf 'Starting %-27s http://127.0.0.1:%s/\n' "$site" "$port"
-  PYTHONUNBUFFERED=1 "$PYTHON_BIN" -m nsdeploy "$CAILVILLE_DIR/$site.hocon" \
+  site_command=("$PYTHON_BIN" -m nsdeploy "$CAILVILLE_DIR/$site.hocon" \
     --port "$port" \
     --upstream "$UPSTREAM" \
     --facade-upstream "$FACADE_UPSTREAM" \
-    "${theme_args[@]}" >"$log" 2>&1 &
+    --runtime-dir "$RUNTIME_DIR")
+  if [[ ! "$THEME_ENABLED" =~ ^(0|false|no)$ ]]; then
+    site_command+=("${theme_args[@]}")
+  fi
+  PYTHONUNBUFFERED=1 "${site_command[@]}" >"$log" 2>&1 &
   pid="$!"
   pids+=("$pid")
   printf '%s\n' "$pid" >"$RUN_DIR/$site.pid"
@@ -137,10 +158,19 @@ for i in "${!sites[@]}"; do
   printf 'Ready    %-27s http://127.0.0.1:%s/\n' "$site" "$port"
 done
 
-if [[ ! -d "$PRIVATE_STUDIO_DIR" ]]; then
-  printf '\nPrivate Neuro-SAN studio project not found: %s\n' "$PRIVATE_STUDIO_DIR" >&2
-  printf 'Set NSDEPLOY_PRIVATE_STUDIO_DIR to its location and rerun.\n' >&2
-  exit 1
+if [[ "$PRIVATE_STUDIO_ENABLED" =~ ^(0|false|no)$ || ! -d "$PRIVATE_STUDIO_DIR" ]]; then
+  if [[ ! -d "$PRIVATE_STUDIO_DIR" && ! "$PRIVATE_STUDIO_ENABLED" =~ ^(0|false|no)$ ]]; then
+    printf '\nPrivate Neuro-SAN studio project not found: %s\n' "$PRIVATE_STUDIO_DIR" >&2
+    printf 'Continuing with the thirteen public browser sites only.\n' >&2
+    printf 'Set NSDEPLOY_PRIVATE_STUDIO_DIR to enable the private stewards.\n' >&2
+  else
+    printf '\nPrivate Neuro-SAN studio disabled; running public browser sites only.\n'
+  fi
+  open "$CAILVILLE_DIR/cailville.html"
+  printf '\nCailville public sites are running. Logs: %s\n' "$LOG_DIR"
+  printf 'Press Ctrl-C to stop every site.\n'
+  wait
+  exit 0
 fi
 if [[ ! -f "$PRIVATE_STUDIO_MANIFEST" ]]; then
   printf '\nPrivate steward manifest not found: %s\n' "$PRIVATE_STUDIO_MANIFEST" >&2
