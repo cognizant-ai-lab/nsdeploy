@@ -465,13 +465,19 @@ server (reachability/auth) and the user's run-time consent.
 
 ## Generative UI (CRUSE)
 
-By default nsdeploy **injects a domain-agnostic CRUSE directive into every agent's
-instructions** (in the generated copy — your source HOCON is untouched), so any
-deployed network produces generative-UI widgets automatically: a **form** when an
-agent needs input, a **choice** when it offers options, a **confirm** before
-finalizing, an **info** card for summaries. The runtime extracts the fenced
-` ```cruse-ui ` JSON each agent emits and renders it, consolidating widgets up the
-agent chain. Opt out with `--no-cruse`.
+By default nsdeploy **injects a domain-agnostic CRUSE directive into only the public
+front-man's instructions** (in the generated copy — your source HOCON is untouched).
+That human-facing agent can produce a **form** when it needs input, a **choice** when
+it offers options, a **confirm** before finalizing, or an **info** card for a summary.
+Internal coordinators and agent-to-agent calls never receive the UI directive, so
+widget generation cannot replace delegation or leak protocol JSON into tool results.
+The runtime extracts and renders the front-man's fenced ` ```cruse-ui ` JSON. Opt out
+with `--no-cruse`.
+
+When a decentralized link replaces a local leaf agent, nsdeploy also publishes that
+leaf's original function description and parameter schema beside the external URL.
+This keeps arbitrary tool contracts intact across the link—including Neuro-SAN's
+`inquiry`/`mode` contract—rather than guessing a one-string public-agent interface.
 
 Widgets are emitted by the **LLM** following the directive, so they appear only with
 a real model (BYOK) — the deterministic mock router never emits them. Verified with a

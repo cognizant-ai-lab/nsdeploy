@@ -88,6 +88,14 @@ class LinkerTests(unittest.TestCase):
                 },
                 {
                     "name": "link_demo_airline",
+                    "function": {
+                        "description": "Public airline",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"inquiry": {"type": "string"}, "mode": {"type": "string"}},
+                            "required": ["inquiry", "mode"],
+                        },
+                    },
                     "instructions": DEMO_MODE_MARKER,
                     "tools": [],
                 },
@@ -102,6 +110,10 @@ class LinkerTests(unittest.TestCase):
             deployed["tools"][0]["tools"],
             ["http://127.0.0.1:8092/link_demo_airline"],
         )
+        external = deployed["nsdeploy_external_tools"]["http://127.0.0.1:8092/link_demo_airline"]
+        self.assertEqual(external["reference"], "link_demo_airline")
+        self.assertEqual(external["function"]["description"], "Public airline")
+        self.assertEqual(external["function"]["parameters"]["required"], ["inquiry", "mode"])
 
     def test_sidecar_round_trip(self):
         path = self.root / "travel.links.json"
@@ -153,6 +165,24 @@ class LinkerTests(unittest.TestCase):
         self.assertEqual(manifest["agent_mcp"]["endpoint"], f"{site}/mcp")
         self.assertEqual(manifest["agent_mcp"]["llm_credentials"]["mode"], "caller-byok")
         self.assertTrue(manifest["agent_mcp"]["llm_credentials"]["required"])
+
+    def test_cruse_is_injected_only_into_the_public_front_man(self):
+        config = {
+            "tools": [
+                {"name": "front", "instructions": "Coordinate.", "tools": ["worker"]},
+                {"name": "worker", "instructions": "Delegate work.", "tools": []},
+            ],
+        }
+        plan = build_plan(config, {}, "demo", [], self.source)
+        self.assertEqual(plan.front_man, "front")
+
+        deployed = rewrite_config(plan, "http://127.0.0.1:8091", cruse=True)
+        by_name = {entry["name"]: entry for entry in deployed["tools"]}
+
+        self.assertIn("GENERATIVE UI (CRUSE)", by_name["front"]["instructions"])
+        self.assertIn("responding directly to a human", by_name["front"]["instructions"])
+        self.assertIn("NEVER emit a cruse-ui block", by_name["front"]["instructions"])
+        self.assertNotIn("GENERATIVE UI (CRUSE)", by_name["worker"]["instructions"])
 
     def test_private_steward_is_generated_for_any_public_site(self):
         plan = DeploymentPlan(

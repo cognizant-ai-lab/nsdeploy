@@ -27,14 +27,18 @@ from nsdeploy.theme import ThemeSpec
 
 DEFAULT_PRIVATE_STEWARD_MAX_EXECUTION_SECONDS = 3600
 
-# Domain-agnostic CRUSE directive injected into each agent's instructions at deploy
-# time so any network produces generative-UI widgets — without editing the source
-# HOCON. The shapes match the neuro-san-web runtime's widget renderer. (Widgets are
-# emitted by the LLM following this guidance; the deterministic mock won't, so this
-# only takes visible effect with a real BYOK model.)
+# Domain-agnostic CRUSE directive injected into the public front-man's instructions
+# at deploy time so any network produces generative-UI widgets without editing the
+# source HOCON. Internal agents must remain focused on delegation: a widget emitted
+# inside an agent-to-agent result is not user-visible and can corrupt orchestration.
+# A front-man can itself be called as a public peer, so the directive also forbids
+# widgets for AAOSA/tool modes and permits them only in a direct human conversation.
 CRUSE_DIRECTIVE = """\
 GENERATIVE UI (CRUSE): the app renders interactive widgets from a fenced ```cruse-ui```
 block of JSON in your reply and sends the user's interaction back as your next input.
+Use CRUSE only when responding directly to a human (there is no mode parameter).
+When another agent calls you with mode Determine, Fulfill, Follow up, or any other
+tool/agent mode, NEVER emit a cruse-ui block; return the requested agent result only.
 Prefer widgets over plain text when interacting:
 - need details from the user before proceeding → emit a FORM widget (don't ask in prose);
 - offering a set of options to choose from → emit a CHOICE widget;
@@ -74,6 +78,12 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
     drop = set(plan.missing_tools) | set(plan.omitted_tools) | set(plan.external_other)
 
     config = copy.deepcopy(plan.config)
+    original_functions = {
+        entry.get("name"): copy.deepcopy(entry.get("function"))
+        for entry in config.get("tools", []) or []
+        if entry.get("name") and isinstance(entry.get("function"), dict)
+    }
+    external_tool_specs: Dict[str, Dict[str, Any]] = {}
     new_tools: List[Dict[str, Any]] = []
     for entry in config.get("tools", []) or []:
         # Keep only LLM agents; the leaf coded/toolbox entries are replaced by inline
@@ -90,17 +100,33 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
             elif ref in ext_url:
                 mapped.append(ext_url[ref])
             elif ref in plan.links:
-                mapped.append(plan.links[ref])
+                target = plan.links[ref]
+                mapped.append(target)
+                # A linked public network replaces a local leaf agent at the same
+                # tool boundary. Preserve that leaf's exact callable contract so
+                # the browser model still sends every original field (including
+                # AAOSA mode/inquiry when present) instead of degrading the call to
+                # a guessed single-string schema.
+                if ref in original_functions:
+                    external_tool_specs[target] = {
+                        "reference": ref,
+                        "function": copy.deepcopy(original_functions[ref]),
+                    }
             elif ref in drop:
                 continue  # missing tool / non-MCP external URL — dropped (reported separately)
             else:
                 mapped.append(ref)  # sub-agent or unresolved link-slot reference
         if "tools" in agent:
             agent["tools"] = mapped
-        if cruse:  # augment instructions so the agent emits generative-UI widgets
+        if cruse and agent.get("name") == plan.front_man:
+            # Only the public front-man owns the browser conversation. Injecting UI
+            # protocol into coordinators/gateways makes them collect data instead of
+            # delegating and leaks widget JSON into parent-agent tool results.
             agent["instructions"] = (agent.get("instructions", "") or "").rstrip() + "\n\n" + CRUSE_DIRECTIVE
         new_tools.append(agent)
     config["tools"] = new_tools
+    if external_tool_specs:
+        config["nsdeploy_external_tools"] = external_tool_specs
     config["link_slots"] = {
         ref: {"callers": callers}
         for ref, callers in plan.link_slots.items()
