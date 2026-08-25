@@ -12,26 +12,167 @@ on demand, caching them under `~/.cache/nsdeploy/`. Files are located by suffix-
 matching the repo's git tree, so the repo's internal layout doesn't matter. Any pip
 dependency a hosted tool imports (e.g. `ddgs`) is auto-installed on demand.
 
-The browser runs the agents on a **vendored copy of the neuro-san-web runtime** (in
-[`runtime/`](runtime) — dependency-free ES modules); the only Python that runs is
-(a) the build-time HOCON resolver and (b) one small MCP server per hostable tool.
+The recommended launcher rebuilds Neuro-SAN's browser execution modules from a
+local Neuro-SAN Python checkout before every run. It serves the resulting
+`neuro-san-web/runtime` directory through nsdeploy's existing `--runtime-dir`
+interface, so no generated JavaScript is copied into nsdeploy. The checked-in
+[`runtime/`](runtime) remains available only as a fallback for direct legacy
+`python -m nsdeploy` commands.
 
-## Install & run
+## Generate Neuro-SAN JavaScript and launch a HOCON
 
-```bash
-pip install "mcp>=1.0.0" uvicorn starlette pyhocon neuro-san
+### Prerequisites
 
-# Tools are pulled from GitHub automatically — no --studio needed:
-python -m nsdeploy examples/travel_agent_system.hocon --port 8080
+- Python 3.12 (required by the pinned `Transcrypt==3.9.5` build);
+- Node.js 20 or newer and npm;
+- nsdeploy's Python dependencies; and
+- local `neuro-san`, `neuro-san-web`, and `nsdeploy` checkouts.
+
+The default directory layout is:
+
+```text
+workspace/
+├── neuro-san-dbox/       # Neuro-SAN Python source
+├── neuro-san-web/        # cross-compiler and browser runtime
+└── nsdeploy/             # this repository
 ```
 
-Then open <http://127.0.0.1:8080/>. Flags: `--repo`/`--ref` (GitHub source, default
+Install the nsdeploy dependencies in the Python environment you intend to use:
+
+```bash
+cd /path/to/nsdeploy
+pip install "mcp>=1.0.0" uvicorn starlette pyhocon neuro-san
+```
+
+### Quick start
+
+From the nsdeploy repository root:
+
+```bash
+./scripts/generate-runtime-and-launch.sh \
+  examples/travel_agent_system.hocon --port 8080
+```
+
+Then open <http://127.0.0.1:8080/>. Press Ctrl-C in the launcher terminal
+to stop the site.
+
+The first run creates `neuro-san-web/.venv`, installs its pinned Python build
+requirements, and runs `npm ci` if the locked JavaScript dependencies are not
+already present. Later runs verify and reuse those dependencies, but they always
+recompile the Neuro-SAN Python closure from scratch.
+
+### What the launcher does
+
+[`generate-runtime-and-launch.sh`](scripts/generate-runtime-and-launch.sh)
+prints and executes these eight stages:
+
+1. **Resolve inputs.** Convert the HOCON, Neuro-SAN, neuro-san-web, and nsdeploy
+   locations to absolute paths and validate the expected source files.
+2. **Check toolchains.** Require Node.js 20+, npm, and Python 3.12. Select
+   separate Python executables for the Transcrypt build and nsdeploy when
+   configured.
+3. **Verify dependencies.** Install or verify `Transcrypt==3.9.5` and the exact
+   `package-lock.json` dependency tree.
+4. **Record the source.** Print the Neuro-SAN Git commit and working-tree state.
+   Untracked and ignored Python files are included in the staged-source hash.
+5. **Generate JavaScript.** Run neuro-san-web's atomic generator against the
+   selected Neuro-SAN checkout. It compiles the declared activation, session,
+   message, and LangChain run-context dependency closure and emits compatibility
+   warnings for filtered or mapped constructs.
+6. **Verify provenance.** Require the generated kernel, activation,
+   run-context, LangChain bridge, type declaration, and `nsxc-report.json`.
+   Print the compiler version, source commit, staged-source SHA-256, closure
+   size, output count, and warning count. The build also verifies that the
+   Neuro-SAN source was not changed.
+7. **Smoke test.** Import the complete browser JavaScript module graph with Node
+   and verify that nsdeploy's HOCON/MCP dependencies import successfully.
+8. **Launch nsdeploy.** Execute `python -m nsdeploy` in the foreground with
+   `--runtime-dir` fixed to the newly generated neuro-san-web runtime.
+
+If compilation, contract validation, provenance validation, or the JavaScript
+import fails, the script exits before nsdeploy starts. neuro-san-web builds
+into a temporary directory and publishes atomically, so a failed build does
+not destroy the last working generated runtime.
+
+The generated Python equivalents are written to
+`neuro-san-web/runtime/generated/`; the complete source and warning inventory
+is in `neuro-san-web/runtime/generated/nsxc-report.json`. The static files
+elsewhere in `neuro-san-web/runtime/` provide browser UI, policy, MCP
+transport, consent, and credential isolation. They do not replace Neuro-SAN's
+generated activation/session or agent execution loop. Coded tools remain MCP
+calls.
+
+A successful run prints `✓ generation complete`, identifies
+`Transcrypt 3.9.5`, reports a non-empty closure and generated-file count,
+confirms that `runtime/index.js` imports successfully, and finally prints the
+site's `live` URL. Compatibility warnings are intentionally visible and are
+recorded in the report; they do not prevent launch. A compiler or verification
+error is fatal.
+
+### Paths and Python environments
+
+The sibling checkout defaults can be overridden without changing nsdeploy:
+
+```bash
+NEURO_SAN_SOURCE_DIR=/path/to/neuro-san \
+NEURO_SAN_WEB_DIR=/path/to/neuro-san-web \
+  ./scripts/generate-runtime-and-launch.sh \
+    cailville/harbor_guide.hocon --port 8091
+```
+
+Configuration variables:
+
+- `NEURO_SAN_SOURCE_DIR`: Neuro-SAN Python source checkout. Defaults to
+  `../neuro-san-dbox`.
+- `NEURO_SAN_WEB_DIR`: neuro-san-web checkout. Defaults to
+  `../neuro-san-web`.
+- `NSDEPLOY_BUILD_PYTHON`: Python 3.12 used by Transcrypt. Defaults to
+  `neuro-san-web/.venv/bin/python`.
+- `NSDEPLOY_PYTHON`: Python used to launch nsdeploy. Defaults to the nsdeploy
+  `.venv`, `venv`, or `python3.12`.
+- `NSDEPLOY_SKIP_INSTALL`: set to `1` to verify dependencies without
+  installing them. It is unset by default.
+
+For example, to use explicit environments and avoid package installation:
+
+```bash
+NSDEPLOY_BUILD_PYTHON=/opt/python312/bin/python \
+NSDEPLOY_PYTHON=/path/to/nsdeploy/.venv/bin/python \
+NSDEPLOY_SKIP_INSTALL=1 \
+  ./scripts/generate-runtime-and-launch.sh \
+    examples/travel_agent_system.hocon --port 8080
+```
+
+### HOCON and nsdeploy arguments
+
+The first argument is the HOCON to deploy. Every later argument is forwarded
+unchanged to nsdeploy except `--runtime-dir`, which the script deliberately
+owns:
+
+```bash
+# Generate and serve another bundled example.
+./scripts/generate-runtime-and-launch.sh \
+  examples/soccer_world_cup_assistant.hocon --port 8082 --no-cruse
+
+# Generate and verify the runtime/site without starting a server.
+./scripts/generate-runtime-and-launch.sh \
+  examples/travel_agent_system.hocon --port 8080 --no-serve
+
+# Resolve coded tools from a local neuro-san-studio checkout.
+./scripts/generate-runtime-and-launch.sh \
+  examples/travel_agent_system.hocon \
+  --studio /path/to/neuro-san-studio --port 8080
+```
+
+Tools are pulled from GitHub automatically when no `--studio` argument is given.
+
+Relevant forwarded flags include `--repo`/`--ref` (GitHub source, default
 `cognizant-ai-lab/neuro-san-studio@main`), `--studio DIR` (use a local checkout
 instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
 `--site-dir` (editable HTML/CSS/JS source),
 `--site-url` (public origin), `--link`/`--links` (outbound network bindings),
-`--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime),
-`--no-cruse` (skip generative-UI injection), and the theming flags below.
+`--upstream` (BYOK proxy upstream), `--no-cruse` (skip generative-UI injection),
+and the theming flags below.
 
 By default it runs on a deterministic **mock** LLM (no key needed). For real output,
 open **⚙ BYOK settings** in the page and enter your API key + model — calls route
@@ -44,11 +185,30 @@ routing errors are shown as errors rather than silently falling back to mock.
 
 [`cailville/`](cailville) contains thirteen independently deployed household,
 business, broker, and civic agent networks, their decentralized link sidecars, and
-an interactive town map. Start the complete demo from the repository root:
+an interactive town map. The complete from-scratch public test is one command:
 
 ```bash
-./cailville/launch_all.sh
+export OPENAI_API_KEY="your-key"
+./cailville/rebuild_all.sh
 ```
+
+`rebuild_all.sh` first runs the Transcrypt 3.9.5 neuro-san-web build against the
+current sibling Neuro-SAN Python checkout and verifies the generated JavaScript.
+Only after that succeeds does it rebuild all thirteen public sites with the fresh
+runtime and force `--theme --theme-refresh` for every site. This intentionally
+replaces each editable `layout.html`, `theme.css`, `theme.json`, and `site.js`
+below `cailville/sites/`. It then starts ports 8091–8103, waits for all health
+checks, and verifies each site log contains a successful fresh theme proposal;
+preserving an old theme after a failed refresh is an error for this command. It
+then opens the town map and remains in the foreground. Press Ctrl-C to stop the
+sites. The private steward/studio is deliberately disabled in this public browser
+test.
+
+Override the default sibling checkout locations with `NEURO_SAN_SOURCE_DIR` and
+`NEURO_SAN_WEB_DIR`. The existing `NSDEPLOY_BUILD_PYTHON`, `NSDEPLOY_PYTHON`,
+`NSDEPLOY_SKIP_INSTALL`, `NSDEPLOY_THEME_MODEL`, and `NSDEPLOY_UPSTREAM`
+variables also apply. To reuse an already generated runtime and preserve the
+current editable themes, continue to use `./cailville/launch_all.sh` directly.
 
 For real public-facade execution, the private steward supplies the caller profile.
 Use the same OpenAI key already used by the private Neuro-SAN server, or set the

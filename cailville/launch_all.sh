@@ -22,6 +22,13 @@ PRIVATE_STEWARD_BYOK_MODEL="${NSDEPLOY_STEWARD_BYOK_MODEL:-gpt-4o}"
 THEME_MODEL="${NSDEPLOY_THEME_MODEL:-gpt-5.6}"
 THEME_ENABLED="${NSDEPLOY_THEME:-1}"
 THEME_REFRESH="${NSDEPLOY_THEME_REFRESH:-0}"
+THEME_REFRESH_REQUIRED="${NSDEPLOY_THEME_REFRESH_REQUIRED:-0}"
+
+if [[ ! "$THEME_REFRESH_REQUIRED" =~ ^(0|false|no)$ ]] \
+   && { [[ "$THEME_ENABLED" =~ ^(0|false|no)$ ]] || [[ "$THEME_REFRESH" =~ ^(0|false|no)$ ]]; }; then
+  printf 'NSDEPLOY_THEME_REFRESH_REQUIRED needs both NSDEPLOY_THEME=1 and NSDEPLOY_THEME_REFRESH=1.\n' >&2
+  exit 1
+fi
 
 if [[ -z "$PRIVATE_STEWARD_BYOK_API_KEY" ]]; then
   printf 'Warning: no caller BYOK key in the launch environment.\n' >&2
@@ -108,12 +115,14 @@ for i in "${!sites[@]}"; do
   fi
 done
 
-for port in "$PRIVATE_STUDIO_HTTP_PORT" "$PRIVATE_STUDIO_GRPC_PORT" "$PRIVATE_STUDIO_NSFLOW_PORT"; do
-  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    printf 'Private Neuro-SAN studio port %s is already in use.\n' "$port" >&2
-    exit 1
-  fi
-done
+if [[ ! "$PRIVATE_STUDIO_ENABLED" =~ ^(0|false|no)$ && -d "$PRIVATE_STUDIO_DIR" ]]; then
+  for port in "$PRIVATE_STUDIO_HTTP_PORT" "$PRIVATE_STUDIO_GRPC_PORT" "$PRIVATE_STUDIO_NSFLOW_PORT"; do
+    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      printf 'Private Neuro-SAN studio port %s is already in use.\n' "$port" >&2
+      exit 1
+    fi
+  done
+fi
 
 mkdir -p "$LOG_DIR" "$RUN_DIR"
 printf '%s\n' "$$" >"$RUN_DIR/launcher.pid"
@@ -155,6 +164,12 @@ for i in "${!sites[@]}"; do
     fi
     sleep 1
   done
+  if [[ ! "$THEME_REFRESH_REQUIRED" =~ ^(0|false|no)$ ]] \
+     && ! grep -q "theme: proposed via" "$LOG_DIR/$site.log"; then
+    printf '\n%s launched without a verified fresh theme. Last log lines:\n' "$site" >&2
+    tail -30 "$LOG_DIR/$site.log" >&2
+    exit 1
+  fi
   printf 'Ready    %-27s http://127.0.0.1:%s/\n' "$site" "$port"
 done
 

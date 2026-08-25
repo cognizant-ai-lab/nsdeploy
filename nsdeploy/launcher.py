@@ -55,6 +55,52 @@ def _called_tool_names(messages: List[Dict[str, Any]]) -> set:
     return {m.get("name") for m in messages if m.get("role") == "tool" and m.get("name")}
 
 
+def _mock_schema_value(name: str, schema: Dict[str, Any], user_text: str) -> Any:
+    """Produce a small value that respects the advertised JSON-Schema type."""
+    enum = schema.get("enum") or []
+    if enum:
+        return enum[0]
+    value_type = schema.get("type", "string")
+    if value_type == "boolean":
+        return True
+    if value_type in ("integer", "number"):
+        return schema.get("minimum", 1)
+    if value_type == "array":
+        return []
+    if value_type == "object":
+        return {}
+    if name.lower() in ("query", "search_terms", "search_query"):
+        # Search MCPs commonly require concise keyword queries even when their
+        # schema omits maxLength. The generated agent inquiry may repeat a long
+        # form submission; keep the first useful portion rather than forwarding
+        # hundreds of duplicate characters from the deterministic mock.
+        compact = " ".join(user_text.split())
+        if len(compact) <= 240:
+            return compact
+        return compact[:240].rsplit(" ", 1)[0] or compact[:240]
+    return user_text
+
+
+def _mock_tool_arguments(schema: Dict[str, Any], user_text: str) -> Dict[str, Any]:
+    """Populate declared tool fields only; never invent undeclared arguments."""
+    properties = schema.get("properties") or {}
+    arguments = {
+        name: _mock_schema_value(name, properties.get(name) or {}, user_text)
+        for name in (schema.get("required") or [])
+        if name in properties
+    }
+    if not arguments:
+        for preferred in ("request", "inquiry", "search_terms", "query", "input"):
+            if preferred in properties:
+                arguments[preferred] = _mock_schema_value(
+                    preferred, properties.get(preferred) or {}, user_text)
+                break
+    if not arguments and properties:
+        name = next(iter(properties))
+        arguments[name] = _mock_schema_value(name, properties.get(name) or {}, user_text)
+    return arguments
+
+
 def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: List[str],
                  local_mcps: Optional[List[str]] = None, facade_mcp: Optional[str] = None):
     ext_mcp_re = re.compile(r"^/ext-mcp/(\d+)/mcp$")
@@ -176,11 +222,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 name = uncalled[0]
                 schema = next((t["function"].get("parameters", {}) for t in tools
                                if t.get("function", {}).get("name") == name), {})
-                args: Dict[str, Any] = {}
-                for p in (schema.get("required") or []):
-                    args[p] = text
-                for common in ("request", "inquiry", "search_terms", "query", "input"):
-                    args.setdefault(common, text)
+                args = _mock_tool_arguments(schema, text)
                 tc = {"index": 0, "id": f"call_{name}", "type": "function",
                       "function": {"name": name, "arguments": json.dumps(args)}}
                 self.wfile.write(_sse({"choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [tc]}}]}))
@@ -331,7 +373,11 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             if ".." in path or not file_path.is_file():
                 return self._send(404, b"404 " + path.encode(), "text/plain")
             data = file_path.read_bytes()
-            extra = {}
+            # This launcher is a development/runtime host. Runtime modules change
+            # whenever neuro-san-web is regenerated or edited, but ESM modules use
+            # stable URLs. Prevent a refreshed page from silently retaining an old
+            # ui.js (for example the pre-Markdown renderer) from browser cache.
+            extra = {"Cache-Control": "no-store"}
             if path == "/runtime/sandbox-worker.js":
                 extra["Content-Security-Policy"] = WORKER_CSP
             self._send(200, data, MIME.get(file_path.suffix, "application/octet-stream"), extra)

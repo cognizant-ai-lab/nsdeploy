@@ -81,6 +81,94 @@ class _ModelCatalogHandler(BaseHTTPRequestHandler):
 
 
 class LauncherProxyTests(unittest.TestCase):
+    def test_static_runtime_and_page_assets_are_not_cached(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            (root / "index.html").write_text("page", encoding="utf-8")
+            (runtime / "ui.js").write_text("export {};", encoding="utf-8")
+            handler = make_handler(root, "http://unused", runtime, [])
+            proxy = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+            proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+            proxy_thread.start()
+            try:
+                for path in ("/", "/runtime/ui.js"):
+                    with urllib.request.urlopen(
+                        f"http://127.0.0.1:{proxy.server_port}{path}", timeout=5,
+                    ) as response:
+                        self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+            finally:
+                proxy.shutdown()
+                proxy.server_close()
+
+    def test_mock_router_emits_only_schema_declared_tool_arguments(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            handler = make_handler(root, "http://unused", root, [])
+            proxy = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+            proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+            proxy_thread.start()
+            try:
+                response = self._post(
+                    f"http://127.0.0.1:{proxy.server_port}/v1/chat/completions",
+                    {
+                        "messages": [{"role": "user", "content": "SFO to Boston"}],
+                        "tools": [{"type": "function", "function": {
+                            "name": "you_search",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"query": {"type": "string"}},
+                                "required": ["query"],
+                                "additionalProperties": False,
+                            },
+                        }}],
+                    },
+                )
+                payload = response.read().decode()
+                event = next(line for line in payload.splitlines() if line.startswith("data: "))
+                chunk = json.loads(event.removeprefix("data: "))
+                tool_call = chunk["choices"][0]["delta"]["tool_calls"][0]
+                self.assertEqual(json.loads(tool_call["function"]["arguments"]), {
+                    "query": "SFO to Boston",
+                })
+            finally:
+                proxy.shutdown()
+                proxy.server_close()
+
+    def test_mock_router_compacts_long_search_queries(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            handler = make_handler(root, "http://unused", root, [])
+            proxy = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+            proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+            proxy_thread.start()
+            try:
+                response = self._post(
+                    f"http://127.0.0.1:{proxy.server_port}/v1/chat/completions",
+                    {
+                        "messages": [{"role": "user", "content": "SFO Boston " * 100}],
+                        "tools": [{"type": "function", "function": {
+                            "name": "search",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"query": {"type": "string"}},
+                                "required": ["query"],
+                            },
+                        }}],
+                    },
+                )
+                payload = response.read().decode()
+                event = next(line for line in payload.splitlines() if line.startswith("data: "))
+                chunk = json.loads(event.removeprefix("data: "))
+                arguments = json.loads(
+                    chunk["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"])
+                self.assertLessEqual(len(arguments["query"]), 240)
+                self.assertTrue(arguments["query"].startswith("SFO Boston"))
+            finally:
+                proxy.shutdown()
+                proxy.server_close()
+
     def test_byok_model_catalog_is_proxied(self):
         upstream = ThreadingHTTPServer(("127.0.0.1", 0), _ModelCatalogHandler)
         upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
