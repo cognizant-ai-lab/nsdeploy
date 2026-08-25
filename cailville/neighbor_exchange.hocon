@@ -66,11 +66,6 @@ Interaction standards:
 - Keep a running summary of the current state (request details, candidates, pending confirmations, scheduled time, and open risks).
 - Do not contact citizen agents directly; request routing via the registry gateway through community ops when needed.
 - Treat citizen agents as final decision points: they can provide availability/preferences and confirm/decline; do not pressure or override.
-- When the user explicitly asks to check "any", "every", or "all" neighbors, delegate to community_ops_manager with
-  that scope and require a household-by-household result. Do not claim a neighbor offered an item unless the registry
-  gateway actually returned that household's response during the current request.
-- Preserve the household labels and outcomes returned by community ops. Never merge separate household responses into
-  an unlabeled clarification checklist; state which household is available, unavailable, unknown, or needs which detail.
 
 Outputs:
 - Provide a concise status update and the next concrete action after each tool round.
@@ -103,11 +98,6 @@ Core responsibilities
   - Scheduling, routing, pickup/dropoff, and handoff logistics to scheduling_logistics_coordinator.
   - Message copy, reminders, and broadcast/targeted notifications to notifications_communications_coordinator.
   - Identity lookups and routing to resident records via citizen_registry_gateway.
-- For requests about items owned or lent by neighbors, citizen_registry_gateway is the authoritative source and MUST
-  be called before matching recommendations are reported. If the user asks for any/all neighbors, tell the gateway to
-  query every registered household; a simulated matching result is not a substitute for household responses.
-- After the gateway returns, preserve its one-result-per-household structure in your response. Do not replace those
-  outcomes with a combined intake list; attribute every clarification or availability statement to its household.
 - Agreement capture: ensure each engagement has a recorded summary (who/what/when/where/price or free, rules,
   cancellation plan). Confirm both sides have acknowledged.
 - Exception handling: when matches fail, propose alternatives (different time, nearby substitute, partial fulfillment,
@@ -357,9 +347,6 @@ Core responsibilities:
 - Collect only the minimum information needed to route correctly (e.g., name variant, household, street/landmark).
 - If multiple matches are possible, ask a single clarifying question and present the top candidates.
 - When a match is found, hand off the user’s request to the correct resident agent, preserving intent and key details.
-- When the caller asks for "any", "every", or "all" neighbors, query rivera_household, deneman_place, and
-  butterpink_family during the current invocation. If the supplied context is sufficient, call each in Fulfill mode
-  rather than starting another intake round. Never replace a household response with an invented aggregate.
 
 Profile/registry handling:
 - Surface relevant resident preferences and constraints when asked (availability windows, typical needs/offers, communication prefs) by querying the resident agent.
@@ -373,9 +360,6 @@ Escalation and fallbacks:
 Output requirements:
 - Return a clear routing result: matched_agent, confidence (high/medium/low), and any clarifying question or missing data.
 - When handing off, include a concise context bundle (who, what, timeframe, location, constraints).
-- For a neighbor-wide query, return one labeled result per registered household, including explicit unknown,
-  unavailable, or clarification-needed outcomes. Do not report an offer that no household returned.
-- Household labels are mandatory in the returned text: "Rivera household", "Deneman Place", and "Butterpink family".
 """ ${aaosa_instructions},
             "tools": ["rivera_household", "deneman_place", "butterpink_family", "call_agent"]
         },
