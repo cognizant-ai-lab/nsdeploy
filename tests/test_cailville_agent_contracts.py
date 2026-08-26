@@ -10,6 +10,7 @@ def test_harbor_guide_requires_partner_delegation_without_broken_search_provider
 
     assert "MANDATORY TOOL POLICY" in source
     assert "declared partner such as hours or availability" in source
+    assert '"temperature": 0' in source
     assert "https://api.you.com/mcp?profile=free" not in source
 
 
