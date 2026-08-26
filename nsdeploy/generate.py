@@ -125,6 +125,13 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
             agent["instructions"] = (agent.get("instructions", "") or "").rstrip() + "\n\n" + CRUSE_DIRECTIVE
         new_tools.append(agent)
     config["tools"] = new_tools
+    if ext_url:
+        # The browser transports external MCP over a same-origin proxy, but consent
+        # must identify the real upstream service rather than the site's own port.
+        config["nsdeploy_mcp_transports"] = {
+            proxy_url: {"upstream_url": upstream_url}
+            for upstream_url, proxy_url in ext_url.items()
+        }
     if external_tool_specs:
         config["nsdeploy_external_tools"] = external_tool_specs
     config["link_slots"] = {

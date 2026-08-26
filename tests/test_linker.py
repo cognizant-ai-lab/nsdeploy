@@ -166,6 +166,23 @@ class LinkerTests(unittest.TestCase):
         self.assertEqual(manifest["agent_mcp"]["llm_credentials"]["mode"], "caller-byok")
         self.assertTrue(manifest["agent_mcp"]["llm_credentials"]["required"])
 
+    def test_external_mcp_proxy_records_its_real_upstream_for_consent(self):
+        upstream = "https://search.example/mcp"
+        site = "http://127.0.0.1:8091"
+        plan = DeploymentPlan(
+            network_name="demo",
+            config={"tools": [{"name": "front", "instructions": "Help.", "tools": [upstream]}]},
+            front_man="front",
+            external_mcps=[upstream],
+        )
+        config = rewrite_config(plan, site, cruse=False)
+        proxy = f"{site}/ext-mcp/0/mcp"
+        self.assertEqual(config["tools"][0]["tools"], [proxy])
+        self.assertEqual(
+            config["nsdeploy_mcp_transports"],
+            {proxy: {"upstream_url": upstream}},
+        )
+
     def test_cruse_is_injected_only_into_the_public_front_man(self):
         config = {
             "tools": [

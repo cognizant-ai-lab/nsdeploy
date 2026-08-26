@@ -310,9 +310,10 @@ Stop the complete demo from another terminal:
    an available private port for each process, avoiding collisions between sites.
 4. **Rewrite** the resolved network (a copy): each hostable tool reference becomes its
    stable same-origin `/_mcp/<i>/mcp` URL; each **external MCP** URL becomes a proxy URL
-   (`/ext-mcp/<i>/mcp`) so the browser can call it without CORS; missing tools and
-   non-MCP external URLs are dropped. This removes any assumption of a local neuro-san
-   server — tools are reached purely over MCP.
+   (`/ext-mcp/<i>/mcp`) so the browser can call it without CORS, with the real upstream
+   URL retained as transport metadata for accurate consent; missing tools and non-MCP
+   external URLs are dropped. This removes any assumption of a local neuro-san server —
+   tools are reached purely over MCP.
 5. **Generate** `index.html` + `theme.css` + `site.js` + `agent-manifest.json` +
    `<network>.network.json` + `agent-mcp.json` + `<network>_private_steward.hocon` +
    `theme.json` from the editable site source and network.
@@ -377,9 +378,9 @@ The runtime uses a **fetch-and-run-locally** composition model: after consent it
 fetches the target site's public manifest and network definition, interprets that
 network inside the caller's browser, and returns the result through the caller's
 existing orchestration loop. A linked network is never invoked as a remote agent
-execution service. It inherits the caller's active LLM router and model settings
-(including the caller's mock router for keyless demos); BYOK keys are never sent to
-the callee site.
+execution service. It inherits the caller's active LLM router and BYOK credential
+while retaining the model declared by its own HOCON. For keyless demos, the inherited
+router can be the caller's mock router. BYOK keys are never sent to the callee site.
 
 The callee is an ordinary standalone network. It needs no import declaration,
 caller name, `link_aliases`, or other knowledge of who might link to it. Every
