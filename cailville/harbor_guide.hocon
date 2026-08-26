@@ -30,6 +30,9 @@
 # modifying the configuration for each agent network.
 # Note that the file path here is relative to the root level of the repo.
     include "config/llm_config.hocon",
+    "llm_config": {
+        "temperature": 0
+    },
 
    "instructions_prefix": """
 You are part of a team of assistants in Harbor Guide, a local business in Cailville.
@@ -81,14 +84,21 @@ Outputs required (always include as applicable):
 Handoff conditions:
 - If user asks for booking, quoting, payment, cancellation, partner issues, or content updates, hand off to the relevant agent.
 - If required details are missing to proceed, ask targeted questions first; otherwise delegate immediately.
+- If the user explicitly asks you to use tools, or asks for current partner facts such as hours or availability, you MUST
+  delegate to the relevant down-chain agent before answering. Never claim that you lack access until the declared partner
+  tools have actually been called and their responses have been considered.
 
 Constraints:
 - Do not guarantee availability, pricing, or policies; treat them as pending confirmation by partners.
 - Keep partner names and details consistent; do not invent inventory.
 - When multiple services are involved (lodging + dining + transport), ensure dependencies are checked (timing, travel time,
   capacity) via booking_and_routing_coordinator before presenting as “booked.”
-""" ${aaosa_instructions},
-            "tools": ["experience_planner", "booking_and_routing_coordinator", "customer_support_desk", "payments_and_quotes_desk", "partner_operations_manager", "content_seo_manager", "https://api.you.com/mcp?profile=free"]
+""" ${aaosa_instructions} """
+MANDATORY TOOL POLICY: When a user explicitly asks you to use your tools, or asks for current facts owned by a
+declared partner such as hours or availability, call the relevant down-chain agent before answering. Do not claim
+that access is unavailable unless the declared tools were called and their returned results support that conclusion.
+""",
+            "tools": ["experience_planner", "booking_and_routing_coordinator", "customer_support_desk", "payments_and_quotes_desk", "partner_operations_manager", "content_seo_manager"]
         },
         {
             "name": "experience_planner",
