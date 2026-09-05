@@ -868,57 +868,12 @@
       },
       "base": true,
       "url": "http://127.0.0.1:8094"
-    },
-    {
-      "id": "workfabric_customer_facing_ops",
-      "name": "WorkFabric Customer Ops",
-      "description": "Coordinates WorkFabric sales, partnerships, onboarding, support, governance, and executive escalations for Cailville customers.",
-      "kind": "Customer Ops",
-      "type": "business",
-      "icon": "briefcase-business",
-      "port": 8088,
-      "position": {
-        "x": 76,
-        "y": 57,
-        "mx": 25,
-        "my_px": 1390
-      },
-      "base": false,
-      "url": "http://127.0.0.1:8088"
     }
   ],
   "relationships": [
     [
-      "seabreeze_inn",
-      "harbor_town_hall"
-    ],
-    [
-      "seabreeze_inn",
-      "main_street_exchange"
-    ],
-    [
-      "seabreeze_inn",
-      "tide_and_table_fishery"
-    ],
-    [
-      "seabreeze_inn",
-      "harbor_wheels_cooperative"
-    ],
-    [
-      "seabreeze_inn",
-      "fix_and_found"
-    ],
-    [
-      "seabreeze_inn",
-      "greenbank_farm"
-    ],
-    [
-      "seabreeze_inn",
-      "workfabric_customer_facing_ops"
-    ],
-    [
       "harbor_guide",
-      "seabreeze_inn"
+      "greenbank_farm"
     ],
     [
       "harbor_guide",
@@ -926,19 +881,23 @@
     ],
     [
       "harbor_guide",
+      "seabreeze_inn"
+    ],
+    [
+      "harbor_guide",
       "harbor_wheels_cooperative"
-    ],
-    [
-      "harbor_guide",
-      "greenbank_farm"
-    ],
-    [
-      "harbor_guide",
-      "workfabric_customer_facing_ops"
     ],
     [
       "rivera_household",
       "harbor_guide"
+    ],
+    [
+      "rivera_household",
+      "neighbor_exchange"
+    ],
+    [
+      "rivera_household",
+      "harbor_town_hall"
     ],
     [
       "rivera_household",
@@ -949,28 +908,20 @@
       "butterpink_family"
     ],
     [
-      "rivera_household",
-      "neighbor_exchange"
-    ],
-    [
-      "rivera_household",
-      "harbor_town_hall"
-    ],
-    [
       "deneman_place",
       "harbor_guide"
     ],
     [
       "deneman_place",
-      "rivera_household"
-    ],
-    [
-      "deneman_place",
       "neighbor_exchange"
     ],
     [
       "deneman_place",
       "harbor_town_hall"
+    ],
+    [
+      "deneman_place",
+      "rivera_household"
     ],
     [
       "butterpink_family",
@@ -978,15 +929,39 @@
     ],
     [
       "butterpink_family",
-      "rivera_household"
-    ],
-    [
-      "butterpink_family",
       "neighbor_exchange"
     ],
     [
       "butterpink_family",
       "harbor_town_hall"
+    ],
+    [
+      "butterpink_family",
+      "rivera_household"
+    ],
+    [
+      "main_street_exchange",
+      "tide_and_table_fishery"
+    ],
+    [
+      "main_street_exchange",
+      "greenbank_farm"
+    ],
+    [
+      "main_street_exchange",
+      "salt_house_restaurant"
+    ],
+    [
+      "main_street_exchange",
+      "seabreeze_inn"
+    ],
+    [
+      "main_street_exchange",
+      "harbor_wheels_cooperative"
+    ],
+    [
+      "main_street_exchange",
+      "fix_and_found"
     ],
     [
       "neighbor_exchange",
@@ -1001,12 +976,104 @@
       "butterpink_family"
     ],
     [
-      "harbor_town_hall",
+      "tide_and_table_fishery",
+      "main_street_exchange"
+    ],
+    [
+      "tide_and_table_fishery",
+      "harbor_town_hall"
+    ],
+    [
+      "tide_and_table_fishery",
+      "salt_house_restaurant"
+    ],
+    [
+      "tide_and_table_fishery",
       "seabreeze_inn"
+    ],
+    [
+      "greenbank_farm",
+      "main_street_exchange"
+    ],
+    [
+      "greenbank_farm",
+      "harbor_town_hall"
+    ],
+    [
+      "greenbank_farm",
+      "salt_house_restaurant"
+    ],
+    [
+      "greenbank_farm",
+      "seabreeze_inn"
+    ],
+    [
+      "salt_house_restaurant",
+      "main_street_exchange"
+    ],
+    [
+      "salt_house_restaurant",
+      "harbor_town_hall"
+    ],
+    [
+      "salt_house_restaurant",
+      "greenbank_farm"
+    ],
+    [
+      "salt_house_restaurant",
+      "tide_and_table_fishery"
+    ],
+    [
+      "seabreeze_inn",
+      "main_street_exchange"
+    ],
+    [
+      "seabreeze_inn",
+      "harbor_town_hall"
+    ],
+    [
+      "seabreeze_inn",
+      "greenbank_farm"
+    ],
+    [
+      "seabreeze_inn",
+      "tide_and_table_fishery"
+    ],
+    [
+      "seabreeze_inn",
+      "harbor_wheels_cooperative"
+    ],
+    [
+      "seabreeze_inn",
+      "fix_and_found"
+    ],
+    [
+      "harbor_wheels_cooperative",
+      "main_street_exchange"
+    ],
+    [
+      "harbor_wheels_cooperative",
+      "harbor_town_hall"
+    ],
+    [
+      "harbor_wheels_cooperative",
+      "fix_and_found"
+    ],
+    [
+      "fix_and_found",
+      "main_street_exchange"
+    ],
+    [
+      "fix_and_found",
+      "harbor_town_hall"
     ],
     [
       "harbor_town_hall",
       "harbor_guide"
+    ],
+    [
+      "harbor_town_hall",
+      "main_street_exchange"
     ],
     [
       "harbor_town_hall",
@@ -1014,7 +1081,11 @@
     ],
     [
       "harbor_town_hall",
-      "main_street_exchange"
+      "tide_and_table_fishery"
+    ],
+    [
+      "harbor_town_hall",
+      "greenbank_farm"
     ],
     [
       "harbor_town_hall",
@@ -1022,7 +1093,7 @@
     ],
     [
       "harbor_town_hall",
-      "tide_and_table_fishery"
+      "seabreeze_inn"
     ],
     [
       "harbor_town_hall",
@@ -1031,122 +1102,6 @@
     [
       "harbor_town_hall",
       "fix_and_found"
-    ],
-    [
-      "harbor_town_hall",
-      "greenbank_farm"
-    ],
-    [
-      "main_street_exchange",
-      "seabreeze_inn"
-    ],
-    [
-      "main_street_exchange",
-      "salt_house_restaurant"
-    ],
-    [
-      "main_street_exchange",
-      "tide_and_table_fishery"
-    ],
-    [
-      "main_street_exchange",
-      "harbor_wheels_cooperative"
-    ],
-    [
-      "main_street_exchange",
-      "fix_and_found"
-    ],
-    [
-      "main_street_exchange",
-      "greenbank_farm"
-    ],
-    [
-      "main_street_exchange",
-      "workfabric_customer_facing_ops"
-    ],
-    [
-      "salt_house_restaurant",
-      "harbor_town_hall"
-    ],
-    [
-      "salt_house_restaurant",
-      "main_street_exchange"
-    ],
-    [
-      "salt_house_restaurant",
-      "tide_and_table_fishery"
-    ],
-    [
-      "salt_house_restaurant",
-      "greenbank_farm"
-    ],
-    [
-      "tide_and_table_fishery",
-      "seabreeze_inn"
-    ],
-    [
-      "tide_and_table_fishery",
-      "harbor_town_hall"
-    ],
-    [
-      "tide_and_table_fishery",
-      "main_street_exchange"
-    ],
-    [
-      "tide_and_table_fishery",
-      "salt_house_restaurant"
-    ],
-    [
-      "harbor_wheels_cooperative",
-      "harbor_town_hall"
-    ],
-    [
-      "harbor_wheels_cooperative",
-      "main_street_exchange"
-    ],
-    [
-      "harbor_wheels_cooperative",
-      "fix_and_found"
-    ],
-    [
-      "fix_and_found",
-      "harbor_town_hall"
-    ],
-    [
-      "fix_and_found",
-      "main_street_exchange"
-    ],
-    [
-      "greenbank_farm",
-      "seabreeze_inn"
-    ],
-    [
-      "greenbank_farm",
-      "harbor_town_hall"
-    ],
-    [
-      "greenbank_farm",
-      "main_street_exchange"
-    ],
-    [
-      "greenbank_farm",
-      "salt_house_restaurant"
-    ],
-    [
-      "workfabric_customer_facing_ops",
-      "seabreeze_inn"
-    ],
-    [
-      "workfabric_customer_facing_ops",
-      "harbor_guide"
-    ],
-    [
-      "workfabric_customer_facing_ops",
-      "harbor_town_hall"
-    ],
-    [
-      "workfabric_customer_facing_ops",
-      "main_street_exchange"
     ]
   ]
 }

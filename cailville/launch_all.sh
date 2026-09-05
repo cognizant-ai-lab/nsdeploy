@@ -20,6 +20,7 @@ PRIVATE_STEWARD_BYOK_MODEL="${NSDEPLOY_STEWARD_BYOK_MODEL:-gpt-4o}"
 THEME_MODEL="${NSDEPLOY_THEME_MODEL:-gpt-5.6}"
 THEME_ENABLED="${NSDEPLOY_THEME:-1}"
 THEME_REFRESH="${NSDEPLOY_THEME_REFRESH:-0}"
+OPEN_BROWSER="${NSDEPLOY_OPEN_BROWSER:-1}"
 
 if [[ -z "$PRIVATE_STEWARD_BYOK_API_KEY" ]]; then
   printf 'Warning: no caller BYOK key in the launch environment.\n' >&2
@@ -67,21 +68,67 @@ fi
 pids=()
 private_pid=""
 
+signal_tree() {
+  local signal="$1"
+  local pid="$2"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+  pkill -"$signal" -P "$pid" 2>/dev/null || true
+  kill -"$signal" "$pid" 2>/dev/null || true
+}
+
+demo_ports_busy() {
+  local port
+  for port in "${ports[@]}" \
+    "$PRIVATE_STUDIO_HTTP_PORT" "$PRIVATE_STUDIO_GRPC_PORT" "$PRIVATE_STUDIO_NSFLOW_PORT"; do
+    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 cleanup() {
   trap - EXIT INT TERM
   if [[ -n "$private_pid" ]]; then
     printf '\nStopping private Neuro-SAN studio...\n'
-    pkill -TERM -P "$private_pid" 2>/dev/null || true
-    kill "$private_pid" 2>/dev/null || true
-    wait "$private_pid" 2>/dev/null || true
+    signal_tree TERM "$private_pid"
   fi
   if ((${#pids[@]})); then
     printf '\nStopping Cailville sites...\n'
     for pid in "${pids[@]}"; do
-      pkill -TERM -P "$pid" 2>/dev/null || true
+      signal_tree TERM "$pid"
     done
-    kill "${pids[@]}" 2>/dev/null || true
-    wait "${pids[@]}" 2>/dev/null || true
+  fi
+
+  local deadline=$((SECONDS + 5))
+  while ((SECONDS < deadline)) && demo_ports_busy; do
+    sleep 1
+  done
+
+  # Some HTTP server loops can outlive their launching shell. Bound graceful
+  # shutdown, then force only the PIDs we started and listeners on demo ports.
+  if [[ -n "$private_pid" ]]; then
+    signal_tree KILL "$private_pid"
+  fi
+  if ((${#pids[@]})); then
+    for pid in "${pids[@]}"; do
+      signal_tree KILL "$pid"
+    done
+  fi
+  local port listener_pid
+  for port in "${ports[@]}" \
+    "$PRIVATE_STUDIO_HTTP_PORT" "$PRIVATE_STUDIO_GRPC_PORT" "$PRIVATE_STUDIO_NSFLOW_PORT"; do
+    while read -r listener_pid; do
+      [[ -n "$listener_pid" ]] && signal_tree KILL "$listener_pid"
+    done < <(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+  done
+
+  [[ -z "$private_pid" ]] || wait "$private_pid" 2>/dev/null || true
+  ((${#pids[@]} == 0)) || wait "${pids[@]}" 2>/dev/null || true
+  if demo_ports_busy; then
+    printf 'Warning: one or more Cailville ports did not stop cleanly. Run %s.\n' \
+      "$CAILVILLE_DIR/stop_all.sh" >&2
   fi
   rm -f "$RUN_DIR/launcher.pid"
   rm -f "$RUN_DIR/private-studio.pid"
@@ -90,6 +137,11 @@ cleanup() {
   done
 }
 trap cleanup EXIT INT TERM
+
+if demo_ports_busy; then
+  printf 'Found an earlier Cailville run; cleaning it up before launch...\n'
+  "$CAILVILLE_DIR/stop_all.sh"
+fi
 
 for i in "${!sites[@]}"; do
   if lsof -nP -iTCP:"${ports[$i]}" -sTCP:LISTEN >/dev/null 2>&1; then
@@ -124,8 +176,10 @@ for i in "${!sites[@]}"; do
     --steward-sites "$STEWARD_SITES_FILE"
     --upstream "$UPSTREAM"
     --facade-upstream "$FACADE_UPSTREAM"
-    "${theme_args[@]}"
   )
+  if ((${#theme_args[@]})); then
+    deploy_args+=("${theme_args[@]}")
+  fi
   if [[ "$studio" != "-" ]]; then
     deploy_args+=(--studio "$studio")
   fi
@@ -217,8 +271,10 @@ done
 printf 'Ready    private Neuro-SAN server   %s\n' "$PRIVATE_STUDIO_SERVER_URL"
 printf 'Ready    private Neuro-SAN nsFlow    %s\n' "$PRIVATE_STUDIO_URL"
 
-open "$CAILVILLE_DIR/cailville.html"
-open "$PRIVATE_STUDIO_URL"
+if [[ ! "$OPEN_BROWSER" =~ ^(0|false|no)$ ]]; then
+  open "$CAILVILLE_DIR/cailville.html"
+  open "$PRIVATE_STUDIO_URL"
+fi
 printf '\nCailville is running. Logs: %s\n' "$LOG_DIR"
 printf 'Private steward manifest: %s\n' "$PRIVATE_STUDIO_MANIFEST"
 printf 'Private Neuro-SAN studio: %s\n' "$PRIVATE_STUDIO_URL"
