@@ -160,12 +160,17 @@ class LinkerTests(unittest.TestCase):
             front_man="harbor_front",
             links={"harbor_guide": "http://127.0.0.1:8091/harbor_guide"},
         )
-        hocon = build_private_steward_hocon(plan, "https://harbor.example")
+        hocon = build_private_steward_hocon(
+            plan,
+            "https://harbor.example",
+            {"town_hall": "https://town-hall.example"},
+        )
         self.assertIn('"class": "nsdeploy.steward.PublicAgentMcpGateway"', hocon)
         self.assertIn('"max_execution_seconds": 3600', hocon)
         self.assertIn('"mode": "open"', hocon)
         self.assertIn("https://harbor.example/mcp", hocon)
         self.assertIn("http://127.0.0.1:8091/harbor_guide", hocon)
+        self.assertIn("https://town-hall.example", hocon)
         self.assertIn("Never invent example domains or hostnames", hocon)
         self.assertIn("After the operator confirms an action", hocon)
 
@@ -198,6 +203,11 @@ class LinkerTests(unittest.TestCase):
         self.assertNotIn(str(root.resolve()), contents)
         self.assertLess(contents.index("deneman_place_private_steward"),
                         contents.index("harbor_guide_private_steward"))
+
+        manifest = write_private_steward_manifest(root, active_networks=["deneman_place"])
+        contents = manifest.read_text()
+        self.assertIn("deneman_place_private_steward", contents)
+        self.assertNotIn("harbor_guide_private_steward", contents)
 
 
 if __name__ == "__main__":

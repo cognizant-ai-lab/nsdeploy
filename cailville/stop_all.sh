@@ -4,7 +4,20 @@ set -Eeuo pipefail
 CAILVILLE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "$CAILVILLE_DIR/.." && pwd)"
 RUN_DIR="${NSDEPLOY_RUN_DIR:-$PROJECT_DIR/.nsdeploy/cailville-pids}"
-ports=(8092 8091 8095 8096 8093 8094 8097 8098 8099 8100 8101 8102 8103)
+if [[ -n "${NSDEPLOY_PYTHON:-}" ]]; then
+  PYTHON_BIN="$NSDEPLOY_PYTHON"
+elif [[ -x "$PROJECT_DIR/venv/bin/python" ]]; then
+  PYTHON_BIN="$PROJECT_DIR/venv/bin/python"
+else
+  PYTHON_BIN="$(command -v python3 || command -v python)"
+fi
+ports=()
+while read -r port; do
+  [[ -n "$port" ]] && ports+=("$port")
+done < <(
+  cd "$PROJECT_DIR"
+  "$PYTHON_BIN" -m nsdeploy.cailville ports --cailville-dir "$CAILVILLE_DIR"
+)
 private_studio_ports=(
   "${NSDEPLOY_PRIVATE_STUDIO_HTTP_PORT:-8181}"
   "${NSDEPLOY_PRIVATE_STUDIO_GRPC_PORT:-31021}"

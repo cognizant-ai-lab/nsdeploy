@@ -132,6 +132,55 @@ Stop the complete demo from another terminal:
 ./cailville/stop_all.sh
 ```
 
+### Add a public site to Cailville
+
+Use the Cailville workflow to design a site, infer a small set of useful public-network
+connections, add it to the map, generate its private steward, and launch the complete
+community:
+
+```bash
+python -m nsdeploy cailville examples/community_bank_front_office.hocon
+```
+
+The HOCON is optional. With no positional argument, nsDeploy selects the most recently
+modified `*.hocon` file directly inside `~/Downloads`:
+
+```bash
+python -m nsdeploy cailville
+```
+
+Additions are cumulative by default. Start this demo from the original 13-site map while
+still adding the requested site with `--base-map`, or restore only the base map with
+`--reset-map`:
+
+```bash
+python -m nsdeploy cailville examples/community_bank_front_office.hocon --base-map
+python -m nsdeploy cailville --reset-map
+```
+
+The first added site defaults to port `8088`; later additions receive the next unassigned
+port. `--no-launch` performs generation, linking, map revision, and steward generation
+without starting the long-running demo. `--no-theme` and `--no-ai-connections` provide a
+keyless deterministic path.
+
+The existing site-generation command can opt into the same community update while retaining
+full control over its normal flags:
+
+```bash
+python -m nsdeploy examples/community_bank_front_office.hocon \
+  --port 8088 --upstream https://api.openai.com/v1 \
+  --theme --theme-model gpt-5.5 --theme-refresh \
+  --add-to-cailville
+```
+
+Use `--cailville-base-map` with `--add-to-cailville` to discard prior demo additions first.
+The base community lives in `cailville/community.base.json`; the active cumulative state is
+`cailville/community.json`. `launch_all.sh` reads the active state, so newly added sites and
+both sides of inferred public-network relationships are launched automatically. Public sites
+receive only their inferred peer links, while every private steward receives the directory of
+all currently active Cailville public sites. Returning to the base map also removes prior demo
+additions from the private-steward manifest.
+
 ## What it does (pipeline)
 
 1. **Resolve** the HOCON with pyhocon, includes relative to the studio root, so

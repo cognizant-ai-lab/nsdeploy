@@ -181,7 +181,11 @@ def build_agent_mcp_metadata(plan: DeploymentPlan, site_base: str) -> Dict[str, 
     }
 
 
-def build_private_steward_hocon(plan: DeploymentPlan, site_base: str) -> str:
+def build_private_steward_hocon(
+    plan: DeploymentPlan,
+    site_base: str,
+    known_public_sites: Optional[Dict[str, str]] = None,
+) -> str:
     """Create the standard Neuro-SAN network used by the site's operator.
 
     The gateway accepts a public site URL at run time.  This deliberately avoids
@@ -191,7 +195,12 @@ def build_private_steward_hocon(plan: DeploymentPlan, site_base: str) -> str:
     import json as _json
 
     description = (plan.config.get("metadata", {}) or {}).get("description") or plan.network_name
-    public_sites = {plan.network_name: site_base.rstrip("/")}
+    public_sites = {
+        name: str(url).rstrip("/")
+        for name, url in sorted((known_public_sites or {}).items())
+        if name and str(url).strip()
+    }
+    public_sites[plan.network_name] = site_base.rstrip("/")
     public_sites.update({name: url.rstrip("/") for name, url in sorted(plan.links.items())})
     public_site_lines = "\n".join(f"- {name}: {url}" for name, url in public_sites.items())
     gateway_parameters = {
@@ -266,7 +275,10 @@ def build_private_steward_hocon(plan: DeploymentPlan, site_base: str) -> str:
     )
 
 
-def write_private_steward_manifest(manifest_dir: Path) -> Path:
+def write_private_steward_manifest(
+    manifest_dir: Path,
+    active_networks: Optional[List[str]] = None,
+) -> Path:
     """Write a Neuro-SAN manifest for every generated steward below ``manifest_dir``.
 
     Cailville launches several deployments concurrently, so the update is locked
@@ -276,6 +288,7 @@ def write_private_steward_manifest(manifest_dir: Path) -> Path:
     manifest_dir = manifest_dir.resolve()
     manifest_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = manifest_dir / "manifest.hocon"
+    active = set(active_networks) if active_networks is not None else None
     try:
         import fcntl
     except ImportError:  # pragma: no cover - Windows has no fcntl.
@@ -287,7 +300,7 @@ def write_private_steward_manifest(manifest_dir: Path) -> Path:
             steward_files = sorted(
                 path.resolve()
                 for bundle_dir in manifest_dir.iterdir()
-                if bundle_dir.is_dir()
+                if bundle_dir.is_dir() and (active is None or bundle_dir.name in active)
                 for path in bundle_dir.glob("*_private_steward.hocon")
                 if path.is_file()
             )
@@ -429,7 +442,8 @@ def _theme_css(theme: ThemeSpec) -> str:
 def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_router: str,
                   site_base: str, mcp_host: str = "127.0.0.1", cruse: bool = True,
                   theme: Optional[ThemeSpec] = None,
-                  site_source_dir: Optional[Path] = None) -> Dict[str, Any]:
+                  site_source_dir: Optional[Path] = None,
+                  private_steward_sites: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """Build the disposable static output from network data and editable site source."""
     theme = theme or ThemeSpec()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -458,7 +472,7 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     elif legacy_steward_path.is_file():
         legacy_steward_path.unlink()
     steward_path.write_text(
-        build_private_steward_hocon(plan, site_base), encoding="utf-8")
+        build_private_steward_hocon(plan, site_base, private_steward_sites), encoding="utf-8")
     write_private_steward_manifest(out_dir.parent)
 
     # Preserve valid runtime-created bindings across regeneration. Each site owns

@@ -247,6 +247,8 @@
 
     .town-map.is-private-focusing .connection { opacity: 0.045; }
 
+    .public-sites { display: contents; }
+
     .site {
       --site-color: var(--business);
       position: absolute;
@@ -516,7 +518,7 @@
       .controls { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
       .control-label { flex: 1 1 170px; }
       .control-label select { width: 100%; }
-      .town-map { min-height: 1450px; }
+      .town-map { min-height: var(--mobile-map-height, 1450px); }
       .site { left: var(--mx); top: var(--my); width: 142px; }
       .site:hover, .site:focus-visible { width: 168px; }
       .private-steward-label { font-size: 0; }
@@ -629,45 +631,7 @@
       <span><strong>Private stewards act on each entity's behalf</strong><span>Hosted privately in nsFlow · each steward can call any public agentic site on the open web.</span></span>
     </aside>
 
-    <a class="site" id="site-seabreeze_inn" data-site="seabreeze_inn" data-type="business" href="http://127.0.0.1:8093" target="_blank" rel="noopener" style="--x:18%;--y:17%;--mx:25%;--my:7%;" aria-label="Open Seabreeze Inn in a new tab">
-      <span class="site-icon"><i data-lucide="hotel" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Seabreeze Inn</span><span class="site-kind">Hospitality</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
-    </a>
-    <a class="site" id="site-harbor_guide" data-site="harbor_guide" data-type="broker" href="http://127.0.0.1:8091" target="_blank" rel="noopener" style="--x:31%;--y:29%;--mx:73%;--my:10%;" aria-label="Open Harbor Guide in a new tab">
-      <span class="site-icon"><i data-lucide="compass" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Harbor Guide</span><span class="site-kind">Tourism broker</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
-    </a>
-    <a class="site" id="site-rivera_household" data-site="rivera_household" data-type="citizen" href="http://127.0.0.1:8092" target="_blank" rel="noopener" style="--x:73%;--y:14%;--mx:25%;--my:19%;" aria-label="Open Rivera Household in a new tab">
-      <span class="site-icon"><i data-lucide="house" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Rivera Household</span><span class="site-kind">Citizen site</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
-    </a>
-    <a class="site" id="site-deneman_place" data-site="deneman_place" data-type="citizen" href="http://127.0.0.1:8095" target="_blank" rel="noopener" style="--x:88%;--y:17%;--mx:73%;--my:22%;" aria-label="Open Deneman Place in a new tab">
-      <span class="site-icon"><i data-lucide="house" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Deneman Place</span><span class="site-kind">Citizen site</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
-    </a>
-    <a class="site" id="site-butterpink_family" data-site="butterpink_family" data-type="citizen" href="http://127.0.0.1:8096" target="_blank" rel="noopener" style="--x:88%;--y:34%;--mx:25%;--my:31%;" aria-label="Open Butterpink Family in a new tab">
-      <span class="site-icon"><i data-lucide="house" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Butterpink Family</span><span class="site-kind">Citizen site</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
-    </a>
-    <a class="site" id="site-neighbor_exchange" data-site="neighbor_exchange" data-type="broker" href="http://127.0.0.1:8098" target="_blank" rel="noopener" style="--x:72%;--y:31%;--mx:73%;--my:34%;" aria-label="Open Neighbor Exchange in a new tab">
-      <span class="site-icon"><i data-lucide="handshake" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Neighbor Exchange</span><span class="site-kind">C2C broker</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
-    </a>
-    <a class="site" id="site-harbor_town_hall" data-site="harbor_town_hall" data-type="civic" href="http://127.0.0.1:8103" target="_blank" rel="noopener" style="--x:54%;--y:36%;--mx:25%;--my:43%;" aria-label="Open Harbor Town Hall in a new tab">
-      <span class="site-icon"><i data-lucide="landmark" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Harbor Town Hall</span><span class="site-kind">Government</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
-    </a>
-    <a class="site" id="site-main_street_exchange" data-site="main_street_exchange" data-type="broker" href="http://127.0.0.1:8097" target="_blank" rel="noopener" style="--x:48%;--y:54%;--mx:73%;--my:46%;" aria-label="Open Main Street Exchange in a new tab">
-      <span class="site-icon"><i data-lucide="store" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Main Street Exchange</span><span class="site-kind">B2B broker</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
-    </a>
-    <a class="site" id="site-salt_house_restaurant" data-site="salt_house_restaurant" data-type="business" href="http://127.0.0.1:8100" target="_blank" rel="noopener" style="--x:27%;--y:52%;--mx:25%;--my:55%;" aria-label="Open Salt House Restaurant in a new tab">
-      <span class="site-icon"><i data-lucide="utensils" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Salt House Restaurant</span><span class="site-kind">Restaurant</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
-    </a>
-    <a class="site" id="site-tide_and_table_fishery" data-site="tide_and_table_fishery" data-type="business" href="http://127.0.0.1:8099" target="_blank" rel="noopener" style="--x:13%;--y:72%;--mx:73%;--my:59%;" aria-label="Open Tide and Table Fishery in a new tab">
-      <span class="site-icon"><i data-lucide="fish" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Tide &amp; Table Fishery</span><span class="site-kind">Producer</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
-    </a>
-    <a class="site" id="site-harbor_wheels_cooperative" data-site="harbor_wheels_cooperative" data-type="business" href="http://127.0.0.1:8101" target="_blank" rel="noopener" style="--x:38%;--y:77%;--mx:25%;--my:69%;" aria-label="Open Harbor Wheels Cooperative in a new tab">
-      <span class="site-icon"><i data-lucide="bus" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Harbor Wheels Co-op</span><span class="site-kind">Transportation</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
-    </a>
-    <a class="site" id="site-fix_and_found" data-site="fix_and_found" data-type="business" href="http://127.0.0.1:8102" target="_blank" rel="noopener" style="--x:60%;--y:73%;--mx:73%;--my:77%;" aria-label="Open Fix and Found in a new tab">
-      <span class="site-icon"><i data-lucide="wrench" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Fix &amp; Found</span><span class="site-kind">Repair &amp; reuse</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
-    </a>
-    <a class="site" id="site-greenbank_farm" data-site="greenbank_farm" data-type="business" href="http://127.0.0.1:8094" target="_blank" rel="noopener" style="--x:84%;--y:74%;--mx:25%;--my:88%;" aria-label="Open Greenbank Farm in a new tab">
-      <span class="site-icon"><i data-lucide="sprout" aria-hidden="true"></i></span><span class="site-copy"><span class="site-name">Greenbank Farm</span><span class="site-kind">Producer</span></span><span class="open-icon"><i data-lucide="external-link" aria-hidden="true"></i></span>
-    </a>
+    <div class="public-sites" id="public-sites" aria-label="Public agentic sites"></div>
 
     <p class="map-note">Arrows point from caller to callable site.</p>
     <div class="legend" aria-label="Site type legend">
@@ -679,40 +643,568 @@
     </div>
   </main>
 
+  <!-- CAILVILLE_DATA_START -->
+  <script id="cailville-community-data" type="application/json">
+{
+  "version": 1,
+  "sites": [
+    {
+      "id": "seabreeze_inn",
+      "name": "Seabreeze Inn",
+      "description": "Hotel, group bookings, events, and guest services",
+      "kind": "Hospitality",
+      "type": "business",
+      "icon": "hotel",
+      "port": 8093,
+      "position": {
+        "x": 18,
+        "y": 17,
+        "mx": 25,
+        "my_px": 102
+      },
+      "base": true,
+      "url": "http://127.0.0.1:8093"
+    },
+    {
+      "id": "harbor_guide",
+      "name": "Harbor Guide",
+      "description": "Tourism and local-services marketplace",
+      "kind": "Tourism broker",
+      "type": "broker",
+      "icon": "compass",
+      "port": 8091,
+      "position": {
+        "x": 31,
+        "y": 29,
+        "mx": 73,
+        "my_px": 145
+      },
+      "base": true,
+      "url": "http://127.0.0.1:8091"
+    },
+    {
+      "id": "rivera_household",
+      "name": "Rivera Household",
+      "description": "Citizen-controlled family representative",
+      "kind": "Citizen site",
+      "type": "citizen",
+      "icon": "house",
+      "port": 8092,
+      "position": {
+        "x": 73,
+        "y": 14,
+        "mx": 25,
+        "my_px": 276
+      },
+      "base": true,
+      "url": "http://127.0.0.1:8092"
+    },
+    {
+      "id": "deneman_place",
+      "name": "Deneman Place",
+      "description": "Citizen-controlled family representative",
+      "kind": "Citizen site",
+      "type": "citizen",
+      "icon": "house",
+      "port": 8095,
+      "position": {
+        "x": 88,
+        "y": 17,
+        "mx": 73,
+        "my_px": 319
+      },
+      "base": true,
+      "url": "http://127.0.0.1:8095"
+    },
+    {
+      "id": "butterpink_family",
+      "name": "Butterpink Family",
+      "description": "Citizen-controlled family representative",
+      "kind": "Citizen site",
+      "type": "citizen",
+      "icon": "house",
+      "port": 8096,
+      "position": {
+        "x": 88,
+        "y": 34,
+        "mx": 25,
+        "my_px": 450
+      },
+      "base": true,
+      "url": "http://127.0.0.1:8096"
+    },
+    {
+      "id": "neighbor_exchange",
+      "name": "Neighbor Exchange",
+      "description": "Citizen-to-citizen goods, work, rides, and mutual aid",
+      "kind": "C2C broker",
+      "type": "broker",
+      "icon": "handshake",
+      "port": 8098,
+      "position": {
+        "x": 72,
+        "y": 31,
+        "mx": 73,
+        "my_px": 493
+      },
+      "base": true,
+      "url": "http://127.0.0.1:8098"
+    },
+    {
+      "id": "harbor_town_hall",
+      "name": "Harbor Town Hall",
+      "description": "Permits, services, public facilities, and civic coordination",
+      "kind": "Government",
+      "type": "civic",
+      "icon": "landmark",
+      "port": 8103,
+      "position": {
+        "x": 54,
+        "y": 36,
+        "mx": 25,
+        "my_px": 624
+      },
+      "base": true,
+      "url": "http://127.0.0.1:8103"
+    },
+    {
+      "id": "main_street_exchange",
+      "name": "Main Street Exchange",
+      "description": "Business discovery and procurement marketplace",
+      "kind": "B2B broker",
+      "type": "broker",
+      "icon": "store",
+      "port": 8097,
+      "position": {
+        "x": 48,
+        "y": 54,
+        "mx": 73,
+        "my_px": 667
+      },
+      "base": true,
+      "url": "http://127.0.0.1:8097"
+    },
+    {
+      "id": "salt_house_restaurant",
+      "name": "Salt House Restaurant",
+      "description": "Waterfront dining, reservations, and catering",
+      "kind": "Restaurant",
+      "type": "business",
+      "icon": "utensils",
+      "port": 8100,
+      "position": {
+        "x": 27,
+        "y": 52,
+        "mx": 25,
+        "my_px": 798
+      },
+      "base": true,
+      "url": "http://127.0.0.1:8100"
+    },
+    {
+      "id": "tide_and_table_fishery",
+      "name": "Tide & Table Fishery",
+      "description": "Fresh and processed seafood producer",
+      "kind": "Producer",
+      "type": "business",
+      "icon": "fish",
+      "port": 8099,
+      "position": {
+        "x": 13,
+        "y": 72,
+        "mx": 73,
+        "my_px": 856
+      },
+      "base": true,
+      "url": "http://127.0.0.1:8099"
+    },
+    {
+      "id": "harbor_wheels_cooperative",
+      "name": "Harbor Wheels Co-op",
+      "description": "Passenger trips, deliveries, and event shuttles",
+      "kind": "Transportation",
+      "type": "business",
+      "icon": "bus",
+      "port": 8101,
+      "position": {
+        "x": 38,
+        "y": 77,
+        "mx": 25,
+        "my_px": 1001
+      },
+      "base": true,
+      "url": "http://127.0.0.1:8101"
+    },
+    {
+      "id": "fix_and_found",
+      "name": "Fix & Found",
+      "description": "Repair, restoration, reuse, and reclaimed materials",
+      "kind": "Repair & reuse",
+      "type": "business",
+      "icon": "wrench",
+      "port": 8102,
+      "position": {
+        "x": 60,
+        "y": 73,
+        "mx": 73,
+        "my_px": 1117
+      },
+      "base": true,
+      "url": "http://127.0.0.1:8102"
+    },
+    {
+      "id": "greenbank_farm",
+      "name": "Greenbank Farm",
+      "description": "Local produce, flowers, eggs, and seasonal goods",
+      "kind": "Producer",
+      "type": "business",
+      "icon": "sprout",
+      "port": 8094,
+      "position": {
+        "x": 84,
+        "y": 74,
+        "mx": 25,
+        "my_px": 1276
+      },
+      "base": true,
+      "url": "http://127.0.0.1:8094"
+    },
+    {
+      "id": "workfabric_customer_facing_ops",
+      "name": "WorkFabric Customer Ops",
+      "description": "Coordinates WorkFabric sales, partnerships, onboarding, support, governance, and executive escalations for Cailville customers.",
+      "kind": "Customer Ops",
+      "type": "business",
+      "icon": "briefcase-business",
+      "port": 8088,
+      "position": {
+        "x": 76,
+        "y": 57,
+        "mx": 25,
+        "my_px": 1390
+      },
+      "base": false,
+      "url": "http://127.0.0.1:8088"
+    }
+  ],
+  "relationships": [
+    [
+      "seabreeze_inn",
+      "harbor_town_hall"
+    ],
+    [
+      "seabreeze_inn",
+      "main_street_exchange"
+    ],
+    [
+      "seabreeze_inn",
+      "tide_and_table_fishery"
+    ],
+    [
+      "seabreeze_inn",
+      "harbor_wheels_cooperative"
+    ],
+    [
+      "seabreeze_inn",
+      "fix_and_found"
+    ],
+    [
+      "seabreeze_inn",
+      "greenbank_farm"
+    ],
+    [
+      "seabreeze_inn",
+      "workfabric_customer_facing_ops"
+    ],
+    [
+      "harbor_guide",
+      "seabreeze_inn"
+    ],
+    [
+      "harbor_guide",
+      "salt_house_restaurant"
+    ],
+    [
+      "harbor_guide",
+      "harbor_wheels_cooperative"
+    ],
+    [
+      "harbor_guide",
+      "greenbank_farm"
+    ],
+    [
+      "harbor_guide",
+      "workfabric_customer_facing_ops"
+    ],
+    [
+      "rivera_household",
+      "harbor_guide"
+    ],
+    [
+      "rivera_household",
+      "deneman_place"
+    ],
+    [
+      "rivera_household",
+      "butterpink_family"
+    ],
+    [
+      "rivera_household",
+      "neighbor_exchange"
+    ],
+    [
+      "rivera_household",
+      "harbor_town_hall"
+    ],
+    [
+      "deneman_place",
+      "harbor_guide"
+    ],
+    [
+      "deneman_place",
+      "rivera_household"
+    ],
+    [
+      "deneman_place",
+      "neighbor_exchange"
+    ],
+    [
+      "deneman_place",
+      "harbor_town_hall"
+    ],
+    [
+      "butterpink_family",
+      "harbor_guide"
+    ],
+    [
+      "butterpink_family",
+      "rivera_household"
+    ],
+    [
+      "butterpink_family",
+      "neighbor_exchange"
+    ],
+    [
+      "butterpink_family",
+      "harbor_town_hall"
+    ],
+    [
+      "neighbor_exchange",
+      "rivera_household"
+    ],
+    [
+      "neighbor_exchange",
+      "deneman_place"
+    ],
+    [
+      "neighbor_exchange",
+      "butterpink_family"
+    ],
+    [
+      "harbor_town_hall",
+      "seabreeze_inn"
+    ],
+    [
+      "harbor_town_hall",
+      "harbor_guide"
+    ],
+    [
+      "harbor_town_hall",
+      "neighbor_exchange"
+    ],
+    [
+      "harbor_town_hall",
+      "main_street_exchange"
+    ],
+    [
+      "harbor_town_hall",
+      "salt_house_restaurant"
+    ],
+    [
+      "harbor_town_hall",
+      "tide_and_table_fishery"
+    ],
+    [
+      "harbor_town_hall",
+      "harbor_wheels_cooperative"
+    ],
+    [
+      "harbor_town_hall",
+      "fix_and_found"
+    ],
+    [
+      "harbor_town_hall",
+      "greenbank_farm"
+    ],
+    [
+      "main_street_exchange",
+      "seabreeze_inn"
+    ],
+    [
+      "main_street_exchange",
+      "salt_house_restaurant"
+    ],
+    [
+      "main_street_exchange",
+      "tide_and_table_fishery"
+    ],
+    [
+      "main_street_exchange",
+      "harbor_wheels_cooperative"
+    ],
+    [
+      "main_street_exchange",
+      "fix_and_found"
+    ],
+    [
+      "main_street_exchange",
+      "greenbank_farm"
+    ],
+    [
+      "main_street_exchange",
+      "workfabric_customer_facing_ops"
+    ],
+    [
+      "salt_house_restaurant",
+      "harbor_town_hall"
+    ],
+    [
+      "salt_house_restaurant",
+      "main_street_exchange"
+    ],
+    [
+      "salt_house_restaurant",
+      "tide_and_table_fishery"
+    ],
+    [
+      "salt_house_restaurant",
+      "greenbank_farm"
+    ],
+    [
+      "tide_and_table_fishery",
+      "seabreeze_inn"
+    ],
+    [
+      "tide_and_table_fishery",
+      "harbor_town_hall"
+    ],
+    [
+      "tide_and_table_fishery",
+      "main_street_exchange"
+    ],
+    [
+      "tide_and_table_fishery",
+      "salt_house_restaurant"
+    ],
+    [
+      "harbor_wheels_cooperative",
+      "harbor_town_hall"
+    ],
+    [
+      "harbor_wheels_cooperative",
+      "main_street_exchange"
+    ],
+    [
+      "harbor_wheels_cooperative",
+      "fix_and_found"
+    ],
+    [
+      "fix_and_found",
+      "harbor_town_hall"
+    ],
+    [
+      "fix_and_found",
+      "main_street_exchange"
+    ],
+    [
+      "greenbank_farm",
+      "seabreeze_inn"
+    ],
+    [
+      "greenbank_farm",
+      "harbor_town_hall"
+    ],
+    [
+      "greenbank_farm",
+      "main_street_exchange"
+    ],
+    [
+      "greenbank_farm",
+      "salt_house_restaurant"
+    ],
+    [
+      "workfabric_customer_facing_ops",
+      "seabreeze_inn"
+    ],
+    [
+      "workfabric_customer_facing_ops",
+      "harbor_guide"
+    ],
+    [
+      "workfabric_customer_facing_ops",
+      "harbor_town_hall"
+    ],
+    [
+      "workfabric_customer_facing_ops",
+      "main_street_exchange"
+    ]
+  ]
+}
+  </script>
+  <!-- CAILVILLE_DATA_END -->
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
   <script>
-    const sites = {
-      harbor_guide: { name: "Harbor Guide", description: "Tourism and local-services marketplace", url: "http://127.0.0.1:8091" },
-      rivera_household: { name: "Rivera Household", description: "Citizen-controlled family representative", url: "http://127.0.0.1:8092" },
-      seabreeze_inn: { name: "Seabreeze Inn", description: "Hotel, group bookings, events, and guest services", url: "http://127.0.0.1:8093" },
-      greenbank_farm: { name: "Greenbank Farm", description: "Local produce, flowers, eggs, and seasonal goods", url: "http://127.0.0.1:8094" },
-      deneman_place: { name: "Deneman Place", description: "Citizen-controlled family representative", url: "http://127.0.0.1:8095" },
-      butterpink_family: { name: "Butterpink Family", description: "Citizen-controlled family representative", url: "http://127.0.0.1:8096" },
-      main_street_exchange: { name: "Main Street Exchange", description: "Business discovery and procurement marketplace", url: "http://127.0.0.1:8097" },
-      neighbor_exchange: { name: "Neighbor Exchange", description: "Citizen-to-citizen goods, work, rides, and mutual aid", url: "http://127.0.0.1:8098" },
-      tide_and_table_fishery: { name: "Tide & Table Fishery", description: "Fresh and processed seafood producer", url: "http://127.0.0.1:8099" },
-      salt_house_restaurant: { name: "Salt House Restaurant", description: "Waterfront dining, reservations, and catering", url: "http://127.0.0.1:8100" },
-      harbor_wheels_cooperative: { name: "Harbor Wheels Cooperative", description: "Passenger trips, deliveries, and event shuttles", url: "http://127.0.0.1:8101" },
-      fix_and_found: { name: "Fix & Found", description: "Repair, restoration, reuse, and reclaimed materials", url: "http://127.0.0.1:8102" },
-      harbor_town_hall: { name: "Harbor Town Hall", description: "Permits, services, public facilities, and civic coordination", url: "http://127.0.0.1:8103" }
-    };
+    const community = JSON.parse(document.getElementById("cailville-community-data").textContent);
+    const sites = Object.fromEntries(community.sites.map(site => [site.id, site]));
+    const relationships = community.relationships;
+    const publicSiteLayer = document.getElementById("public-sites");
 
-    const relationships = [
-      ["harbor_guide", "greenbank_farm"], ["harbor_guide", "salt_house_restaurant"], ["harbor_guide", "seabreeze_inn"], ["harbor_guide", "harbor_wheels_cooperative"],
-      ["rivera_household", "harbor_guide"], ["rivera_household", "neighbor_exchange"], ["rivera_household", "harbor_town_hall"], ["rivera_household", "deneman_place"], ["rivera_household", "butterpink_family"],
-      ["deneman_place", "harbor_guide"], ["deneman_place", "neighbor_exchange"], ["deneman_place", "harbor_town_hall"], ["deneman_place", "rivera_household"],
-      ["butterpink_family", "harbor_guide"], ["butterpink_family", "neighbor_exchange"], ["butterpink_family", "harbor_town_hall"], ["butterpink_family", "rivera_household"],
-      ["main_street_exchange", "tide_and_table_fishery"], ["main_street_exchange", "greenbank_farm"], ["main_street_exchange", "salt_house_restaurant"], ["main_street_exchange", "seabreeze_inn"], ["main_street_exchange", "harbor_wheels_cooperative"], ["main_street_exchange", "fix_and_found"],
-      ["neighbor_exchange", "rivera_household"], ["neighbor_exchange", "deneman_place"], ["neighbor_exchange", "butterpink_family"],
-      ["tide_and_table_fishery", "main_street_exchange"], ["tide_and_table_fishery", "harbor_town_hall"], ["tide_and_table_fishery", "salt_house_restaurant"], ["tide_and_table_fishery", "seabreeze_inn"],
-      ["greenbank_farm", "main_street_exchange"], ["greenbank_farm", "harbor_town_hall"], ["greenbank_farm", "salt_house_restaurant"], ["greenbank_farm", "seabreeze_inn"],
-      ["salt_house_restaurant", "main_street_exchange"], ["salt_house_restaurant", "harbor_town_hall"], ["salt_house_restaurant", "greenbank_farm"], ["salt_house_restaurant", "tide_and_table_fishery"],
-      ["seabreeze_inn", "main_street_exchange"], ["seabreeze_inn", "harbor_town_hall"], ["seabreeze_inn", "greenbank_farm"], ["seabreeze_inn", "tide_and_table_fishery"], ["seabreeze_inn", "harbor_wheels_cooperative"], ["seabreeze_inn", "fix_and_found"],
-      ["harbor_wheels_cooperative", "main_street_exchange"], ["harbor_wheels_cooperative", "harbor_town_hall"], ["harbor_wheels_cooperative", "fix_and_found"],
-      ["fix_and_found", "main_street_exchange"], ["fix_and_found", "harbor_town_hall"],
-      ["harbor_town_hall", "harbor_guide"], ["harbor_town_hall", "main_street_exchange"], ["harbor_town_hall", "neighbor_exchange"], ["harbor_town_hall", "tide_and_table_fishery"], ["harbor_town_hall", "greenbank_farm"], ["harbor_town_hall", "salt_house_restaurant"], ["harbor_town_hall", "seabreeze_inn"], ["harbor_town_hall", "harbor_wheels_cooperative"], ["harbor_town_hall", "fix_and_found"]
-    ];
+    function iconElement(name) {
+      const icon = document.createElement("i");
+      icon.dataset.lucide = name;
+      icon.setAttribute("aria-hidden", "true");
+      return icon;
+    }
 
+    function createPublicSites() {
+      community.sites.forEach(siteData => {
+        const site = document.createElement("a");
+        const position = siteData.position;
+        site.className = "site";
+        site.id = `site-${siteData.id}`;
+        site.dataset.site = siteData.id;
+        site.dataset.type = siteData.type;
+        site.href = siteData.url;
+        site.target = "_blank";
+        site.rel = "noopener";
+        site.title = siteData.name;
+        site.setAttribute("aria-label", `Open ${siteData.name} in a new tab`);
+        site.style.setProperty("--x", `${position.x}%`);
+        site.style.setProperty("--y", `${position.y}%`);
+        site.style.setProperty("--mx", `${position.mx}%`);
+        site.style.setProperty("--my", position.my_px == null ? `${position.my}%` : `${position.my_px}px`);
+
+        const siteIcon = document.createElement("span");
+        siteIcon.className = "site-icon";
+        siteIcon.append(iconElement(siteData.icon));
+        const copy = document.createElement("span");
+        copy.className = "site-copy";
+        const name = document.createElement("span");
+        name.className = "site-name";
+        name.textContent = siteData.name;
+        const kind = document.createElement("span");
+        kind.className = "site-kind";
+        kind.textContent = siteData.kind;
+        copy.append(name, kind);
+        const openIcon = document.createElement("span");
+        openIcon.className = "open-icon";
+        openIcon.append(iconElement("external-link"));
+        site.append(siteIcon, copy, openIcon);
+        publicSiteLayer.append(site);
+      });
+    }
+
+    createPublicSites();
     const townMap = document.getElementById("town-map");
     const connectionSvg = document.getElementById("connections");
     const pathGroup = document.getElementById("connection-paths");
@@ -725,6 +1217,10 @@
     const stewardSvg = document.getElementById("steward-reach");
     const stewardPathGroup = document.getElementById("steward-paths");
     const siteElements = [...document.querySelectorAll(".site")];
+    const baseReadoutName = `Explore ${siteElements.length} independent agentic sites`;
+    const additionCount = community.sites.filter(site => !site.base).length;
+    townMap.style.setProperty("--mobile-map-height", `${1450 + additionCount * 110}px`);
+    readoutName.textContent = baseReadoutName;
     let activeStewardId = null;
 
     function stewardUrl(siteId) {
@@ -915,7 +1411,7 @@
         restoreDefaultSteward();
         return;
       }
-      readoutName.textContent = "Explore 13 independent agentic sites";
+      readoutName.textContent = baseReadoutName;
       readoutDescription.textContent = "Hover to trace relationships. Select a location to open its site.";
     }
 
@@ -951,7 +1447,7 @@
         townMap.classList.remove("is-private-focusing");
         siteElements.forEach(site => site.classList.remove("is-private-target"));
         document.querySelectorAll(".private-steward").forEach(steward => steward.classList.remove("is-active"));
-        readoutName.textContent = "Explore 13 independent agentic sites";
+        readoutName.textContent = baseReadoutName;
         readoutDescription.textContent = "Hover to trace relationships. Select a location to open its site.";
       }
     });

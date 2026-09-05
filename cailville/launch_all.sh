@@ -9,6 +9,7 @@ UPSTREAM="${NSDEPLOY_UPSTREAM:-https://api.openai.com/v1}"
 FACADE_UPSTREAM="${NSDEPLOY_FACADE_UPSTREAM:-$UPSTREAM}"
 PRIVATE_STUDIO_DIR="${NSDEPLOY_PRIVATE_STUDIO_DIR:-/Users/754339/projects/cailville-private}"
 PRIVATE_STUDIO_MANIFEST="${NSDEPLOY_PRIVATE_STUDIO_MANIFEST:-$PROJECT_DIR/.nsdeploy/cailville/manifest.hocon}"
+STEWARD_SITES_FILE="$PROJECT_DIR/.nsdeploy/cailville/community-public-sites.json"
 PRIVATE_STUDIO_HTTP_PORT="${NSDEPLOY_PRIVATE_STUDIO_HTTP_PORT:-8181}"
 PRIVATE_STUDIO_GRPC_PORT="${NSDEPLOY_PRIVATE_STUDIO_GRPC_PORT:-31021}"
 PRIVATE_STUDIO_NSFLOW_PORT="${NSDEPLOY_PRIVATE_STUDIO_NSFLOW_PORT:-4174}"
@@ -41,22 +42,28 @@ else
   PYTHON_BIN="$(command -v python3 || command -v python)"
 fi
 
-sites=(
-  rivera_household
-  harbor_guide
-  deneman_place
-  butterpink_family
-  seabreeze_inn
-  greenbank_farm
-  main_street_exchange
-  neighbor_exchange
-  tide_and_table_fishery
-  salt_house_restaurant
-  harbor_wheels_cooperative
-  fix_and_found
-  harbor_town_hall
+cd "$PROJECT_DIR"
+sites=()
+ports=()
+hocons=()
+site_dirs=()
+studios=()
+while IFS=$'\t' read -r site port hocon site_dir studio; do
+  [[ -n "$site" ]] || continue
+  sites+=("$site")
+  ports+=("$port")
+  hocons+=("$hocon")
+  site_dirs+=("$site_dir")
+  studios+=("$studio")
+done < <(
+  "$PYTHON_BIN" -m nsdeploy.cailville launch-rows \
+    --cailville-dir "$CAILVILLE_DIR" --project-dir "$PROJECT_DIR"
 )
-ports=(8092 8091 8095 8096 8093 8094 8097 8098 8099 8100 8101 8102 8103)
+if ((${#sites[@]} == 0)); then
+  printf 'No sites found in %s\n' "$CAILVILLE_DIR/community.json" >&2
+  exit 1
+fi
+
 pids=()
 private_pid=""
 
@@ -100,18 +107,29 @@ done
 
 mkdir -p "$LOG_DIR" "$RUN_DIR"
 printf '%s\n' "$$" >"$RUN_DIR/launcher.pid"
-cd "$PROJECT_DIR"
 
 for i in "${!sites[@]}"; do
   site="${sites[$i]}"
   port="${ports[$i]}"
+  hocon="${hocons[$i]}"
+  site_dir="${site_dirs[$i]}"
+  studio="${studios[$i]}"
   log="$LOG_DIR/$site.log"
   printf 'Starting %-27s http://127.0.0.1:%s/\n' "$site" "$port"
-  PYTHONUNBUFFERED=1 "$PYTHON_BIN" -m nsdeploy "$CAILVILLE_DIR/$site.hocon" \
-    --port "$port" \
-    --upstream "$UPSTREAM" \
-    --facade-upstream "$FACADE_UPSTREAM" \
-    "${theme_args[@]}" >"$log" 2>&1 &
+  deploy_args=(
+    "$hocon"
+    --port "$port"
+    --out "$PROJECT_DIR/.nsdeploy/cailville/$site"
+    --site-dir "$site_dir"
+    --steward-sites "$STEWARD_SITES_FILE"
+    --upstream "$UPSTREAM"
+    --facade-upstream "$FACADE_UPSTREAM"
+    "${theme_args[@]}"
+  )
+  if [[ "$studio" != "-" ]]; then
+    deploy_args+=(--studio "$studio")
+  fi
+  PYTHONUNBUFFERED=1 "$PYTHON_BIN" -m nsdeploy "${deploy_args[@]}" >"$log" 2>&1 &
   pid="$!"
   pids+=("$pid")
   printf '%s\n' "$pid" >"$RUN_DIR/$site.pid"
@@ -136,6 +154,11 @@ for i in "${!sites[@]}"; do
   done
   printf 'Ready    %-27s http://127.0.0.1:%s/\n' "$site" "$port"
 done
+
+# Concurrent site generation writes a broad aggregate manifest. Rebuild it from
+# the active map so a base-map reset cannot retain private stewards from old demos.
+"$PYTHON_BIN" -m nsdeploy.cailville active-manifest \
+  --cailville-dir "$CAILVILLE_DIR" --project-dir "$PROJECT_DIR"
 
 if [[ ! -d "$PRIVATE_STUDIO_DIR" ]]; then
   printf '\nPrivate Neuro-SAN studio project not found: %s\n' "$PRIVATE_STUDIO_DIR" >&2

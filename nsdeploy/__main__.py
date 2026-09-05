@@ -15,10 +15,17 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
 
+from nsdeploy.cailville import (
+    commit_addition,
+    plan_addition,
+    public_site_directory,
+    run_cailville_command,
+)
 from nsdeploy.generate import generate_site
 from nsdeploy.linker import load_deploy_links, run_link_command
 from nsdeploy.launcher import serve
@@ -31,6 +38,8 @@ from nsdeploy.theme import DEFAULT_THEME_MODEL, ThemeSpec, load_theme_file, prop
 def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "link":
         return run_link_command(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "cailville":
+        return run_cailville_command(sys.argv[2:])
 
     ap = argparse.ArgumentParser(prog="nsdeploy", description=__doc__)
     ap.add_argument("hocon", help="path to the agent-network HOCON")
@@ -54,6 +63,15 @@ def main() -> int:
     ap.add_argument("--links", default=None, help="link sidecar JSON (default: <hocon>.links.json when present)")
     ap.add_argument("--link", action="append", default=[], metavar="REF=URL",
                     help="bind a dangling agent reference to a remote nsDeploy network (repeatable)")
+    ap.add_argument("--add-to-cailville", action="store_true",
+                    help="add this public site and sensible peer links to the Cailville community")
+    ap.add_argument("--cailville-base-map", action="store_true",
+                    help="with --add-to-cailville, start from the original 13-site map")
+    ap.add_argument("--cailville-no-ai-connections", action="store_true",
+                    help="with --add-to-cailville, use deterministic local connection inference")
+    ap.add_argument("--cailville-dir", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--steward-sites", default=None,
+                    help="JSON map of public site names to URLs known by the private steward")
     ap.add_argument("--no-cruse", action="store_true",
                     help="don't inject the CRUSE generative-UI directive into agents")
     # Tier-1 LLM theming (opt-in, DEPLOY-TIME only — independent of the runtime BYOK).
@@ -71,6 +89,9 @@ def main() -> int:
     ap.add_argument("--no-serve", action="store_true", help="generate the site but don't launch")
     args = ap.parse_args()
 
+    if args.cailville_base_map and not args.add_to_cailville:
+        ap.error("--cailville-base-map requires --add-to-cailville")
+
     hocon_path = Path(args.hocon).resolve()
     if not hocon_path.is_file():
         print(f"error: HOCON not found: {hocon_path}", file=sys.stderr)
@@ -87,6 +108,22 @@ def main() -> int:
     site_dir = (Path(args.site_dir).resolve() if args.site_dir
                 else hocon_path.parent / "sites" / network_name)
     config, missing_includes = resolve_hocon(hocon_path, source)
+    cailville_draft = None
+    if args.add_to_cailville:
+        try:
+            cailville_draft = plan_addition(
+                config, hocon_path, port=args.port, site_dir=site_dir,
+                cailville_dir=Path(args.cailville_dir).resolve() if args.cailville_dir else None,
+                base_map=args.cailville_base_map, model=args.theme_model,
+                api_key=args.theme_key or os.environ.get("OPENAI_API_KEY", ""),
+                upstream=args.theme_upstream or "https://api.openai.com/v1",
+                use_model=not args.cailville_no_ai_connections,
+                studio=args.studio, repo=args.repo, ref=args.ref,
+            )
+            config = cailville_draft.augmented_config
+        except (OSError, ValueError) as exc:
+            print(f"error: cannot add site to Cailville: {exc}", file=sys.stderr)
+            return 2
     try:
         links_path = Path(args.links).resolve() if args.links else None
         if links_path is not None and not links_path.is_file():
@@ -99,6 +136,21 @@ def main() -> int:
         configured = dict(config.get("links", {}) or {})
         configured.update(deploy_links)
         config["links"] = configured
+    private_steward_sites = {}
+    if args.steward_sites:
+        try:
+            steward_data = json.loads(Path(args.steward_sites).read_text(encoding="utf-8"))
+            if not isinstance(steward_data, dict) or not all(
+                isinstance(name, str) and isinstance(url, str)
+                for name, url in steward_data.items()
+            ):
+                raise ValueError("expected a JSON object containing name-to-URL strings")
+            private_steward_sites.update(steward_data)
+        except (OSError, ValueError) as exc:
+            print(f"error: cannot load private steward sites: {exc}", file=sys.stderr)
+            return 2
+    if cailville_draft is not None:
+        private_steward_sites.update(public_site_directory(cailville_draft.community))
     toolbox_info = load_toolbox_info(source)
     plan = build_plan(config, toolbox_info, network_name, missing_includes, source)
 
@@ -179,9 +231,17 @@ def main() -> int:
     mock_router = f"{site_base}/v1"
     byok_router = f"{site_base}/byok/v1"
     generate_site(plan, out_dir, mock_router, byok_router, site_base, cruse=not args.no_cruse,
-                  theme=theme, site_source_dir=site_dir)
+                  theme=theme, site_source_dir=site_dir,
+                  private_steward_sites=private_steward_sites or None)
     print(f"✅ Generated site → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))
     print(f"   private steward manifest → {out_dir.parent / 'manifest.hocon'}")
+
+    if cailville_draft is not None:
+        try:
+            commit_addition(cailville_draft)
+        except (OSError, ValueError) as exc:
+            print(f"error: site generated but Cailville map update failed: {exc}", file=sys.stderr)
+            return 2
 
     if args.no_serve:
         print("   (--no-serve: not launching)")
