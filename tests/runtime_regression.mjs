@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 
-import { isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopRouter } from "../runtime/engine.js";
-import { RemoteRegistry } from "../runtime/remote.js";
-import { isMockResponse } from "../runtime/llm.js";
-import { normalizeModelName } from "../runtime/model.js";
-import { consumeAgentBudget, consumeRemoteBudget, remoteIsInChain } from "../runtime/runner.js";
+import { isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopRouter } from "../nsdeploy/runtime/engine.js";
+import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
+import { isMockResponse } from "../nsdeploy/runtime/llm.js";
+import { normalizeModelName } from "../nsdeploy/runtime/model.js";
+import { consumeAgentBudget, consumeRemoteBudget, remoteIsInChain } from "../nsdeploy/runtime/runner.js";
 
 const manifest = {
   llm_router: {

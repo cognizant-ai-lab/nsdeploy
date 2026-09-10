@@ -25,9 +25,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from nsdeploy.byok import BYOK_AUTH_HEADER, BYOK_MODEL_HEADER
 from nsdeploy.resolve import DeploymentPlan
 
-# The vendored neuro-san-web browser runtime (self-contained ES modules) lives at
-# the project root. Overridable via serve(..., runtime_dir=...) / --runtime-dir.
-DEFAULT_RUNTIME_DIR = Path(__file__).resolve().parents[1] / "runtime"
+# The vendored neuro-san-web browser runtime (self-contained ES modules) ships inside
+# the package as data so editable and regular installs both find it. Overridable via
+# serve(..., runtime_dir=...) / --runtime-dir.
+DEFAULT_RUNTIME_DIR = Path(__file__).resolve().parent / "runtime"
 MIME = {
     ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
     ".mjs": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",

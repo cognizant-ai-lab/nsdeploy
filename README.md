@@ -13,7 +13,7 @@ matching the repo's git tree, so the repo's internal layout doesn't matter. Any 
 dependency a hosted tool imports (e.g. `ddgs`) is auto-installed on demand.
 
 The browser runs the agents on a **vendored copy of the neuro-san-web runtime** (in
-[`runtime/`](runtime) — dependency-free ES modules); the only Python that runs is
+[`nsdeploy/runtime/`](nsdeploy/runtime) — dependency-free ES modules); the only Python that runs is
 (a) the build-time HOCON resolver and (b) one small MCP server per hostable tool.
 
 ## Install & run
@@ -24,6 +24,20 @@ pip install "mcp>=1.0.0" uvicorn starlette pyhocon neuro-san
 # Tools are pulled from GitHub automatically — no --studio needed:
 python -m nsdeploy examples/travel_agent_system.hocon --port 8080
 ```
+
+To deploy networks that live in **another project**, install nsdeploy into that project's
+environment and run it from there. Every path is relative to your working directory or
+the HOCON file, and the browser runtime ships inside the package, so editable and regular
+installs both work:
+
+```bash
+pip install -e /path/to/nsdeploy      # or: pip install /path/to/nsdeploy, or git+<url>
+python -m nsdeploy examples/my_network.hocon --port 8091 --theme --theme-model gpt-5.5
+```
+
+The generated site goes to `./.nsdeploy/` (add it to that project's `.gitignore`), the
+editable site source to `<hocon-dir>/sites/<name>/`, and fetched tool sources and theme
+results are cached under `~/.cache/nsdeploy/`.
 
 Then open <http://127.0.0.1:8080/>. Flags: `--repo`/`--ref` (GitHub source, default
 `cognizant-ai-lab/neuro-san-studio@main`), `--studio DIR` (use a local checkout
