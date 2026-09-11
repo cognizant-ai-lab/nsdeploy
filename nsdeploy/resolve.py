@@ -23,6 +23,7 @@ import importlib
 import inspect
 import io
 import logging
+import posixpath
 import re
 import subprocess
 import sys
@@ -84,18 +85,41 @@ class DeploymentPlan:
     notes: List[str] = field(default_factory=list)
 
 
-def _prefetch_includes(text: str, source: StudioSource, missing: List[str], seen: set) -> None:
+def _prefetch_includes(text: str, source: StudioSource, missing: List[str], seen: set,
+                       parent_dir: str = "") -> None:
     """Recursively materialize every `include`d file (from the source) into the
-    source root so pyhocon can resolve them locally."""
+    source root so pyhocon can resolve them locally.
+
+    Top-level includes are root-relative (neuro-san resolves them against the repo
+    root). pyhocon, however, resolves an include *nested* inside an included file
+    against that file's own directory: `include "developer_llm_config.hocon"` inside
+    `config/llm_config.hocon` is looked up as `config/developer_llm_config.hocon`.
+    So nested includes are materialized at the parent-relative path pyhocon will
+    look for first, falling back to the root-relative path.
+    """
     for rel in _INCLUDE_RE.findall(text):
-        if rel in seen or rel.startswith(("http://", "https://")):
+        if rel.startswith(("http://", "https://")):
             continue
-        seen.add(rel)
-        path = source.ensure(rel)
-        if path is None:
+        candidates: List[str] = []
+        if parent_dir and not rel.startswith("/"):
+            candidates.append(posixpath.normpath(posixpath.join(parent_dir, rel)))
+        if rel not in candidates:
+            candidates.append(rel)
+        found = False
+        for logical in candidates:
+            if logical in seen:
+                found = True  # already attempted (and reported, if missing)
+                break
+            seen.add(logical)
+            path = source.ensure(logical)
+            if path is None:
+                continue
+            found = True
+            _prefetch_includes(path.read_text(encoding="utf-8"), source, missing, seen,
+                               parent_dir=posixpath.dirname(logical))
+            break
+        if not found:
             missing.append(f"Cannot include file {rel} (not found in {getattr(source, 'repo', source.root)}).")
-            continue
-        _prefetch_includes(path.read_text(encoding="utf-8"), source, missing, seen)
 
 
 def resolve_hocon(hocon_path: Path, source: StudioSource) -> tuple[Dict[str, Any], List[str]]:

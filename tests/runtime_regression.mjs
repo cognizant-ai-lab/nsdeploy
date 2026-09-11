@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopRouter } from "../nsdeploy/runtime/engine.js";
 import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
 import { isMockResponse } from "../nsdeploy/runtime/llm.js";
+import { McpClient, parseMaybeSse } from "../nsdeploy/runtime/mcp.js";
 import { normalizeModelName } from "../nsdeploy/runtime/model.js";
 import { consumeAgentBudget, consumeRemoteBudget, remoteIsInChain } from "../nsdeploy/runtime/runner.js";
 
@@ -84,5 +85,45 @@ assert.match(consumeRemoteBudget({...budget, deadline: 50}, "peer-c", 100), /dea
 const agentBudget = {agentCalls: 0, maxAgentCalls: 1, deadline: 200};
 assert.equal(consumeAgentBudget(agentBudget, 100), null);
 assert.match(consumeAgentBudget(agentBudget, 100), /agent invocations/);
+
+// MCP SSE parsing: a server may stream notifications ahead of the JSON-RPC response
+// (You.com emits a notifications/message log line before every tools/call result).
+// The client must return the response event, not the first event.
+const youSse = [
+  "event: message",
+  'data: {"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info","data":"Search successful"}}',
+  "",
+  "event: message",
+  'data: {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"hit"}]}}',
+  "",
+].join("\n");
+assert.equal(parseMaybeSse(youSse, 3).result.content[0].text, "hit");
+assert.equal(parseMaybeSse(youSse).result.content[0].text, "hit");
+assert.equal(parseMaybeSse('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}', 1).result.ok, true);
+assert.equal(parseMaybeSse('event: message\ndata: {"jsonrpc":"2.0","id":2,"error":{"code":-1,"message":"x"}}', 2).error.code, -1);
+assert.throws(
+  () => parseMaybeSse('event: message\ndata: {"jsonrpc":"2.0","method":"notifications/message","params":{}}', 1),
+  /unparseable/,
+);
+{
+  const realFetch = globalThis.fetch;
+  const methods = [];
+  globalThis.fetch = async (_url, init) => {
+    const req = JSON.parse(init.body);
+    methods.push(req.method);
+    const text = req.method === "tools/call"
+      ? youSse.replace('"id":3', `"id":${req.id}`)
+      : `event: message\ndata: {"jsonrpc":"2.0","id":${req.id ?? null},"result":{}}\n`;
+    return new Response(text, { status: 200, headers: { "Content-Type": "text/event-stream", "Mcp-Session-Id": "s1" } });
+  };
+  try {
+    const client = new McpClient({ url: "http://127.0.0.1:8091/ext-mcp/0/mcp" });
+    assert.equal(await client.callTool("you-search", { query: "q" }), "hit");
+    assert.deepEqual(methods, ["initialize", "notifications/initialized", "tools/call"]);
+    assert.equal(client.sessionId, "s1");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
 
 console.log("runtime regression tests passed");
