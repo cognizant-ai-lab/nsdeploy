@@ -67,7 +67,8 @@ def main() -> int:
     ap.add_argument("--facade-upstream", default=None,
                     help="server-side facade LLM endpoint (default: $NSDEPLOY_FACADE_UPSTREAM or --upstream)")
     ap.add_argument("--facade-key", default=None,
-                    help="legacy compatibility option; real facade calls require caller BYOK over MCP")
+                    help="accepted for backward compatibility and IGNORED: a served site never uses a "
+                         "host-side LLM key; the facade only uses the caller's BYOK credentials")
     ap.add_argument("--runtime-dir", default=None, help="neuro-san-web runtime dir (default: vendored nsdeploy/runtime)")
     ap.add_argument("--links", default=None, help="link sidecar JSON (default: <hocon>.links.json when present)")
     ap.add_argument("--link", action="append", default=[], metavar="REF=URL",
@@ -100,6 +101,9 @@ def main() -> int:
 
     if args.cailville_base_map and not args.add_to_cailville:
         ap.error("--cailville-base-map requires --add-to-cailville")
+    if args.facade_key:
+        print("warning: --facade-key is ignored; the public facade only uses caller BYOK credentials",
+              file=sys.stderr)
 
     hocon_path = Path(args.hocon).resolve()
     if not hocon_path.is_file():
@@ -264,7 +268,7 @@ def main() -> int:
     # source.root holds the (materialized) coded-tool sources the MCP hosts import.
     serve(out_dir, plan, source.root, port=args.port, upstream=args.upstream,
           runtime_dir=runtime_dir, ext_mcps=plan.external_mcps,
-          facade_upstream=args.facade_upstream, facade_api_key=args.facade_key)
+          facade_upstream=args.facade_upstream)
     return 0
 
 

@@ -54,6 +54,15 @@ a real key is automatically moved off the site's mock `/v1` route. The header re
 a real LLM only after the endpoint returns a verifiable, non-mock model response;
 routing errors are shown as errors rather than silently falling back to mock.
 
+**BYOK guarantee.** A served site never holds or uses an LLM key configured on the
+host. `/v1` is a keyless local mock that makes no network calls; `/byok/v1` forwards
+exactly the `Authorization` header the visitor entered to `--upstream` and nothing
+else; the public `/mcp` facade refuses real requests without caller BYOK headers and
+is started with provider credentials (`OPENAI_*`, `ANTHROPIC_*`, `*_API_KEY`, …)
+scrubbed from its environment. Deploy-time theming is the only step that reads
+`OPENAI_API_KEY`, and it finishes before the server starts. `--facade-key` is accepted
+for compatibility and ignored.
+
 ## Cailville multi-site demo
 
 [`cailville/`](cailville) contains thirteen independently deployed household,
@@ -264,7 +273,9 @@ LLM execution is caller BYOK. A private steward sends its
 `NSDEPLOY_STEWARD_BYOK_MODEL` as sensitive MCP transport headers. Every public
 facade uses those credentials and propagates them only when invoking another public
 facade; they are never included in tool arguments, prompts, results, or local and
-third-party MCP calls. A real facade request without caller credentials is rejected.
+third-party MCP calls. A real facade request without caller credentials is rejected,
+and the facade subprocess is started with provider credentials scrubbed from its
+environment (`scrubbed_env` in `nsdeploy/launcher.py`).
 Set the facade upstream explicitly to `mock://nsdeploy` only for a deterministic
 keyless demo. The browser `/byok/v1` path remains unchanged.
 

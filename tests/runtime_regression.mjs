@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopRouter } from "../nsdeploy/runtime/engine.js";
 import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
-import { isMockResponse } from "../nsdeploy/runtime/llm.js";
+import { LlmClient, isMockResponse } from "../nsdeploy/runtime/llm.js";
 import { McpClient, parseMaybeSse } from "../nsdeploy/runtime/mcp.js";
 import { normalizeModelName } from "../nsdeploy/runtime/model.js";
 import { consumeAgentBudget, consumeRemoteBudget, remoteIsInChain } from "../nsdeploy/runtime/runner.js";
@@ -121,6 +121,26 @@ assert.throws(
     assert.equal(await client.callTool("you-search", { query: "q" }), "hit");
     assert.deepEqual(methods, ["initialize", "notifications/initialized", "tools/call"]);
     assert.equal(client.sessionId, "s1");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// BYOK guard: a real (non-mock) router is never contacted without a visitor-entered
+// key. The "demo" sentinel and an empty key are both rejected before any fetch.
+{
+  const realFetch = globalThis.fetch;
+  let fetched = 0;
+  globalThis.fetch = async () => { fetched += 1; throw new Error("fetch reached"); };
+  try {
+    const real = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "demo", mock: false });
+    await assert.rejects(real.chat({ model: "m", messages: [] }), /needs your API key/);
+    const empty = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "", mock: false });
+    await assert.rejects(empty.chat({ model: "m", messages: [] }), /needs your API key/);
+    assert.equal(fetched, 0);
+    const mock = new LlmClient({ baseUrl: "http://127.0.0.1:8091/v1", apiKey: "demo", mock: true });
+    await assert.rejects(mock.chat({ model: "m", messages: [] }), /fetch reached/);
+    assert.equal(fetched, 1);
   } finally {
     globalThis.fetch = realFetch;
   }

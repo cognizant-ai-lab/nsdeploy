@@ -1,14 +1,18 @@
+import http.client
 import json
+import os
 import tempfile
 import threading
+import types
 import unittest
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 from nsdeploy.byok import BYOK_AUTH_HEADER, BYOK_MODEL_HEADER
-from nsdeploy.launcher import make_handler
+from nsdeploy.launcher import _facade_command, make_handler, scrubbed_env
 
 
 class _SessionMcpHandler(BaseHTTPRequestHandler):
@@ -17,6 +21,7 @@ class _SessionMcpHandler(BaseHTTPRequestHandler):
     delete_session_id = ""
     byok_authorization = ""
     byok_model = ""
+    authorization = ""
 
     def log_message(self, *args):
         pass
@@ -24,6 +29,7 @@ class _SessionMcpHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         type(self).byok_authorization = self.headers.get(BYOK_AUTH_HEADER, "")
         type(self).byok_model = self.headers.get(BYOK_MODEL_HEADER, "")
+        type(self).authorization = self.headers.get("Authorization", "")
         length = int(self.headers.get("Content-Length", 0) or 0)
         body = json.loads(self.rfile.read(length) or b"{}")
         if body.get("method") == "initialize":
@@ -202,6 +208,145 @@ class LauncherProxyTests(unittest.TestCase):
         return urllib.request.urlopen(urllib.request.Request(
             url, data=json.dumps(body).encode(), method="POST", headers=headers,
         ), timeout=5)
+
+
+class _ChatUpstreamHandler(BaseHTTPRequestHandler):
+    """Fake OpenAI-compatible upstream: records what the BYOK proxy forwards."""
+    headers_seen = {}
+    body_seen = b""
+
+    def log_message(self, *args):
+        pass
+
+    def do_POST(self):
+        type(self).headers_seen = {k: v for k, v in self.headers.items()}
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        type(self).body_seen = self.rfile.read(length)
+        if not self.headers.get("Authorization"):
+            payload = json.dumps({"error": {"message": "missing key"}}).encode()
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+        else:
+            payload = (b'data: {"model":"real-model","choices":[{"index":0,"delta":{"content":"ok"},'
+                       b'"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+class ByokOnlyTests(unittest.TestCase):
+    """A served site must never use an LLM credential configured on the host."""
+
+    def _serve(self, handler_cls, *make_handler_args):
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls) if handler_cls else None
+        if upstream:
+            threading.Thread(target=upstream.serve_forever, daemon=True).start()
+        temp = tempfile.TemporaryDirectory()
+        root = Path(temp.name)
+        args = [a(upstream.server_port) if callable(a) else a for a in make_handler_args]
+        proxy = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(root, *args))
+        threading.Thread(target=proxy.serve_forever, daemon=True).start()
+
+        def cleanup():
+            proxy.shutdown(); proxy.server_close()
+            if upstream:
+                upstream.shutdown(); upstream.server_close()
+            temp.cleanup()
+        self.addCleanup(cleanup)
+        return proxy.server_port
+
+    def test_byok_chat_proxy_forwards_only_the_visitor_header(self):
+        port = self._serve(_ChatUpstreamHandler, lambda p: f"http://127.0.0.1:{p}", Path("."), [])
+        body = json.dumps({"model": "visitor-model", "messages": [{"role": "user", "content": "hi"}],
+                           "stream": True}).encode()
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "server-secret"}):
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/byok/v1/chat/completions", data=body, method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer visitor-key"})
+            with urllib.request.urlopen(request, timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get("X-Nsdeploy-LLM-Route"), "byok")
+                self.assertIn(b"real-model", response.read())
+        self.assertEqual(_ChatUpstreamHandler.headers_seen.get("Authorization"), "Bearer visitor-key")
+        self.assertEqual(_ChatUpstreamHandler.body_seen, body)
+        self.assertNotIn("server-secret", json.dumps(_ChatUpstreamHandler.headers_seen))
+
+    def test_byok_chat_proxy_never_substitutes_a_key_when_the_visitor_sent_none(self):
+        port = self._serve(_ChatUpstreamHandler, lambda p: f"http://127.0.0.1:{p}", Path("."), [])
+        body = json.dumps({"model": "m", "messages": []}).encode()
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "server-secret"}):
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/byok/v1/chat/completions", data=body, method="POST",
+                headers={"Content-Type": "application/json"})
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(request, timeout=5)
+        self.assertEqual(ctx.exception.code, 401)
+        with ctx.exception as denied:
+            self.assertIn(b"missing key", denied.read())
+        self.assertFalse(_ChatUpstreamHandler.headers_seen.get("Authorization"))
+        self.assertNotIn("server-secret", json.dumps(_ChatUpstreamHandler.headers_seen))
+
+    def test_mock_router_makes_no_network_call(self):
+        port = self._serve(None, "http://unused", Path("."), [])
+        body = json.dumps({"model": "mock-1", "messages": [{"role": "user", "content": "hi"}],
+                           "tools": [{"type": "function", "function": {
+                               "name": "lookup", "parameters": {"type": "object", "required": ["q"]}}}]})
+        with patch("urllib.request.urlopen", side_effect=AssertionError("mock router must not call out")):
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request("POST", "/v1/chat/completions", body=body,
+                         headers={"Content-Type": "application/json"})
+            response = conn.getresponse()
+            text = response.read().decode()
+            conn.close()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("X-Nsdeploy-LLM-Route"), "mock")
+        self.assertIn('"tool_calls"', text)
+        self.assertIn('"name": "lookup"', text)
+
+    def test_tool_proxies_do_not_forward_any_credential(self):
+        mcp_urls = lambda p: [f"http://127.0.0.1:{p}/mcp"]  # noqa: E731 - both ext and local proxies
+        port = self._serve(_SessionMcpHandler, "http://unused", Path("."), mcp_urls, mcp_urls)
+        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                           "clientInfo": {"name": "test", "version": "1"}}}
+        for path in ("/_mcp/0/mcp", "/ext-mcp/0/mcp"):
+            _SessionMcpHandler.authorization = "unset"
+            _SessionMcpHandler.byok_authorization = "unset"
+            _SessionMcpHandler.byok_model = "unset"
+            LauncherProxyTests._post(f"http://127.0.0.1:{port}{path}", init, extra_headers={
+                "Authorization": "Bearer visitor-key",
+                BYOK_AUTH_HEADER: "Bearer caller-key",
+                BYOK_MODEL_HEADER: "caller-model",
+            })
+            self.assertEqual(_SessionMcpHandler.authorization, "", path)
+            self.assertEqual(_SessionMcpHandler.byok_authorization, "", path)
+            self.assertEqual(_SessionMcpHandler.byok_model, "", path)
+
+    def test_scrubbed_env_removes_provider_credentials_and_keeps_settings(self):
+        env = scrubbed_env({
+            "OPENAI_API_KEY": "k", "OPENAI_BASE_URL": "u", "OPENAI_ORG_ID": "o",
+            "ANTHROPIC_API_KEY": "k", "AZURE_OPENAI_API_KEY": "k", "AZURE_OPENAI_ENDPOINT": "u",
+            "GOOGLE_API_KEY": "k", "GEMINI_API_KEY": "k", "GOOGLE_APPLICATION_CREDENTIALS": "f",
+            "MISTRAL_API_KEY": "k", "HF_API_TOKEN": "t", "NSDEPLOY_FACADE_API_KEY": "k",
+            "NSDEPLOY_STEWARD_BYOK_API_KEY": "k", "NSDEPLOY_STEWARD_BYOK_MODEL": "m",
+            "NSDEPLOY_FACADE_UPSTREAM": "http://router/v1", "NSDEPLOY_FACADE_MODEL": "gpt-x",
+            "NSDEPLOY_FACADE_SITE_TIMEOUT_SECONDS": "30", "PATH": "/bin", "PYTHONPATH": "/src",
+            "HOME": "/home/u",
+        })
+        self.assertEqual(env, {
+            "NSDEPLOY_FACADE_UPSTREAM": "http://router/v1", "NSDEPLOY_FACADE_MODEL": "gpt-x",
+            "NSDEPLOY_FACADE_SITE_TIMEOUT_SECONDS": "30", "PATH": "/bin", "PYTHONPATH": "/src",
+            "HOME": "/home/u",
+        })
+
+    def test_facade_command_carries_no_credential(self):
+        plan = types.SimpleNamespace(network_name="net", front_man="front")
+        cmd = _facade_command("python", Path("/site"), plan, 8091, 50000, "https://api.example/v1")
+        flags = {arg for arg in cmd if arg.startswith("--")}
+        self.assertEqual(flags, {"--config", "--site-base", "--front-man", "--port", "--upstream"})
+        self.assertNotIn("--api-key", cmd)
 
 
 if __name__ == "__main__":

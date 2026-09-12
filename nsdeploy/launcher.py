@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from nsdeploy.byok import BYOK_AUTH_HEADER, BYOK_MODEL_HEADER
 from nsdeploy.resolve import DeploymentPlan
@@ -38,6 +38,36 @@ WORKER_CSP = "default-src 'none'; script-src blob:; connect-src 'none'; worker-s
 MCP_PROXY_TIMEOUT_SECONDS = 480
 UPSTREAM_REQUEST_TIMEOUT_SECONDS = 480
 MODEL_CATALOG_TIMEOUT_SECONDS = 120
+
+# A served site must never use an LLM credential configured on the host: every real
+# completion carries the visitor's (or MCP caller's) own key. These patterns identify
+# provider credentials and provider endpoints that must not leak into the facade
+# subprocess. Non-secret settings (NSDEPLOY_FACADE_UPSTREAM, NSDEPLOY_FACADE_MODEL,
+# timeouts, PATH, PYTHONPATH) are kept.
+_SCRUB_PREFIXES = ("OPENAI_", "ANTHROPIC_", "AZURE_OPENAI_", "GEMINI_", "GOOGLE_API_",
+                   "NSDEPLOY_STEWARD_BYOK_")
+_SCRUB_SUFFIXES = ("_API_KEY", "_API_TOKEN", "_SECRET_KEY")
+_SCRUB_EXACT = {"GOOGLE_APPLICATION_CREDENTIALS", "NSDEPLOY_FACADE_API_KEY"}
+
+
+def scrubbed_env(base: Mapping[str, str]) -> Dict[str, str]:
+    """Copy of `base` without LLM-provider credentials or provider endpoints."""
+    return {
+        name: value for name, value in base.items()
+        if not (name in _SCRUB_EXACT
+                or name.startswith(_SCRUB_PREFIXES)
+                or name.endswith(_SCRUB_SUFFIXES))
+    }
+
+
+def _facade_command(python_exe: str, site_dir: Path, plan: DeploymentPlan, port: int,
+                    facade_port: int, facade_upstream: str) -> List[str]:
+    """argv for the public MCP facade subprocess. It carries no credential: the facade
+    only ever uses the caller's BYOK headers."""
+    return [python_exe, "-m", "nsdeploy.facade", "--config",
+            str(site_dir / f"{plan.network_name}.network.json"), "--site-base",
+            f"http://127.0.0.1:{port}", "--front-man", plan.front_man,
+            "--port", str(facade_port), "--upstream", facade_upstream]
 
 
 def _sse(obj: Dict[str, Any]) -> bytes:
@@ -407,6 +437,9 @@ def _stop_process(proc: subprocess.Popen) -> None:
 def spawn_mcp_servers(plan: DeploymentPlan, studio_root: Path, python_exe: str) -> List[Tuple[subprocess.Popen, int]]:
     """Start one FastMCP server per tool on an available private runtime port."""
     bindings: List[Tuple[subprocess.Popen, int]] = []
+    # NOTE: tool subprocesses currently inherit the full host environment (some studio
+    # coded tools construct provider clients from it). Tightening this to scrubbed_env()
+    # is tracked separately together with the affected tools.
     env = dict(os.environ)
     repo_root = str(Path(__file__).resolve().parents[1])
     env["PYTHONPATH"] = os.pathsep.join([repo_root, str(studio_root), env.get("PYTHONPATH", "")])
@@ -443,7 +476,7 @@ def spawn_mcp_servers(plan: DeploymentPlan, studio_root: Path, python_exe: str) 
 def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int = 8080,
           upstream: str = "https://api.openai.com/v1", python_exe: Optional[str] = None,
           runtime_dir: Optional[Path] = None, ext_mcps: Optional[List[str]] = None,
-          facade_upstream: Optional[str] = None, facade_api_key: Optional[str] = None) -> None:
+          facade_upstream: Optional[str] = None) -> None:
     python_exe = python_exe or sys.executable
     runtime_dir = runtime_dir or DEFAULT_RUNTIME_DIR
     ext_mcps = ext_mcps or []
@@ -454,19 +487,12 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
         facade_port = _free_tcp_port()
         facade_upstream = facade_upstream or os.environ.get("NSDEPLOY_FACADE_UPSTREAM") or upstream
         repo_root = str(Path(__file__).resolve().parents[1])
-        env = dict(os.environ)
-        for secret_name in (
-            "OPENAI_API_KEY",
-            "NSDEPLOY_FACADE_API_KEY",
-            "NSDEPLOY_STEWARD_BYOK_API_KEY",
-        ):
-            env.pop(secret_name, None)
+        # The facade runs the network for MCP callers with *their* BYOK credentials, so it
+        # must not even be able to see the host's provider credentials.
+        env = scrubbed_env(os.environ)
         env["PYTHONPATH"] = os.pathsep.join([repo_root, str(studio_root), env.get("PYTHONPATH", "")])
         facade_proc = subprocess.Popen(
-            [python_exe, "-m", "nsdeploy.facade", "--config",
-             str(site_dir / f"{plan.network_name}.network.json"), "--site-base",
-             f"http://127.0.0.1:{port}", "--front-man", plan.front_man,
-             "--port", str(facade_port), "--upstream", facade_upstream],
+            _facade_command(python_exe, site_dir, plan, port, facade_port, facade_upstream),
             env=env, cwd=repo_root,
         )
         _wait_for_listener(facade_proc, facade_port)
