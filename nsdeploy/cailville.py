@@ -1,0 +1,612 @@
+"""Cailville community integration and one-command demo workflow."""
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import math
+import os
+import re
+import subprocess
+import sys
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import urlparse
+
+from nsdeploy.resolve import resolve_hocon
+from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio, StudioSource
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CAILVILLE_DIR = PROJECT_ROOT / "cailville"
+DATA_START = "<!-- CAILVILLE_DATA_START -->"
+DATA_END = "<!-- CAILVILLE_DATA_END -->"
+SITE_TYPES = {"citizen", "broker", "business", "civic"}
+ICONS = {
+    "badge-dollar-sign", "banknote", "briefcase-business", "building-2", "bus",
+    "church", "compass", "factory", "fish", "handshake", "heart-handshake",
+    "hospital", "hotel", "house", "landmark", "library", "school", "ship",
+    "sprout", "store", "utensils", "warehouse", "wrench",
+}
+
+
+@dataclass
+class CommunityDraft:
+    community: Dict[str, Any]
+    augmented_config: Dict[str, Any]
+    site: Dict[str, Any]
+    connect_to: List[str]
+    connect_from: List[str]
+    cailville_dir: Path
+
+
+def load_community(path: Path) -> Dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"cannot read Cailville community file {path}: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("sites"), list):
+        raise ValueError(f"invalid Cailville community file: {path}")
+    return data
+
+
+def public_site_directory(community: Dict[str, Any]) -> Dict[str, str]:
+    """Return every active Cailville public-site origin for private stewards."""
+    return {
+        site["id"]: f"http://127.0.0.1:{site['port']}"
+        for site in community.get("sites", [])
+    }
+
+
+def cailville_ports(cailville_dir: Path, project_dir: Optional[Path] = None) -> List[int]:
+    """Return active ports plus ports from prior generated Cailville bundles."""
+    community = load_community(cailville_dir / "community.json")
+    ports = [int(site["port"]) for site in community["sites"]]
+    if project_dir is not None:
+        bundle_root = project_dir / ".nsdeploy" / "cailville"
+        for manifest_path in bundle_root.glob("*/agent-manifest.json"):
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                endpoint = (manifest.get("agent_mcp") or {}).get("endpoint", "")
+                parsed = urlparse(endpoint)
+                if parsed.hostname in {"127.0.0.1", "localhost"} and parsed.port:
+                    ports.append(parsed.port)
+            except (OSError, ValueError, TypeError):
+                continue
+    return list(dict.fromkeys(ports))
+
+
+def latest_download_hocon(downloads: Optional[Path] = None) -> Path:
+    root = (downloads or (Path.home() / "Downloads")).expanduser()
+    candidates = [path for path in root.glob("*.hocon") if path.is_file()]
+    if not candidates:
+        raise ValueError(f"no .hocon files found in {root}")
+    return max(candidates, key=lambda path: (path.stat().st_mtime_ns, path.name)).resolve()
+
+
+def allocate_port(community: Dict[str, Any], preferred: Optional[int] = None) -> int:
+    used = {int(site["port"]) for site in community.get("sites", []) if site.get("port")}
+    if preferred is not None:
+        if preferred in used:
+            raise ValueError(f"port {preferred} is already assigned in Cailville")
+        return preferred
+    for port in range(8088, 9000):
+        if port not in used:
+            return port
+    raise ValueError("no free Cailville demo port is available")
+
+
+def _clean(value: Any, limit: int) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= limit:
+        return text
+    shortened = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:-")
+    return shortened or text[:limit]
+
+
+def _brandize(value: str) -> str:
+    return re.sub(r"[_-]+", " ", value).strip().title()
+
+
+def _identity(config: Dict[str, Any], network: str) -> Dict[str, Any]:
+    agents = [
+        item for item in (config.get("tools", []) or [])
+        if isinstance(item, dict) and "instructions" in item
+        and "class" not in item and "toolbox" not in item
+    ]
+    front = agents[0] if agents else {}
+    meta = config.get("metadata", {}) or {}
+    description = ((front.get("function") or {}).get("description")
+                   or meta.get("description") or front.get("instructions") or network)
+    return {
+        "network": network,
+        "description": _clean(description, 900),
+        "sample_queries": [_clean(item, 240) for item in (meta.get("sample_queries") or [])[:4]],
+        "agents": [
+            {
+                "name": item.get("name", ""),
+                "role": _clean((item.get("function") or {}).get("description") or item.get("instructions"), 180),
+            }
+            for item in agents[:12]
+        ],
+    }
+
+
+def _tokens(value: str) -> set[str]:
+    stop = {
+        "about", "agent", "and", "assistant", "cailville", "for", "from", "into",
+        "local", "network", "of", "or", "site", "the", "their", "this", "to", "with",
+    }
+    return {word for word in re.findall(r"[a-z0-9]+", value.lower()) if len(word) > 2 and word not in stop}
+
+
+def heuristic_profile(identity: Dict[str, Any], peers: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    text = " ".join([
+        identity["network"], identity["description"],
+        " ".join(item.get("name", "") + " " + item.get("role", "") for item in identity["agents"]),
+        " ".join(identity["sample_queries"]),
+    ]).lower()
+    words = _tokens(text)
+
+    if any(term in text for term in ("family", "household", "personal presence", "individual")):
+        site_type, icon, kind = "citizen", "house", "Citizen site"
+    elif any(term in text for term in ("government", "municipal", "public agency", "permit", "civic")):
+        site_type, icon, kind = "civic", "landmark", "Civic service"
+    elif any(term in text for term in ("marketplace", "exchange", "broker", "directory", "concierge")):
+        site_type, icon, kind = "broker", "handshake", "Community broker"
+    elif any(term in text for term in ("bank", "banking", "credit union", "finance", "loan")):
+        site_type, icon, kind = "business", "landmark", "Community banking"
+    elif any(term in text for term in ("restaurant", "catering", "food", "dining")):
+        site_type, icon, kind = "business", "utensils", "Food & dining"
+    elif any(term in text for term in ("hotel", "lodging", "inn", "hospitality")):
+        site_type, icon, kind = "business", "hotel", "Hospitality"
+    elif any(term in text for term in ("transport", "delivery", "shuttle", "vehicle")):
+        site_type, icon, kind = "business", "bus", "Transportation"
+    else:
+        site_type, icon, kind = "business", "building-2", "Local organization"
+
+    scored: List[tuple[int, str, Dict[str, Any]]] = []
+    for peer in peers:
+        peer_text = " ".join((peer.get("id", ""), peer.get("name", ""),
+                              peer.get("description", ""), peer.get("kind", ""))).lower()
+        score = len(words & _tokens(peer_text)) * 4
+        peer_id = peer["id"]
+        if peer_id == "main_street_exchange" and site_type in {"business", "broker"}:
+            score += 10
+        if peer_id == "neighbor_exchange" and any(term in text for term in ("community", "family", "household", "bank", "resident", "citizen")):
+            score += 9
+        if peer_id == "harbor_town_hall":
+            score += 5
+        if peer_id == "harbor_guide" and any(term in text for term in ("visitor", "travel", "event", "hotel", "restaurant", "tour")):
+            score += 9
+        if peer_id == "fix_and_found" and any(term in text for term in ("repair", "reuse", "equipment", "maintenance")):
+            score += 8
+        if peer_id == "harbor_wheels_cooperative" and any(term in text for term in ("transport", "delivery", "event", "travel")):
+            score += 7
+        scored.append((score, peer_id, peer))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    useful = [peer_id for score, peer_id, _ in scored if score > 0][:4]
+    if len(useful) < 2:
+        useful.extend(peer_id for _, peer_id, _ in scored if peer_id not in useful)
+        useful = useful[:3]
+    peer_by_id = {peer["id"]: peer for _, _, peer in scored}
+    inbound = [
+        peer_id for peer_id in useful
+        if peer_by_id[peer_id].get("type") in {"broker", "civic"}
+    ][:3]
+    return {
+        "name": _brandize(identity["network"]),
+        "description": _clean(identity["description"], 160),
+        "kind": kind,
+        "type": site_type,
+        "icon": icon,
+        "connect_to": useful,
+        "connect_from": inbound,
+    }
+
+
+def _extract_json(text: str) -> Dict[str, Any]:
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.I)
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start >= 0 and end > start:
+        cleaned = cleaned[start:end + 1]
+    value = json.loads(cleaned)
+    if not isinstance(value, dict):
+        raise ValueError("connection model did not return an object")
+    return value
+
+
+def _model_profile(identity: Dict[str, Any], peers: List[Dict[str, Any]], *,
+                   model: str, api_key: str, upstream: str) -> Dict[str, Any]:
+    peer_facts = [
+        {key: peer.get(key) for key in ("id", "name", "description", "kind", "type")}
+        for peer in peers
+    ]
+    system = (
+        "You place a newly deployed public agent-network site into the fictional coastal town Cailville. "
+        "Return only JSON. Choose real collaboration edges that are useful for the new organization; do not connect "
+        "everything. connect_to means the new public network may call an existing public network. connect_from means "
+        "an existing public network may call the new one. Choose 2-5 connect_to IDs and 0-3 connect_from IDs. "
+        "Only use supplied IDs. Return: name, description (<=160 chars), kind (<=24 chars), type "
+        "(citizen|broker|business|civic), icon, connect_to, connect_from. Icon must be one of: "
+        + ", ".join(sorted(ICONS)) + "."
+    )
+    payload = {
+        "model": model,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps({"new_site": identity, "existing_sites": peer_facts})},
+        ],
+    }
+    if not re.match(r"^gpt-5(?:[.-]|$)", model, flags=re.I):
+        payload["temperature"] = 0.2
+    request = urllib.request.Request(
+        f"{upstream.rstrip('/')}/chat/completions",
+        data=json.dumps(payload).encode("utf-8"), method="POST",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+    )
+    with urllib.request.urlopen(request, timeout=180) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    return _extract_json(body["choices"][0]["message"]["content"])
+
+
+def infer_profile(identity: Dict[str, Any], peers: List[Dict[str, Any]], *, model: str,
+                  api_key: str = "", upstream: str = "https://api.openai.com/v1",
+                  use_model: bool = True) -> Dict[str, Any]:
+    fallback = heuristic_profile(identity, peers)
+    proposed: Dict[str, Any] = {}
+    model_succeeded = False
+    if use_model and api_key:
+        try:
+            proposed = _model_profile(identity, peers, model=model, api_key=api_key, upstream=upstream)
+            model_succeeded = True
+            print(f"   Cailville connections proposed via {model}")
+        except Exception as exc:
+            print(f"   Cailville connection model failed ({str(exc)[:100]}); using local inference")
+    else:
+        print("   Cailville connections: using local inference" + (" (no API key)" if use_model else ""))
+
+    peer_ids = {peer["id"] for peer in peers}
+    site_type = proposed.get("type") if proposed.get("type") in SITE_TYPES else fallback["type"]
+    icon = proposed.get("icon") if proposed.get("icon") in ICONS else fallback["icon"]
+    proposed_to = proposed.get("connect_to", [])
+    proposed_from = proposed.get("connect_from", [])
+    connect_to = [item for item in proposed_to if item in peer_ids] if isinstance(proposed_to, list) else []
+    connect_from = [item for item in proposed_from if item in peer_ids] if isinstance(proposed_from, list) else []
+    if not connect_to:
+        connect_to = fallback["connect_to"]
+    if not model_succeeded or "connect_from" not in proposed:
+        connect_from = fallback["connect_from"]
+    return {
+        "name": _clean(proposed.get("name") or fallback["name"], 60),
+        "description": _clean(proposed.get("description") or fallback["description"], 160),
+        "kind": _clean(proposed.get("kind") or fallback["kind"], 24),
+        "type": site_type,
+        "icon": icon,
+        "connect_to": list(dict.fromkeys(connect_to))[:5],
+        "connect_from": list(dict.fromkeys(connect_from))[:3],
+    }
+
+
+def choose_position(sites: List[Dict[str, Any]]) -> Dict[str, Any]:
+    occupied = [site.get("position", {}) for site in sites]
+    candidates = [
+        (x, y) for y in (13, 24, 35, 46, 57, 68, 79, 88)
+        for x in (13, 22, 31, 40, 49, 58, 67, 76, 85, 91)
+        if not (y < 22 and 35 < x < 69)
+    ]
+
+    def clearance(point: tuple[int, int]) -> float:
+        if not occupied:
+            return 999.0
+        return min(math.hypot(point[0] - float(pos.get("x", 50)),
+                              (point[1] - float(pos.get("y", 50))) * 1.35)
+                   for pos in occupied)
+
+    x, y = max(candidates, key=lambda point: (clearance(point), -point[1], -point[0]))
+    addition_index = sum(1 for site in sites if not site.get("base", False))
+    return {
+        "x": x,
+        "y": y,
+        "mx": 25 if addition_index % 2 == 0 else 73,
+        "my_px": 1390 + addition_index * 110,
+    }
+
+
+def augment_config(config: Dict[str, Any], network: str,
+                   community: Dict[str, Any]) -> Dict[str, Any]:
+    result = copy.deepcopy(config)
+    sites = {site["id"]: site for site in community.get("sites", [])}
+    targets = [target for source, target in community.get("relationships", [])
+               if source == network and target in sites]
+    agents = [
+        item for item in (result.get("tools", []) or [])
+        if isinstance(item, dict) and "instructions" in item
+        and "class" not in item and "toolbox" not in item
+    ]
+    if not agents or not targets:
+        return result
+    front = agents[0]
+    tools = list(front.get("tools", []) or [])
+    links = dict(result.get("links", {}) or {})
+    for target in targets:
+        if target not in tools:
+            tools.append(target)
+        links[target] = f"http://127.0.0.1:{sites[target]['port']}/{target}"
+    front["tools"] = tools
+    result["links"] = links
+    return result
+
+
+def plan_addition(config: Dict[str, Any], hocon_path: Path, *, port: Optional[int],
+                  site_dir: Path, cailville_dir: Optional[Path] = None,
+                  base_map: bool = False, model: str = "gpt-5.5", api_key: str = "",
+                  upstream: str = "https://api.openai.com/v1", use_model: bool = True,
+                  studio: Optional[str] = None, repo: str = DEFAULT_REPO,
+                  ref: str = DEFAULT_REF) -> CommunityDraft:
+    cailville_dir = (cailville_dir or DEFAULT_CAILVILLE_DIR).resolve()
+    source_path = cailville_dir / ("community.base.json" if base_map else "community.json")
+    if not source_path.is_file():
+        source_path = cailville_dir / "community.base.json"
+    community = copy.deepcopy(load_community(source_path))
+    network = hocon_path.stem
+    existing = next((site for site in community["sites"] if site["id"] == network), None)
+    peers = [site for site in community["sites"] if site["id"] != network]
+    identity = _identity(config, network)
+    profile = infer_profile(identity, peers, model=model, api_key=api_key,
+                            upstream=upstream, use_model=use_model)
+    if existing and port is None:
+        selected_port = int(existing["port"])
+    else:
+        port_community = {**community, "sites": peers}
+        selected_port = allocate_port(port_community, port)
+    position = copy.deepcopy(existing.get("position")) if existing else choose_position(peers)
+    site: Dict[str, Any] = {
+        "id": network,
+        "name": profile["name"],
+        "description": profile["description"],
+        "kind": profile["kind"],
+        "type": profile["type"],
+        "icon": profile["icon"],
+        "port": selected_port,
+        "hocon": str(hocon_path.resolve()),
+        "site_dir": str(site_dir.resolve()),
+        "base": bool(existing and existing.get("base")),
+        "position": position,
+    }
+    if studio:
+        site["studio"] = str(Path(studio).resolve())
+    elif repo != DEFAULT_REPO or ref != DEFAULT_REF:
+        site.update({"repo": repo, "ref": ref})
+
+    community["sites"] = peers + [site]
+    edges = {
+        (source, target) for source, target in community.get("relationships", [])
+        if source != network and target != network
+    }
+    edges.update((network, target) for target in profile["connect_to"])
+    edges.update((source, network) for source in profile["connect_from"])
+    order = {item["id"]: index for index, item in enumerate(community["sites"])}
+    community["relationships"] = [
+        list(edge) for edge in sorted(edges, key=lambda edge: (order.get(edge[0], 999), order.get(edge[1], 999)))
+    ]
+    augmented = augment_config(config, network, community)
+    return CommunityDraft(community, augmented, site, profile["connect_to"],
+                          profile["connect_from"], cailville_dir)
+
+
+def _map_payload(community: Dict[str, Any]) -> Dict[str, Any]:
+    sites = []
+    for item in community.get("sites", []):
+        site = {key: item[key] for key in (
+            "id", "name", "description", "kind", "type", "icon", "port", "position", "base"
+        )}
+        site["url"] = f"http://127.0.0.1:{item['port']}"
+        sites.append(site)
+    return {"version": 1, "sites": sites, "relationships": community.get("relationships", [])}
+
+
+def render_map_html(html_path: Path, community: Dict[str, Any]) -> None:
+    text = html_path.read_text(encoding="utf-8")
+    if DATA_START not in text or DATA_END not in text:
+        raise ValueError(f"Cailville data markers are missing from {html_path}")
+    raw = json.dumps(_map_payload(community), indent=2, ensure_ascii=False).replace("<", "\\u003c")
+    replacement = f'{DATA_START}\n  <script id="cailville-community-data" type="application/json">\n{raw}\n  </script>\n  {DATA_END}'
+    pattern = re.compile(re.escape(DATA_START) + ".*?" + re.escape(DATA_END), re.S)
+    updated, count = pattern.subn(replacement, text, count=1)
+    if count != 1:
+        raise ValueError(f"could not update Cailville data in {html_path}")
+    temp = html_path.with_name(f".{html_path.name}.tmp")
+    temp.write_text(updated, encoding="utf-8")
+    temp.replace(html_path)
+
+
+def commit_addition(draft: CommunityDraft) -> None:
+    output = draft.cailville_dir / "community.json"
+    temp = output.with_name(f".{output.name}.tmp")
+    temp.write_text(json.dumps(draft.community, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temp.replace(output)
+    render_map_html(draft.cailville_dir / "cailville.html", draft.community)
+    print(f"✅ Added {draft.site['name']} to Cailville on port {draft.site['port']}")
+    print("   calls → " + ", ".join(draft.connect_to))
+    print("   called by ← " + (", ".join(draft.connect_from) or "none"))
+
+
+def reset_map(cailville_dir: Path = DEFAULT_CAILVILLE_DIR) -> None:
+    cailville_dir = cailville_dir.resolve()
+    community = load_community(cailville_dir / "community.base.json")
+    output = cailville_dir / "community.json"
+    output.write_text(json.dumps(community, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    render_map_html(cailville_dir / "cailville.html", community)
+    print(f"✅ Restored the base Cailville map ({len(community['sites'])} sites)")
+
+
+def _member_path(cailville_dir: Path, value: str) -> Path:
+    path = Path(value).expanduser()
+    return path.resolve() if path.is_absolute() else (cailville_dir / path).resolve()
+
+
+def prepare_runtime_sources(cailville_dir: Path, project_dir: Path) -> Dict[str, Path]:
+    community = load_community(cailville_dir / "community.json")
+    sites = {site["id"]: site for site in community["sites"]}
+    added = {site_id for site_id, site in sites.items() if not site.get("base", False)}
+    derived = set(added)
+    derived.update(source for source, target in community.get("relationships", []) if target in added)
+    output_dir = project_dir / ".nsdeploy" / "cailville" / "community-sources"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    result: Dict[str, Path] = {}
+    for site_id in sorted(derived):
+        site = sites[site_id]
+        hocon = _member_path(cailville_dir, site["hocon"])
+        source: StudioSource
+        if site.get("studio"):
+            source = LocalStudio(site["studio"])
+        else:
+            source = GithubStudio(site.get("repo", DEFAULT_REPO), site.get("ref", DEFAULT_REF))
+        config, _ = resolve_hocon(hocon, source)
+        config = augment_config(config, site_id, community)
+        destination = output_dir / f"{site_id}.hocon"
+        destination.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        result[site_id] = destination
+    return result
+
+
+def write_steward_sites_file(cailville_dir: Path, project_dir: Path) -> Path:
+    community = load_community(cailville_dir / "community.json")
+    destination = project_dir / ".nsdeploy" / "cailville" / "community-public-sites.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(public_site_directory(community), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return destination
+
+
+def write_active_private_manifest(cailville_dir: Path, project_dir: Path) -> Path:
+    from nsdeploy.generate import write_private_steward_manifest
+
+    community = load_community(cailville_dir / "community.json")
+    active = [site["id"] for site in community["sites"]]
+    return write_private_steward_manifest(
+        project_dir / ".nsdeploy" / "cailville", active_networks=active
+    )
+
+
+def emit_launch_rows(cailville_dir: Path, project_dir: Path) -> None:
+    community = load_community(cailville_dir / "community.json")
+    runtime_sources = prepare_runtime_sources(cailville_dir, project_dir)
+    write_steward_sites_file(cailville_dir, project_dir)
+    for site in community["sites"]:
+        site_id = site["id"]
+        hocon = runtime_sources.get(site_id) or _member_path(cailville_dir, site["hocon"])
+        site_dir = _member_path(cailville_dir, site["site_dir"])
+        studio = site.get("studio") or "-"
+        print("\t".join((site_id, str(site["port"]), str(hocon), str(site_dir), str(studio))))
+
+
+def run_cailville_command(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="nsdeploy cailville",
+        description="Generate a public site, connect it into Cailville, and launch the complete demo.",
+    )
+    parser.add_argument("hocon", nargs="?", help="network HOCON (default: newest ~/Downloads/*.hocon)")
+    parser.add_argument("--port", type=int, default=None, help="site port (default: next Cailville port, starting at 8088)")
+    parser.add_argument("--base-map", action="store_true", help="discard earlier demo additions before adding this site")
+    parser.add_argument("--reset-map", action="store_true", help="restore the original 13-site map and exit")
+    parser.add_argument("--no-launch", action="store_true", help="generate and integrate the site without launching Cailville")
+    parser.add_argument("--no-theme", action="store_true", help="skip LLM site design")
+    parser.add_argument("--no-theme-refresh", action="store_true", help="reuse an existing editable site theme")
+    parser.add_argument("--theme-model", default="gpt-5.5", help="site-design and connection model (default gpt-5.5)")
+    parser.add_argument("--theme-upstream", default=None, help="OpenAI-compatible endpoint for design and connections")
+    parser.add_argument("--theme-key", default=None, help="API key (else $OPENAI_API_KEY)")
+    parser.add_argument("--no-ai-connections", action="store_true", help="use deterministic local connection inference")
+    parser.add_argument("--upstream", default="https://api.openai.com/v1", help="runtime BYOK upstream")
+    parser.add_argument("--studio", default=None, help="local neuro-san-studio checkout")
+    parser.add_argument("--repo", default=DEFAULT_REPO, help=f"GitHub studio repo (default {DEFAULT_REPO})")
+    parser.add_argument("--ref", default=DEFAULT_REF, help=f"Git ref (default {DEFAULT_REF})")
+    parser.add_argument("--site-dir", default=None, help="editable source directory for the new public site")
+    parser.add_argument("--cailville-dir", default=str(DEFAULT_CAILVILLE_DIR), help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    cailville_dir = Path(args.cailville_dir).resolve()
+    if args.reset_map:
+        reset_map(cailville_dir)
+        return 0
+    try:
+        hocon = Path(args.hocon).expanduser().resolve() if args.hocon else latest_download_hocon()
+        if not hocon.is_file():
+            raise ValueError(f"HOCON not found: {hocon}")
+        current_path = cailville_dir / ("community.base.json" if args.base_map else "community.json")
+        community = load_community(current_path if current_path.is_file() else cailville_dir / "community.base.json")
+        existing = next((site for site in community["sites"] if site["id"] == hocon.stem), None)
+        port = args.port if args.port is not None else (int(existing["port"]) if existing else allocate_port(community))
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    if not args.hocon:
+        print(f"▶ Using newest Downloads HOCON: {hocon}")
+    project_dir = cailville_dir.parent
+    site_dir = Path(args.site_dir).expanduser().resolve() if args.site_dir else hocon.parent / "sites" / hocon.stem
+    out_dir = project_dir / ".nsdeploy" / "cailville" / hocon.stem
+    command = [
+        sys.executable, "-m", "nsdeploy", str(hocon),
+        "--port", str(port), "--out", str(out_dir), "--site-dir", str(site_dir),
+        "--upstream", args.upstream, "--add-to-cailville", "--no-serve",
+        "--cailville-dir", str(cailville_dir), "--theme-model", args.theme_model,
+    ]
+    if args.base_map:
+        command.append("--cailville-base-map")
+    if args.no_ai_connections:
+        command.append("--cailville-no-ai-connections")
+    if args.studio:
+        command.extend(("--studio", args.studio))
+    else:
+        command.extend(("--repo", args.repo, "--ref", args.ref))
+    if not args.no_theme:
+        command.append("--theme")
+        if not args.no_theme_refresh:
+            command.append("--theme-refresh")
+    if args.theme_upstream:
+        command.extend(("--theme-upstream", args.theme_upstream))
+    if args.theme_key:
+        command.extend(("--theme-key", args.theme_key))
+    result = subprocess.run(command, cwd=project_dir)
+    if result.returncode:
+        return result.returncode
+    if args.no_launch:
+        print(f"\nPrepared Cailville. Launch later with {cailville_dir / 'launch_all.sh'}")
+        return 0
+    return subprocess.call([str(cailville_dir / "launch_all.sh")], cwd=project_dir,
+                           env=os.environ.copy())
+
+
+def _internal_main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(prog="python -m nsdeploy.cailville")
+    sub = parser.add_subparsers(dest="command", required=True)
+    rows = sub.add_parser("launch-rows")
+    rows.add_argument("--cailville-dir", required=True)
+    rows.add_argument("--project-dir", required=True)
+    ports = sub.add_parser("ports")
+    ports.add_argument("--cailville-dir", required=True)
+    ports.add_argument("--project-dir")
+    manifest = sub.add_parser("active-manifest")
+    manifest.add_argument("--cailville-dir", required=True)
+    manifest.add_argument("--project-dir", required=True)
+    args = parser.parse_args(argv)
+    if args.command == "launch-rows":
+        emit_launch_rows(Path(args.cailville_dir).resolve(), Path(args.project_dir).resolve())
+    elif args.command == "ports":
+        project_dir = Path(args.project_dir).resolve() if args.project_dir else None
+        for port in cailville_ports(Path(args.cailville_dir).resolve(), project_dir):
+            print(port)
+    elif args.command == "active-manifest":
+        write_active_private_manifest(
+            Path(args.cailville_dir).resolve(), Path(args.project_dir).resolve()
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_internal_main())
