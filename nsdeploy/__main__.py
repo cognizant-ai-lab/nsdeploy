@@ -20,12 +20,6 @@ import os
 import sys
 from pathlib import Path
 
-from nsdeploy.cailville import (
-    commit_addition,
-    plan_addition,
-    public_site_directory,
-    run_cailville_command,
-)
 from nsdeploy.generate import generate_site
 from nsdeploy.linker import load_deploy_links, run_link_command
 from nsdeploy.launcher import serve
@@ -35,11 +29,26 @@ from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio
 from nsdeploy.theme import DEFAULT_THEME_MODEL, ThemeSpec, load_theme_file, propose_theme
 
 
+def _load_cailville():
+    """Import the Cailville community helpers on demand.
+
+    Only `nsdeploy cailville ...` and --add-to-cailville need them; a plain deploy must
+    not fail to start when that module is absent from an install.
+    """
+    try:
+        from nsdeploy import cailville
+    except ImportError as exc:
+        print(f"error: Cailville support is unavailable in this install: {exc}", file=sys.stderr)
+        return None
+    return cailville
+
+
 def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "link":
         return run_link_command(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "cailville":
-        return run_cailville_command(sys.argv[2:])
+        cailville = _load_cailville()
+        return cailville.run_cailville_command(sys.argv[2:]) if cailville else 2
 
     ap = argparse.ArgumentParser(prog="nsdeploy", description=__doc__)
     ap.add_argument("hocon", help="path to the agent-network HOCON")
@@ -58,8 +67,9 @@ def main() -> int:
     ap.add_argument("--facade-upstream", default=None,
                     help="server-side facade LLM endpoint (default: $NSDEPLOY_FACADE_UPSTREAM or --upstream)")
     ap.add_argument("--facade-key", default=None,
-                    help="legacy compatibility option; real facade calls require caller BYOK over MCP")
-    ap.add_argument("--runtime-dir", default=None, help="neuro-san-web runtime dir (default: vendored ./runtime)")
+                    help="accepted for backward compatibility and IGNORED: a served site never uses a "
+                         "host-side LLM key; the facade only uses the caller's BYOK credentials")
+    ap.add_argument("--runtime-dir", default=None, help="neuro-san-web runtime dir (default: vendored nsdeploy/runtime)")
     ap.add_argument("--links", default=None, help="link sidecar JSON (default: <hocon>.links.json when present)")
     ap.add_argument("--link", action="append", default=[], metavar="REF=URL",
                     help="bind a dangling agent reference to a remote nsDeploy network (repeatable)")
@@ -91,6 +101,9 @@ def main() -> int:
 
     if args.cailville_base_map and not args.add_to_cailville:
         ap.error("--cailville-base-map requires --add-to-cailville")
+    if args.facade_key:
+        print("warning: --facade-key is ignored; the public facade only uses caller BYOK credentials",
+              file=sys.stderr)
 
     hocon_path = Path(args.hocon).resolve()
     if not hocon_path.is_file():
@@ -109,9 +122,13 @@ def main() -> int:
                 else hocon_path.parent / "sites" / network_name)
     config, missing_includes = resolve_hocon(hocon_path, source)
     cailville_draft = None
+    cailville = None
     if args.add_to_cailville:
+        cailville = _load_cailville()
+        if cailville is None:
+            return 2
         try:
-            cailville_draft = plan_addition(
+            cailville_draft = cailville.plan_addition(
                 config, hocon_path, port=args.port, site_dir=site_dir,
                 cailville_dir=Path(args.cailville_dir).resolve() if args.cailville_dir else None,
                 base_map=args.cailville_base_map, model=args.theme_model,
@@ -150,7 +167,7 @@ def main() -> int:
             print(f"error: cannot load private steward sites: {exc}", file=sys.stderr)
             return 2
     if cailville_draft is not None:
-        private_steward_sites.update(public_site_directory(cailville_draft.community))
+        private_steward_sites.update(cailville.public_site_directory(cailville_draft.community))
     toolbox_info = load_toolbox_info(source)
     plan = build_plan(config, toolbox_info, network_name, missing_includes, source)
 
@@ -238,7 +255,7 @@ def main() -> int:
 
     if cailville_draft is not None:
         try:
-            commit_addition(cailville_draft)
+            cailville.commit_addition(cailville_draft)
         except (OSError, ValueError) as exc:
             print(f"error: site generated but Cailville map update failed: {exc}", file=sys.stderr)
             return 2
@@ -251,7 +268,7 @@ def main() -> int:
     # source.root holds the (materialized) coded-tool sources the MCP hosts import.
     serve(out_dir, plan, source.root, port=args.port, upstream=args.upstream,
           runtime_dir=runtime_dir, ext_mcps=plan.external_mcps,
-          facade_upstream=args.facade_upstream, facade_api_key=args.facade_key)
+          facade_upstream=args.facade_upstream)
     return 0
 
 

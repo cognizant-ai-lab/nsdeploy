@@ -41,7 +41,7 @@ export class McpClient {
 
       const text = await resp.text();
       if (!resp.ok) throw new Error(`MCP HTTP ${resp.status}: ${text.slice(0, 200)}`);
-      const json = parseMaybeSse(text);
+      const json = parseMaybeSse(text, body.id);
       if (json.error) throw new Error(`MCP error ${json.error.code}: ${json.error.message}`);
       this.trace?.end(span, { status: "ok" });
       return json.result;
@@ -79,17 +79,27 @@ export class McpClient {
   }
 }
 
-// MCP servers may answer JSON-RPC as plain JSON or as a single SSE event.
-function parseMaybeSse(text) {
+// MCP servers may answer JSON-RPC as plain JSON or as an SSE stream. The stream can
+// carry server notifications (e.g. `notifications/message` log lines — You.com emits
+// one before every tools/call result) ahead of the actual response, so pick the
+// event that is a JSON-RPC response (has `result` or `error`), preferring the one
+// whose id matches the request.
+export function parseMaybeSse(text, expectId) {
   const trimmed = text.trim();
   if (trimmed.startsWith("{")) return JSON.parse(trimmed);
+  let fallback = null;
   for (const line of trimmed.split("\n")) {
     const l = line.trim();
-    if (l.startsWith("data:")) {
-      const payload = l.slice(5).trim();
-      if (payload && payload !== "[DONE]") return JSON.parse(payload);
-    }
+    if (!l.startsWith("data:")) continue;
+    const payload = l.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    let json;
+    try { json = JSON.parse(payload); } catch { continue; }
+    if (!("result" in json) && !("error" in json)) continue; // a notification, not the response
+    if (expectId == null || json.id === expectId) return json;
+    if (!fallback) fallback = json;
   }
+  if (fallback) return fallback;
   throw new Error("unparseable MCP response");
 }
 

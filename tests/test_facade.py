@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from unittest.mock import patch
 
@@ -17,6 +18,12 @@ from nsdeploy.facade import (
 
 
 class FacadeContextTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # A provider key present in the facade's environment must never be used.
+        env = patch.dict(os.environ, {"OPENAI_API_KEY": "host-key-must-not-be-used"})
+        env.start()
+        self.addCleanup(env.stop)
+
     def test_context_round_trip(self):
         packed = _pack_context(
             "Find a venue",
@@ -48,7 +55,6 @@ class FacadeContextTests(unittest.IsolatedAsyncioTestCase):
             {"tools": [{"name": "front", "instructions": "Help."}]},
             "http://127.0.0.1:8091",
             "https://api.example/v1",
-            "host-key-must-not-be-used",
         )
         result = await runner.run("request", "front")
         self.assertIn("caller BYOK credentials are required", result)
@@ -81,7 +87,6 @@ class FacadeContextTests(unittest.IsolatedAsyncioTestCase):
             {"tools": [{"name": "front", "instructions": "Help."}]},
             "http://127.0.0.1:8091",
             "https://api.example/v1",
-            "host-key-must-not-be-used",
         )
         results = []
 
@@ -112,7 +117,6 @@ class FacadeContextTests(unittest.IsolatedAsyncioTestCase):
             {"tools": [{"name": "front", "instructions": "Help."}]},
             "http://127.0.0.1:8091",
             "https://api.example/v1",
-            "host-key-must-not-be-used",
         )
         tools = [{
             "name": "remote",
@@ -142,7 +146,6 @@ class FacadeContextTests(unittest.IsolatedAsyncioTestCase):
             {"tools": [{"name": "front", "instructions": ""}]},
             "http://127.0.0.1:8091",
             "mock://nsdeploy",
-            "",
         )
         tools = [{
             "name": "remote",
@@ -161,7 +164,6 @@ class FacadeContextTests(unittest.IsolatedAsyncioTestCase):
             {"tools": [{"name": "front", "instructions": ""}]},
             "http://127.0.0.1:8091",
             "mock://nsdeploy",
-            "",
         )
         tools = [{
             "name": "remote",

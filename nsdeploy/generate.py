@@ -59,6 +59,20 @@ def _brandize(network_name: str) -> str:
     return network_name.replace("_", " ").replace("-", " ").title()
 
 
+def _seed_default_model(config: Dict[str, Any]) -> None:
+    """Give the deployed network a top-level `llm_config.model_name` when the studio
+    config only lists `fallbacks`. neuro-san tries fallbacks in order; the browser
+    runtime and the MCP facade read a single `model_name` and otherwise default to
+    the mock model, which a real BYOK upstream rejects."""
+    llm = config.get("llm_config")
+    if not isinstance(llm, dict) or llm.get("model_name"):
+        return
+    for fallback in llm.get("fallbacks") or []:
+        if isinstance(fallback, dict) and fallback.get("model_name"):
+            llm["model_name"] = fallback["model_name"]
+            return
+
+
 def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.0.1",
                    cruse: bool = True) -> Dict[str, Any]:
     """Produce the deployed network config: agents only, with tool references mapped
@@ -74,6 +88,7 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
     drop = set(plan.missing_tools) | set(plan.omitted_tools) | set(plan.external_other)
 
     config = copy.deepcopy(plan.config)
+    _seed_default_model(config)
     new_tools: List[Dict[str, Any]] = []
     for entry in config.get("tools", []) or []:
         # Keep only LLM agents; the leaf coded/toolbox entries are replaced by inline

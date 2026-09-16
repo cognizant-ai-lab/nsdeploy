@@ -12,3 +12,6 @@ venv/
 
 # misc
 .DS_Store
+
+# IDE files
+.idea/

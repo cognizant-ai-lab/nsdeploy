@@ -98,12 +98,15 @@ def _unpack_context(request: str) -> Tuple[str, set[str], int]:
 
 
 class NetworkRunner:
-    def __init__(self, config: Dict[str, Any], site_base: str, upstream: str, api_key: str,
-                 max_steps: int = 8):
+    """Runs the deployed network for MCP callers. There is deliberately no server-side
+    LLM credential here: every real completion uses the caller's BYOK headers
+    (see `_complete`), and the launcher starts this process with provider credentials
+    scrubbed from its environment."""
+
+    def __init__(self, config: Dict[str, Any], site_base: str, upstream: str, max_steps: int = 8):
         self.config = config
         self.site_base = site_base.rstrip("/")
         self.upstream = upstream.rstrip("/")
-        self.api_key = api_key
         self.model = (
             os.environ.get("NSDEPLOY_FACADE_MODEL")
             or (config.get("llm_config", {}) or {}).get("model_name")
@@ -334,13 +337,12 @@ class NetworkRunner:
             return {"message": {"role": "assistant", "content": f"Facade LLM failed: {exc}"}}
 
 
-async def _serve(config: Dict[str, Any], site_base: str, upstream: str, api_key: str, port: int,
-                 front_man: str):
+async def _serve(config: Dict[str, Any], site_base: str, upstream: str, port: int, front_man: str):
     from mcp.server.fastmcp import FastMCP
     import uvicorn
     from starlette.middleware.cors import CORSMiddleware
 
-    runner = NetworkRunner(config, site_base, upstream, api_key)
+    runner = NetworkRunner(config, site_base, upstream)
     mcp = FastMCP("nsdeploy-public-facade", port=port)
 
     async def invoke_network(request: str) -> str:
@@ -362,10 +364,9 @@ def main() -> int:
     parser.add_argument("--front-man", required=True)
     parser.add_argument("--port", required=True, type=int)
     parser.add_argument("--upstream", default="mock://nsdeploy")
-    parser.add_argument("--api-key", default="")
     args = parser.parse_args()
     config = json.loads(Path(args.config).read_text(encoding="utf-8"))
-    asyncio.run(_serve(config, args.site_base, args.upstream, args.api_key, args.port, args.front_man))
+    asyncio.run(_serve(config, args.site_base, args.upstream, args.port, args.front_man))
     return 0
 
 
