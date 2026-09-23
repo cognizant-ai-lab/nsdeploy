@@ -112,9 +112,8 @@ export async function runAgentLangChain(ctx, agentName, userText, parentSpan, ch
       }
     }
 
-    // Contribute any agent-generated widgets up the chain (consolidated by the UI).
-    if (helpers.extractWidgets) finalText = helpers.extractWidgets(finalText, ctx, agentName);
-
+    // The shared runAgent boundary returns text + the presentation proposal to
+    // our caller, so both runners use exactly the same CRUSE contract.
     trace.end(agentSpan, { answerChars: finalText.length });
     return finalText;
   } catch (err) {

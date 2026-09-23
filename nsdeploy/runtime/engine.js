@@ -12,6 +12,7 @@ import { fetchManifest, fetchText, resolveUrl, RemoteRegistry } from "./remote.j
 import { runAgent } from "./runner.js";
 import { McpClient } from "./mcp.js";
 import { normalizeModelName } from "./model.js";
+import { interactionMessage } from "./cruse.js";
 
 function normOrigin(url) {
   try { return new URL(url).origin; } catch { return String(url || ""); }
@@ -402,6 +403,10 @@ export class Engine {
   }
 
   async run(userText, { slyData } = {}) {
+    return (await this.runTurn(userText, { slyData })).text;
+  }
+
+  async runTurn(userText, { slyData, interaction } = {}) {
     if (!this.top) await this.loadTop();
     const runSpan = this.trace.start("run", { origin: hostOf(this.top.base), input: userText });
     try {
@@ -426,13 +431,15 @@ export class Engine {
           deadline: Date.now() + 90_000,
         },
       });
-      const text = await runAgent(ctx, this.top.network.findFrontMan(), userText, runSpan, ctx_chain(ctx, this.top));
+      const message = interactionMessage(userText, interaction);
+      const result = await runAgent(ctx, this.top.network.findFrontMan(), message, runSpan, ctx_chain(ctx, this.top));
+      result.turnId = runSpan;
       // Persist this turn so the next turn has conversation context.
-      this.history.push({ role: "user", content: userText });
-      this.history.push({ role: "assistant", content: text });
+      this.history.push({ role: "user", content: message });
+      this.history.push({ role: "assistant", content: result.text + (result.presentation ? `\n\nCRUSE presentation turn: ${runSpan}\n\`\`\`cruse-ui\n${JSON.stringify(result.presentation)}\n\`\`\`` : "") });
       if (this.history.length > 24) this.history = this.history.slice(-24); // bound tokens
-      this.trace.end(runSpan, { answerPreview: text.slice(0, 300) });
-      return text;
+      this.trace.end(runSpan, { answerPreview: result.text.slice(0, 300) });
+      return result;
     } catch (err) {
       this.trace.fail(runSpan, err);
       throw err;
@@ -489,9 +496,9 @@ class Session {
         composition,
         isTop: false,
       });
-      const text = await runAgent(ctx, this.network.findFrontMan(), request.user_message.text, span, invocationChain);
-      trace.end(span, { responsePreview: text.slice(0, 300), type: ChatMessageType.AGENT });
-      return text;
+      const result = await runAgent(ctx, this.network.findFrontMan(), request.user_message.text, span, invocationChain);
+      trace.end(span, { responsePreview: result.text.slice(0, 300), type: ChatMessageType.AGENT });
+      return result;
     } catch (err) {
       trace.fail(span, err);
       return `Error from ${hostOf(this.base)}: ${err.message}`;

@@ -1,0 +1,14 @@
+{
+  "name": "nsdeploy-runtime-build",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:runner": "node scripts/bundle-runner.mjs",
+    "test": "node tests/runtime_regression.mjs && node --test tests/cruse.test.mjs"
+  },
+  "devDependencies": {
+    "@langchain/core": "1.2.12",
+    "@langchain/openai": "1.5.13",
+    "esbuild": "0.28.2"
+  }
+}

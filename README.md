@@ -380,16 +380,35 @@ server (reachability/auth) and the user's run-time consent.
 ## Generative UI (CRUSE)
 
 By default nsdeploy **injects a domain-agnostic CRUSE directive into every agent's
-instructions** (in the generated copy — your source HOCON is untouched), so any
-deployed network produces generative-UI widgets automatically: a **form** when an
-agent needs input, a **choice** when it offers options, a **confirm** before
-finalizing, an **info** card for summaries. The runtime extracts the fenced
-` ```cruse-ui ` JSON each agent emits and renders it, consolidating widgets up the
-agent chain. Opt out with `--no-cruse`.
+instructions** (in the generated copy — your source HOCON is untouched). CRUSE
+chooses a useful combination of chat, formatted reports, tables, bar/line charts,
+presentational HTML, and optional form/choice/confirm/info components. It does not
+require a form for every question. Opt out of prompt injection with `--no-cruse`.
 
-Widgets are emitted by the **LLM** following the directive, so they appear only with
-a real model (BYOK) — the deterministic mock router never emits them. Verified with a
-local `qwen2.5:7b`: the agents emitted `form` and `choice` widgets unprompted.
+Each child returns its answer **and a presentation proposal to its parent**. Each
+parent is instructed to consolidate its children's proposals during its normal
+response: merge redundant questions, use known answers, preserve distinct needs,
+and choose the right presentation for the current request. This applies across
+local agents and linked networks, with both manual and LangChain runners. Only the
+final root composition is rendered; child proposals remain in the developer trace.
+Exact duplicate components are also removed by the runtime; semantic consolidation
+is performed by the model, so quality still depends on the selected model.
+
+The welcome widget remains an optional starting point. Users may ignore it, answer
+in chat, or supplement submitted form values in later chat turns. Unsubmitted
+drafts are not sent. The history includes the final presentation, and interactions
+carry their turn/component IDs and typed values so follow-ups retain context.
+
+New output uses one `cruse-ui` JSON fence containing
+`{"version":1,"components":[...]}`. Legacy single-widget fences remain supported.
+Charts include a text summary and expandable data table. HTML is limited to
+sanitized semantic markup; scripts, CSS, embeds, resources and HTML input controls
+are not supported. See [the CRUSE protocol](docs/cruse.md) for shapes and tests.
+
+Presentations are authored by the **LLM**, so the deterministic mock router does
+not exercise semantic consolidation. Regenerate a deployment to install updated
+CRUSE prompts. Theme prompt version 9 describes optional forms and rich responses;
+existing editable themes are preserved until explicitly refreshed.
 
 ## Look & feel (optional LLM-designed layout)
 
@@ -540,8 +559,9 @@ chatbot:
   `<tool_response>` tags). The chat unwraps it at display time — showing the
   human-facing `Response` (or, for a `Determine` reply, the requirement prompt) —
   instead of leaking the raw protocol JSON. Inter-agent messages keep their structure.
-- **Generative-UI widgets (CRUSE)** are extracted from each agent's reply and rendered
-  as forms/choices/confirms/info cards, consolidated up the agent chain (see above).
+- **Generative UI (CRUSE)** carries presentation proposals up the agent hierarchy.
+  Each parent consolidates its children's suggestions; the final response can mix
+  formatted text, reports, tables, charts, HTML and optional input widgets.
 - **Resizable layout.** The chat and the right rail sit **side by side** with a
   **draggable splitter** between them (the rail width is remembered across reloads);
   each pane scrolls its own overflow and the app scrolls rather than crushing a pane

@@ -18,8 +18,10 @@ import {
   upsertByokProfile,
 } from "./byok.js";
 import { normalizeModelName } from "./model.js";
+import { normalizePresentation } from "./cruse.js";
+import { PRESENTATION_CSS, renderMarkdown, renderRichComponent } from "./cruse-render.js";
 
-const BASE_CSS = `
+const BASE_CSS = PRESENTATION_CSS + `
 /* Legacy themes get two resizable panes side by side. Composed themes provide
    header/chat/agents mount slots and own their placement; the runtime continues
    to own the components' internal layout and behavior. */
@@ -310,15 +312,10 @@ export function mountApp(root, { engine, trace, manifest }) {
   const activeAgents = new Set();
   let routingViolation = false;
   let count = 0;
-  // Widgets contributed by ANY agent during the current turn, consolidated and
-  // rendered after the final answer.
-  let pendingWidgets = [];
   trace.addEventListener("event", (e) => {
     const ev = e.detail;
     count++;
     countEl.textContent = `${count} events`;
-
-    if (ev.phase === "note" && ev.kind === "widget" && ev.widget) pendingWidgets.push(ev.widget);
 
     if (ev.phase === "start") {
       if (ev.origin) activeOrigins.add(ev.origin);
@@ -383,26 +380,24 @@ export function mountApp(root, { engine, trace, manifest }) {
     msgs.scrollTop = msgs.scrollHeight;
   };
 
-  async function runUserTurn(text) {
+  async function runUserTurn(text, interaction) {
     text = (text || "").trim();
-    if (!text || sendBtn.disabled) return;
-    if (!await validateConfiguredModel()) return;
+    if (!text || sendBtn.disabled) return false;
+    if (!await validateConfiguredModel()) return false;
     input.value = "";
     sendBtn.disabled = true;
     addBubble(msgs, "user", text);
     currentBot = null;
     botBuffer = "";
-    pendingWidgets = [];
     try {
-      // The runtime strips cruse-ui blocks from each agent's answer and emits them
-      // as "widget" trace events; we render the clean text + the consolidated widgets.
-      const answer = await engine.run(text, { slyData: { backend_token: "demo-customer-token-123" } });
-      const clean = visibleText(answer);
+      const result = await engine.runTurn(text, { interaction, slyData: { backend_token: "demo-customer-token-123" } });
+      const clean = visibleText(result.text);
       // Always show the cleaned text — never the raw answer or retained streamed text
       // (which could be an AAOSA envelope / cruse-ui JSON). Empty is fine: widgets carry the turn.
       if (!currentBot) currentBot = addBubble(msgs, "bot", clean);
-      else currentBot.textContent = clean;
-      for (const w of pendingWidgets) renderWidget(msgs, w, runUserTurn);
+      renderMarkdown(currentBot, clean);
+      if (!clean) currentBot.remove();
+      renderPresentation(msgs, result.presentation, runUserTurn, result.turnId);
       requestAnimationFrame(() => { msgs.scrollTop = msgs.scrollHeight; });
     } catch (err) {
       addBubble(msgs, "bot", "⚠️ " + err.message);
@@ -410,8 +405,8 @@ export function mountApp(root, { engine, trace, manifest }) {
       sendBtn.disabled = false;
       currentBot = null;
       botBuffer = "";
-      pendingWidgets = [];
     }
+    return true;
   }
   const send = () => runUserTurn(input.value);
 
@@ -422,7 +417,9 @@ export function mountApp(root, { engine, trace, manifest }) {
   root.querySelector("#ns-newchat").addEventListener("click", () => {
     engine.resetHistory();
     currentBot = null;
-    [...msgs.querySelectorAll(".ns-msg, .ns-widget")].forEach((el, i) => { if (i > 0) el.remove(); });
+    [...msgs.children].forEach((el) => { if (el !== msgs.firstElementChild && el.dataset.welcome !== "true") el.remove(); });
+    const welcome = msgs.querySelector('[data-welcome="true"]');
+    if (welcome) lockWidget(welcome, false);
   });
 
   // Developer mode: the technical execution trace is hidden by default. Reveal it
@@ -967,7 +964,8 @@ export function mountApp(root, { engine, trace, manifest }) {
   if (manifest?.welcome?.widget) {
     const greet = msgs.querySelector(".ns-msg.bot");
     if (manifest.welcome.message && greet) greet.textContent = manifest.welcome.message;
-    renderWidget(msgs, manifest.welcome.widget, runUserTurn);
+    const welcome = renderWidget(msgs, { ...manifest.welcome.widget, id: "welcome" }, runUserTurn, "welcome");
+    welcome.dataset.welcome = "true";
   }
 }
 
@@ -983,8 +981,8 @@ function addBubble(msgs, cls, text) {
 // --- CRUSE generative-UI: parse a fenced ```cruse-ui {json}``` block ---------
 function visibleText(s) {
   if (!s) return "";
-  let out = s.replace(/```cruse-ui[\s\S]*?```/g, "").trim();
-  const i = out.indexOf("```cruse-ui");
+  let out = s.replace(/```cruse-ui[\s\S]*?```/gi, "").trim();
+  const i = out.search(/```cruse-ui/i);
   if (i >= 0) out = out.slice(0, i).trim();
   return unwrapAaosa(out);
 }
@@ -1020,9 +1018,9 @@ function tolerantParse(s) {
   try { return JSON.parse(s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/,\s*([}\]])/g, "$1")); } catch {}
   return null;
 }
-function lockWidget(card) {
-  card.querySelectorAll("button,input,select,textarea").forEach((el) => (el.disabled = true));
-  card.classList.add("done");
+function lockWidget(card, locked = true) {
+  card.querySelectorAll("button,input,select,textarea").forEach((el) => (el.disabled = locked));
+  card.classList.toggle("done", locked);
 }
 
 // Render one schema property. Widgets are generated by LLMs / partner agents, so
@@ -1062,7 +1060,7 @@ function renderField(fid, key, f, req) {
 // `entries` is the same Object.entries(props) array used to render, so index i
 // maps to the field id `f${i}` (selector-safe; the untrusted key is never queried).
 function collectForm(card, entries) {
-  const vals = {};
+  const vals = Object.create(null);
   entries.forEach(([key, f], i) => {
     const fid = "f" + i;
     if (Array.isArray(f.enum) && f["x-ui"]?.widget === "radio") {
@@ -1073,20 +1071,40 @@ function collectForm(card, entries) {
       vals[key] = box ? [...box.querySelectorAll("input:checked")].map((i2) => i2.value) : [];
     } else if (f.type === "boolean") {
       const el = card.querySelector(`[data-field="${fid}"]`);
-      vals[key] = el && el.checked ? "yes" : "no";
+      vals[key] = !!el?.checked;
     } else {
       const el = card.querySelector(`[data-field="${fid}"]`);
       vals[key] = el ? el.value : "";
+      if (["number", "integer"].includes(f.type) && vals[key] !== "") vals[key] = Number(vals[key]);
     }
   });
   return vals;
 }
 
-// Render a widget inline and feed the user's interaction back as the next turn.
-function renderWidget(container, spec, onSubmit) {
+// Only called with the root's consolidated proposal (or the welcome widget).
+export function renderPresentation(container, presentation, onSubmit, turnId) {
+  const normalized = normalizePresentation(presentation);
+  if (!normalized.presentation) return null;
+  const surface = document.createElement("section");
+  surface.className = "ns-presentation";
+  surface.setAttribute("aria-label", "Response");
+  for (const spec of normalized.presentation.components) renderWidget(surface, spec, onSubmit, turnId);
+  container.append(surface);
+  return surface;
+}
+
+function renderWidget(container, spec, onSubmit, turnId) {
   const kind = spec.kind || (spec.schema ? "form" : "info");
   const card = document.createElement("div");
   card.className = "ns-widget";
+  card.dataset.componentId = spec.id || "welcome";
+  const submit = async (text, data) => {
+    lockWidget(card);
+    try {
+      const accepted = await onSubmit(text, { turnId, componentId: spec.id || "welcome", kind, ...data });
+      if (accepted === false) lockWidget(card, false);
+    } catch { lockWidget(card, false); }
+  };
   // spec.color is untrusted (LLM/partner-supplied). Only accept a plain CSS color
   // token (#hex, rgb()/hsl(), or a bare keyword) so it can't smuggle extra CSS.
   if (spec.color && /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+|(rgb|hsl)a?\([0-9.,%\s/]+\))$/.test(String(spec.color).trim())) {
@@ -1095,19 +1113,23 @@ function renderWidget(container, spec, onSubmit) {
   let html = `<div class="ns-w-head">${spec.icon ? `<span class="ns-w-icon">${escapeHtml(spec.icon)}</span>` : ""}<b>${escapeHtml(spec.title || "")}</b></div>`;
   if (spec.description) html += `<div class="ns-w-desc">${escapeHtml(spec.description)}</div>`;
 
-  if (kind === "confirm") {
+  if (["report", "table", "chart", "html"].includes(kind)) {
+    card.innerHTML = html;
+    const body = document.createElement("div");
+    renderRichComponent(body, spec);
+    card.append(body);
+  } else if (kind === "confirm") {
     html += `<div class="ns-w-actions"><button class="ns-w-btn" data-act="confirm">${escapeHtml(spec.confirmLabel || "Confirm")}</button><button class="ns-w-btn ghost" data-act="cancel">${escapeHtml(spec.cancelLabel || "Cancel")}</button></div>`;
     card.innerHTML = html;
-    card.querySelector('[data-act="confirm"]').addEventListener("click", () => { lockWidget(card); onSubmit(spec.confirmText || spec.confirmLabel || "Confirm"); });
-    card.querySelector('[data-act="cancel"]').addEventListener("click", () => { lockWidget(card); onSubmit(spec.cancelText || "Not yet, hold off."); });
+    card.querySelector('[data-act="confirm"]').addEventListener("click", () => submit(spec.confirmText || spec.confirmLabel || "Confirm", { action: "confirm" }));
+    card.querySelector('[data-act="cancel"]').addEventListener("click", () => submit(spec.cancelText || "Not yet, hold off.", { action: "cancel" }));
   } else if (kind === "choice") {
     html += `<div class="ns-w-choices">` + (spec.options || []).map((o, idx) =>
       `<button class="ns-w-choice" data-idx="${idx}"><div class="ns-w-ctitle">${escapeHtml(o.title || o.value || "")}</div>${o.subtitle ? `<div class="ns-w-csub">${escapeHtml(o.subtitle)}</div>` : ""}${o.meta ? `<div class="ns-w-cmeta">${escapeHtml(o.meta)}</div>` : ""}</button>`).join("") + `</div>`;
     card.innerHTML = html;
     card.querySelectorAll(".ns-w-choice").forEach((b) => b.addEventListener("click", () => {
       const o = (spec.options || [])[+b.dataset.idx];
-      lockWidget(card);
-      onSubmit(`${spec.choosePrefix || "I'll go with"}: ${o.title || o.value}`);
+      submit(`${spec.choosePrefix || "I'll go with"}: ${o.title || o.value}`, { value: o.value ?? o.title });
     }));
   } else if (kind === "info") {
     html += `<div class="ns-w-fields">` + Object.entries(spec.fields || {}).map(([k, v]) =>
@@ -1120,14 +1142,29 @@ function renderWidget(container, spec, onSubmit) {
     html += `<form class="ns-w-form">` + entries.map(([key, f], i) => renderField("f" + i, key, f, required.includes(key))).join("") +
       `<div class="ns-w-actions"><button type="submit" class="ns-w-btn">${escapeHtml(spec.submitLabel || "Submit")}</button></div></form>`;
     card.innerHTML = html;
+    entries.forEach(([key, field], i) => {
+      const control = card.querySelector(`[data-field="f${i}"]`) || card.querySelector(`input[name="f${i}"]`);
+      if (!control) return;
+      control.id = `${turnId || "welcome"}-${spec.id || "welcome"}-f${i}`;
+      const label = control.closest(".ns-w-row")?.querySelector(".ns-w-label");
+      if (label) label.htmlFor = control.id;
+      if (required.includes(key) && field.type !== "boolean" && field.type !== "array") control.required = true;
+      if (field.type === "number") control.step = "any";
+      if (field.type === "integer") control.step = "1";
+      if (field.default !== undefined) {
+        if (field.type === "boolean") control.checked = field.default === true;
+        else if (field["x-ui"]?.widget === "radio") {
+          card.querySelectorAll(`input[name="f${i}"]`).forEach((el) => { el.checked = el.value === String(field.default); });
+        } else if (field.type !== "array") control.value = String(field.default);
+      }
+    });
     card.querySelector("form").addEventListener("submit", (e) => {
       e.preventDefault();
       const vals = collectForm(card, entries);
-      lockWidget(card);
       const summary = (spec.title ? `${spec.title} — ` : "") +
         Object.entries(vals).filter(([, v]) => v !== "" && v != null && !(Array.isArray(v) && v.length === 0))
           .map(([k, v]) => `${props[k]?.title || k}: ${Array.isArray(v) ? v.join(", ") : v}`).join("; ");
-      onSubmit(summary || "(submitted)");
+      submit(summary || "(submitted)", { values: vals });
     });
   }
   container.appendChild(card);
@@ -1203,6 +1240,7 @@ function rowLabel(ev) {
     case "remote_call": detail = `${escapeHtml(ev.brand || ev.network || ev.peerOrigin || "")} <span class="ns-meta">@ ${escapeHtml(ev.peerOrigin || "")} · via ${escapeHtml(ev.method || "")}</span>`; break;
     case "mcp_call": detail = `${escapeHtml(ev.method || "")} <span class="ns-meta">@ ${escapeHtml(ev.peerOrigin || "")}</span>`; break;
     case "tool_result": detail = `${escapeHtml(ev.tool || "")} <span class="ns-meta">${escapeHtml((ev.preview || "").slice(0, 80))}</span>`; break;
+    case "presentation_proposal": detail = `${escapeHtml(ev.agent || "")} <span class="ns-meta">${ev.presentation?.components?.length || 0} components</span>`; break;
     default: detail = "";
   }
   return `<span class="ns-tag">${tag}</span>${detail}`;
@@ -1210,7 +1248,7 @@ function rowLabel(ev) {
 
 function detailJson(ev) {
   const keep = {};
-  for (const k of ["fetchedUrls", "requestPayload", "args", "result", "headers", "toolNames", "usage", "responsePreview", "preview", "errors", "warnings", "peers", "error", "httpStatus", "url", "method", "endpoint", "routerHost", "mock"]) {
+  for (const k of ["fetchedUrls", "requestPayload", "args", "result", "presentation", "issues", "invocation", "headers", "toolNames", "usage", "responsePreview", "preview", "errors", "warnings", "peers", "error", "httpStatus", "url", "method", "endpoint", "routerHost", "mock"]) {
     if (ev[k] !== undefined) keep[k] = ev[k];
   }
   return Object.keys(keep).length ? JSON.stringify(keep, null, 2) : "";

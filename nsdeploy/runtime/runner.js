@@ -9,6 +9,9 @@
 // identically regardless of which loop drives it. The engine selects via ctx.useLangGraph.
 
 import { ChatMessageType, filterSlyData, allowedDownstreamSly, parseExternalAgent } from "./kernel.js";
+import { parseAgentResponse, agentPresentationContext } from "./cruse.js";
+
+let invocationSequence = 0;
 
 export function argsToText(args) {
   if (args == null) return "";
@@ -57,44 +60,6 @@ export function consumeAgentBudget(composition, now = Date.now()) {
   }
   composition.agentCalls += 1;
   return null;
-}
-
-// Pull any ```cruse-ui {json}``` widget(s) out of an agent's answer, emit each as a
-// "widget" trace event (so it surfaces to the UI), and return the text with the
-// blocks removed. This lets ANY agent in the chain contribute widgets, generated on
-// the fly, while keeping the text passed up to its caller clean (consolidation).
-function tolerantJsonParse(s) {
-  try { return JSON.parse(s); } catch {}
-  // Best-effort repair: normalize smart quotes and drop trailing commas.
-  const fixed = s
-    .replace(/[“”]/g, '"').replace(/[‘’]/g, "'")
-    .replace(/,\s*([}\]])/g, "$1");
-  try { return JSON.parse(fixed); } catch {}
-  return null;
-}
-
-export function extractWidgets(text, ctx, agentName) {
-  if (!text) return text;
-  // Accept ```cruse-ui (preferred), or a bare ```json fence whose body is a widget.
-  const re = /```(?:cruse-ui|json)\s*([\s\S]*?)```/gi;
-  let m;
-  let found = false;
-  while ((m = re.exec(text))) {
-    const widget = tolerantJsonParse(m[1].trim());
-    if (widget && typeof widget === "object" && widget.display !== false && (widget.schema || widget.kind || widget.options || widget.fields)) {
-      found = true;
-      ctx.trace.note("widget", { origin: ctx.displayOrigin, agent: agentName, network: ctx.network?.name, widget });
-    }
-  }
-  if (!found) return text;
-  // Remove only blocks we actually turned into widgets (cruse-ui, or json that parsed as a widget).
-  return text
-    .replace(/```cruse-ui[\s\S]*?```/gi, "")
-    .replace(/```json\s*([\s\S]*?)```/gi, (full, body) => {
-      const w = tolerantJsonParse(body.trim());
-      return w && (w.schema || w.kind || w.options || w.fields) ? "" : full;
-    })
-    .trim();
 }
 
 // Rough per-1M-token prices [input, output] for cost estimates. Approximate.
@@ -332,20 +297,32 @@ export async function dispatchToolCall(ctx, entry, args, parentSpan, chain) {
 // Dispatcher: the LangChain.js runner when enabled, else the dependency-free
 // reference loop. Either way neuro-san-web owns multi-agent orchestration.
 export async function runAgent(ctx, agentName, userText, parentSpan, chain) {
+  const source = { origin: ctx.displayOrigin, network: ctx.network.name, agent: agentName, invocation: `cruse-${++invocationSequence}` };
   const budgetReason = consumeAgentBudget(ctx.composition);
   if (budgetReason) {
     ctx.trace.note("composition_limit", {
       parent: parentSpan, origin: ctx.displayOrigin, agent: agentName,
       reason: budgetReason, agentCalls: ctx.composition?.agentCalls,
     });
-    return `Skipped ${agentName}: ${budgetReason}. Continue with available results and do not retry it.`;
+    return parseAgentResponse(`Skipped ${agentName}: ${budgetReason}. Continue with available results and do not retry it.`, source);
   }
-  if (ctx.externalRunner) {
-    return ctx.externalRunner(ctx, agentName, userText, parentSpan, chain, {
-      buildToolTable, dispatchToolCall, schemaFor, argsToText, extractWidgets,
-    });
-  }
-  return runAgentManual(ctx, agentName, userText, parentSpan, chain);
+  // Scope prompt context to this invocation. Never mutate a shared agent spec or
+  // ctx: siblings and remote networks can be running concurrently.
+  const context = agentPresentationContext(ctx, agentName);
+  const network = Object.create(ctx.network);
+  network.getAgentSpec = (name) => {
+    const spec = ctx.network.getAgentSpec(name);
+    return name === agentName && spec && context ? { ...spec, instructions: `${spec.instructions || ""}\n\n${context}` } : spec;
+  };
+  const local = { ...ctx, network };
+  const raw = ctx.externalRunner
+    ? await ctx.externalRunner(local, agentName, userText, parentSpan, chain, {
+      buildToolTable, dispatchToolCall, schemaFor, argsToText,
+    })
+    : await runAgentManual(local, agentName, userText, parentSpan, chain);
+  const result = parseAgentResponse(raw, source);
+  ctx.trace.note("presentation_proposal", { parent: parentSpan, ...source, presentation: result.presentation, issues: result.presentationIssues });
+  return result;
 }
 
 export async function runAgentManual(ctx, agentName, userText, parentSpan, chain) {
@@ -393,7 +370,6 @@ export async function runAgentManual(ctx, agentName, userText, parentSpan, chain
       }
     }
 
-    finalText = extractWidgets(finalText, ctx, agentName); // contribute widgets up the chain
     trace.end(agentSpan, { answerChars: finalText.length });
     return finalText;
   } catch (err) {
