@@ -2,7 +2,8 @@
 //
 // A business's index.html imports `boot` and points it at its origin. boot loads
 // the origin's published network, compiles it, mounts the themeable UI, and is
-// ready to run — entirely in the browser, with no agent server.
+// ready to run, entirely in the browser, with no agent server. The agents run on
+// neuro-san's own loop (see engine.js).
 
 export { Engine } from "./engine.js";
 export { TraceBus } from "./trace.js";
@@ -41,17 +42,10 @@ export async function boot(rootSelector = "#app", opts = {}) {
   const engine = new Engine({
     originUrl: location.origin,
     trace,
-    sandboxWorkerUrl: "/runtime/sandbox-worker.js",
     byokKey: opts.byokKey || storedKey || savedProfile?.key || "demo",
     routerOverride: opts.router || params.get("router") || savedRouter || "",
     modelOverride: opts.model || params.get("model") || savedProfile?.model || "",
   });
-  // Select the agent loop: ?runner=langchain drives the LLM via LangChain.js
-  // (neuro-san-web owns the loop). 'langgraph' kept as an alias for older links.
-  const runnerChoice = opts.runner || params.get("runner") || (savedProfile?.runner ? "langchain" : "");
-  if (runnerChoice === "langchain" || runnerChoice === "langgraph") {
-    await engine.enableLangChain();
-  }
   const { manifest } = await engine.loadTop();
   mountApp(root, { engine, trace, manifest });
   // expose for debugging / e2e tests

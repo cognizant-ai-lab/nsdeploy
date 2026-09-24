@@ -1,0 +1,143 @@
+// composition.js: nsdeploy's own policy around the neuro-san agent loop.
+//
+// None of this is neuro-san logic. The loop itself is neuro-san's (see engine.js and
+// the bundled generated/neuro-san.mjs); these are the limits nsdeploy puts on composing
+// public sites (per-query budgets, cycle checks), the consent card's cost estimate,
+// and CRUSE widget extraction from an agent's answer.
+
+import { parseExternalAgent } from "./kernel.js";
+
+export function argsToText(args) {
+  if (args == null) return "";
+  if (typeof args === "string") return args;
+  if (args.request) return String(args.request);
+  if (args.input) return String(args.input);
+  if (args.input_string) return String(args.input_string);
+  return JSON.stringify(args);
+}
+
+// The text of a partner network request, readable for the consent card. neuro-san's
+// ExternalActivation sends the calling agent's tool arguments as a ```json block;
+// a single "inquiry" (or other one-string) argument is shown as plain text, and
+// several arguments as "name: value" pairs.
+export function peerRequestText(request) {
+  const text = String(request?.user_message?.text ?? "").trim();
+  const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  if (!fenced) return text;
+  let args;
+  try {
+    args = JSON.parse(fenced[1]);
+  } catch {
+    return fenced[1];
+  }
+  if (args == null || typeof args !== "object" || Array.isArray(args)) return argsToText(args);
+  const entries = Object.entries(args).filter(([, value]) => value != null && value !== "");
+  if (entries.length === 1 && typeof entries[0][1] === "string") return entries[0][1];
+  return entries
+    .map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`)
+    .join("; ");
+}
+
+export function remoteIsInChain(ref, baseOrigin, chain = []) {
+  try {
+    const parsed = parseExternalAgent(ref, baseOrigin);
+    return chain.includes(`${parsed.origin}::${parsed.agentName}`);
+  } catch {
+    return false;
+  }
+}
+
+export function consumeRemoteBudget(composition, targetKey, now = Date.now()) {
+  if (!composition) return null;
+  if (now >= composition.deadline) return "the composition deadline was reached";
+  if (composition.remoteCalls >= composition.maxRemoteCalls) {
+    return `the per-query limit of ${composition.maxRemoteCalls} third-party calls was reached`;
+  }
+  const prior = composition.peerCalls.get(targetKey) || 0;
+  if (prior >= composition.maxCallsPerPeer) return "that network was already consulted for this query";
+  composition.remoteCalls += 1;
+  composition.peerCalls.set(targetKey, prior + 1);
+  return null;
+}
+
+export function consumeAgentBudget(composition, now = Date.now()) {
+  if (!composition) return null;
+  if (now >= composition.deadline) return "the 90-second query deadline was reached";
+  if (composition.agentCalls >= composition.maxAgentCalls) {
+    return `the per-query limit of ${composition.maxAgentCalls} agent invocations was reached`;
+  }
+  composition.agentCalls += 1;
+  return null;
+}
+
+// Pull any ```cruse-ui {json}``` widget(s) out of an agent's answer, emit each as a
+// "widget" trace event (so it surfaces to the UI), and return the text with the
+// blocks removed. This lets ANY agent in the chain contribute widgets, generated on
+// the fly, while keeping the text passed up to its caller clean (consolidation).
+function tolerantJsonParse(s) {
+  try { return JSON.parse(s); } catch {}
+  // Best-effort repair: normalize smart quotes and drop trailing commas.
+  const fixed = s
+    .replace(/[“”]/g, '"').replace(/[‘’]/g, "'")
+    .replace(/,\s*([}\]])/g, "$1");
+  try { return JSON.parse(fixed); } catch {}
+  return null;
+}
+
+export function extractWidgets(text, ctx, agentName) {
+  if (!text) return text;
+  // Accept ```cruse-ui (preferred), or a bare ```json fence whose body is a widget.
+  const re = /```(?:cruse-ui|json)\s*([\s\S]*?)```/gi;
+  let m;
+  let found = false;
+  while ((m = re.exec(text))) {
+    const widget = tolerantJsonParse(m[1].trim());
+    if (widget && typeof widget === "object" && widget.display !== false && (widget.schema || widget.kind || widget.options || widget.fields)) {
+      found = true;
+      ctx.trace.note("widget", { origin: ctx.displayOrigin, agent: agentName, network: ctx.network?.name, widget });
+    }
+  }
+  if (!found) return text;
+  // Remove only blocks we actually turned into widgets (cruse-ui, or json that parsed as a widget).
+  return text
+    .replace(/```cruse-ui[\s\S]*?```/gi, "")
+    .replace(/```json\s*([\s\S]*?)```/gi, (full, body) => {
+      const w = tolerantJsonParse(body.trim());
+      return w && (w.schema || w.kind || w.options || w.fields) ? "" : full;
+    })
+    .trim();
+}
+
+// Rough per-1M-token prices [input, output] for cost estimates. Approximate.
+const PRICE = {
+  "gpt-4o": [2.5, 10], "gpt-4o-mini": [0.15, 0.6],
+  "gpt-4.1": [2, 8], "gpt-4.1-mini": [0.4, 1.6], "gpt-4.1-nano": [0.1, 0.4],
+  "o4-mini": [1.1, 4.4], "gpt-5.2": [1.25, 10],
+};
+
+// Estimate the token cost of running a peer network for one request. Heuristic:
+// prompt grows with each agent's instructions + tool schemas (re-sent per round),
+// and there is roughly one model round-trip per tool plus a final summary.
+export function estimateRemoteCost({ network, requestText, model, mock }) {
+  let instrChars = 0;
+  for (const a of network.config.tools || []) {
+    instrChars += (a.instructions || "").length + JSON.stringify(a.function || {}).length;
+  }
+  const fm = network.getAgentSpec(network.findFrontMan());
+  const toolCount = (fm?.tools || []).length;
+  const rounds = 1 + toolCount;
+  const promptTokens = Math.round(((instrChars + (requestText || "").length) / 4) * (1 + 0.3 * toolCount));
+  const completionTokens = rounds * 120;
+  const totalTokens = promptTokens + completionTokens;
+  let costText = null;
+  if (mock) costText = "$0.00 (mock)";
+  else {
+    const key = (model || "").replace(/-\d{4}-\d{2}-\d{2}$/, "");
+    const p = PRICE[model] || PRICE[key];
+    if (p) {
+      const c = (promptTokens / 1e6) * p[0] + (completionTokens / 1e6) * p[1];
+      costText = "$" + c.toFixed(c < 0.01 ? 4 : 3);
+    }
+  }
+  return { totalTokens, promptTokens, completionTokens, costText };
+}

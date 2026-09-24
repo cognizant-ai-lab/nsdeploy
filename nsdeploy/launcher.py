@@ -34,7 +34,6 @@ MIME = {
     ".mjs": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",
     ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".map": "application/json",
 }
-WORKER_CSP = "default-src 'none'; script-src blob:; connect-src 'none'; worker-src 'none'"
 MCP_PROXY_TIMEOUT_SECONDS = 480
 UPSTREAM_REQUEST_TIMEOUT_SECONDS = 480
 MODEL_CATALOG_TIMEOUT_SECONDS = 120
@@ -193,16 +192,8 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             uncalled = [n for n in available if n not in called]
             text = _last_user_text(messages)
 
-            self.send_response(200)
-            self._cors()
-            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("X-Nsdeploy-LLM-Route", "mock")
-            # No Content-Length: signal end-of-stream by closing the connection so the
-            # browser's SSE reader gets `done` (mirrors res.end() in the Node demo).
-            self.send_header("Connection", "close")
-            self.close_connection = True
-            self.end_headers()
+            tool_call: Optional[Dict[str, Any]] = None
+            summary = ""
             if uncalled:
                 name = uncalled[0]
                 schema = next((t["function"].get("parameters", {}) for t in tools
@@ -212,15 +203,49 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                     args[p] = text
                 for common in ("request", "inquiry", "search_terms", "query", "input"):
                     args.setdefault(common, text)
-                tc = {"index": 0, "id": f"call_{name}", "type": "function",
-                      "function": {"name": name, "arguments": json.dumps(args)}}
-                self.wfile.write(_sse({"choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [tc]}}]}))
-                self.wfile.write(_sse({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}))
+                tool_call = {"index": 0, "id": f"call_{name}", "type": "function",
+                             "function": {"name": name, "arguments": json.dumps(args)}}
             else:
                 summary = self._summarize(messages)
-                for piece in summary.split(" "):
+
+            self.send_response(200)
+            self._cors()
+            self.send_header("X-Nsdeploy-LLM-Route", "mock")
+            if not body.get("stream"):
+                # A non-streaming request gets one chat.completion, as OpenAI answers it.
+                # The neuro-san agent loop asks this way whenever a network's llm_config
+                # does not turn streaming on.
+                message: Dict[str, Any] = {"role": "assistant", "content": None if tool_call else summary}
+                if tool_call:
+                    message["tool_calls"] = [{k: v for k, v in tool_call.items() if k != "index"}]
+                payload = json.dumps({
+                    "id": "chatcmpl-neuro-san-mock", "object": "chat.completion", "model": "neuro-san-mock",
+                    "choices": [{"index": 0, "message": message,
+                                 "finish_reason": "tool_calls" if tool_call else "stop"}],
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                }).encode("utf-8")
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            # No Content-Length: signal end-of-stream by closing the connection so the
+            # browser's SSE reader gets `done` (mirrors res.end() in the Node demo).
+            self.send_header("Connection", "close")
+            self.close_connection = True
+            self.end_headers()
+            if tool_call:
+                self.wfile.write(_sse({"choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [tool_call]}}]}))
+                self.wfile.write(_sse({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}))
+            else:
+                for i, piece in enumerate(summary.split(" ")):
+                    # The first delta carries the role, as OpenAI's stream does. The
+                    # neuro-san agent loop drops streamed content that never names one.
+                    delta = {"role": "assistant", "content": piece + " "} if i == 0 else {"content": piece + " "}
                     self.wfile.write(_sse({"model": "neuro-san-mock",
-                                           "choices": [{"index": 0, "delta": {"content": piece + " "}}]}))
+                                           "choices": [{"index": 0, "delta": delta}]}))
                 self.wfile.write(_sse({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}))
             self.wfile.write(b"data: [DONE]\n\n")
 
@@ -362,10 +387,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             if ".." in path or not file_path.is_file():
                 return self._send(404, b"404 " + path.encode(), "text/plain")
             data = file_path.read_bytes()
-            extra = {}
-            if path == "/runtime/sandbox-worker.js":
-                extra["Content-Security-Policy"] = WORKER_CSP
-            self._send(200, data, MIME.get(file_path.suffix, "application/octet-stream"), extra)
+            self._send(200, data, MIME.get(file_path.suffix, "application/octet-stream"))
 
         def _byok_models_proxy(self):
             """Expose the active upstream catalog for browser-side model validation."""

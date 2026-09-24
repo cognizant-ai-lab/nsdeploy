@@ -12,9 +12,13 @@ on demand, caching them under `~/.cache/nsdeploy/`. Files are located by suffix-
 matching the repo's git tree, so the repo's internal layout doesn't matter. Any pip
 dependency a hosted tool imports (e.g. `ddgs`) is auto-installed on demand.
 
-The browser runs the agents on a **vendored copy of the neuro-san-web runtime** (in
-[`nsdeploy/runtime/`](nsdeploy/runtime) — dependency-free ES modules); the only Python that runs is
-(a) the build-time HOCON resolver and (b) one small MCP server per hostable tool.
+The browser runs the agents on **neuro-san's own agent loop**, from
+[`@cognizant-ai-lab/neuro-san-npm`](https://github.com/cognizant-ai-lab/neuro-san-ts-package)
+(the real neuro-san Python transpiled to TypeScript), bundled into
+[`nsdeploy/runtime/generated/`](nsdeploy/runtime/generated) and driven by the page
+runtime in [`nsdeploy/runtime/`](nsdeploy/runtime). See
+[The agent loop](#the-agent-loop). The only Python that runs is (a) the build-time
+HOCON resolver and (b) one small MCP server per hostable tool.
 
 ## Install & run
 
@@ -228,8 +232,7 @@ additions from the private-steward manifest.
 5. **Generate** `index.html` + `theme.css` + `site.js` + `agent-manifest.json` +
    `<network>.network.json` + `agent-mcp.json` + `<network>_private_steward.hocon` +
    `theme.json` from the editable site source and network.
-6. **Serve** one static origin (site + the `neuro-san-web` runtime, with the
-   sandbox-worker CSP), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
+6. **Serve** one static origin (site + the browser runtime), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
    local-MCP proxy at `/_mcp/<i>/mcp`, an external-MCP proxy at
    `/ext-mcp/<i>/mcp`, plus the private local MCP server subprocesses. Every site
    also publishes a server-side MCP facade at `/mcp` for private stewards.
@@ -530,9 +533,43 @@ non-empty API key. For local deploy-time theming, pass
 proxy target.) Bigger local models give richer layouts; `qwen2.5:7b` is a good
 low-footprint default (~4.7 GB).
 
+## The agent loop
+
+Agents run on neuro-san's `DirectAgentSession`, not on a reimplementation of it.
+[`runtime-build/`](runtime-build) bundles the neuro-san npm package for the browser into
+one file, `nsdeploy/runtime/generated/neuro-san.mjs`, which is committed like the rest of
+the runtime so a deployed site needs no build step:
+
+```bash
+cd runtime-build
+npm install     # expects ../../neuro-san-ts-package/ts-package/package.tgz
+npm run build   # DEBUG=1 npm run build for an unminified bundle with source maps
+```
+
+What comes from neuro-san: the config filter chain, `AgentNetwork`, the network
+validators, `sly_data` redaction, external agent and MCP reference parsing, and the
+whole loop, including sub-agents, MCP tools (`LangChainMcpAdapter`) and partner networks
+(`ExternalActivation`). What stays nsdeploy's own, in
+[`engine.js`](nsdeploy/runtime/engine.js) and
+[`composition.js`](nsdeploy/runtime/composition.js): router selection and the BYOK
+guarantee, consent before contacting a partner or an MCP server, per-query composition
+limits, link slots, the trace the UI draws, and CRUSE widget extraction. neuro-san's loop
+calls into those through hooks in
+[`runtime-build/neuro-san-session.mjs`](runtime-build/neuro-san-session.mjs).
+
+A partner network is still fetched and run in this browser: neuro-san asks the engine
+for the partner's published network the first time an agent calls it, after consent, and
+runs it as its own `AsyncDirectAgentSession` with the caller's router.
+
+The package's transpiled code does not all run as-is yet. Each gap is worked around in
+`runtime-build/` (never by editing the package, so a rebundled package stays reproducible
+from its transpiling source) and marked `WORKAROUND` / `PORT BACK` with what to fix
+upstream. The browser stand-ins for Node builtins are listed in
+[`runtime-build/browser-shims/README.md`](runtime-build/browser-shims/README.md).
+
 ## Runtime UI
 
-The served page (the vendored neuro-san-web runtime) is consumer-grade, not a raw
+The served page is consumer-grade, not a raw
 chatbot:
 
 - **Clean answers.** neuro-san agents reply in the AAOSA wire format (a JSON envelope

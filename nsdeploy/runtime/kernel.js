@@ -1,38 +1,38 @@
-// kernel.js — the pure, framework-free orchestration logic.
+// kernel.js: the browser-side view of a neuro-san agent network.
 //
-// This module is the browser-side reference for what the plan calls the
-// "cross-compilable kernel": config filter chain, AgentNetwork, the activation
-// taxonomy (wiring only — NOT the agentic loop), validators, sly_data redaction,
-// the ChatMessage envelope, and external/MCP URL parsing. It imports nothing
-// browser-specific and nothing framework-specific, so it is exactly the surface
-// `nsxc` would generate from neuro_san/kernel/. It is hand-written here so the demo
-// runs today; behavioral parity tests (see nsxc/) pin it to the Python source.
+// Logic that exists in neuro-san itself is not written here. It comes from
+// @cognizant-ai-lab/neuro-san-npm, the real neuro-san sources transpiled to
+// TypeScript, through ./generated-bridge.js: the config filter chain (commondefs,
+// defaults, name correction), AgentNetwork's front man and agent specs, the network
+// validators, and external agent / MCP reference parsing. What stays here is
+// nsdeploy's own: link slots (a reference the developer links to another site at
+// run time), the trace's display redaction, and adapting neuro-san's parsed
+// references to browser origins.
 
-import { deepMerge, isPlainObject } from "./hocon.js";
-// Cross-compiled from neuro_san/kernel by nsxc (regenerated every build, drift-gated).
-import { find_front_man, classify_tool } from "./generated/graph.gen.mjs";
-import { validate_network } from "./generated/validation.gen.mjs";
+import { neuroSanKernel } from "./generated-bridge.js";
+
+export { loadNeuroSan } from "./generated-bridge.js";
 
 // --- ChatMessage envelope (mirrors neuro_san/api/grpc/chat.proto) ------------
 
-export const ChatMessageType = {
-  UNKNOWN: 0,
-  SYSTEM: 1,
-  HUMAN: 2,
-  AI: 4,
-  AGENT: 100,
-  AGENT_FRAMEWORK: 101,
-  AGENT_TOOL_RESULT: 103,
-  AGENT_PROGRESS: 104,
-};
+// Filled from neuro-san's own ChatMessageType when the kernel loads, so the values
+// are not restated here. Modules import this object up front and read it at run
+// time, which is always after boot() has loaded the kernel.
+export const ChatMessageType = {};
+
+export function initKernel() {
+  Object.assign(ChatMessageType, neuroSanKernel().ChatMessageType);
+}
 
 export function chatMessage(type, text, origin = [], extra = {}) {
   return { type, text, origin, ...extra };
 }
 
-// --- sly_data redaction (mirrors AgentFrameworkMessage.translate_for_trace) --
+// --- sly_data (display only) ---------------------------------------------------
 
-// Keep keys, drop values, when sly_data crosses an origin/trust boundary.
+// Keep keys, drop values, when sly_data is shown across a boundary in the trace. This
+// is presentation, not policy: what crosses a boundary is decided by neuro-san's own
+// SlyDataRedactor inside the agent loop.
 export function redactSlyData(slyData) {
   if (!slyData) return slyData;
   const out = {};
@@ -40,151 +40,66 @@ export function redactSlyData(slyData) {
   return out;
 }
 
-// Filter sly_data to the subset an `allow` block permits to cross a boundary.
-export function filterSlyData(slyData, allowedKeys) {
-  if (!slyData) return {};
-  if (!allowedKeys || allowedKeys.length === 0) return {};
-  if (allowedKeys.includes("*")) return { ...slyData };
-  const out = {};
-  for (const k of allowedKeys) if (k in slyData) out[k] = slyData[k];
-  return out;
-}
-
-export function allowedDownstreamSly(agentSpec) {
-  return agentSpec?.allow?.to_downstream?.sly_data ?? null;
-}
-export function allowedUpstreamSly(agentSpec) {
-  return agentSpec?.allow?.to_upstream?.sly_data ?? null;
-}
-
-// --- external / MCP URL parsing (mirrors external_agent_parsing.py) ----------
+// --- external / MCP references (neuro-san's ExternalAgentParsing) ----------------
 
 export function isExternalAgent(ref) {
-  if (typeof ref !== "string") return false;
-  return /^https?:\/\//i.test(ref) || ref.startsWith("/");
+  return typeof ref === "string" && neuroSanKernel().isExternalAgent(ref);
 }
 
 export function isMcpTool(ref) {
-  if (isPlainObject(ref)) return true;
-  if (typeof ref !== "string") return false;
-  if (!/^https?:\/\//i.test(ref)) return false;
-  try {
-    const u = new URL(ref);
-    const hostLabels = u.hostname.toLowerCase().split(".");
-    const pathSegs = u.pathname.split("/").filter(Boolean).map((s) => s.toLowerCase());
-    return hostLabels.includes("mcp") || pathSegs.includes("mcp");
-  } catch {
-    return false;
-  }
+  return neuroSanKernel().isMcpTool(ref);
 }
 
-// Parse "https://host:port/agents/name" or "/name" into its parts.
+// Adapts neuro-san's {host, port, agent_name, scheme} to the {origin, agentName, url}
+// this runtime passes around, resolving a same-server reference ("/name") against the
+// serving origin.
 export function parseExternalAgent(ref, baseOrigin) {
-  if (ref.startsWith("/")) {
+  const parsed = neuroSanKernel().parseExternalAgent(ref);
+  if (!parsed) return null;
+  if (!parsed.scheme) {
     const origin = baseOrigin || (typeof location !== "undefined" ? location.origin : "");
-    return { origin, agentName: ref.replace(/^\//, ""), url: origin + ref };
+    return { origin, agentName: parsed.agent_name, url: origin + ref };
   }
-  const u = new URL(ref);
-  return { origin: u.origin, agentName: u.pathname.replace(/^\//, ""), url: ref };
+  const authority = parsed.port ? `${parsed.host}:${parsed.port}` : parsed.host;
+  return { origin: `${parsed.scheme}://${authority}`, agentName: parsed.agent_name, url: ref };
 }
 
-// --- config filter chain (mirrors the *ConfigFilter classes) -----------------
-
-// Expand commondefs.replacement_strings ({token}) and replacement_values, then
-// push top-level defaults down onto each agent spec, mirroring DefaultsConfigFilter.
-const DEFAULT_KEYS = [
-  "llm_config",
-  "verbose",
-  "max_steps",
-  "max_iterations",
-  "max_execution_seconds",
-  "max_attempts",
-  "error_formatter",
-  "error_fragments",
-];
-
-export function filterConfig(rawConfig) {
-  let config = deepClone(rawConfig);
-  const commondefs = config.commondefs || {};
-  const strs = commondefs.replacement_strings || {};
-  const vals = commondefs.replacement_values || {};
-
-  config = walkReplace(config, (v) => {
-    if (typeof v === "string") {
-      // full-value replacement_values match first
-      if (Object.prototype.hasOwnProperty.call(vals, v)) return vals[v];
-      // {token} string substitution
-      return v.replace(/\{([A-Za-z0-9_]+)\}/g, (m, key) =>
-        Object.prototype.hasOwnProperty.call(strs, key) ? strs[key] : m
-      );
-    }
-    return v;
-  });
-
-  // push down defaults
-  const tools = Array.isArray(config.tools) ? config.tools : [];
-  for (const agent of tools) {
-    for (const key of DEFAULT_KEYS) {
-      if (key in config) {
-        if (isPlainObject(config[key]) && isPlainObject(agent[key])) {
-          agent[key] = deepMerge(config[key], agent[key]);
-        } else if (!(key in agent)) {
-          agent[key] = deepClone(config[key]);
-        }
-      }
-    }
-    // name correction: trim whitespace
-    if (typeof agent.name === "string") agent.name = agent.name.trim();
-  }
-  return config;
-}
-
-function walkReplace(v, fn) {
-  if (Array.isArray(v)) return v.map((x) => walkReplace(x, fn));
-  if (isPlainObject(v)) {
-    const out = {};
-    for (const [k, val] of Object.entries(v)) out[k] = walkReplace(val, fn);
-    return out;
-  }
-  return fn(v);
-}
-
-function deepClone(v) {
-  return typeof structuredClone === "function"
-    ? structuredClone(v)
-    : JSON.parse(JSON.stringify(v));
-}
-
-// --- AgentNetwork (mirrors internals/graph/registry/agent_network.py) --------
+// --- AgentNetwork ------------------------------------------------------------------
 
 export class AgentNetwork {
   constructor(config, name) {
-    this.config = filterConfig(config);
+    this.config = neuroSanKernel().filterNetworkConfig(config);
     this.name = name;
     this.linkSlots = new Set(Object.keys(this.config.link_slots || {}));
     this.links = { ...(this.config.links || {}) };
     this.linkLabels = { ...(this.config.link_labels || {}) };
-    this.specMap = new Map();
-    for (const agent of this.config.tools || []) {
-      if (agent && typeof agent.name === "string") this.specMap.set(agent.name, agent);
-    }
   }
 
   getAgentSpec(name) {
-    return this.specMap.get(name) || null;
+    return neuroSanKernel().getAgentToolSpec(this.config, name) || null;
   }
 
-  // Delegates to the cross-compiled kernel (neuro_san/kernel/graph.py).
+  // neuro-san's own AgentNetwork.find_front_man; null when there is none.
   findFrontMan() {
-    return find_front_man(this.config);
+    return neuroSanKernel().findFrontMan(this.config);
   }
 
-  // Delegates classification to the cross-compiled kernel, then attaches the
-  // local agent spec (needed by the runner) for non-remote/non-mcp kinds.
+  // How this runtime activates a tool reference, composed from neuro-san's own
+  // predicates, plus nsdeploy's link slots.
   classifyTool(ref) {
-    let kind = classify_tool(this.config, ref);
-    if (kind === "missing" && typeof ref === "string" && this.linkSlots.has(ref)) kind = "link";
-    const spec = typeof ref === "string" ? this.specMap.get(ref) : undefined;
+    let kind;
+    if (isMcpTool(ref)) kind = "mcp";
+    else if (typeof ref !== "string") kind = "missing";
+    else if (isExternalAgent(ref)) kind = "remote";
+    else if (this.linkSlots.has(ref)) kind = "link";
+    else {
+      const spec = this.getAgentSpec(ref);
+      if (!spec) kind = "missing";
+      else if (spec.class != null) kind = "coded";
+      else if (spec.toolbox != null) kind = "toolbox";
+      else kind = "agent";
+    }
+    const spec = typeof ref === "string" ? this.getAgentSpec(ref) || undefined : undefined;
     return { kind, ref, spec };
   }
 
@@ -201,12 +116,13 @@ export class AgentNetwork {
   }
 }
 
-// --- validators (mirrors the validator chain) --------------------------------
+// --- validation ------------------------------------------------------------------------
 
 export function validateNetwork(network) {
-  // Errors come from the cross-compiled kernel (neuro_san/kernel/validation.py).
-  const errors = validate_network(network.config).filter((message) =>
-    ![...network.linkSlots].some((ref) => message.includes(`references missing tool '${ref}'.`))
+  // neuro-san's network validators. A link slot is a reference nsdeploy resolves at run
+  // time, so it is not reported as a missing agent.
+  const errors = neuroSanKernel().validateNetwork(network.config, network.name).filter((message) =>
+    ![...network.linkSlots].some((ref) => message.includes("non-existent agent") && message.includes(`'${ref}'`))
   );
   const warnings = [];
 

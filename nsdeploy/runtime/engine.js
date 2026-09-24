@@ -1,17 +1,27 @@
-// engine.js — top-level orchestration: load a published network from an origin,
-// compile it (HOCON -> filter chain -> validate -> AgentNetwork), and run it. Owns
-// the intrinsics (LLM client, sandbox, trace) and implements resolveRemote, the
-// fetch-and-run-locally bridge that turns a peer URL into a runnable Session.
+// engine.js: load a published network from an origin, compile it, and run it on
+// neuro-san's own agent loop.
+//
+// The loop is neuro-san's DirectAgentSession, from @cognizant-ai-lab/neuro-san-npm
+// (the real neuro-san sources transpiled to TypeScript), bundled into
+// generated/neuro-san.mjs. This module owns what is nsdeploy's rather than neuro-san's:
+// which LLM router a run uses, consent before contacting a partner network or MCP
+// server, the per-query composition limits, link slots, and turning the loop's
+// streamed messages into the trace the UI draws.
+//
+// Partner networks are fetched and run locally: neuro-san asks resolvePeer (below)
+// for a partner's network the first time it calls it, and runs it here in the
+// caller's session, with the caller's router. A partner is never executed remotely
+// and never receives the caller's BYOK key.
 
 import { parseHocon } from "./hocon.js";
-import { AgentNetwork, validateNetwork, parseExternalAgent, redactSlyData, ChatMessageType } from "./kernel.js";
-import { LlmClient } from "./llm.js";
-import { ToolSandbox } from "./sandbox.js";
+import {
+  AgentNetwork, ChatMessageType, initKernel, loadNeuroSan, parseExternalAgent, redactSlyData, validateNetwork,
+} from "./kernel.js";
+import { neuroSanSession } from "./generated-bridge.js";
 import { TraceBus } from "./trace.js";
 import { fetchManifest, fetchText, resolveUrl, RemoteRegistry } from "./remote.js";
-import { runAgent } from "./runner.js";
-import { McpClient } from "./mcp.js";
-import { normalizeModelName } from "./model.js";
+import { argsToText, consumeRemoteBudget, estimateRemoteCost, extractWidgets, peerRequestText, remoteIsInChain } from "./composition.js";
+import { isMockResponse, normalizeModelName } from "./model.js";
 
 function normOrigin(url) {
   try { return new URL(url).origin; } catch { return String(url || ""); }
@@ -86,28 +96,38 @@ export function selectPeerRouter(callerRouter) {
   return { baseUrl: callerRouter.baseUrl, mock: callerRouter.mock === true };
 }
 
+// BYOK guarantee: a real (non-mock) router is never contacted without a key the
+// visitor entered. Refuse rather than forward the placeholder "demo" to a live
+// provider (which returns a confusing 401). This happens e.g. when a shared/reloaded
+// URL keeps the proxy router but no saved BYOK profile/key is available here.
+export function assertRouterKey(llm, apiKey) {
+  if (!llm?.mock && (!apiKey || apiKey === "demo")) {
+    throw new Error(`The selected LLM router (${hostOf(llm?.baseUrl) || "a real provider"}) needs your API key. Open ⚙ BYOK settings and enter it, or switch the router back to the mock to run without a key.`);
+  }
+}
+
 export class Engine {
-  constructor({ originUrl, trace, sandboxWorkerUrl, byokKey, routerOverride } = {}) {
+  constructor({ originUrl, trace, byokKey, routerOverride } = {}) {
     this.originUrl = (originUrl || (typeof location !== "undefined" ? location.origin : "")).replace(/\/$/, "");
     this.trace = trace || new TraceBus();
-    this.sandboxWorkerUrl = sandboxWorkerUrl || "/runtime/sandbox-worker.js";
     this.byokKey = byokKey || "";
     this.routerOverride = routerOverride || "";
     this.modelOverride = normalizeModelName(arguments[0] && arguments[0].modelOverride);
-    this.registry = new RemoteRegistry({ trace: this.trace });
-    this.sandbox = new ToolSandbox({ workerUrl: this.sandboxWorkerUrl, trace: this.trace });
-    this.top = null; // {network, base, bundleUrl, manifest, llm}
-    this.agentRunner = null; // set by enableLangChain(); neuro-san-web owns the loop
-    this.history = []; // top-level conversation turns ([{role,content}]) across runs
+    this.registry = new RemoteRegistry({ trace: this.trace }); // compiled partner networks, for the UI
+    this.top = null; // {network, base, manifest, llm}
+    this.chatContext = null; // neuro-san's chat_context from the last turn, sent with the next
     this.consent = new Map(); // peerOrigin -> "always" (remembered approvals)
     this.onConsent = null; // UI hook: async (info) => "allow"|"always"|"decline"
     this.onLinkRequired = null; // UI hook: async ({reference,...}) => peer URL|null
     this.runtimeAllowedPeers = new Set(); // user-entered, validated link origins
+    this.refOwners = new Map(); // tool reference URL -> the network (and site) that declares it
+    this.composition = null; // this query's composition budget
+    this.runSpan = null;
   }
 
-  // Clear the multi-turn conversation history (start a new chat).
+  // Start a new chat.
   resetHistory() {
-    this.history = [];
+    this.chatContext = null;
   }
 
   // Ask the user to approve contacting another hosted network. Remembers
@@ -120,20 +140,17 @@ export class Engine {
     return decision || "allow";
   }
 
-  // Load the prebuilt LangChain.js AgentRunner bundle and use it as the loop.
-  async enableLangChain() {
-    const mod = await import("./generated/agent-runner.bundle.js");
-    this.agentRunner = mod.runAgentLangChain || mod.default;
-    return this.agentRunner;
-  }
-
   // Compile the origin's own published front network.
   async loadTop() {
+    await loadNeuroSan();
+    initKernel();
+    this._installLoopHooks();
+    this._observeModelCalls();
     const span = this.trace.start("compile", { origin: hostOf(this.originUrl), what: "top network" });
     try {
       const { manifest, base } = await fetchManifest(this.originUrl);
       const entry = manifest.networks[0];
-      // Set manifest early so resolveRemote/resolveMcp policy checks have it.
+      // Set manifest early so partner/MCP policy checks have it.
       this.top = { manifest, base };
       const hasConfiguredModel = !!String(this.modelOverride || "").trim();
       const hasRealKey = !!(this.byokKey && this.byokKey !== "demo");
@@ -147,8 +164,8 @@ export class Engine {
           reason: "saved router is another nsDeploy site's published mock endpoint",
         });
       }
-      const { network, bundleUrl, integrity, llm, validation: v } = await this._compile(base, manifest, entry, { isTop: true });
-      this.top = { network, base, bundleUrl, integrity, manifest, llm };
+      const { network, llm, validation: v } = await this._compile(base, manifest, entry, { isTop: true });
+      this.top = { network, base, manifest, llm };
       this.mockLLM = llm.mock; // true when using the deterministic mock router
       this.byokRouter = manifest.llm_router?.byok_router || ""; // real-LLM proxy for BYOK keys
       this.trace.end(span, {
@@ -172,16 +189,17 @@ export class Engine {
     const publishedLinks = await this._loadPublishedLinks(base, entry.name || entry.hocon);
     config.links = { ...(config.links || {}), ...publishedLinks };
     const network = new AgentNetwork(config, entry.name || entry.hocon);
-    // Validation gate: a network with structural errors must never run. (Warnings
-    // are non-fatal and surfaced in the trace/UI.) This applies to the top network
-    // AND to every fetched-and-run peer network compiled below.
+    // Validation gate: a network with structural errors must never run. This applies
+    // to the top network AND to every fetched-and-run partner network.
     const validation = validateNetwork(network);
     if (validation.errors && validation.errors.length) {
       throw new Error(`Network '${network.name}' (${hostOf(base)}) failed validation: ${validation.errors.join("; ")}`);
     }
-    const bundleUrl = manifest.coded_tools?.bundle ? resolveUrl(base, manifest.coded_tools.bundle) : null;
-    const integrity = manifest.coded_tools?.integrity || null; // optional SRI digest
-    // LLM routing boundary. The top site chooses the active router. Peer manifests
+    // Every reference is policed by the manifest of the site that declares it.
+    for (const ref of [...validation.externals, ...validation.mcps, ...Object.values(network.links)]) {
+      this.refOwners.set(ref, { network, base, manifest });
+    }
+    // LLM routing boundary. The top site chooses the active router. Partner manifests
     // contribute network definitions only and can never redirect execution or keys.
     let routerBase;
     let mock;
@@ -192,19 +210,16 @@ export class Engine {
       this.routerOverride = selected.upgradedToByok ? routerBase : this.routerOverride;
       this.userRouter = { baseUrl: routerBase, mock };
     } else {
-      // A peer contributes its network definition, not its execution environment.
-      // It always runs in this browser with the top caller's active router, even
-      // for keyless/mock sessions. Never send execution or a BYOK key to the peer.
+      // A partner contributes its network definition, not its execution environment.
+      // It always runs in this browser with the top caller's active router, even for
+      // keyless/mock sessions. Never send execution or a BYOK key to the partner.
       const selected = selectPeerRouter(this.userRouter);
       routerBase = selected.baseUrl;
       mock = selected.mock;
     }
-    const llm = new LlmClient({ baseUrl: routerBase, apiKey: this.byokKey, trace: this.trace, mock });
-    return { network, bundleUrl, integrity, llm, hoconUrl, validation };
+    return { network, llm: { baseUrl: routerBase, mock }, hoconUrl, validation };
   }
 
-  // Every hop is constrained by the immediate caller's published manifest. The
-  // user still approves each remote call, so a peer cannot silently expand access.
   _assertAllowedPeer(target, sourceManifest) {
     const manifest = sourceManifest || this.top?.manifest;
     if (!manifestAllowsPeer(target, manifest, this.runtimeAllowedPeers)) {
@@ -311,193 +326,304 @@ export class Engine {
     return normalized;
   }
 
-  _makeCtx({ network, base, bundleUrl, integrity, manifest, llm, slyData, chain, composition, isTop, history }) {
-    const self = this;
-    const ctx = {
-      network,
-      manifest,
-      baseOrigin: base,
-      displayOrigin: hostOf(base),
-      codedToolBundleUrl: bundleUrl,
-      codedToolIntegrity: integrity || null,
-      llm,
-      sandbox: this.sandbox,
-      trace: this.trace,
-      slyData,
-      composition,
-      // Prior conversation turns ([{role,content}]), only for the top front-man.
-      history: history || [],
-      defaultModel: network.config.llm_config?.model_name || "mock-1",
-      isTop: !!isTop,
-      frontMan: network.findFrontMan(),
-      onAnswerDelta: isTop ? (t) => self.onAnswerDelta?.(t) : undefined,
-      resolveRemote: (ref, callChain, parentSpan) => self.resolveRemote(ref, callChain || chain, parentSpan, manifest),
-      resolveMcp: (ref, parentSpan) => self.resolveMcp(ref, parentSpan, slyData, manifest),
-      resolveLink: (ref, parentSpan) => self.resolveLink(ref, network, base, parentSpan),
-      requestConsent: (info) => self.requestConsent(info),
-      // LangChain.js AgentRunner intrinsic (neuro-san-web owns the loop)
-      externalRunner: self.agentRunner,
-      routerBaseUrl: llm.baseUrl,
-      mock: llm.mock,
-      apiKey: self.byokKey,
-      modelOverride: self.modelOverride,
-    };
-    return ctx;
+  // The config neuro-san's loop runs for a network: every agent uses the active
+  // router's model (neuro-san reads the key and router from OPENAI_API_KEY and
+  // OPENAI_BASE_URL), and link slots become partner URLs. A slot not linked yet
+  // becomes LINK_SLOT_PREFIX + its name, which resolvePeer turns into a request for
+  // the developer to link it.
+  _runnableConfig(network) {
+    const config = structuredClone(network.config);
+    const override = this.modelOverride ? { model_name: this.modelOverride } : {};
+    const llmConfig = (agentConfig) => ({ ...(agentConfig || {}), class: "openai", ...override });
+    config.llm_config = llmConfig(config.llm_config);
+    for (const agent of config.tools || []) {
+      if (agent.llm_config || !agent.class) agent.llm_config = llmConfig(agent.llm_config);
+      if (!Array.isArray(agent.tools)) continue;
+      agent.tools = agent.tools.map((ref) => {
+        if (typeof ref !== "string" || !network.linkSlots.has(ref)) return ref;
+        const target = network.getLink(ref) || this._storedLink(this._baseOf(network), network.name, ref);
+        const url = target || LINK_SLOT_PREFIX + encodeURIComponent(ref);
+        this.refOwners.set(url, { network, base: this._baseOf(network), manifest: this._manifestOf(network), linkSlot: ref });
+        return url;
+      });
+    }
+    return config;
   }
 
-  // fetch-and-run-locally: turn a peer URL into a runnable Session.
-  async resolveRemote(ref, chain, parentSpan, sourceManifest) {
-    const { origin } = parseExternalAgent(ref, this.top?.base);
-    this._assertAllowedPeer(origin, sourceManifest); // per-hop publish-time policy gate
-    const lastSeg = ref.split("/").filter(Boolean).pop();
-    this.registry.checkCycle(chain, origin, lastSeg);
+  _baseOf(network) {
+    if (network === this.top?.network) return this.top.base;
+    for (const owner of this.refOwners.values()) if (owner.network === network) return owner.base;
+    return this.top?.base;
+  }
 
-    const cached = this.registry.get(origin, lastSeg);
-    if (cached) return cached;
+  _manifestOf(network) {
+    if (network === this.top?.network) return this.top.manifest;
+    for (const owner of this.refOwners.values()) if (owner.network === network) return owner.manifest;
+    return this.top?.manifest;
+  }
 
-    const fetchSpan = this.trace.start("remote_fetch", {
-      parent: parentSpan,
-      origin: hostOf(this.top.base),
-      peerOrigin: hostOf(origin),
-      url: ref,
+  // The hooks neuro-san's loop calls at the points where nsdeploy decides something:
+  // before contacting an MCP server or calling one of its tools, and before running
+  // a partner network.
+  _installLoopHooks() {
+    if (this._hooksInstalled) return;
+    this._hooksInstalled = true;
+    const session = neuroSanSession();
+    const mcpSpans = new Map();
+    const peerSpans = new Map();
+    session.setHooks({
+      mcpConsent: async ({ url }) => {
+        const owner = this.refOwners.get(url);
+        try {
+          this._assertAllowedPeer(url, owner?.manifest);
+        } catch (err) {
+          this.trace.note("consent", { parent: this.runSpan, origin: hostOf(owner?.base || this.top.base), peerOrigin: hostOf(url), phase: "discover", decision: "blocked", reason: err.message });
+          return false;
+        }
+        // Discovering MCP tools (initialize, tools/list) IS contact with the server, so
+        // it waits for consent; declining means the agent runs without these tools.
+        const decision = await this.requestConsent({
+          kind: "mcp", phase: "discover", peerLabel: "Destination service", peerOrigin: hostOf(url),
+          requestText: "(discover available tools)",
+          est: { totalTokens: 0, costText: this.mockLLM ? "$0.00 (mock)" : "metadata only" },
+        });
+        if (decision === "decline") {
+          this.trace.note("consent", { parent: this.runSpan, origin: hostOf(owner?.base || this.top.base), peerOrigin: hostOf(url), phase: "discover", decision: "declined" });
+          return false;
+        }
+        return true;
+      },
+      mcpCall: async ({ url, tool, args }) => {
+        // Discovery consent never silently authorizes execution: the call itself is
+        // confirmed with the real payload, unless the origin is "always" allowed.
+        const requestText = argsToText(args);
+        const decision = await this.requestConsent({
+          kind: "mcp", phase: "call", peerLabel: "Destination service", peerOrigin: hostOf(url),
+          requestText,
+          est: { totalTokens: Math.round((requestText.length + 80) / 4), costText: this.mockLLM ? "$0.00 (mock)" : null },
+        });
+        if (decision === "decline") {
+          this.trace.note("consent", { parent: this.runSpan, origin: hostOf(this.top.base), peerOrigin: hostOf(url), phase: "call", decision: "declined" });
+          return `The user declined to send this request to ${hostOf(url)}. Continue without it.`;
+        }
+        mcpSpans.set(`${url}::${tool}`, this.trace.start("mcp_call", {
+          parent: this.runSpan, origin: hostOf(this.top.base), peerOrigin: hostOf(url), tool, requestPayload: args,
+        }));
+        return null;
+      },
+      mcpResult: ({ url, tool, result, error }) => {
+        const key = `${url}::${tool}`;
+        const span = mcpSpans.get(key);
+        mcpSpans.delete(key);
+        if (!span) return;
+        if (error) this.trace.fail(span, error);
+        else this.trace.end(span, { responsePreview: String(result ?? "").slice(0, 300) });
+      },
+      resolvePeer: (url, { chain, request }) => this._resolvePeer(url, chain, request, peerSpans),
+      peerDone: ({ url, error }) => {
+        const span = peerSpans.get(url);
+        peerSpans.delete(url);
+        if (!span) return;
+        if (error) this.trace.fail(span, error);
+        else this.trace.end(span, { type: ChatMessageType.AGENT });
+      },
+      peerFunction: (url) => {
+        const owner = this.refOwners.get(url);
+        const label = owner?.network.linkLabels?.[url] || owner?.linkSlot || parseExternalAgent(url, owner?.base)?.agentName || url;
+        return owner?.linkSlot && url.startsWith(LINK_SLOT_PREFIX)
+          ? { description: `Hand off to the linked agent network "${owner.linkSlot}". If it is not linked yet, ask the developer for its nsDeploy site URL.` }
+          : { description: `Hand off to the ${label} network. Provide a natural-language request.` };
+      },
     });
-    let session;
+  }
+
+  // Called by neuro-san the first time an agent calls a partner network. Applies
+  // nsdeploy's policy, then fetches and compiles the partner's published network.
+  // Returning { answer } does not run the partner; that text is its answer.
+  async _resolvePeer(url, chain, request, peerSpans) {
+    let owner = this.refOwners.get(url);
+    let target = url;
+    if (url.startsWith(LINK_SLOT_PREFIX)) {
+      const reference = decodeURIComponent(url.slice(LINK_SLOT_PREFIX.length));
+      target = await this.resolveLink(reference, owner.network, owner.base, this.runSpan);
+      if (!target) return { answer: `The user did not link '${reference}'. Continue without it.` };
+      this.refOwners.set(target, owner);
+    }
+    const label = owner?.network.linkLabels?.[target] || hostOf(target);
+    const base = owner?.base || this.top.base;
+    const parsed = parseExternalAgent(target, base);
+    const chainKeys = chain.map((ref) => {
+      const p = parseExternalAgent(ref, base);
+      return p ? `${p.origin}::${p.agentName}` : ref;
+    });
+    if (remoteIsInChain(target, base, [`${this.top.base}::${this.top.network.name}`, ...chainKeys])) {
+      this.trace.note("composition_skip", { parent: this.runSpan, origin: hostOf(base), target, reason: "already visited in this request" });
+      return { answer: `Skipped ${label}: that network is already in this request's call chain. Continue with available results and do not retry it.` };
+    }
+    // Consent precedes any contact with the partner, so the estimate is coarse: the
+    // partner has not been fetched yet.
+    const requestText = peerRequestText(request) || "(the request your agent is sending)";
+    const decision = await this.requestConsent({
+      kind: "network", peerLabel: label, peerOrigin: hostOf(target), requestText,
+      est: { totalTokens: Math.round((requestText.length + 300) / 4) * 2, costText: this.mockLLM ? "$0.00 (mock)" : null },
+    });
+    if (decision === "decline") {
+      this.trace.note("consent", { parent: this.runSpan, origin: hostOf(base), peerOrigin: hostOf(target), decision: "declined" });
+      return { answer: `The user declined to contact ${hostOf(target)}. Proceed without it and note that to the user.` };
+    }
+    const budgetReason = consumeRemoteBudget(this.composition, `${parsed.origin}::${parsed.agentName}`);
+    if (budgetReason) {
+      this.trace.note("composition_limit", { parent: this.runSpan, origin: hostOf(base), target, reason: budgetReason, remoteCalls: this.composition?.remoteCalls });
+      return { answer: `Skipped ${label}: ${budgetReason}. Continue with available results and do not retry it.` };
+    }
+    this._assertAllowedPeer(parsed.origin, owner?.manifest);
+
+    const lastSeg = target.split("/").filter(Boolean).pop();
+    const fetchSpan = this.trace.start("remote_fetch", {
+      parent: this.runSpan, origin: hostOf(this.top.base), peerOrigin: hostOf(parsed.origin), url: target,
+    });
+    let compiled;
     try {
-      const { manifest, base } = await fetchManifest(origin);
-      // Fail closed: only run the exact published network that was requested —
-      // never silently fall back to a different (e.g. networks[0]) network.
+      const { manifest, base: peerBase } = await fetchManifest(parsed.origin);
+      // Fail closed: only run the exact published network that was requested, never a
+      // different (e.g. networks[0]) one.
       const entry = manifest.networks.find((n) => n.name === lastSeg);
       if (!entry) {
-        throw new Error(`No published network named '${lastSeg}' at ${hostOf(origin)}; refusing to run a different network.`);
+        throw new Error(`No published network named '${lastSeg}' at ${hostOf(parsed.origin)}; refusing to run a different network.`);
       }
-      const fetchedUrls = {
-        manifest: `${base}/agent-manifest.json`,
-        hocon: resolveUrl(base, entry.hocon),
-        toolBundle: manifest.coded_tools?.bundle ? resolveUrl(base, manifest.coded_tools.bundle) : null,
-      };
-      const { network, bundleUrl, integrity, llm } = await this._compile(base, manifest, entry);
-      this.trace.end(fetchSpan, { network: network.name, fetchedUrls, peerOrigin: hostOf(origin), brand: manifest.brand });
-      session = new Session(this, { network, base, bundleUrl, integrity, manifest, llm, fetchedUrls, brand: manifest.brand });
-      this.registry.set(origin, lastSeg, session);
-      return session;
+      const fetchedUrls = { manifest: `${peerBase}/agent-manifest.json`, hocon: resolveUrl(peerBase, entry.hocon) };
+      compiled = await this._compile(peerBase, manifest, entry);
+      compiled.base = peerBase;
+      this.registry.set(parsed.origin, lastSeg, { base: peerBase, network: compiled.network, brand: manifest.brand });
+      this.trace.end(fetchSpan, { network: compiled.network.name, fetchedUrls, peerOrigin: hostOf(parsed.origin), brand: manifest.brand });
+      peerSpans.set(url, this.trace.start("remote_call", {
+        parent: this.runSpan, origin: hostOf(this.top.base), peerOrigin: hostOf(peerBase),
+        method: "fetch-and-run-locally", fetchedUrls, network: compiled.network.name, brand: manifest.brand,
+        est: estimateRemoteCost({ network: compiled.network, requestText, model: this.modelOverride, mock: this.mockLLM }),
+      }));
     } catch (err) {
       this.trace.fail(fetchSpan, err);
       throw err;
     }
+    return { config: this._runnableConfig(compiled.network), name: compiled.network.name };
   }
 
-  // Resolve an MCP tool reference (string URL or { url, tools }) to a cached
-  // MCP client. The browser acts as MCP client to a hosted MCP server.
-  async resolveMcp(ref, parentSpan, slyData, sourceManifest) {
-    const url = typeof ref === "string" ? ref : ref.url;
-    this._assertAllowedPeer(url, sourceManifest); // same per-hop policy gate as peer networks
-    if (!this._mcpClients) this._mcpClients = new Map();
-    let client = this._mcpClients.get(url);
-    if (!client) {
-      const headers = (slyData && slyData.http_headers && slyData.http_headers[url]) || {};
-      client = new McpClient({ url, trace: this.trace, headers });
-      this._mcpClients.set(url, client);
-    }
-    return client;
+  // Report each call to the active LLM router as a model_call span, labelled from
+  // what the endpoint actually returned, so the header badge can never show a real
+  // model for the mock. The calls themselves are neuro-san's; this observes them, and
+  // enforces the BYOK guarantee (assertRouterKey) before each one goes out.
+  _observeModelCalls() {
+    if (this._observingModelCalls || typeof globalThis.fetch !== "function") return;
+    this._observingModelCalls = true;
+    const originalFetch = globalThis.fetch.bind(globalThis);
+    globalThis.fetch = async (input, init) => {
+      const url = String(input?.url ?? input);
+      const router = this.top?.llm?.baseUrl;
+      if (!router || !url.startsWith(router.replace(/\/$/, "") + "/chat/completions")) {
+        return originalFetch(input, init);
+      }
+      assertRouterKey(this.top.llm, this.byokKey);
+      let requested = "";
+      try { requested = JSON.parse(init?.body || "{}").model || ""; } catch {}
+      const span = this.trace.start("model_call", { parent: this.runSpan, origin: hostOf(this.top.base), via: hostOf(router), model: requested });
+      try {
+        const response = await originalFetch(input, init);
+        const route = response.headers.get("X-Nsdeploy-LLM-Route") || "";
+        let model = requested;
+        try {
+          const text = await response.clone().text();
+          model = (text.match(/"model"\s*:\s*"([^"]+)"/) || [])[1] || requested;
+        } catch {}
+        if (response.ok) {
+          this.trace.end(span, { model, mock: isMockResponse(this.top?.llm?.mock, route, model), status: "ok" });
+        } else {
+          this.trace.fail(span, new Error(`LLM router returned ${response.status}`));
+        }
+        return response;
+      } catch (err) {
+        this.trace.fail(span, err);
+        throw err;
+      }
+    };
   }
 
   async run(userText, { slyData } = {}) {
     if (!this.top) await this.loadTop();
     const runSpan = this.trace.start("run", { origin: hostOf(this.top.base), input: userText });
+    this.runSpan = runSpan;
+    this.composition = {
+      remoteCalls: 0,
+      peerCalls: new Map(),
+      maxRemoteCalls: 4,
+      maxCallsPerPeer: 1,
+      agentCalls: 0,
+      maxAgentCalls: 24,
+      deadline: Date.now() + 90_000,
+    };
     try {
-      const ctx = this._makeCtx({
-        network: this.top.network,
-        base: this.top.base,
-        bundleUrl: this.top.bundleUrl,
-        integrity: this.top.integrity,
-        manifest: this.top.manifest,
-        llm: this.top.llm,
-        slyData: { ...(slyData || {}) },
-        chain: [`${this.top.base}::${this.top.network.name}`],
-        isTop: true,
-        history: this.history,
-        composition: {
-          remoteCalls: 0,
-          peerCalls: new Map(),
-          maxRemoteCalls: 4,
-          maxCallsPerPeer: 1,
-          agentCalls: 0,
-          maxAgentCalls: 24,
-          deadline: Date.now() + 90_000,
-        },
+      assertRouterKey(this.top.llm, this.byokKey);
+      const session = neuroSanSession();
+      session.setEnv({
+        OPENAI_API_KEY: this.byokKey || "demo",
+        OPENAI_BASE_URL: this.top.llm.baseUrl,
       });
-      const text = await runAgent(ctx, this.top.network.findFrontMan(), userText, runSpan, ctx_chain(ctx, this.top));
-      // Persist this turn so the next turn has conversation context.
-      this.history.push({ role: "user", content: userText });
-      this.history.push({ role: "assistant", content: text });
-      if (this.history.length > 24) this.history = this.history.slice(-24); // bound tokens
+      const network = this.top.network;
+      const loop = session.createSession(this._runnableConfig(network), network.name);
+      const request = {
+        user_message: { type: ChatMessageType.HUMAN, text: userText },
+        sly_data: { ...(slyData || {}) },
+        // MAXIMAL so the trace can show every agent's messages; the answer is the final
+        // AGENT_FRAMEWORK message either way.
+        chat_filter: { chat_filter_type: "MAXIMAL" },
+      };
+      if (this.chatContext) request.chat_context = this.chatContext;
+      let answer = "";
+      const agentSpans = new Map();
+      for await (const chatResponse of loop.streaming_chat(request)) {
+        const message = chatResponse?.response;
+        if (!message) continue;
+        this._traceMessage(message, agentSpans);
+        if (message.type === ChatMessageType.AGENT_FRAMEWORK && message.chat_context) {
+          answer = String(message.text ?? "");
+          this.chatContext = message.chat_context;
+        }
+      }
+      for (const span of agentSpans.values()) this.trace.end(span, {});
+      const text = extractWidgets(answer, { trace: this.trace, displayOrigin: hostOf(this.top.base), network }, network.findFrontMan());
       this.trace.end(runSpan, { answerPreview: text.slice(0, 300) });
       return text;
     } catch (err) {
       this.trace.fail(runSpan, err);
       throw err;
+    } finally {
+      this.runSpan = null;
     }
   }
-}
 
-function ctx_chain(ctx, top) {
-  return [`${top.base}::${top.network.name}`];
-}
-
-// A peer network made runnable locally, exposed through the uniform Session API.
-class Session {
-  constructor(engine, { network, base, bundleUrl, integrity, manifest, llm, fetchedUrls, brand }) {
-    this.engine = engine;
-    this.network = network;
-    this.brand = brand;
-    this.base = base;
-    this.bundleUrl = bundleUrl;
-    this.integrity = integrity || null;
-    this.manifest = manifest;
-    this.llm = llm;
-    this.fetchedUrls = fetchedUrls;
-  }
-
-  async func() {
-    const front = this.network.getAgentSpec(this.network.findFrontMan());
-    return front?.function || { description: this.network.name };
-  }
-
-  async invoke(request, { parentSpan, chain = [], composition } = {}) {
-    const trace = this.engine.trace;
-    const span = trace.start("remote_call", {
-      parent: parentSpan,
-      origin: hostOf(this.engine.top.base),
-      peerOrigin: hostOf(this.base),
-      method: "fetch-and-run-locally",
-      fetchedUrls: this.fetchedUrls,
-      requestPayload: { ...request, sly_data: redactSlyData(request.sly_data) },
-      network: this.network.name,
-      brand: this.brand,
-    });
-    try {
-      const invocationChain = [...chain, `${this.base}::${this.network.name}`];
-      const ctx = this.engine._makeCtx({
-        network: this.network,
-        base: this.base,
-        bundleUrl: this.bundleUrl,
-        integrity: this.integrity,
-        manifest: this.manifest,
-        llm: this.llm,
-        slyData: { ...(request.sly_data || {}) },
-        chain: invocationChain,
-        composition,
-        isTop: false,
+  // One streamed neuro-san message, as trace events: an "agent" span for each agent
+  // (by its origin path) the first time it speaks, and each tool result.
+  _traceMessage(message, agentSpans) {
+    const origin = Array.isArray(message.origin) ? message.origin : [];
+    const path = origin.map((o) => o.tool).join("/");
+    const agent = origin.length ? origin[origin.length - 1].tool : null;
+    const peerRef = origin.map((o) => o.tool).find((tool) => typeof tool === "string" && /^https?:\/\//.test(tool));
+    const where = peerRef ? hostOf(peerRef) : hostOf(this.top.base);
+    if (agent && !agentSpans.has(path)) {
+      agentSpans.set(path, this.trace.start("agent", {
+        parent: this.runSpan, origin: where, agent, network: peerRef ? parseExternalAgent(peerRef)?.agentName : this.top.network.name,
+      }));
+    }
+    if (message.type === ChatMessageType.AGENT_TOOL_RESULT) {
+      this.trace.note("tool_result", {
+        parent: agentSpans.get(path) || this.runSpan, origin: where, tool: agent,
+        preview: String(message.text ?? "").slice(0, 200), type: ChatMessageType.AGENT_TOOL_RESULT,
       });
-      const text = await runAgent(ctx, this.network.findFrontMan(), request.user_message.text, span, invocationChain);
-      trace.end(span, { responsePreview: text.slice(0, 300), type: ChatMessageType.AGENT });
-      return text;
-    } catch (err) {
-      trace.fail(span, err);
-      return `Error from ${hostOf(this.base)}: ${err.message}`;
     }
   }
 }
+
+// An unlinked link slot, until the developer links it: resolvePeer asks for the URL.
+const LINK_SLOT_PREFIX = "https://nsdeploy-link-slot.invalid/";
 
 function hostOf(url) {
   try {

@@ -227,7 +227,6 @@ export function mountApp(root, { engine, trace, manifest }) {
           <datalist id="ns-model-options"></datalist>
           <label>Router base URL <input id="ns-router" placeholder="OpenAI-compatible /v1"></label>
           <div id="ns-router-hint" class="ns-hint"></div>
-          <label class="ns-row-inline"><input type="checkbox" id="ns-lg"> Drive the LLM via LangChain.js</label>
           <div class="ns-profile-actions">
             <button id="ns-save-profile" class="ghost">Save setup</button>
             <button id="ns-delete-profile" class="ghost">Delete setup</button>
@@ -739,7 +738,6 @@ export function mountApp(root, { engine, trace, manifest }) {
   const keyEl = root.querySelector("#ns-key");
   const modelEl = root.querySelector("#ns-model");
   const modelOptionsEl = root.querySelector("#ns-model-options");
-  const langchainEl = root.querySelector("#ns-lg");
   const hintEl = root.querySelector("#ns-router-hint");
   const profileHintEl = root.querySelector("#ns-profile-hint");
   const saveProfileBtn = root.querySelector("#ns-save-profile");
@@ -755,7 +753,6 @@ export function mountApp(root, { engine, trace, manifest }) {
   try { storedKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
   keyEl.value = storedKey || selectedProfile?.key || "";
   profileNameEl.value = selectedProfile?.name || "";
-  langchainEl.checked = !!engine.agentRunner;
 
   const profileStorageText = canUseByokCookie()
     ? "Saved setups are kept in this browser and mirrored to a local cookie, so they follow nsDeploy across localhost ports."
@@ -778,7 +775,6 @@ export function mountApp(root, { engine, trace, manifest }) {
     keyEl.value = profile.key || "";
     modelEl.value = profile.model || "";
     routerEl.value = resolveByokRouter(profile.router || "");
-    langchainEl.checked = !!profile.runner;
     refreshHint();
   };
   const currentProfileDraft = (id) => {
@@ -795,7 +791,6 @@ export function mountApp(root, { engine, trace, manifest }) {
       key,
       model,
       router: portableByokRouter(router),
-      runner: langchainEl.checked,
     };
   };
   const saveCurrentProfile = () => {
@@ -944,7 +939,7 @@ export function mountApp(root, { engine, trace, manifest }) {
     } catch {}
     if (router) p.set("router", router); else p.delete("router");
     if (model) p.set("model", model); else p.delete("model");
-    if (langchainEl.checked) p.set("runner", "langchain"); else p.delete("runner");
+    p.delete("runner"); // the old choice of vibed agent loop; neuro-san's loop is the only one
     const qs = p.toString();
     // Rewrite the (key-free) query string, then reload so the change applies even
     // when only the key changed (router/model unchanged).

@@ -1,0 +1,19 @@
+{
+  "name": "nsdeploy-runtime-build",
+  "private": true,
+  "type": "module",
+  "description": "Bundles @cognizant-ai-lab/neuro-san-npm for the browser into nsdeploy/runtime/generated/.",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "build": "node bundle.mjs"
+  },
+  "dependencies": {
+    "@cognizant-ai-lab/neuro-san-npm": "file:../../neuro-san-ts-package/ts-package/package.tgz"
+  },
+  "devDependencies": {
+    "buffer": "^6.0.3",
+    "esbuild": "^0.24.0"
+  }
+}

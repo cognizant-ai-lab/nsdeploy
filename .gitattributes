@@ -1,3 +1,3 @@
-# Vendored, prebuilt minified runtime bundle — trailing whitespace lives inside
-# template literals; exclude from whitespace checks and mark generated.
-nsdeploy/runtime/generated/agent-runner.bundle.js -whitespace linguist-generated=true
+# Prebuilt, minified neuro-san bundles (runtime-build/): trailing whitespace lives
+# inside template literals; exclude from whitespace checks and mark generated.
+nsdeploy/runtime/generated/*.mjs -whitespace linguist-generated=true
