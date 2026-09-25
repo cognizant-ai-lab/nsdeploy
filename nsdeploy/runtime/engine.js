@@ -428,6 +428,13 @@ export class Engine {
         if (error) this.trace.fail(span, error);
         else this.trace.end(span, { type: ChatMessageType.AGENT });
       },
+      // Widgets a partner puts in its answer are shown here and taken out of the text
+      // its caller gets, since the caller's LLM would not pass them on.
+      peerAnswer: ({ url, text }) => {
+        const owner = this.refOwners.get(url);
+        const agentName = parseExternalAgent(url, owner?.base)?.agentName;
+        return extractWidgets(text, { trace: this.trace, displayOrigin: hostOf(url), network: { name: agentName } }, agentName);
+      },
       peerFunction: (url) => {
         const owner = this.refOwners.get(url);
         const label = owner?.network.linkLabels?.[url] || owner?.linkSlot || parseExternalAgent(url, owner?.base)?.agentName || url;

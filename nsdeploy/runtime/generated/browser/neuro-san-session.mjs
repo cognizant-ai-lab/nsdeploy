@@ -27,6 +27,10 @@ const hooks = {
   resolvePeer: null,
   // ({ url, error }) => void. After a partner network's run ends.
   peerDone: null,
+  // ({ url, text }) => string. A partner network's final answer before it goes back
+  // to its caller, so the runtime can take the ```cruse-ui``` widgets out of it and
+  // show them, as it does for the top network's answer. Returns the text to pass on.
+  peerAnswer: null,
   // (agentUrl) => function spec | null. What to advertise for a partner before it is
   // contacted, e.g. the contract nsdeploy published for the leaf it replaced.
   peerFunction: null
@@ -158,7 +162,13 @@ class PeerSession {
     const session = new AsyncDirectAgentSession(network, context, metadata, null, null);
     let error = null;
     try {
-      yield* session.streaming_chat(request);
+      for await (const chatResponse of session.streaming_chat(request)) {
+        const message = chatResponse?.response;
+        if (hooks.peerAnswer && message?.type === ChatMessageType.AGENT_FRAMEWORK && typeof message.text === "string") {
+          message.text = hooks.peerAnswer({ url: this.agentUrl, text: message.text });
+        }
+        yield chatResponse;
+      }
     } catch (err) {
       error = err;
       throw err;
