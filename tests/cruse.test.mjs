@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseAgentResponse, normalizePresentation, agentPresentationContext } from "../runtime/cruse.js";
-import { Engine } from "../runtime/engine.js";
+import { parseAgentResponse, normalizePresentation, agentPresentationContext } from "../nsdeploy/runtime/cruse.js";
+import { Engine } from "../nsdeploy/runtime/engine.js";
 
 const fence = (value) => "```cruse-ui\n" + JSON.stringify(value) + "\n```";
 const form = (id, properties) => ({ id, kind: "form", title: "Borrowing details", schema: { type: "object", properties, required: Object.keys(properties) } });

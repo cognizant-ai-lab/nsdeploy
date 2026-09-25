@@ -1,9 +1,9 @@
 // Open cruse-browser.html through any local static server. Exercises the real UI
 // without a provider key or network requests; leaves a rich example for visual QA.
-import { mountApp, renderPresentation } from "../runtime/ui.js";
-import { renderMarkdown, renderSafeHtml } from "../runtime/cruse-render.js";
-import { Engine } from "../runtime/engine.js";
-import { AgentNetwork } from "../runtime/kernel.js";
+import { mountApp, renderPresentation } from "../nsdeploy/runtime/ui.js";
+import { renderMarkdown, renderSafeHtml } from "../nsdeploy/runtime/cruse-render.js";
+import { Engine } from "../nsdeploy/runtime/engine.js";
+import { AgentNetwork } from "../nsdeploy/runtime/kernel.js";
 
 const status = document.querySelector("#status");
 const passed = [];
