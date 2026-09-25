@@ -1,4 +1,0 @@
-# Third-party libraries, prebuilt and minified by runtime-build/ (vite build): trailing
-# whitespace lives inside template literals; exclude from whitespace checks and mark
-# generated. generated/browser/ and generated/neuro-san/ are left readable for review.
-nsdeploy/runtime/generated/vendor/*.mjs -whitespace linguist-generated=true

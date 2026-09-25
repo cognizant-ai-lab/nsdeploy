@@ -1,7 +1,6 @@
 // vite.config.mjs: builds @cognizant-ai-lab/neuro-san-npm (the real neuro-san sources
-// transpiled to TypeScript) for the browser into nsdeploy/runtime/generated/. The
-// output is committed with the rest of the runtime, so a deployed site needs no build
-// step, and it is laid out to be read in review:
+// transpiled to TypeScript) for the browser into nsdeploy/runtime/generated/, which
+// is build output and not checked in. The layout:
 //   browser/     our code from runtime-build/, unminified: browser/neuro-san.mjs (the
 //                entry the runtime imports), the kernel and session adapters, and
 //                browser/shims.mjs (the Node stand-ins, see browser-shims/README.md)

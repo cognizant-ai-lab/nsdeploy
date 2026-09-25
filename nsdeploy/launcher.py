@@ -505,6 +505,9 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
           facade_upstream: Optional[str] = None) -> None:
     python_exe = python_exe or sys.executable
     runtime_dir = runtime_dir or DEFAULT_RUNTIME_DIR
+    if not (runtime_dir / "generated" / "browser" / "neuro-san.mjs").is_file():
+        raise SystemExit(f"error: the browser runtime is not built ({runtime_dir / 'generated'} is missing). "
+                         "Run `npm install && npm run build` in runtime-build/ first.")
     ext_mcps = ext_mcps or []
     bindings = spawn_mcp_servers(plan, studio_root, python_exe)
     facade_proc: Optional[subprocess.Popen] = None

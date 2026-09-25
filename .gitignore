@@ -1,6 +1,9 @@
 # generated deploy output
 .nsdeploy/
 
+# the browser runtime's build output (cd runtime-build && npm install && npm run build)
+nsdeploy/runtime/generated/
+
 # python
 __pycache__/
 *.pyc

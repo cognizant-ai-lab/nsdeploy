@@ -14,8 +14,8 @@ dependency a hosted tool imports (e.g. `ddgs`) is auto-installed on demand.
 
 The browser runs the agents on **neuro-san's own agent loop**, from
 [`@cognizant-ai-lab/neuro-san-npm`](https://github.com/cognizant-ai-lab/neuro-san-ts-package)
-(the real neuro-san Python transpiled to TypeScript), bundled into
-[`nsdeploy/runtime/generated/`](nsdeploy/runtime/generated) and driven by the page
+(the real neuro-san Python transpiled to TypeScript), bundled by
+[`runtime-build/`](runtime-build) into `nsdeploy/runtime/generated/` and driven by the page
 runtime in [`nsdeploy/runtime/`](nsdeploy/runtime). See
 [The agent loop](#the-agent-loop). The only Python that runs is (a) the build-time
 HOCON resolver and (b) one small MCP server per hostable tool.
@@ -24,6 +24,10 @@ HOCON resolver and (b) one small MCP server per hostable tool.
 
 ```bash
 pip install "mcp>=1.0.0" uvicorn starlette pyhocon neuro-san
+
+# Build the browser runtime once, and again after updating the neuro-san package.
+# It is build output, so it is not checked in (see The agent loop).
+(cd runtime-build && npm install && npm run build)
 
 # Tools are pulled from GitHub automatically — no --studio needed:
 python -m nsdeploy examples/travel_agent_system.hocon --port 8080
@@ -537,8 +541,9 @@ low-footprint default (~4.7 GB).
 
 Agents run on neuro-san's `DirectAgentSession`, not on a reimplementation of it.
 [`runtime-build/`](runtime-build) builds the neuro-san npm package for the browser with
-Vite into `nsdeploy/runtime/generated/`, which is committed like the rest of the runtime
-so a deployed site needs no build step. The output is laid out to be read in review:
+Vite into `nsdeploy/runtime/generated/`. That folder is build output, like a `dist`, so
+it is not checked in: build it before running nsdeploy or building a wheel, which ships
+whatever is there. The layout:
 
 - `browser/`: our code from `runtime-build/` (the kernel and session adapters, and the
   Node stand-ins in `shims.mjs`), unminified. `browser/neuro-san.mjs` is the entry.
