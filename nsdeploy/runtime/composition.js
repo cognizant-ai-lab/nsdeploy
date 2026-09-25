@@ -1,7 +1,7 @@
 // composition.js: nsdeploy's own policy around the neuro-san agent loop.
 //
 // None of this is neuro-san logic. The loop itself is neuro-san's (see engine.js and
-// the bundled generated/neuro-san.mjs); these are the limits nsdeploy puts on composing
+// the built generated/browser/neuro-san.mjs); these are the limits nsdeploy puts on composing
 // public sites (per-query budgets, cycle checks), the consent card's cost estimate,
 // and CRUSE widget extraction from an agent's answer.
 

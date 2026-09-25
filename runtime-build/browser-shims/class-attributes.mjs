@@ -2,7 +2,7 @@
 //
 // In python an instance reads a class attribute through self (self.TYPE_LOOKUP,
 // self.END_MESSAGE). The transpile turns class attributes into JS statics, which
-// `this` does not see, so every such read comes back undefined. bundle.mjs
+// `this` does not see, so every such read comes back undefined. vite.config.mjs
 // calls exposeClassAttributes() on each class the package exports, which makes
 // the statics readable through instances the way python resolves them: subclasses
 // inherit them, and assigning on an instance shadows the class value for that

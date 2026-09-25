@@ -536,14 +536,22 @@ low-footprint default (~4.7 GB).
 ## The agent loop
 
 Agents run on neuro-san's `DirectAgentSession`, not on a reimplementation of it.
-[`runtime-build/`](runtime-build) bundles the neuro-san npm package for the browser into
-one file, `nsdeploy/runtime/generated/neuro-san.mjs`, which is committed like the rest of
-the runtime so a deployed site needs no build step:
+[`runtime-build/`](runtime-build) builds the neuro-san npm package for the browser with
+Vite into `nsdeploy/runtime/generated/`, which is committed like the rest of the runtime
+so a deployed site needs no build step. The output is laid out to be read in review:
+
+- `browser/`: our code from `runtime-build/` (the kernel and session adapters, and the
+  Node stand-ins in `shims.mjs`), unminified. `browser/neuro-san.mjs` is the entry.
+- `neuro-san/`: the package's own code, unminified, one file per area of the package
+  (`graph`, `run_context`, `session`, `message`, ...), with the build-time source patches
+  applied in place.
+- `vendor/libraries.mjs`: the third-party libraries (LangChain, the MCP SDK, pythonlib,
+  ...), minified and pinned by `runtime-build/package-lock.json`.
 
 ```bash
 cd runtime-build
 npm install     # expects ../../neuro-san-ts-package/ts-package/package.tgz
-npm run build   # DEBUG=1 npm run build for an unminified bundle with source maps
+npm run build   # DEBUG=1 npm run build leaves vendor/ unminified and adds source maps
 ```
 
 What comes from neuro-san: the config filter chain, `AgentNetwork`, the network

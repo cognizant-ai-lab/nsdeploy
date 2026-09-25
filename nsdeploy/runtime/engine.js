@@ -2,8 +2,9 @@
 // neuro-san's own agent loop.
 //
 // The loop is neuro-san's DirectAgentSession, from @cognizant-ai-lab/neuro-san-npm
-// (the real neuro-san sources transpiled to TypeScript), bundled into
-// generated/neuro-san.mjs. This module owns what is nsdeploy's rather than neuro-san's:
+// (the real neuro-san sources transpiled to TypeScript), built into generated/
+// (entered at generated/browser/neuro-san.mjs). This module owns what is nsdeploy's
+// rather than neuro-san's:
 // which LLM router a run uses, consent before contacting a partner network or MCP
 // server, the per-query composition limits, link slots, and turning the loop's
 // streamed messages into the trace the UI draws.

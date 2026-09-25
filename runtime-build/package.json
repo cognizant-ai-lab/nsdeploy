@@ -7,13 +7,14 @@
     "node": ">=26"
   },
   "scripts": {
-    "build": "node bundle.mjs"
+    "build": "vite build"
   },
   "dependencies": {
     "@cognizant-ai-lab/neuro-san-npm": "file:../../neuro-san-ts-package/ts-package/package.tgz"
   },
   "devDependencies": {
+    "@rollup/plugin-inject": "^5.0.5",
     "buffer": "^6.0.3",
-    "esbuild": "^0.24.0"
+    "vite": "^7.3.6"
   }
 }

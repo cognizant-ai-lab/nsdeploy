@@ -1,4 +1,5 @@
-// A browser `process`, injected ahead of every module in the bundle. The package
+// A browser `process`, and Node's `global`. The build injects these into every module
+// that names them (vite.config.mjs), so they exist whatever order modules load in. The package
 // reads its LLM key and base URL from process.env (OPENAI_API_KEY and
 // OPENAI_BASE_URL), and LangChain.js reads the same variables, so the runtime sets
 // them here from the user's BYOK settings before a session runs. The other fields
@@ -34,3 +35,7 @@ if (typeof globalThis.process === "undefined") {
     uptime: () => (now() - start) / 1000,
   };
 }
+
+export const process = globalThis.process;
+// Node's name for globalThis, which some CommonJS dependencies read.
+export const globalObject = globalThis;
