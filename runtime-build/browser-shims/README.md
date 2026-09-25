@@ -14,5 +14,5 @@ for neuro-san's own logic.
 | `module`, `stream` | coded-tool require(), MCP stdio transport | `module.mjs`, `stream.mjs`: throw if ever used |
 | `child_process` | pythonlib's subprocess module | `child_process.mjs`: throws if ever used |
 | `cross-spawn` | the MCP SDK's stdio transport | `cross-spawn.mjs`: throws if ever used |
-| global `process`, `Buffer` | env vars for the LLM key and base URL; the io stub's BytesIO | `process.mjs`, `buffer.mjs`, injected into every module that names them |
+| global `process`, `Buffer` | env vars for the LLM key and base URL; the io stub's BytesIO | `process.mjs`, and the `buffer` package's standard browser Buffer, injected into every module that names them |
 | everything else Node-only | pythonlib modules the loop never calls | `empty.mjs` |

@@ -247,7 +247,7 @@ export default defineConfig({
     // Node globals, as imports of the stand-ins, in every module that names them. It
     // runs after Vite converts CommonJS dependencies, so it sees them as ES modules.
     { ...inject({
-      exclude: [path.join(shims, "process.mjs"), path.join(shims, "buffer.mjs")],
+      exclude: [path.join(shims, "process.mjs")],
       process: [path.join(shims, "process.mjs"), "process"],
       Buffer: ["buffer", "Buffer"],
       global: [path.join(shims, "process.mjs"), "globalObject"],
