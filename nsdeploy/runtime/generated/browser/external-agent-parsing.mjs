@@ -1,4 +1,6 @@
-import { AgentSessionConstants, ExternalAgentParsing } from "../neuro-san/internals.mjs";
+import "../neuro-san/index.mjs";
+import { AgentSessionConstants } from "../neuro-san/interfaces.mjs";
+import { ExternalAgentParsing } from "../neuro-san/internals.mjs";
 function pythonUrlSplit(url) {
   let rest = url;
   let scheme = "";

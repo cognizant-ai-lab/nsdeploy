@@ -6,8 +6,7 @@
 //                entry the runtime imports), the kernel and session adapters, and
 //                browser/shims.mjs (the Node stand-ins, see browser-shims/README.md)
 //   neuro-san/   the package's own code, unminified, one file per area of the package
-//                (graph, run_context, session, ...), with the SOURCE_PATCHES below
-//                applied in place
+//                (graph, run_context, session, ...)
 //   vendor/      third-party libraries (LangChain, the MCP SDK, pythonlib, ...), in one
 //                minified file, pinned by package-lock.json
 // Run `npm install && npm run build` here after updating the package. DEBUG=1 leaves
@@ -63,118 +62,12 @@ const browserShims = {
 
 // --- package transforms ----------------------------------------------------------------
 
-// Spots in the package's transpiled output that are rewritten as the bundle is built:
-// JavaScript a bundler refuses to parse (Node only fails if the line runs), and a stub
-// that does not behave as python does. The package on disk is not touched.
-// PORT BACK: fix each in the transpiling source.
-const SOURCE_PATCHES = [
-  {
-    // python: self.properties.get(args_name) on a dict. A transpiled dict is a plain
-    // object with no get(), so passing arguments to any sub-agent threw. It is the
-    // package's only `x.get(key)` on a dict; everywhere else uses dict.get.
-    file: /activations\/argument_assigner\.js$/,
-    from: "let atttribute = this.properties.get(args_name);",
-    to: "let atttribute = dict.get(this.properties, args_name);",
-  },
-  {
-    // The importlib stub searches a developer's own checkouts (absolute paths under a
-    // home directory) for a require() root. A browser has no filesystem to search, and
-    // those paths would be published in the committed bundle, so only process.cwd()
-    // is kept.
-    file: /stubs\/importlib\.js$/,
-    from: /(const roots = \[\s*process\.cwd\(\),)[^\]]*\]/,
-    to: "$1\n    ]",
-  },
-  {
-    // python's dict(x) copies a dict, and the transpile represents every python dict
-    // as a plain object, but the stub's callable dict() is pythonlib's `new Map(x)`,
-    // which throws for a plain object. Five package files call dict(x), among them
-    // BaseToolFactory.create_function_tool, so no external agent could become a tool.
-    file: /stubs\/pythonlib_gaps\.js$/,
-    from: "export const dict = Object.assign((entries) => pythonlib_dict(entries), pythonlib_dict, {",
-    to: "export const dict = Object.assign((entries) => (entries == null ? {}"
-      + " : entries instanceof Map || typeof entries[Symbol.iterator] === \"function\""
-      + " ? Object.fromEntries(entries) : { ...entries }), pythonlib_dict, {",
-  },
-  {
-    // python: SlyDataRedactor(parent_spec, config_keys=[...]). The keyword argument
-    // became a trailing object in the positional config_keys slot, so redacting the
-    // sly_data sent to an external agent threw and every partner call failed.
-    // allow_empty_dict keeps its python default, True.
-    file: /external_activation_prepper\.js$/,
-    from: 'new SlyDataRedactor(parent_spec, { config_keys: ["allow.sly_data", "allow.to_downstream.sly_data"] })',
-    to: 'new SlyDataRedactor(parent_spec, ["allow.sly_data", "allow.to_downstream.sly_data"], true)',
-  },
-  {
-    // python: `async for chat_response in chat_responses`. Transpiled as a plain
-    // for...of over an async generator, which throws before the external agent runs.
-    file: /activations\/external_activation\.js$/,
-    from: "for (const chat_response of chat_responses) {",
-    to: "for await (const chat_response of chat_responses) {",
-  },
-  {
-    // python: `with suppress(Exception): await chat_responses.aclose()`. A JS async
-    // generator closes with return(), and the transpiled suppress() suppresses
-    // nothing, so the missing aclose() replaced whatever error the loop had raised.
-    file: /activations\/external_activation\.js$/,
-    from: "await chat_responses.aclose();",
-    to: "await chat_responses.return?.().catch?.(() => {});",
-  },
-  {
-    // python: copy(self) keeps the class. `{ ...this }` is a plain object without the
-    // SessionInvocationContext methods, so a direct session built on the copy fails
-    // (get_toolbox_factory is not a function). It is the package's only `{ ...this }`.
-    file: /session_invocation_context\.js$/,
-    from: "let invocation_context = { ...this };",
-    to: "let invocation_context = Object.assign(Object.create(Object.getPrototypeOf(this)), this);",
-  },
-  {
-    // parse_tool_output checks isinstance(..., tuple) but the file never imports tuple,
-    // so handing any tool result back to the calling agent throws.
-    file: /core\/langchain_run_context\.js$/,
-    from: 'import { at, isinstance, iter, slice, sorted, string } from "pythonlib";',
-    to: 'import { at, isinstance, iter, slice, sorted, string, tuple } from "pythonlib";',
-  },
-  {
-    // python calls LangChainRun with keywords (tool_message=..., invocation=...), which
-    // the transpile turns into a trailing object in whatever positional slot comes
-    // next: submit_tool_outputs passes { tool_message } as tool_name, so every tool
-    // result reaches the calling agent as null. The constructor binds a trailing
-    // keyword object here the way python binds keywords. Only the last argument is
-    // read this way, and only when all its keys are this constructor's parameters.
-    file: /core\/langchain_run\.js$/,
-    from: "    constructor(run_id_base, chat_history, tool_name, args, tool_message, invocation) {\n        super();",
-    to: "    constructor(...positional) {\n        super();\n"
-      + "        const names = [\"run_id_base\", \"chat_history\", \"tool_name\", \"args\", \"tool_message\", \"invocation\"];\n"
-      + "        const last = positional[positional.length - 1];\n"
-      + "        const bound = {};\n"
-      + "        if (positional.length > 2 && last != null && Object.getPrototypeOf(last) === Object.prototype\n"
-      + "            && Object.keys(last).length > 0 && Object.keys(last).every((key) => names.indexOf(key) >= positional.length - 1)) {\n"
-      + "            Object.assign(bound, positional.pop());\n"
-      + "        }\n"
-      + "        names.forEach((name, i) => { if (!(name in bound)) bound[name] = positional[i]; });\n"
-      + "        const { run_id_base, chat_history, tool_name, args, tool_message, invocation } = bound;",
-  },
-  {
-    // _arun reassigns the kwargs it declared const (_run declares it the same way).
-    file: /langchain_openai_function_tool\.js$/,
-    from: /const kwargs = args.length > 0/g,
-    to: "let kwargs = args.length > 0",
-  },
-  {
-    // Assigning to a namespace import (python's sys.stdout = ...). A browser has no
-    // stdout to reroute, so the rerouting is dropped.
-    file: /stream_to_logger\.js$/,
-    from: /sys\.(stdout|stderr) = \w+;/g,
-    to: "/* browser: no $1 to reroute */",
-  },
-];
 const classAttributes = path.join(shims, "class-attributes.mjs");
 const EXPORTED_CLASS = /^export class (\w+)(?:\s+extends\s+[\w.$]+)?\s*\{/gm;
 
-// Every JS file of the package passes through here: the SOURCE_PATCHES that apply to
-// it, then python class-attribute semantics for the classes it exports (see
-// browser-shims/class-attributes.mjs). Package files and our own are not tree-shaken,
+// Every JS file of the package passes through here, for python class-attribute
+// semantics on the classes it exports (see browser-shims/class-attributes.mjs).
+// Package files and our own are not tree-shaken,
 // so each output file holds the whole of every module in it, as in the package.
 const packageTransforms = {
   name: "package-transforms",
@@ -185,11 +78,6 @@ const packageTransforms = {
       return ours ? { code, moduleSideEffects: "no-treeshake" } : null;
     }
     let text = code;
-    for (const p of SOURCE_PATCHES.filter((patch) => patch.file.test(id))) {
-      const before = text;
-      text = text.replace(p.from, p.to);
-      if (text === before) throw new Error(`source patch no longer applies to ${id}: ${p.from}`);
-    }
     const classes = [...text.matchAll(EXPORTED_CLASS)].map((m) => m[1]);
     if (classes.length) {
       text += `\nimport { exposeClassAttributes as __exposeClassAttributes } from ${JSON.stringify(classAttributes)};\n`
@@ -202,15 +90,22 @@ const packageTransforms = {
 // --- output layout -----------------------------------------------------------------------
 
 // Areas of the package, each one output file under neuro-san/. The first match wins.
+// No two of these files may import each other, even through a third: the package's
+// modules have no import cycles, but files that did would let a class run before the
+// class it extends ("Cannot access 'X' before initialization"). So validation and
+// reservations share run_context's file (their modules import each other), and the
+// config filters, which validation imports, have a file of their own apart from graph.
 const PACKAGE_AREAS = [
+  [/\/dist\/src\//, "index"],
   [/\/dist\/data\//, "data"],
   [/\/dist\/stubs\//, "stubs"],
   [/\/generated\/leaf_common\//, "leaf_common"],
-  [/\/neuro_san\/internals\/run_context\//, "run_context"],
-  [/\/neuro_san\/internals\/graph\//, "graph"],
-  [/\/neuro_san\/internals\/validation\//, "validation"],
   [/\/neuro_san\/message\//, "message"],
-  [/\/neuro_san\/(session|client)\//, "session"],
+  [/\/neuro_san\/(interfaces|internals\/interfaces)\//, "interfaces"],
+  [/\/neuro_san\/internals\/(run_context|reservations|validation)\//, "run_context"],
+  [/\/neuro_san\/internals\/graph\/filters\//, "filters"],
+  [/\/neuro_san\/internals\/graph\//, "graph"],
+  [/\/neuro_san\/(session|client|internals\/chat|internals\/network_providers)\//, "session"],
   [/\/generated\/neuro_san\//, "internals"],
 ];
 

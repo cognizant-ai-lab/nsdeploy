@@ -3,8 +3,8 @@
 // toolbox info. They are embedded here at build time and served by the path the
 // package asks for. Every other path does not exist, which is what the package's
 // other probes (a LangSmith config, a package.json) expect in a browser.
-import defaultLlmInfo from "../node_modules/@cognizant-ai-lab/neuro-san-npm/dist/data/internals/run_context/langchain/llms/default_llm_info.hocon";
-import toolboxInfo from "../node_modules/@cognizant-ai-lab/neuro-san-npm/dist/data/internals/run_context/langchain/toolbox/toolbox_info.hocon";
+import defaultLlmInfo from "@cognizant-ai-lab/neuro-san-npm/data/internals/run_context/langchain/llms/default_llm_info.hocon";
+import toolboxInfo from "@cognizant-ai-lab/neuro-san-npm/data/internals/run_context/langchain/toolbox/toolbox_info.hocon";
 
 const FILES = {
   "data/internals/run_context/langchain/llms/default_llm_info.hocon": defaultLlmInfo,

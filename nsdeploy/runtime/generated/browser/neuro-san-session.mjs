@@ -1,11 +1,12 @@
-import { AgentNetwork } from "../neuro-san/graph.mjs";
-import { AsyncioExecutorPool } from "../neuro-san/leaf_common.mjs";
-import { StorageClass, ExpiringAgentNetworkStorage, DirectAgentReservationist } from "../neuro-san/internals.mjs";
-import { MasterLlmFactory, MasterToolboxFactory, LangChainRunContext, BaseToolFactory, LangChainOpenAIFunctionTool, PydanticArgumentDictionaryConverter, LangChainRun, NeuroSanRunnable, LangChainMcpAdapter, McpToolErrorHandler } from "../neuro-san/run_context.mjs";
-import { SessionInvocationContext, DirectAgentSession, ExternalAgentSessionFactory, AsyncDirectAgentSession } from "../neuro-san/session.mjs";
-import { ChatMessageType, AgentMessage, AgentFrameworkMessage, AgentToolResultMessage, AgentProgressMessage, ChatMessageTypeUtil, ContentUtils } from "../neuro-san/message.mjs";
-import { SystemMessage, HumanMessage, AIMessage, MultiServerMCPClient } from "../vendor/libraries.mjs";
+import "../neuro-san/index.mjs";
+import { MultiServerMCPClient } from "../vendor/libraries.mjs";
 import { parseExternalAgent } from "./external-agent-parsing.mjs";
+import { AgentNetwork } from "../neuro-san/graph.mjs";
+import { MasterLlmFactory, MasterToolboxFactory, DirectAgentReservationist, LangChainMcpAdapter, McpToolErrorHandler } from "../neuro-san/run_context.mjs";
+import { StorageClass } from "../neuro-san/interfaces.mjs";
+import { ExpiringAgentNetworkStorage, SessionInvocationContext, DirectAgentSession, ExternalAgentSessionFactory, AsyncDirectAgentSession } from "../neuro-san/session.mjs";
+import { AsyncioExecutorPool } from "../neuro-san/leaf_common.mjs";
+import { ChatMessageType } from "../neuro-san/message.mjs";
 const hooks = {
   // async ({ url }) => boolean. Runs before anything is sent to an MCP server
   // (initialize, tools/list), so declining means the server is never contacted and
@@ -55,118 +56,11 @@ function createSession(config, name) {
   context.start();
   return new DirectAgentSession(network, context, null, null, null);
 }
-const MESSAGE_CLASS_TO_CHAT_MESSAGE_TYPE = /* @__PURE__ */ new Map([
-  [SystemMessage, ChatMessageType.SYSTEM],
-  [HumanMessage, ChatMessageType.HUMAN],
-  [AIMessage, ChatMessageType.AI],
-  [AgentMessage, ChatMessageType.AGENT],
-  [AgentFrameworkMessage, ChatMessageType.AGENT_FRAMEWORK],
-  [AgentToolResultMessage, ChatMessageType.AGENT_TOOL_RESULT],
-  [AgentProgressMessage, ChatMessageType.AGENT_PROGRESS]
-]);
-ChatMessageTypeUtil.from_message = function fromMessage(baseMessage) {
-  const messageClass = baseMessage == null ? null : baseMessage.constructor;
-  return MESSAGE_CLASS_TO_CHAT_MESSAGE_TYPE.get(messageClass) ?? ChatMessageType.UNKNOWN_MESSAGE_TYPE;
-};
-const fromResponseType = ChatMessageTypeUtil.from_response_type;
-ChatMessageTypeUtil.from_response_type = function(responseType) {
-  if (typeof responseType === "number") return responseType;
-  return fromResponseType.call(this, responseType);
-};
-const createResources = LangChainRunContext.prototype.create_resources;
-LangChainRunContext.prototype.create_resources = function(agentName, instructions, assignments, toolNames, ...rest) {
-  const isKeywordObject = toolNames != null && typeof toolNames === "object" && !Array.isArray(toolNames) && Object.keys(toolNames).every((key) => key === "tool_names");
-  return createResources.call(
-    this,
-    agentName,
-    instructions,
-    assignments,
-    isKeywordObject ? toolNames.tool_names : toolNames,
-    ...rest
-  );
-};
-BaseToolFactory.prototype.ensure_external_parameters = async function ensureExternalParameters(functionJson, name) {
-  const isDict = (value) => value != null && typeof value === "object" && !Array.isArray(value);
-  const isEmpty = (value) => value == null || (isDict(value) ? Object.keys(value).length === 0 : !value);
-  if (functionJson == null) {
-    return null;
-  }
-  if (functionJson.description == null) {
-    return functionJson;
-  }
-  const rawParameters = functionJson.parameters;
-  if (rawParameters != null && !isDict(rawParameters)) {
-    return functionJson;
-  }
-  const parameters = isEmpty(rawParameters) ? {} : rawParameters;
-  const properties = isEmpty(parameters.properties) ? {} : parameters.properties;
-  if (!isEmpty(properties)) {
-    BaseToolFactory.synthesis_warned.delete(name);
-    return functionJson;
-  }
-  const allowedKeys = /* @__PURE__ */ new Set(["type", "properties", "required"]);
-  if (!isEmpty(parameters) && !Object.keys(parameters).every((key) => allowedKeys.has(key))) {
-    return functionJson;
-  }
-  if (!BaseToolFactory.synthesis_warned.has(name)) {
-    BaseToolFactory.synthesis_warned.add(name);
-    const message = `The front-man of external agent ${name} declares no parameters in its function definition, so a single required '${BaseToolFactory.DEFAULT_EXTERNAL_PARAMETER_NAME}' string parameter is being synthesized for it to receive the calling agent's request. To control what this agent network receives, declare at least one parameter in the function definition of its front-man.`;
-    await this.journal.write_message(new AgentMessage(message, {}, null), null);
-    this.logger.warning(message);
-  }
-  return { ...functionJson, parameters: structuredClone(BaseToolFactory.DEFAULT_EXTERNAL_PARAMETERS) };
-};
-const fromFunctionJson = LangChainOpenAIFunctionTool.from_function_json;
-LangChainOpenAIFunctionTool.from_function_json = function(functionJson, toolCaller) {
-  const tool = fromFunctionJson.call(this, functionJson, toolCaller);
-  for (const field of ["name", "description", "parameters"]) {
-    if (tool[field] == null && functionJson?.[field] != null) tool[field] = functionJson[field];
-  }
-  return tool;
-};
-Object.defineProperty(LangChainOpenAIFunctionTool.prototype, "schema", {
-  configurable: true,
-  get() {
-    const parameters = this.function_json;
-    const isSchema = parameters != null && typeof parameters === "object" && !Array.isArray(parameters) && (parameters.type === "object" || "properties" in parameters);
-    return isSchema ? parameters : { type: "object", properties: {} };
-  },
-  set(value) {
-    Object.defineProperty(this, "schema", { value, writable: true, configurable: true });
-  }
-});
-LangChainOpenAIFunctionTool.prototype._call = async function call(args) {
-  let run = null;
-  try {
-    const kwargs = new PydanticArgumentDictionaryConverter().to_dict(args || {});
-    const initialRun = new LangChainRun("tool_base", [""], this.name, kwargs, null, this.invocation);
-    run = await this.tool_caller.make_tool_function_calls(initialRun);
-  } catch (exception) {
-    console.error("Tool._arun() got Exception:", exception);
-    return String(exception);
-  }
-  const theAnswer = run.get_tool_message();
-  if (theAnswer == null) {
-    return null;
-  }
-  return ContentUtils.history_safe_text(theAnswer);
-};
-const prepareRunnableConfig = NeuroSanRunnable.prototype.prepare_runnable_config;
-NeuroSanRunnable.prototype.prepare_runnable_config = function(...args) {
-  const config = prepareRunnableConfig.apply(this, args);
-  for (const [python, js] of [["recursion_limit", "recursionLimit"], ["run_name", "runName"]]) {
-    if (config && python in config) {
-      config[js] ??= config[python];
-      delete config[python];
-    }
-  }
-  return config;
-};
 LangChainMcpAdapter.prototype.get_mcp_tools = async function getMcpTools(serverUrl, allowedTools = null, headers = null) {
-  if (this._mcp_servers_info == null) {
+  if (LangChainMcpAdapter._mcp_servers_info == null) {
     this._load_mcp_servers_info();
   }
-  const serversInfo = this._mcp_servers_info || {};
+  const serversInfo = LangChainMcpAdapter._mcp_servers_info || {};
   const serverInfo = serversInfo[serverUrl] || {};
   if (hooks.mcpConsent && !await hooks.mcpConsent({ kind: "mcp", url: serverUrl })) {
     this.client_allowed_tools = allowedTools;
@@ -222,10 +116,6 @@ class PeerSessionFactory extends ExternalAgentSessionFactory {
     super(false, null);
   }
   create_session(agentUrl, invocationContext = null, invocation = null) {
-    if (invocationContext != null && typeof invocationContext.get_port !== "function" && "invocation_context" in invocationContext) {
-      invocation = invocationContext.invocation ?? invocation;
-      invocationContext = invocationContext.invocation_context;
-    }
     return new PeerSession(agentUrl, invocationContext, invocation);
   }
 }

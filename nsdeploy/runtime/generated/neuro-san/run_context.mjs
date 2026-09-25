@@ -1,10 +1,12 @@
 import { exposeClassAttributes } from "../browser/shims.mjs";
-import { len, TOP_LEVEL_DIR, dict, suppress, Limits, AsyncClient, PythonChatOpenAI, contains, isclass, issubclass, BaseModel, set, signature, is_dict, frozenset, Lock, callable, Field, create_model, format_exc, deepcopy, ContextVar, ConfigDict, Lock$1, contextmanager, copy_context, wait_for, TimeoutError, messages_to_dict, message_chunk_to_message, AgentMiddleware, create_agent, gethostname } from "./stubs.mjs";
-import { isinstance2, iter2, hasattr2, getattr2, tuple2, type2, getLogger, getenv, BaseLanguageModel, slice2, sorted2, copy, warning, at2, uuid4, format2, any2, repr2, StructuredTool, MultiServerMCPClient, all2, BaseCallbackHandler, ToolMessage, registerConfigureHook, time, AIMessage, RunnablePassthrough, environ, max2, mergeConfigs, ensureConfig, reversed2, AIMessageChunk, enumerate2, SystemMessage, HumanMessage, BaseMessage, string2, loads, datetime } from "../vendor/libraries.mjs";
-import { Resolver, ConfigUtil, ResolverUtil, DictionaryOverlay, DictionaryExtractor, DictionaryConverter, SensitiveLogger, ExceptionUtil } from "./leaf_common.mjs";
-import { EnvironmentConfiguration, LingeringResource, AbstractAsyncConfigRestorer, ContextTypeLlmFactory, ContextTypeToolboxFactory, ExternalAgentParsing, ToolArgumentReporting, OriginatingJournal, Origination, MetadataUtil, AccumulatingAgentReservationist, ProgressJournal, ErrorDetector, InterceptingJournal, TracingContext, ContextTypeTracingContextFactory } from "./internals.mjs";
+import { iter2, isinstance2, list3, getLogger, type2, any2, repr2, tuple2, hasattr2, match, enumerate2, sorted2, uuid4, slice2, UUID, min2, time, getattr2, getenv, BaseLanguageModel, copy, warning, at2, format2, StructuredTool, MultiServerMCPClient, all2, BaseCallbackHandler, ToolMessage, registerConfigureHook, AIMessage, RunnablePassthrough, environ, max2, mergeConfigs, ensureConfig, reversed2, AIMessageChunk, dumps, SystemMessage, HumanMessage, BaseMessage, string2, loads, datetime } from "../vendor/libraries.mjs";
+import { is_dict, dict, contains, set, len, Field, create_model, BaseModel, next, Event$1 as Event, get_running_loop, run_coroutine_threadsafe, TOP_LEVEL_DIR, suppress, Limits, AsyncClient, PythonChatOpenAI, isclass, issubclass, signature, frozenset, Lock, callable, format_exc, deepcopy, ContextVar, ConfigDict, Lock$1, contextmanager, copy_context, wait_for, TimeoutError, messages_to_dict, message_chunk_to_message, AgentMiddleware, create_agent, gethostname } from "./stubs.mjs";
+import { Reservation, Reservationist, EnvironmentConfiguration, LingeringResource, ContextTypeLlmFactory, ContextTypeToolboxFactory, TracingContext, ContextTypeTracingContextFactory } from "./interfaces.mjs";
+import { DictionaryValidator, DictionaryExtractor, DictionaryConverter, CompositeDictionaryValidator, Resolver, ConfigUtil, ResolverUtil, DictionaryOverlay, SensitiveLogger, ExceptionUtil } from "./leaf_common.mjs";
+import { AbstractAsyncConfigRestorer, ExternalAgentParsing, ToolArgumentReporting, OriginatingJournal, Origination, MetadataUtil, ProgressJournal, ErrorDetector, InterceptingJournal } from "./internals.mjs";
 import { ContentUtils, AgentMessage, AgentToolResultMessage, AgentFrameworkMessage, BaseMessageDictionaryConverter } from "./message.mjs";
 import { process } from "../browser/process.mjs";
+import { NetworkConfigFilterChain } from "./filters.mjs";
 class AgentNetworkInspector {
   /**
    * :return: The entire config dictionary given to the instance.
@@ -42,6 +44,1197 @@ class AgentNetworkInspector {
   }
 }
 exposeClassAttributes(AgentNetworkInspector);
+class AbstractNetworkValidator extends DictionaryValidator {
+  static {
+    this._PARAMS_NOT_FOUND = new Object();
+  }
+  /**
+   * Locate the parameters block on an agent spec, checking
+   * ``function.parameters`` (OpenAI-style) first, then a top-level
+   * ``parameters`` key.
+   *
+   * :return: The raw value if the key exists (may be ``None`` for
+   * explicitly null entries), or ``_PARAMS_NOT_FOUND`` when
+   * no parameters key is present at all.
+   */
+  static _locate_parameters(agent_spec) {
+    if (!is_dict(agent_spec)) {
+      return AbstractNetworkValidator._PARAMS_NOT_FOUND;
+    }
+    let function_block = dict.get(agent_spec, "function");
+    if (is_dict(function_block) && contains("parameters", function_block)) {
+      return dict.get(function_block, "parameters");
+    }
+    if (contains("parameters", agent_spec)) {
+      return dict.get(agent_spec, "parameters");
+    }
+    return AbstractNetworkValidator._PARAMS_NOT_FOUND;
+  }
+  /**
+   * Validate the agent network.
+   *
+   * Expects a fully-resolved config (commondefs substitution, defaults
+   * injection, and name correction already applied). Production callers
+   * get this from the restorer's filter chain; the parameter validators
+   * get it from ParametersSchemaNetworkValidator, which filters once for
+   * both of its phases rather than once per validator.
+   *
+   * :param candidate: The agent network or name -> spec dictionary to validate
+   * :return: A list of error messages
+   */
+  validate(candidate) {
+    let errors = [];
+    if (!candidate) {
+      errors.push("Agent network is empty.");
+      return errors;
+    }
+    let name_to_spec = AbstractNetworkValidator.get_name_to_spec(candidate);
+    let name_to_spec_errors = this.validate_name_to_spec_dict(name_to_spec);
+    errors.push(...name_to_spec_errors);
+    return errors;
+  }
+  /**
+   * Validate the agent network, specifically in the form of a name -> agent spec dictionary.
+   *
+   * :param name_to_spec: The name -> agent spec dictionary to validate
+   * :return: A list of error messages
+   */
+  validate_name_to_spec_dict(name_to_spec) {
+    throw Error("Method not implemented");
+  }
+  /**
+   * :param agent_network: The top-level agent network or tools dictionary
+   * :return: The agent name -> single agent spec dictionary of the agent network
+   */
+  static get_name_to_spec(agent_network) {
+    if (agent_network == null) {
+      return null;
+    }
+    if (!contains("tools", agent_network)) {
+      return agent_network;
+    }
+    let name_to_spec = {};
+    let agents = dict.get(agent_network, "tools", []);
+    for (const one_agent of iter2(agents)) {
+      name_to_spec[dict.get(one_agent, "name")] = one_agent;
+    }
+    return name_to_spec;
+  }
+  /**
+   * Check if a tool string is a URL or file path (not an agent name).
+   *
+   * :param tool: The tool string to check
+   * :return: True if tool is a URL or path, False otherwise
+   */
+  static is_url_or_path(tool) {
+    return tool.startsWith("/") || tool.startsWith("http://") || tool.startsWith("https://");
+  }
+  /**
+   * Sometimes tool lists have dictionary entries to support servers-based tools
+   * that need more than just a string.  For instance MCP servers.
+   * :param  down_chains: List of tools
+   * :return: List of tools without dictionary entries
+   */
+  static remove_dictionary_tools(down_chains) {
+    let safe_list = [];
+    for (const tool of iter2(down_chains)) {
+      if (isinstance2(tool, String)) {
+        safe_list.push(tool);
+      }
+    }
+    return safe_list;
+  }
+  /**
+   * Return the agent's `tools` as a list, coercing malformed values to empty.
+   *
+   * Callers that traverse the connectivity graph (front-man detection,
+   * reachability, missing nodes, cycles) should use this rather than reading
+   * `tools` directly so they do not crash on `str + list` or iterate the
+   * characters of a string. The shape contract this enforces matches
+   * ToolsShapeValidator.validate_tools, which is the place that reports the
+   * shape error to the user.
+   *
+   * :param agent_spec: The agent specification dictionary
+   * :return: The agent's `tools` list, or an empty list if the value is malformed.
+   */
+  static coerce_tools(agent_spec) {
+    let no_tools = [];
+    let extractor = new DictionaryExtractor(agent_spec, ".");
+    let tools = extractor.get("tools", no_tools);
+    if (isinstance2(tools, Array)) {
+      return tools;
+    }
+    return no_tools;
+  }
+  /**
+   * Return `args.tools` as a list of values, coercing malformed shapes to empty.
+   *
+   * `args.tools` is the convention coded tools use to declare downstream agents.
+   * It may be a dict of label -> agent name (the values are the agent names)
+   * or a list of agent names; anything else is coerced to empty. The shape
+   * contract this enforces matches ToolsShapeValidator.validate_args_tools,
+   * which is the place that reports the shape error to the user.
+   *
+   * :param agent_spec: The agent specification dictionary
+   * :return: The combined list of agent names referenced by `args.tools`, or
+   * empty if the value is missing or malformed.
+   */
+  static coerce_args_tools(agent_spec) {
+    let no_tools = [];
+    let extractor = new DictionaryExtractor(agent_spec, ".");
+    let args_tools = extractor.get("args.tools", no_tools);
+    if (is_dict(args_tools)) {
+      return list3(Object.values(args_tools));
+    }
+    if (isinstance2(args_tools, Array)) {
+      return args_tools;
+    }
+    return no_tools;
+  }
+}
+exposeClassAttributes(AbstractNetworkValidator);
+class KeywordNetworkValidator extends AbstractNetworkValidator {
+  static {
+    this.ALL_KEYWORDS = set(["description", "instructions"]);
+  }
+  /**
+   * Constructor
+   *
+   * :param keywords: Iterable of keyword names to validate.
+   * If null, all keywords are validated.
+   * :param network_name: The agent network name for diagnostic log lines
+   *
+   * Note: `tools` shape validation lives in ToolsShapeValidator (a structure
+   * concern, not a keyword concern), and is not handled by this class.
+   */
+  constructor(keywords, network_name) {
+    super();
+    this.logger = getLogger(this.constructor.name);
+    this.keywords = keywords != null ? set(keywords) : KeywordNetworkValidator.ALL_KEYWORDS;
+    this.network_name = network_name;
+  }
+  /**
+   * Validate the agent network, specifically in the form of a name -> agent spec dictionary.
+   *
+   * :param name_to_spec: The name -> agent spec dictionary to validate
+   * :return: List of errors indicating agents and missing keywords
+   */
+  validate_name_to_spec_dict(name_to_spec) {
+    let errors = [];
+    this.logger.debug("Validating %s agent network keywords...", this.network_name);
+    for (const [agent_name, agent] of Object.entries(name_to_spec)) {
+      if (contains("description", this.keywords)) {
+        errors.push(...KeywordNetworkValidator.validate_description(agent_name, agent));
+      }
+      if (contains("instructions", this.keywords)) {
+        errors.push(...KeywordNetworkValidator.validate_instructions(agent_name, agent));
+      }
+    }
+    if (len(errors) > 0) {
+      this.logger.warning(String(errors));
+    }
+    return errors;
+  }
+  /**
+   * Validate that 'function.description' is a non-empty string when present.
+   *
+   * :param agent_name: The name of the agent being validated
+   * :param agent: The agent spec dictionary
+   * :return: A list of error messages
+   */
+  static validate_description(agent_name, agent) {
+    let errors = [];
+    let _function = dict.get(agent, "function");
+    if (_function == null) {
+      return errors;
+    }
+    if (!is_dict(_function)) {
+      errors.push(`${agent_name} 'function' must be a dict, got ${type2(_function)}.`);
+      return errors;
+    }
+    let description = dict.get(_function, "description");
+    if (description != null) {
+      if (!isinstance2(description, String)) {
+        errors.push(`${agent_name} 'function.description' must be a str, got ${type2(description)}.`);
+      } else if (description.trim() == "") {
+        errors.push(`${agent_name} 'function.description' cannot be empty.`);
+      }
+    }
+    return errors;
+  }
+  /**
+   * Validate that 'instructions' is a non-empty string when present.
+   *
+   * :param agent_name: The name of the agent being validated
+   * :param agent: The agent spec dictionary
+   * :return: A list of error messages
+   */
+  static validate_instructions(agent_name, agent) {
+    let errors = [];
+    let instructions = dict.get(agent, "instructions");
+    if (instructions != null) {
+      if (!isinstance2(instructions, String)) {
+        errors.push(`${agent_name} 'instructions' must be a str, got ${type2(instructions)}.`);
+      } else if (instructions.trim() == "") {
+        errors.push(`${agent_name} 'instructions' cannot be empty.`);
+      }
+    }
+    return errors;
+  }
+}
+exposeClassAttributes(KeywordNetworkValidator);
+class MissingNodesNetworkValidator extends AbstractNetworkValidator {
+  /**
+   * Constructor
+   */
+  constructor() {
+    super();
+    this.logger = getLogger(this.constructor.name);
+  }
+  /**
+   * Validate the agent network, specifically in the form of a name -> agent spec dictionary.
+   *
+   * :param name_to_spec: The name -> agent spec dictionary to validate
+   * :return: A list of error messages
+   */
+  validate_name_to_spec_dict(name_to_spec) {
+    let errors = [];
+    let missing_nodes = this.find_missing_agent_nodes(name_to_spec);
+    if (missing_nodes) {
+      for (const [agent, missing_tools] of Object.entries(missing_nodes)) {
+        let tools_str = [...(function* () {
+          for (const tool of missing_tools)
+            yield `'${tool}'`;
+        })()].join(", ");
+        errors.push(`Agent '${agent}' references non-existent agent(s) in tools: ${tools_str}`);
+      }
+    }
+    if (len(errors) > 0) {
+      this.logger.warning(String(errors));
+    }
+    return errors;
+  }
+  /**
+   * Find agents referenced in "tools" lists that don't have corresponding nodes in the network.
+   *
+   * :param name_to_spec: The agent network to validate
+   * :return: Dictionary mapping agent names to list of tools that reference non-existent agents
+   * Format: {agent_name: [missing_tool1, missing_tool2, ...]}
+   */
+  find_missing_agent_nodes(name_to_spec) {
+    let missing_nodes = {};
+    for (const [agent_name, agent_data] of Object.entries(name_to_spec)) {
+      let tools = MissingNodesNetworkValidator.coerce_tools(agent_data);
+      let safe_tools = MissingNodesNetworkValidator.remove_dictionary_tools(tools);
+      for (const tool of iter2(safe_tools)) {
+        if (MissingNodesNetworkValidator.is_url_or_path(tool)) {
+          continue;
+        }
+        if (!contains(tool, name_to_spec)) {
+          if (!contains(agent_name, missing_nodes)) {
+            missing_nodes[agent_name] = [];
+          }
+          missing_nodes[agent_name].push(tool);
+        }
+      }
+    }
+    return missing_nodes;
+  }
+}
+exposeClassAttributes(MissingNodesNetworkValidator);
+class ToolSpecError extends Error {
+}
+exposeClassAttributes(ToolSpecError);
+class BaseModelDictionaryConverter extends DictionaryConverter {
+  static {
+    this.TYPE_LOOKUP = { "string": String, "int": Number, "float": Number, "boolean": Boolean, "array": Array, "integer": Number, "number": Number, "bool": Boolean, "object": Object };
+  }
+  /**
+   * Constructor
+   *
+   * :param top_level_field_name: The field name for the top-level object
+   */
+  constructor(top_level_field_name) {
+    super();
+    this.top_level_field_name = top_level_field_name;
+  }
+  /**
+   * :param obj: The object to be converted into a dictionary
+   * :return: A data-only dictionary that represents all the data for
+   * the given object, either in primitives
+   * (booleans, ints, floats, strings), arrays, or dictionaries.
+   * If obj is null, then the returned dictionary should also be
+   * null.  If obj is not the correct type, it is also reasonable
+   * to return null.
+   */
+  to_dict(obj) {
+    throw Error("Method not implemented");
+  }
+  /**
+   * :param obj_dict: The data-only dictionary to be converted into an object
+   * :return: An object instance created from the given dictionary.
+   * If obj_dict is null, the returned object should also be null.
+   * If obj_dict is not the correct type, it is also reasonable
+   * to return null.
+   */
+  from_dict(obj_dict) {
+    if (obj_dict == null) {
+      return null;
+    }
+    let base_model = this.openai_function_to_pydantic(this.top_level_field_name, obj_dict);
+    return base_model;
+  }
+  /**
+   * Turns an openai function spec dictionary into a pydantic BaseModel
+   * See: https://docs.pydantic.dev/latest/concepts/models/#dynamic-model-creation
+   *
+   * :param name: The string name of the object/field undergoing conversion
+   * :param function_dict: The dictionary describing the OpenAI function to
+   * be converted into a pydantic BaseModel
+   * :return: The pydantic BaseModel that corresponds to the OpenAI function spec.
+   */
+  openai_function_to_pydantic(name, function_dict) {
+    let properties = dict.get(function_dict, "properties");
+    if (properties == null) {
+      properties = {};
+    }
+    if (!is_dict(properties)) {
+      throw new ToolSpecError(`'properties' must be an object, got ${type2(properties)}`);
+    }
+    let required = dict.get(function_dict, "required");
+    if (required == null) {
+      required = [];
+    }
+    if (!isinstance2(required, Array)) {
+      throw new ToolSpecError(`'required' must be a list of field names, got ${type2(required)}`);
+    }
+    if (any2((function* () {
+      for (const entry of required)
+        yield !isinstance2(entry, String);
+    })())) {
+      throw new ToolSpecError(`'required' must contain only field-name strings, got ${repr2(required)}`);
+    }
+    let fields = {};
+    for (const [field_name, one_property] of Object.entries(properties)) {
+      this.validate_field_name(field_name);
+      if (!is_dict(one_property)) {
+        throw new ToolSpecError(`Property '${field_name}' must be an object describing the field, got ${type2(one_property)}`);
+      }
+      let description = dict.get(one_property, "description");
+      let field_type = this.get_type_from_property_dict(field_name, one_property);
+      let field_kwargs = {};
+      if (description != null) {
+        field_kwargs["description"] = description;
+      }
+      if (!contains(field_name, required)) {
+        field_kwargs["default"] = null;
+        field_type = field_type | void 0;
+      }
+      let field = new Field(field_kwargs);
+      fields[field_name] = tuple2(field_type, field);
+    }
+    let model = null;
+    try {
+      model = create_model(name, fields);
+    } catch (exception) {
+      throw new ToolSpecError(`Could not create pydantic model '${name}': ${exception}`);
+    }
+    return model;
+  }
+  /**
+   * :param field_name: The string name of a single parameter/field.
+   * Raises ToolSpecError for parameter names that pydantic v2's
+   * create_model() cannot accept as field names.
+   *
+   * Pydantic v1 tolerated all of the names rejected here (it merely
+   * warned about and dropped underscore-prefixed names), but pydantic v2
+   * fails on them with cryptic NameError/TypeError at model-creation
+   * time.  The invalid names are:
+   *
+   * * Names with a leading underscore (e.g. "_internal", "__config__"):
+   * pydantic v2 reserves these for private attributes, and dunder
+   * names collide with create_model()'s own keyword arguments.
+   * * "model_config": silently consumed as create_model()'s model
+   * configuration argument instead of becoming a field.
+   * * Names that shadow a BaseModel method inside pydantic's protected
+   * namespaces "model_dump" and "model_validate" (e.g. "model_dump",
+   * "model_dump_json", "model_validate_json").  Other "model_"-prefixed
+   * names (e.g. "model_name") are fine.
+   *
+   * Deliberately NOT rejected here: names that shadow BaseModel
+   * attributes outside the protected namespaces, such as "schema",
+   * "json", "dict" or "copy".  Pydantic v2 creates those fields and only
+   * emits a shadowing UserWarning, so they work.  This is itself a
+   * behavior change from the v1-based converter: v1's create_model
+   * raised NameError for them, which made network validation reject
+   * such specs - they now pass.
+   */
+  validate_field_name(field_name) {
+    let message = null;
+    if (field_name.startsWith("_")) {
+      message = `Parameter name '${field_name}' must not start with an underscore.`;
+    } else if (field_name == "model_config") {
+      message = "Parameter name 'model_config' is reserved by pydantic for model configuration.";
+    } else if (field_name.startsWith(tuple2("model_dump", "model_validate")) && hasattr2(BaseModel, field_name)) {
+      message = `Parameter name '${field_name}' shadows a pydantic BaseModel method.`;
+    }
+    if (message != null) {
+      throw new ToolSpecError(message);
+    }
+  }
+  /**
+   * :param field_name: The string name of the field undergoing conversion
+   * :param one_property: The property dictionary of the field whose type we are looking for.
+   * :return: the any of the property to be used with pydantic Fields
+   * This type may be a BaseModel if object specification is
+   * deep enough.
+   */
+  get_type_from_property_dict(field_name, one_property) {
+    let type_from_dict = dict.get(one_property, "type");
+    if (type_from_dict == null) {
+      throw new ToolSpecError(`Field '${field_name}' has no 'type' key. Composite schemas (anyOf/oneOf/enum/$ref) are not supported.`);
+    }
+    if (!isinstance2(type_from_dict, String)) {
+      throw new ToolSpecError(`Field '${field_name}' has a non-string 'type' (${repr2(type_from_dict)}). Union type lists are not supported; use a single type name.`);
+    }
+    let field_type = dict.get(BaseModelDictionaryConverter.TYPE_LOOKUP, type_from_dict);
+    if (field_type == null) {
+      throw new ToolSpecError(`Unrecognized type '${type_from_dict}' for field '${field_name}'`);
+    }
+    if (type_from_dict == "object") {
+      let object_props = dict.get(one_property, "properties");
+      if (object_props != null && object_props) {
+        field_type = this.openai_function_to_pydantic(field_name, one_property);
+      }
+    } else if (type_from_dict == "array") {
+      let items = dict.get(one_property, "items");
+      if (!is_dict(items)) {
+        let got = items == null ? "nothing" : type2(items);
+        throw new ToolSpecError(`Array field '${field_name}' needs an 'items' object describing its element type, got ${got}`);
+      }
+      let item_type = this.get_type_from_property_dict(`${field_name}_component`, items);
+      field_type = [];
+    }
+    return field_type;
+  }
+}
+exposeClassAttributes(BaseModelDictionaryConverter);
+class PydanticParametersNetworkValidator extends AbstractNetworkValidator {
+  /**
+   * Constructor
+   *
+   * :param network_name: The agent network name for diagnostic log lines
+   */
+  constructor(network_name) {
+    super();
+    this.logger = getLogger(this.constructor.name);
+    this.network_name = network_name;
+  }
+  /**
+   * :param name_to_spec: The name -> agent spec dictionary to validate
+   * :return: A list of error messages describing pydantic conversion problems.
+   */
+  validate_name_to_spec_dict(name_to_spec) {
+    let errors = [];
+    this.logger.debug("Validating %s parameters via pydantic...", this.network_name);
+    for (const [agent_name, agent_spec] of Object.entries(name_to_spec)) {
+      let params = PydanticParametersNetworkValidator._locate_parameters(agent_spec);
+      if (params === PydanticParametersNetworkValidator._PARAMS_NOT_FOUND) {
+        continue;
+      }
+      if (params == null) {
+        errors.push(`${agent_name}: 'parameters' is null - use {} or remove the key`);
+        continue;
+      }
+      if (!is_dict(params)) {
+        errors.push(`${agent_name}: 'parameters' must be object, got ${type2(params)}`);
+        continue;
+      }
+      let properties = dict.get(params, "properties");
+      if (!is_dict(properties) || !properties) {
+        continue;
+      }
+      try {
+        let converter = new BaseModelDictionaryConverter("parameters");
+        converter.from_dict(params);
+      } catch (e) {
+        if (e instanceof Error) {
+          let detail = String(e).split(/\s+/).join(" ");
+          errors.push(`${agent_name}: pydantic model conversion failed - ${detail}`);
+        } else if (e instanceof Error) {
+          const exc = e;
+          let detail = String(e).split(/\s+/).join(" ");
+          errors.push(`${agent_name}: pydantic model conversion failed - ${detail}`);
+        }
+      }
+    }
+    return errors;
+  }
+}
+exposeClassAttributes(PydanticParametersNetworkValidator);
+class SemanticParametersNetworkValidator extends AbstractNetworkValidator {
+  /**
+   * Constructor
+   *
+   * :param network_name: The agent network name for diagnostic log lines
+   */
+  constructor(network_name) {
+    super();
+    this.logger = getLogger(this.constructor.name);
+    this.network_name = network_name;
+  }
+  /**
+   * :param name_to_spec: The name -> agent spec dictionary to validate
+   * :return: A list of error messages describing semantic parameter problems.
+   */
+  validate_name_to_spec_dict(name_to_spec) {
+    let errors = [];
+    this.logger.debug("Validating %s parameters semantics...", this.network_name);
+    for (const [agent_name, agent_spec] of Object.entries(name_to_spec)) {
+      let params = SemanticParametersNetworkValidator._locate_parameters(agent_spec);
+      if (!is_dict(params)) {
+        continue;
+      }
+      for (const nested_path of SemanticParametersNetworkValidator._find_nested_parameters_keys(params)) {
+        errors.push(`${agent_name}: '${nested_path}' contains a nested 'parameters' key - move the inner 'properties' and 'required' up one level`);
+      }
+      errors.push(...SemanticParametersNetworkValidator._check_required_refs(agent_name, params));
+    }
+    return errors;
+  }
+  /**
+   * Yield ``(child_schema, child_path)`` for every nested object
+   * property and array ``items`` entry inside *schema*.
+   */
+  static *_iter_subschemas(schema, path) {
+    let properties = dict.get(schema, "properties");
+    if (is_dict(properties)) {
+      for (const [prop_name, prop_schema] of Object.entries(properties)) {
+        if (is_dict(prop_schema)) {
+          yield [prop_schema, path + ".properties." + prop_name];
+        }
+      }
+    }
+    let items = dict.get(schema, "items");
+    if (is_dict(items)) {
+      yield [items, path + ".items"];
+    }
+  }
+  /**
+   * Recursively verify that every ``required`` entry references a
+   * key that exists in ``properties``.  Pydantic silently ignores
+   * missing required entries, so this must remain a custom check.
+   *
+   * :param agent_name: Display name for error messages
+   * :param params: The schema dict to validate
+   * :param path: Dotted path for contextual error messages
+   * :return: A list of error messages
+   */
+  static _check_required_refs(agent_name, params, path = "parameters") {
+    let errors = [];
+    if (!is_dict(params)) {
+      return errors;
+    }
+    let properties = dict.get(params, "properties");
+    let required = dict.get(params, "required");
+    if (isinstance2(required, Array) && is_dict(properties)) {
+      let missing = required.filter((r) => !contains(r, properties)).map((r) => r);
+      if (missing) {
+        errors.push(`${agent_name}: ${path}.required has undefined props ${missing}`);
+      }
+    }
+    for (const [child, child_path] of this._iter_subschemas(params, path)) {
+      errors.push(...SemanticParametersNetworkValidator._check_required_refs(agent_name, child, child_path));
+    }
+    return errors;
+  }
+  /**
+   * Walk a JSON-schema-like tree, returning every dotted path whose dict
+   * contains a 'parameters' key.  Does not recurse into the 'parameters'
+   * value itself - once we've flagged a site as malformed, we leave the
+   * inner contents alone (fixing the outer occurrence likely fixes the
+   * inner ones, and reporting both would be noisy).
+   */
+  static _find_nested_parameters_keys(schema, path = "parameters") {
+    let found = [];
+    if (!is_dict(schema)) {
+      return found;
+    }
+    if (contains("parameters", schema)) {
+      found.push(path);
+    }
+    for (const [child, child_path] of this._iter_subschemas(schema, path)) {
+      found.push(...SemanticParametersNetworkValidator._find_nested_parameters_keys(child, child_path));
+    }
+    return found;
+  }
+}
+exposeClassAttributes(SemanticParametersNetworkValidator);
+class ParametersSchemaNetworkValidator extends CompositeDictionaryValidator {
+  /**
+   * Constructor
+   *
+   * :param network_name: The agent network name for diagnostic log lines
+   */
+  constructor(network_name) {
+    let validators = [new PydanticParametersNetworkValidator(network_name), new SemanticParametersNetworkValidator(network_name)];
+    super(validators);
+  }
+  /**
+   * Resolve the config once, then run both parameter phases on it.
+   *
+   * The parameter validators need fully-resolved configs (commondefs
+   * substitution, defaults injection, name correction). Filtering here -
+   * rather than inside each leaf validator - means the filter chain runs
+   * a single time for both phases instead of once per validator, which
+   * matters when this composite is itself nested inside the larger
+   * ManifestNetworkValidator.
+   *
+   * :param candidate: The agent network or name -> spec dictionary to validate
+   * :return: A list of error messages
+   */
+  validate(candidate) {
+    if (!candidate) {
+      return super.validate(candidate);
+    }
+    let filtered = new NetworkConfigFilterChain().filter_config(candidate);
+    return super.validate(filtered);
+  }
+}
+exposeClassAttributes(ParametersSchemaNetworkValidator);
+class ToolNameNetworkValidator extends AbstractNetworkValidator {
+  static {
+    this.TOOL_NAME_PATTERN = "^[a-zA-Z0-9_-]+$";
+  }
+  /**
+   * Constructor
+   */
+  constructor() {
+    super();
+    this.logger = getLogger(this.constructor.name);
+  }
+  /**
+   * Validate the agent network, specifically in the form of a name -> agent spec dictionary.
+   *
+   * :param name_to_spec: The name -> agent spec dictionary to validate
+   * :return: List of errors indicating agents than have invalid names
+   */
+  validate_name_to_spec_dict(name_to_spec) {
+    let errors = [];
+    for (const [agent_name, agent] of Object.entries(name_to_spec)) {
+      let spec_name = dict.get(agent, "name");
+      if (!match(ToolNameNetworkValidator.TOOL_NAME_PATTERN, agent_name) || !match(ToolNameNetworkValidator.TOOL_NAME_PATTERN, spec_name)) {
+        let error_msg = `${agent_name} must match the regex '${ToolNameNetworkValidator.TOOL_NAME_PATTERN}'`;
+        errors.push(error_msg);
+      }
+    }
+    if (len(errors) > 0) {
+      this.logger.warning(String(errors));
+    }
+    return errors;
+  }
+}
+exposeClassAttributes(ToolNameNetworkValidator);
+class ToolsShapeValidator extends AbstractNetworkValidator {
+  /**
+   * Constructor
+   *
+   * :param network_name: The agent network name for diagnostic log lines
+   */
+  constructor(network_name) {
+    super();
+    this.logger = getLogger(this.constructor.name);
+    this.network_name = network_name;
+  }
+  /**
+   * Validate the agent network, specifically in the form of a name -> agent spec dictionary.
+   *
+   * :param name_to_spec: The name -> agent spec dictionary to validate
+   * :return: A list of error messages
+   */
+  validate_name_to_spec_dict(name_to_spec) {
+    let errors = [];
+    this.logger.debug("Validating %s tools shape...", this.network_name);
+    for (const [agent_name, agent] of Object.entries(name_to_spec)) {
+      errors.push(...ToolsShapeValidator.validate_tools(agent_name, agent));
+      errors.push(...ToolsShapeValidator.validate_args_tools(agent_name, agent));
+    }
+    if (len(errors) > 0) {
+      this.logger.warning(String(errors));
+    }
+    return errors;
+  }
+  /**
+   * Validate that 'tools' is a list where each element is a string or dict.
+   *
+   * :param agent_name: The name of the agent being validated
+   * :param agent: The agent spec dictionary
+   * :return: A list of error messages
+   */
+  static validate_tools(agent_name, agent) {
+    let tools = dict.get(agent, "tools");
+    if (tools == null) {
+      return [];
+    }
+    if (!isinstance2(tools, Array)) {
+      return [`${agent_name} 'tools' must be a list, got ${type2(tools)}.`];
+    }
+    return ToolsShapeValidator.check_element_types(tools, [String, Object], "str or dict", agent_name, "tools");
+  }
+  /**
+   * Validate that 'args.tools', if present, is either a dict of string values or a
+   * list of string values. This is the coded-tool convention for declaring
+   * downstream agents: a dict of label -> agent name, or a list of agent names.
+   *
+   * :param agent_name: The name of the agent being validated
+   * :param agent: The agent spec dictionary
+   * :return: A list of error messages
+   */
+  static validate_args_tools(agent_name, agent) {
+    let args = dict.get(agent, "args");
+    if (!is_dict(args) || !contains("tools", args)) {
+      return [];
+    }
+    let args_tools = dict.get(args, "tools");
+    if (!isinstance2(args_tools, [Object, Array])) {
+      return [`${agent_name} 'args.tools' must be a dict or list, got ${type2(args_tools)}.`];
+    }
+    return ToolsShapeValidator.check_element_types(args_tools, String, "str (agent name)", agent_name, "args.tools");
+  }
+  /**
+   * Validate that each value in `items` is an instance of `allowed_types`.
+   *
+   * `items` can be a list (indexed by position, error label uses [i]) or a
+   * dict (keyed by label, error label uses [key!r]). Used by both
+   * `validate_tools` (tools list) and `validate_args_tools` (args.tools as
+   * dict or list) to keep the iteration + error format consistent.
+   *
+   * :param items: The list or dict whose entries to check
+   * :param allowed_types: A type or tuple of types each value must match
+   * :param type_label: Human-readable description of allowed types for the
+   * error message (e.g., "str or dict", "str (agent name)")
+   * :param agent_name: The name of the agent being validated
+   * :param field_prefix: The field path prefix used in error messages
+   * (e.g., "tools" or "args.tools")
+   * :return: A list of error messages, one per element that fails the check
+   */
+  static check_element_types(items, allowed_types, type_label, agent_name, field_prefix) {
+    let errors = [];
+    if (is_dict(items)) {
+      for (const [key, value] of Object.entries(items)) {
+        if (!isinstance2(value, allowed_types)) {
+          errors.push(`${agent_name} '${field_prefix}[${repr2(key)}]' must be a ${type_label}, got ${type2(value)}.`);
+        }
+      }
+    } else if (isinstance2(items, Array)) {
+      for (const [i, value] of enumerate2(items)) {
+        if (!isinstance2(value, allowed_types)) {
+          errors.push(`${agent_name} '${field_prefix}[${i}]' must be a ${type_label}, got ${type2(value)}.`);
+        }
+      }
+    }
+    return errors;
+  }
+}
+exposeClassAttributes(ToolsShapeValidator);
+class UnreachableNodesNetworkValidator extends AbstractNetworkValidator {
+  /**
+   * Constructor
+   *
+   * :param network_name: The agent network name for diagnostic log lines
+   */
+  constructor(network_name) {
+    super();
+    this.logger = getLogger(this.constructor.name);
+    this.network_name = network_name;
+  }
+  /**
+   * Validate the agent network, specifically in the form of a name -> agent spec dictionary.
+   *
+   * :param name_to_spec: The name -> agent spec dictionary to validate
+   * :return: A list of error messages
+   */
+  validate_name_to_spec_dict(name_to_spec) {
+    let errors = [];
+    this.logger.debug("Validating %s agent network structure...", this.network_name);
+    let front_man_agents = this.find_all_front_man_agents(name_to_spec);
+    if (len(front_man_agents) == 0) {
+      errors.push("No front man agent found in network");
+    } else if (len(front_man_agents) > 1) {
+      errors.push(`Multiple front man agents found: ${sorted2(front_man_agents)}. Expected exactly one.`);
+    }
+    let unreachable_agents = set();
+    if (len(front_man_agents) == 1) {
+      let front_man_agent = next(iter2(front_man_agents));
+      unreachable_agents = this.find_unreachable_agents(name_to_spec, front_man_agent);
+      if (len(unreachable_agents) > 0) {
+        errors.push(`Unreachable agents found: ${sorted2(unreachable_agents)}`);
+      }
+    }
+    if (len(errors) > 0) {
+      this.logger.warning(String(errors));
+    }
+    return errors;
+  }
+  /**
+   * Build the list of traversable down-chain agent names for an agent spec.
+   *
+   * Down-chains come from two sources: the traditional `tools` field (a list of agent
+   * names and/or inline dicts), and `args.tools` (the convention for coded tools, which
+   * may be a dict of label -> agent name or a list of names). Both are read through
+   * the inherited coerce helpers so a malformed value (the #852 case where `tools`
+   * is a string) is treated as empty instead of crashing on `str + list`. The shape
+   * error itself is surfaced by ToolsShapeValidator running in the validation chain.
+   *
+   * Dict-shaped entries (MCP/inline tool configs) and URL/path entries are filtered
+   * out so the result contains only the agent names that this validator should
+   * traverse.
+   *
+   * :param agent_spec: The agent specification dictionary
+   * :return: List of agent-name strings reachable from this spec.
+   */
+  get_agent_down_chains(agent_spec) {
+    let raw_down_chains = [...UnreachableNodesNetworkValidator.coerce_tools(agent_spec), ...UnreachableNodesNetworkValidator.coerce_args_tools(agent_spec)];
+    let safe_down_chains = UnreachableNodesNetworkValidator.remove_dictionary_tools(raw_down_chains);
+    let traversable_down_chains = [];
+    for (const tool of iter2(safe_down_chains)) {
+      if (!UnreachableNodesNetworkValidator.is_url_or_path(tool)) {
+        traversable_down_chains.push(tool);
+      }
+    }
+    return traversable_down_chains;
+  }
+  /**
+   * Find all front man agents - agents that have down-chains but are not down-chains of others.
+   *
+   * :param name_to_spec: The agent network to validate
+   * :return: Set of front man agent names
+   */
+  find_all_front_man_agents(name_to_spec) {
+    let all_down_chains = set();
+    let has_down_chains = set();
+    for (const [agent_name, agent_config] of Object.entries(name_to_spec)) {
+      let down_chains = this.get_agent_down_chains(agent_config);
+      if (down_chains != null && len(down_chains) > 0) {
+        has_down_chains.add(agent_name);
+        for (const one_down_chain of down_chains) {
+          all_down_chains.add(one_down_chain);
+        }
+        ;
+      }
+    }
+    let front_man_agents = new Set([...has_down_chains].filter((one) => !all_down_chains.has(one)));
+    if (len(front_man_agents) == 0 && len(name_to_spec) == 1) {
+      let one_front_man = list3(Object.keys(name_to_spec))[0];
+      front_man_agents.add(one_front_man);
+    }
+    return front_man_agents;
+  }
+  /**
+   * Find agents that are unreachable from the front man agent using Depth-First Search (DFS) traversal.
+   *
+   * :param name_to_spec: The agent network to validate
+   * :param front_man_agent: The single front man agent to start from
+   * :return: Set of unreachable agent names
+   */
+  find_unreachable_agents(name_to_spec, front_man_agent) {
+    let reachable_agents = set();
+    let visited = set();
+    this.dfs_reachability_traversal(name_to_spec, front_man_agent, visited, reachable_agents);
+    let all_agents = set(Object.keys(name_to_spec));
+    let unreachable_agents = new Set([...all_agents].filter((one) => !reachable_agents.has(one)));
+    return unreachable_agents;
+  }
+  /**
+   * Perform DFS traversal to find all agents reachable from a specific starting agent.
+   *
+   * :param name_to_spec: The agent network to validate
+   * :param agent: Current agent being visited
+   * :param visited: Set of agents already visited in this traversal (prevents infinite loops)
+   * :param reachable_agents: Set to collect all agents that can be reached
+   */
+  dfs_reachability_traversal(name_to_spec, agent, visited, reachable_agents) {
+    if (contains(agent, visited) || !contains(agent, name_to_spec)) {
+      return;
+    }
+    visited.add(agent);
+    reachable_agents.add(agent);
+    let empty = {};
+    let agent_spec = dict.get(name_to_spec, agent, empty);
+    let down_chains = this.get_agent_down_chains(agent_spec);
+    for (const child_agent of iter2(down_chains)) {
+      this.dfs_reachability_traversal(name_to_spec, child_agent, visited, reachable_agents);
+    }
+  }
+}
+exposeClassAttributes(UnreachableNodesNetworkValidator);
+class UrlNetworkValidator extends AbstractNetworkValidator {
+  /**
+   * Constructor
+   *
+   * :param external_agents: A list of valid /external_agent referencess
+   * :param mcp_servers: A list of MCP servers, as read in from a mcp_info.hocon file
+   * :param network_name: The agent network name for diagnostic log lines
+   */
+  constructor(external_agents, mcp_servers, network_name) {
+    super();
+    this.logger = getLogger(this.constructor.name);
+    this.external_agents = external_agents;
+    this.mcp_servers = mcp_servers;
+    this.network_name = network_name;
+  }
+  /**
+   * Validate the agent network, specifically in the form of a name -> agent spec dictionary.
+   * Check if URL of MCP servers and external_agents are valid.
+   *
+   * :param name_to_spec: The name -> agent spec dictionary to validate
+   * :return: List of errors indicating invalid URL
+   */
+  validate_name_to_spec_dict(name_to_spec) {
+    let errors = [];
+    let urls = [];
+    if (this.external_agents) {
+      urls.push(...this.external_agents);
+    }
+    if (this.mcp_servers) {
+      urls.push(...this.mcp_servers);
+    }
+    this.logger.debug("Validating %s URLs for MCP tools and subnetwork...", this.network_name);
+    for (const [agent_name, agent] of Object.entries(name_to_spec)) {
+      let tools = UrlNetworkValidator.coerce_tools(agent);
+      if (tools) {
+        let safe_tools = UrlNetworkValidator.remove_dictionary_tools(tools);
+        this.check_safe_urls(agent_name, safe_tools, urls, errors);
+      }
+    }
+    return errors;
+  }
+  /**
+   * Validate that URL- or path-like tool references resolve to a known endpoint.
+   *
+   * A tool reference is considered valid if it matches one of the configured
+   * external agents / MCP servers, is an http(s):// URL, or ends with "mcp"
+   * or "mcp/"., unknown unrecognized URL- or path-like tool is appended to errors.
+   *
+   * :param agent_name: Name of the agent that owns these tools
+   * :param safe_tools: Tool references to check (with dictionary-form tools removed)
+   * :param urls: Known-valid URLs (configured external agents and MCP servers)
+   * :param errors: List of errors. Modified in place when invalid tools are found.
+   */
+  check_safe_urls(agent_name, safe_tools, urls, errors) {
+    for (const tool of iter2(safe_tools)) {
+      if (UrlNetworkValidator.is_url_or_path(tool) && !contains(tool, urls) && (!tool.startsWith("http://") && (!tool.startsWith("https://") && (!tool.endsWith("mcp") && !tool.endsWith("mcp/"))))) {
+        let error_msg = `Agent '${agent_name}' references an unrecognized URL or path tool '${tool}'. Expected an external agent or network name starting with '/' (e.g. '/bank_ops'), an MCP server, an http(s):// URL, or an MCP endpoint. Available URLs: ${urls}`;
+        errors.push(error_msg);
+      }
+    }
+  }
+}
+exposeClassAttributes(UrlNetworkValidator);
+class ManifestNetworkValidator extends CompositeDictionaryValidator {
+  /**
+   * Constructor
+   *
+   * :param external_network_names: A list of external network names
+   * :param mcp_servers: A list of MCP servers, as read in from a mcp_info.hocon file
+   * :param network_name: The agent network name for diagnostic log lines
+   */
+  constructor(external_network_names, mcp_servers, network_name) {
+    let validators = [new ToolsShapeValidator(network_name), new KeywordNetworkValidator(null, network_name), new MissingNodesNetworkValidator(), new UnreachableNodesNetworkValidator(network_name), new ToolNameNetworkValidator(), new ParametersSchemaNetworkValidator(network_name), new UrlNetworkValidator(external_network_names, mcp_servers, network_name)];
+    super(validators);
+  }
+}
+exposeClassAttributes(ManifestNetworkValidator);
+class AgentReservation extends Reservation {
+  /**
+   * Constructor
+   *
+   * :param lifetime_in_seconds: The number of seconds the reservation is allowed to exist.
+   * :param prefix: A string prefix to prepend to the id so as to provide external context.
+   */
+  constructor(lifetime_in_seconds, prefix) {
+    super(lifetime_in_seconds);
+    this.id = String(uuid4());
+    this.prefix = prefix;
+    if (this.prefix == null) {
+      this.prefix = "";
+    }
+    if (len(this.prefix) > 0) {
+      this.prefix = `${this.prefix}-`;
+    }
+  }
+  /**
+   * :return: The id associated with the reservation instance
+   */
+  get_reservation_id() {
+    return `${this.prefix}${this.id}`;
+  }
+  /**
+   * :param agent_name: The name of an agent
+   * :return: True if the name is in the format of a reservation id, False otherwise.
+   */
+  static is_reservation_name(agent_name) {
+    if (!isinstance2(agent_name, String)) {
+      return false;
+    }
+    let uuid_part = slice2(agent_name, -36, void 0);
+    try {
+      let u = new UUID(uuid_part);
+      if (u.version == 4) {
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+  /**
+   * :return: The prefix assigned at construct time
+   */
+  get_prefix() {
+    return this.prefix;
+  }
+  /**
+   * :return: A url associated with the reservation.
+   * Can be null if this is not an option for what we are reserving.
+   */
+  get_url() {
+    let url = this.get_reservation_id();
+    let external_url = dict.get(process.env, "AGENT_EXTERNAL_SERVER_URL");
+    if (external_url != null) {
+      while (external_url.endsWith("/")) {
+        external_url = slice2(external_url, void 0, -1);
+      }
+      if (len(external_url) > 0) {
+        url = `${external_url}/api/v1/${url}`;
+      }
+    }
+    return url;
+  }
+  /**
+   * Set the expiration time in seconds using the input as a basis for "now"..
+   */
+  set_expiration_from(use_now_in_seconds, max_lifetime_in_seconds) {
+    let actual_lifetime = min2(this.get_lifetime_in_seconds(), max_lifetime_in_seconds);
+    this.expiration_time_in_seconds = use_now_in_seconds + actual_lifetime;
+  }
+}
+exposeClassAttributes(AgentReservation);
+class AbstractAgentReservationist extends Reservationist {
+  /**
+   * Constructor
+   *
+   * :param reservations_storage: A Set of ReservationsStorage instances that manage
+   * any temporary networks
+   * :param max_lifetime_in_seconds: The maximum lifetime allowed for any Reservation.
+   */
+  constructor(reservations_storage, max_lifetime_in_seconds) {
+    super();
+    this.reservations_storage = reservations_storage;
+    this.max_lifetime_in_seconds = max_lifetime_in_seconds;
+  }
+  /**
+   * Creates a reservation for a specific time period.
+   *
+   * :param lifetime_in_seconds: The lifetime of the reservation
+   * :param prefix: A string prefix to prepend to the id so as to provide external context.
+   * :return: A new Reservation object corresponding to the request.
+   */
+  reserve(lifetime_in_seconds, prefix) {
+    let actual_lifetime = min2(lifetime_in_seconds, this.max_lifetime_in_seconds);
+    let reservation = new AgentReservation(actual_lifetime, { prefix });
+    return reservation;
+  }
+  /**
+   * Deploy multiple Reservations.
+   *
+   * :param deployment_dict: A dictionary whose keys are Reservation objects
+   * previously obtained with reserve() and whose values are each an
+   * object to deploy using the key as Reservation.
+   * In this case, the object value to deploy is another dictionary where:
+   * keys can be either a string or an asyncio.Event
+   * values are a dictionary of AgentReservations -> agent_spec dictionaries
+   * That is, these values are deployment_dicts from an AccumulatingAgentReservationist.
+   * :param confirmation: When True, indicates a confirmation Event is desired.
+   * When False (the default), no such confirmation is needed.
+   * This is ignored on this instance
+   * :return: Either a confiramtion Event object whose wait() method will confirm
+   * that the deployment is complete, or null, depending on the value passed
+   * for confirmation.
+   * This instance always returns null.
+   */
+  async deploy(deployment_dict, confirmation) {
+    throw Error("Method not implemented");
+  }
+  /**
+   * :param event: The event to set
+   */
+  static set_event(event) {
+    event.set();
+  }
+  /**
+   * :param deployment_dict: A dictionary whose keys are AgentReservations
+   * and whose values are agent network spec dictionaries.
+   * :param source: A string describing where the deployment was coming from
+   * :param max_lifetime_in_seconds: Longest a temp network can live
+   */
+  async deploy_together(deployment_dict, source, max_lifetime_in_seconds) {
+    let use_now = time();
+    let reservations_dict = {};
+    for (const [reservation, agent_spec] of Object.entries(deployment_dict)) {
+      reservation.set_expiration_from(use_now, max_lifetime_in_seconds);
+      reservations_dict[reservation] = agent_spec;
+    }
+    for (const storage of this.reservations_storage) {
+      await storage.add_reservations(reservations_dict, source);
+    }
+  }
+}
+exposeClassAttributes(AbstractAgentReservationist);
+class DirectAgentReservationist extends AbstractAgentReservationist {
+  /**
+   * Deploy multiple Reservations.
+   *
+   * :param deployment_dict: A dictionary whose keys are Reservation objects
+   * previously obtained with reserve() and whose values are each an
+   * object to deploy using the key as Reservation.
+   * In this case, the object value to deploy is another dictionary where:
+   * keys can be either a string or an asyncio.Event
+   * values are a dictionary of AgentReservations -> agent_spec dictionaries
+   * That is, these values are deployment_dicts from an AccumulatingAgentReservationist.
+   * :param confirmation: When True, indicates a confirmation Event is desired.
+   * When False (the default), no such confirmation is needed.
+   * This is ignored on this instance
+   * :return: Either a confiramtion Event object whose wait() method will confirm
+   * that the deployment is complete, or null, depending on the value passed
+   * for confirmation.
+   * This instance always returns null.
+   */
+  async deploy(deployment_dict, confirmation) {
+    for (const storage of this.reservations_storage) {
+      storage.expire_reservations();
+    }
+    if (!deployment_dict) {
+      return null;
+    }
+    for (const [reservation, value] of Object.entries(deployment_dict)) {
+      const to_deploy = value;
+      for (const [key, value2] of Object.entries(to_deploy)) {
+        const source = reservation.get_prefix();
+        deployment_dict = value2;
+        const max_lifetime_in_seconds = this.max_lifetime_in_seconds;
+        await this.deploy_together(deployment_dict, source, max_lifetime_in_seconds);
+        if (isinstance2(key, Event)) {
+          const event = key;
+          const event_loop = get_running_loop();
+          run_coroutine_threadsafe(DirectAgentReservationist.set_event(event), event_loop);
+        }
+      }
+    }
+    return null;
+  }
+}
+exposeClassAttributes(DirectAgentReservationist);
 class LangChainLlmFactory extends EnvironmentConfiguration {
   /**
    * Create a LangChainLlmResources instance from the fully-specified llm config.
@@ -360,7 +1553,7 @@ class OpenAILlmPolicy extends LlmPolicy {
   create_http_client(config) {
     let openai_proxy = OpenAILlmPolicy.get_value_or_env(config, "openai_proxy", "OPENAI_PROXY");
     let request_timeout = dict.get(config, "request_timeout");
-    this.http_client = new AsyncClient({ proxy: openai_proxy, timeout: request_timeout, limits: this.LIMITS });
+    this.http_client = new AsyncClient({ proxy: openai_proxy, timeout: request_timeout, limits: OpenAILlmPolicy.LIMITS });
   }
   /**
    * Create a BaseLanguageModel instance from the fully-specified llm config
@@ -1026,23 +2219,21 @@ class DefaultLlmFactory extends ContextTypeLlmFactory {
       }
       let config_from_class_in_llm_info = this.get_chat_class_args(class_from_llm_config);
       full_config = this.overlayer.overlay(config_from_class_in_llm_info, config);
+      if (this.is_llm_info_class(class_from_llm_config)) {
+        let alias_model_name = dict.get(full_config, "model_name");
+        if (isinstance2(alias_model_name, String)) {
+          full_config["model_name"] = this.resolve_model_name_alias(alias_model_name);
+        }
+      }
       full_config = this.replace_any_required_api_keys(full_config, sly_data);
       return full_config;
     }
     let default_config = dict.get(this.llm_infos, "default_config");
     let use_config = this.overlayer.overlay(default_config, config);
     let model_name = dict.get(use_config, "model_name");
-    let llm_entry = dict.get(this.llm_infos, model_name);
-    if (llm_entry == null) {
-      throw new Error(`No llm entry for model_name ${model_name}`);
-    }
-    let use_model_name = dict.get(llm_entry, "use_model_name", model_name);
-    if (len(Object.keys(llm_entry)) <= 2 && use_model_name != null) {
-      llm_entry = dict.get(this.llm_infos, use_model_name);
-      if (llm_entry == null) {
-        throw new Error(`No llm entry for use_model_name ${use_model_name} in ${model_name}`);
-      }
-    }
+    let resolved = this._resolve_llm_entry(model_name);
+    let llm_entry = resolved[0];
+    let use_model_name = resolved[1];
     let chat_class_name = dict.get(llm_entry, "class");
     if (chat_class_name == null) {
       throw new Error(`llm info entry for ${use_model_name} requires a 'class' key/value pair.`);
@@ -1057,6 +2248,87 @@ class DefaultLlmFactory extends ContextTypeLlmFactory {
       full_config["max_tokens"] = this.get_max_prompt_tokens(full_config);
     }
     return full_config;
+  }
+  /**
+   * Tells whether a "class" value from an llm_config names one of the classes in the
+   * llm_info "classes" table (stock ones like "openai" or "anthropic", or ones a user
+   * added through their own llm_info_file), as opposed to the full python path of a
+   * langchain chat model class.
+   *
+   * :param chat_class_name: The value of the "class" key from an llm_config
+   * :return: True if the class is defined in the llm_info "classes" table
+   */
+  is_llm_info_class(chat_class_name) {
+    let chat_classes = dict.get(this.llm_infos, "classes", {});
+    return contains(chat_class_name, chat_classes);
+  }
+  /**
+   * Looks up the llm_info entry for a model name, following at most one alias hop.
+   *
+   * An alias is an entry with at most two keys whose "use_model_name" points at the
+   * real entry (e.g. "claude-fable" -> "claude-fable-5-1"). Entries with more keys
+   * keep their own details even when they carry a "use_model_name" of their own
+   * (e.g. the azure-* entries, whose "class" must win over their target's).
+   * This method never raises; callers decide how to treat a missing entry.
+   *
+   * :param model_name: The model name from the config
+   * :return: A tuple of (llm_entry, use_model_name). llm_entry is the entry after any
+   * alias hop, or null when either model_name or the alias target has no entry.
+   * use_model_name is the name the alias pointed at, or model_name itself when
+   * there was no alias.
+   */
+  _find_llm_entry(model_name) {
+    let llm_entry = dict.get(this.llm_infos, model_name);
+    if (llm_entry == null) {
+      return [null, model_name];
+    }
+    let use_model_name = dict.get(llm_entry, "use_model_name", model_name);
+    let is_alias = len(Object.keys(llm_entry)) <= 2 && use_model_name != null;
+    let resolved_entry = is_alias ? dict.get(this.llm_infos, use_model_name) : llm_entry;
+    return [resolved_entry, use_model_name];
+  }
+  /**
+   * Looks up the llm_info entry for a model name, following at most one alias hop,
+   * and insists that an entry exists.
+   *
+   * :param model_name: The model name from the config
+   * :return: A tuple of (llm_entry, use_model_name) as described in _find_llm_entry(),
+   * with llm_entry guaranteed not to be null.
+   * :raises Error: if there is no entry for model_name, or for the alias target
+   */
+  _resolve_llm_entry(model_name) {
+    if (dict.get(this.llm_infos, model_name) == null) {
+      throw new Error(`No llm entry for model_name ${model_name}`);
+    }
+    let found = this._find_llm_entry(model_name);
+    let llm_entry = found[0];
+    let use_model_name = found[1];
+    if (llm_entry == null) {
+      throw new Error(`No llm entry for use_model_name ${use_model_name} in ${model_name}`);
+    }
+    return [llm_entry, use_model_name];
+  }
+  /**
+   * Turns a model name that might be an llm_info alias into the model id the provider
+   * accepts, without requiring the name to be known to llm_info at all.
+   *
+   * This serves llm_configs that name one of our classes explicitly: the model may be one
+   * we know (possibly under an alias) or one we have never heard of, and either way the
+   * user's class is what gets instantiated.
+   *
+   * :param model_name: The model name from the config
+   * :return: The resolved model id, or model_name unchanged when llm_info does not know it.
+   * When an alias points at a name that has no entry of its own, that name is
+   * returned as-is so the provider can be the judge of it.
+   */
+  resolve_model_name_alias(model_name) {
+    let found = this._find_llm_entry(model_name);
+    let llm_entry = found[0];
+    let use_model_name = found[1];
+    if (llm_entry == null) {
+      return use_model_name;
+    }
+    return dict.get(llm_entry, "use_model_name", use_model_name);
   }
   /**
    * :param chat_class_name: string name of the chat class to look up.
@@ -1220,14 +2492,7 @@ class DefaultLlmFactory extends ContextTypeLlmFactory {
    */
   get_max_prompt_tokens(config) {
     let model_name = dict.get(config, "model_name");
-    let llm_entry = dict.get(this.llm_infos, model_name);
-    if (llm_entry == null) {
-      throw new Error(`No llm entry for model_name ${model_name}`);
-    }
-    let use_model_name = dict.get(llm_entry, "use_model_name", model_name);
-    if (len(Object.keys(llm_entry)) <= 2 && use_model_name != null) {
-      llm_entry = dict.get(this.llm_infos, use_model_name);
-    }
+    let llm_entry = this._resolve_llm_entry(model_name)[0];
     let entry_max_tokens = dict.get(llm_entry, "max_output_tokens");
     let prompt_token_fraction = dict.get(config, "prompt_token_fraction");
     let use_max_tokens = null;
@@ -1273,9 +2538,12 @@ class DefaultLlmFactory extends ContextTypeLlmFactory {
         let sub_config = { "fallbacks": fallback };
         one_llm_resources = this.create_llm_withFallbacks(sub_config, { sly_data, num_fallbacks: null, randomize_peers: true });
         if (is_dict(one_llm_resources)) {
-          Object.assign(api_key_errors, dict.get(one_llm_resources, "api_key_errors", []));
-          Object.assign(construction_errors, dict.get(one_llm_resources, "construction_errors", []));
-          Object.assign(required_sly_data, dict.get(one_llm_resources, "required_sly_data_errors", []));
+          for (const error of dict.get(one_llm_resources, "api_key_errors", []))
+            api_key_errors.add(error);
+          for (const error of dict.get(one_llm_resources, "construction_errors", []))
+            construction_errors.add(error);
+          for (const error of dict.get(one_llm_resources, "required_sly_data_errors", []))
+            required_sly_data.add(error);
           continue;
         }
       }
@@ -1300,7 +2568,8 @@ class DefaultLlmFactory extends ContextTypeLlmFactory {
         continue;
       }
       if (isinstance2(one_llm_resources, Set)) {
-        Object.assign(required_sly_data, one_llm_resources);
+        for (const error of one_llm_resources)
+          required_sly_data.add(error);
         continue;
       }
       if (main_llm_resources == null) {
@@ -1502,7 +2771,7 @@ class ToolboxFactory extends ContextTypeToolboxFactory {
   _require_tool_info(tool_name) {
     let tool_info = dict.get(this.toolbox_infos, tool_name);
     if (tool_info == null) {
-      if (contains(tool_name, this.REMOVED_TOOLS)) {
+      if (contains(tool_name, ToolboxFactory.REMOVED_TOOLS)) {
         throw ToolboxFactory._removed_tool_error(tool_name);
       }
       let sources = "the default toolbox info file";
@@ -1515,7 +2784,7 @@ class ToolboxFactory extends ContextTypeToolboxFactory {
       throw new Error(`The value for the ${tool_name} key must be a dictionary.`);
     }
     if (!contains("class", tool_info)) {
-      if (contains(tool_name, this.REMOVED_TOOLS)) {
+      if (contains(tool_name, ToolboxFactory.REMOVED_TOOLS)) {
         throw ToolboxFactory._removed_tool_error(tool_name);
       }
       throw new Error(`Tool '${tool_name}' is missing required key: 'class'.
@@ -1882,18 +3151,8 @@ class LangChainRun extends Run {
    * "event" - implies no answer needed
    * null - implies chatbot
    */
-  constructor(...positional) {
+  constructor(run_id_base, chat_history, tool_name, args, tool_message, invocation) {
     super();
-    const names = ["run_id_base", "chat_history", "tool_name", "args", "tool_message", "invocation"];
-    const last = positional[positional.length - 1];
-    const bound = {};
-    if (positional.length > 2 && last != null && Object.getPrototypeOf(last) === Object.prototype && Object.keys(last).length > 0 && Object.keys(last).every((key) => names.indexOf(key) >= positional.length - 1)) {
-      Object.assign(bound, positional.pop());
-    }
-    names.forEach((name, i) => {
-      if (!(name in bound)) bound[name] = positional[i];
-    });
-    const { run_id_base, chat_history, tool_name, args, tool_message, invocation } = bound;
     this.id = LangChainRun._create_run_id(run_id_base, chat_history);
     this.chat_history = chat_history;
     this.tool_name = tool_name;
@@ -1958,183 +3217,6 @@ class LangChainRun extends Run {
   }
 }
 exposeClassAttributes(LangChainRun);
-class ToolSpecError extends Error {
-}
-exposeClassAttributes(ToolSpecError);
-class BaseModelDictionaryConverter extends DictionaryConverter {
-  static {
-    this.TYPE_LOOKUP = { "string": String, "int": Number, "float": Number, "boolean": Boolean, "array": Array, "integer": Number, "number": Number, "bool": Boolean, "object": Object };
-  }
-  /**
-   * Constructor
-   *
-   * :param top_level_field_name: The field name for the top-level object
-   */
-  constructor(top_level_field_name) {
-    super();
-    this.top_level_field_name = top_level_field_name;
-  }
-  /**
-   * :param obj: The object to be converted into a dictionary
-   * :return: A data-only dictionary that represents all the data for
-   * the given object, either in primitives
-   * (booleans, ints, floats, strings), arrays, or dictionaries.
-   * If obj is null, then the returned dictionary should also be
-   * null.  If obj is not the correct type, it is also reasonable
-   * to return null.
-   */
-  to_dict(obj) {
-    throw Error("Method not implemented");
-  }
-  /**
-   * :param obj_dict: The data-only dictionary to be converted into an object
-   * :return: An object instance created from the given dictionary.
-   * If obj_dict is null, the returned object should also be null.
-   * If obj_dict is not the correct type, it is also reasonable
-   * to return null.
-   */
-  from_dict(obj_dict) {
-    if (obj_dict == null) {
-      return null;
-    }
-    let base_model = this.openai_function_to_pydantic(this.top_level_field_name, obj_dict);
-    return base_model;
-  }
-  /**
-   * Turns an openai function spec dictionary into a pydantic BaseModel
-   * See: https://docs.pydantic.dev/latest/concepts/models/#dynamic-model-creation
-   *
-   * :param name: The string name of the object/field undergoing conversion
-   * :param function_dict: The dictionary describing the OpenAI function to
-   * be converted into a pydantic BaseModel
-   * :return: The pydantic BaseModel that corresponds to the OpenAI function spec.
-   */
-  openai_function_to_pydantic(name, function_dict) {
-    let properties = dict.get(function_dict, "properties");
-    if (properties == null) {
-      properties = {};
-    }
-    if (!is_dict(properties)) {
-      throw new ToolSpecError(`'properties' must be an object, got ${type2(properties)}`);
-    }
-    let required = dict.get(function_dict, "required");
-    if (required == null) {
-      required = [];
-    }
-    if (!isinstance2(required, Array)) {
-      throw new ToolSpecError(`'required' must be a list of field names, got ${type2(required)}`);
-    }
-    if (any2((function* () {
-      for (const entry of required)
-        yield !isinstance2(entry, String);
-    })())) {
-      throw new ToolSpecError(`'required' must contain only field-name strings, got ${repr2(required)}`);
-    }
-    let fields = {};
-    for (const [field_name, one_property] of Object.entries(properties)) {
-      this.validate_field_name(field_name);
-      if (!is_dict(one_property)) {
-        throw new ToolSpecError(`Property '${field_name}' must be an object describing the field, got ${type2(one_property)}`);
-      }
-      let description = dict.get(one_property, "description");
-      let field_type = this.get_type_from_property_dict(field_name, one_property);
-      let field_kwargs = {};
-      if (description != null) {
-        field_kwargs["description"] = description;
-      }
-      if (!contains(field_name, required)) {
-        field_kwargs["default"] = null;
-        field_type = field_type | void 0;
-      }
-      let field = new Field(field_kwargs);
-      fields[field_name] = tuple2(field_type, field);
-    }
-    let model = null;
-    try {
-      model = create_model(name, fields);
-    } catch (exception) {
-      throw new ToolSpecError(`Could not create pydantic model '${name}': ${exception}`);
-    }
-    return model;
-  }
-  /**
-   * :param field_name: The string name of a single parameter/field.
-   * Raises ToolSpecError for parameter names that pydantic v2's
-   * create_model() cannot accept as field names.
-   *
-   * Pydantic v1 tolerated all of the names rejected here (it merely
-   * warned about and dropped underscore-prefixed names), but pydantic v2
-   * fails on them with cryptic NameError/TypeError at model-creation
-   * time.  The invalid names are:
-   *
-   * * Names with a leading underscore (e.g. "_internal", "__config__"):
-   * pydantic v2 reserves these for private attributes, and dunder
-   * names collide with create_model()'s own keyword arguments.
-   * * "model_config": silently consumed as create_model()'s model
-   * configuration argument instead of becoming a field.
-   * * Names that shadow a BaseModel method inside pydantic's protected
-   * namespaces "model_dump" and "model_validate" (e.g. "model_dump",
-   * "model_dump_json", "model_validate_json").  Other "model_"-prefixed
-   * names (e.g. "model_name") are fine.
-   *
-   * Deliberately NOT rejected here: names that shadow BaseModel
-   * attributes outside the protected namespaces, such as "schema",
-   * "json", "dict" or "copy".  Pydantic v2 creates those fields and only
-   * emits a shadowing UserWarning, so they work.  This is itself a
-   * behavior change from the v1-based converter: v1's create_model
-   * raised NameError for them, which made network validation reject
-   * such specs - they now pass.
-   */
-  validate_field_name(field_name) {
-    let message = null;
-    if (field_name.startsWith("_")) {
-      message = `Parameter name '${field_name}' must not start with an underscore.`;
-    } else if (field_name == "model_config") {
-      message = "Parameter name 'model_config' is reserved by pydantic for model configuration.";
-    } else if (field_name.startsWith(tuple2("model_dump", "model_validate")) && hasattr2(BaseModel, field_name)) {
-      message = `Parameter name '${field_name}' shadows a pydantic BaseModel method.`;
-    }
-    if (message != null) {
-      throw new ToolSpecError(message);
-    }
-  }
-  /**
-   * :param field_name: The string name of the field undergoing conversion
-   * :param one_property: The property dictionary of the field whose type we are looking for.
-   * :return: the any of the property to be used with pydantic Fields
-   * This type may be a BaseModel if object specification is
-   * deep enough.
-   */
-  get_type_from_property_dict(field_name, one_property) {
-    let type_from_dict = dict.get(one_property, "type");
-    if (type_from_dict == null) {
-      throw new ToolSpecError(`Field '${field_name}' has no 'type' key. Composite schemas (anyOf/oneOf/enum/$ref) are not supported.`);
-    }
-    if (!isinstance2(type_from_dict, String)) {
-      throw new ToolSpecError(`Field '${field_name}' has a non-string 'type' (${repr2(type_from_dict)}). Union type lists are not supported; use a single type name.`);
-    }
-    let field_type = dict.get(this.TYPE_LOOKUP, type_from_dict);
-    if (field_type == null) {
-      throw new ToolSpecError(`Unrecognized type '${type_from_dict}' for field '${field_name}'`);
-    }
-    if (type_from_dict == "object") {
-      let object_props = dict.get(one_property, "properties");
-      if (object_props != null && object_props) {
-        field_type = this.openai_function_to_pydantic(field_name, one_property);
-      }
-    } else if (type_from_dict == "array") {
-      let items = dict.get(one_property, "items");
-      if (!is_dict(items)) {
-        let got = items == null ? "nothing" : type2(items);
-        throw new ToolSpecError(`Array field '${field_name}' needs an 'items' object describing its element type, got ${got}`);
-      }
-      let item_type = this.get_type_from_property_dict(`${field_name}_component`, items);
-      field_type = [];
-    }
-    return field_type;
-  }
-}
-exposeClassAttributes(BaseModelDictionaryConverter);
 class PydanticArgumentDictionaryConverter extends DictionaryConverter {
   /**
    * :param obj: The object to be converted into a dictionary
@@ -2198,6 +3280,24 @@ class PydanticArgumentDictionaryConverter extends DictionaryConverter {
 }
 exposeClassAttributes(PydanticArgumentDictionaryConverter);
 class LangChainOpenAIFunctionTool extends StructuredTool {
+  constructor(fields) {
+    super(fields ?? {});
+    for (const field of ["name", "description", "parameters"]) {
+      if (fields?.[field] != null)
+        this[field] = fields[field];
+    }
+  }
+  get schema() {
+    const parameters = this.function_json;
+    const is_schema = parameters != null && typeof parameters === "object" && !Array.isArray(parameters) && (parameters.type === "object" || "properties" in parameters);
+    return is_schema ? parameters : { type: "object", properties: {} };
+  }
+  set schema(value) {
+    Object.defineProperty(this, "schema", { value, writable: true, configurable: true });
+  }
+  async _call(tool_args) {
+    return this._arun(tool_args ?? {});
+  }
   static {
     this.parameters = null;
   }
@@ -2290,7 +3390,7 @@ ${function_json}
     return tool;
   }
   async _run(...args) {
-    let kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
+    let kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) ? args.pop() : {};
     throw Error("Method not implemented");
   }
   /**
@@ -2320,12 +3420,12 @@ ${function_json}
    * calling LLM can verbally recognize the problem.
    */
   async _arun(...args) {
-    let kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
+    let kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) ? args.pop() : {};
     let run = null;
     try {
       let converter = new PydanticArgumentDictionaryConverter();
       kwargs = converter.to_dict(kwargs);
-      let initial_run = new LangChainRun("tool_base", [""], this.name, kwargs, { invocation: this.invocation });
+      let initial_run = new LangChainRun("tool_base", [""], this.name, kwargs, null, this.invocation);
       run = await this.tool_caller.make_tool_function_calls(initial_run);
     } catch (exception) {
       let logger = getLogger(this.constructor.name);
@@ -2381,7 +3481,7 @@ class McpToolErrorHandler {
    */
   constructor(tool) {
     this.tool = tool;
-    this.original_coroutine = tool.coroutine;
+    this.original_coroutine = (tool.func ?? tool.coroutine)?.bind(tool);
     this.sensitive_logger = new SensitiveLogger(getLogger(this.constructor.name));
   }
   /**
@@ -2457,11 +3557,11 @@ class LangChainMcpAdapter {
    * :return: A list of LangChain BaseTool instances retrieved from the MCP server.
    */
   async get_mcp_tools(server_url, allowed_tools, headers) {
-    if (this._mcp_servers_info == null) {
+    if (LangChainMcpAdapter._mcp_servers_info == null) {
       this._load_mcp_servers_info();
     }
-    let mcp_tool_dict = { "url": server_url, "transport": "streamable_http" };
-    let headers_dict = headers || dict.get(dict.get(this._mcp_servers_info, server_url, {}), "http_headers");
+    let mcp_tool_dict = { "url": server_url, "transport": "http" };
+    let headers_dict = headers || dict.get(LangChainMcpAdapter._mcp_servers_info[server_url] ?? {}, "http_headers");
     if (headers_dict) {
       if (is_dict(headers_dict)) {
         mcp_tool_dict["headers"] = copy(headers_dict);
@@ -2470,19 +3570,20 @@ class LangChainMcpAdapter {
       }
     }
     let client = new MultiServerMCPClient({ "server": mcp_tool_dict });
-    let mcp_tools = await client.get_tools();
+    let mcp_tools = await client.getTools();
     let client_allowed_tools = allowed_tools;
     if (client_allowed_tools == null) {
-      client_allowed_tools = dict.get(dict.get(this._mcp_servers_info, server_url, {}), "tools", []);
+      client_allowed_tools = dict.get(LangChainMcpAdapter._mcp_servers_info[server_url] ?? {}, "tools", []);
     }
-    if (client_allowed_tools) {
+    if (client_allowed_tools && client_allowed_tools.length > 0) {
       mcp_tools = mcp_tools.filter((tool) => contains(tool.name, client_allowed_tools)).map((tool) => tool);
     }
     this.client_allowed_tools = client_allowed_tools;
     for (const tool of iter2(mcp_tools)) {
       tool.tags = ["langchain_tool"];
-      if (getattr2(tool, "coroutine", null) != null) {
-        tool.coroutine = new McpToolErrorHandler(tool).async_invoke;
+      if (typeof tool.func === "function") {
+        const error_handler = new McpToolErrorHandler(tool);
+        tool.func = (...args) => error_handler.async_invoke(...args);
       }
     }
     return mcp_tools;
@@ -2506,7 +3607,7 @@ class ExternalToolAdapter {
    */
   async get_function_json(invocation_context) {
     if (this.function_json == null) {
-      let session = this.session_factory.create_session(this.agent_url, { invocation_context });
+      let session = this.session_factory.create_session(this.agent_url, invocation_context);
       let request_dict = {};
       try {
         let function_response = await session.function(request_dict);
@@ -2663,22 +3764,22 @@ class BaseToolFactory {
     }
     let parameters = raw_parameters || {};
     let properties = dict.get(parameters, "properties") || {};
-    if (properties) {
-      BaseToolFactory.synthesis_warned.discard(name);
+    if (properties && Object.keys(properties).length > 0) {
+      BaseToolFactory.synthesis_warned.delete(name);
       return function_json;
     }
-    if (parameters && !set.isSuperset(set(["type", "properties", "required"]), Object.keys(parameters))) {
+    if (parameters && !Object.keys(parameters).every((key) => ["type", "properties", "required"].includes(key))) {
       return function_json;
     }
     if (!contains(name, BaseToolFactory.synthesis_warned)) {
       BaseToolFactory.synthesis_warned.add(name);
-      let message = `The front-man of external agent ${name} declares no parameters in its function definition, so a single required '${this.DEFAULT_EXTERNAL_PARAMETER_NAME}' string parameter is being synthesized for it to receive the calling agent's request. To control what this agent network receives, declare at least one parameter in the function definition of its front-man.`;
+      let message = `The front-man of external agent ${name} declares no parameters in its function definition, so a single required '${BaseToolFactory.DEFAULT_EXTERNAL_PARAMETER_NAME}' string parameter is being synthesized for it to receive the calling agent's request. To control what this agent network receives, declare at least one parameter in the function definition of its front-man.`;
       let agent_message = new AgentMessage(message, {}, null);
       await this.journal.write_message(agent_message, null);
       this.logger.warning(message);
     }
     let use_function_json = dict(function_json);
-    use_function_json["parameters"] = deepcopy(this.DEFAULT_EXTERNAL_PARAMETERS);
+    use_function_json["parameters"] = deepcopy(BaseToolFactory.DEFAULT_EXTERNAL_PARAMETERS);
     return use_function_json;
   }
   /**
@@ -3446,13 +4547,13 @@ class NeuroSanRunnable extends RunnablePassthrough {
       runnable_config["configurable"] = { "session_id": session_id };
     }
     if (run_name) {
-      runnable_config["run_name"] = run_name;
+      runnable_config["runName"] = run_name;
     }
     if (callbacks) {
       runnable_config["callbacks"] = callbacks;
     }
     if (recursion_limit) {
-      runnable_config["recursion_limit"] = recursion_limit;
+      runnable_config["recursionLimit"] = recursion_limit;
     }
     let runnable_metadata = this.prepare_tracing_metadata();
     if (runnable_metadata) {
@@ -3736,6 +4837,137 @@ class RunContextRunnable extends NeuroSanRunnable {
   }
 }
 exposeClassAttributes(RunContextRunnable);
+class AccumulatingAgentReservationist extends Reservationist {
+  /**
+   * Constructor
+   *
+   * :param supporting_reservationist: The supporting Reservationist that will do the real work
+   * :param agent_name: The full name of the agent using this instance
+   * :param max_lifetime_in_seconds: The maximum lifetime allowed for any Reservation.
+   */
+  constructor(supporting_reservationist, agent_name, max_lifetime_in_seconds) {
+    super();
+    this.max_lifetime_in_seconds = max_lifetime_in_seconds;
+    this.agent_name = agent_name;
+    this.deployments = {};
+    this._supporting_reservationist = supporting_reservationist;
+    this._supporting_reservation = null;
+    this._external_networks = null;
+    this._mcp_servers = null;
+  }
+  /**
+   * Creates a reservation for a specific time period.
+   *
+   * :param lifetime_in_seconds: The lifetime of the reservation
+   * :param prefix: A string prefix to prepend to the id so as to provide external context.
+   * :return: A new Reservation object corresponding to the request.
+   */
+  reserve(lifetime_in_seconds, prefix) {
+    let actual_lifetime = min2(lifetime_in_seconds, this.max_lifetime_in_seconds);
+    if (prefix != null && len(prefix) > 0) {
+      AccumulatingAgentReservationist.validate_id(prefix);
+    }
+    let reservation = new AgentReservation(actual_lifetime, prefix);
+    return reservation;
+  }
+  /**
+   * Allow passing of validation parameters when using a with-statement.
+   * These get reset in __aexit__().
+   *
+   * :param external_networks: A list of external network names
+   * :param mcp_servers: A list of MCP servers, as read in from a mcp_info.hocon file
+   * :return: The instance
+   */
+  validate_with(external_networks, mcp_servers) {
+    this._external_networks = external_networks;
+    this._mcp_servers = mcp_servers;
+    return this;
+  }
+  /**
+   * Python context manager protocol entrypoint.
+   * This is what gets called when you enter a with-statement.
+   */
+  async __aenter__() {
+    this.deployments = {};
+    this._supporting_reservation = await this._supporting_reservationist.reserve({ prefix: this.agent_name });
+  }
+  /**
+   * Deploy multiple Reservations.
+   *
+   * :param deployment_dict: A dictionary whose keys are Reservation objects
+   * previously obtained with reserve() and whose values are each an
+   * object to deploy using the key as Reservation.
+   * :param confirmation: When True, indicates a confirmation Event is desired.
+   * When False (the default), no such confirmation is needed.
+   * :return: Either a confiramtion Event object whose wait() method will confirm
+   * that the deployment is complete, or null, depending on the value passed
+   * for confirmation.
+   */
+  async deploy(deployment_dict, confirmation) {
+    if (!deployment_dict) {
+      return null;
+    }
+    let errors = {};
+    for (const [reservation, agent_network_spec] of Object.entries(deployment_dict)) {
+      let key2 = reservation.get_reservation_id();
+      AccumulatingAgentReservationist.validate_id(key2);
+      let validator = new ManifestNetworkValidator({ external_network_names: this._external_networks, mcp_servers: this._mcp_servers, network_name: key2 });
+      let new_errors = validator.validate(agent_network_spec);
+      if (new_errors != null && len(new_errors) > 0) {
+        errors[key2] = new_errors;
+      }
+    }
+    if (errors) {
+      throw new Error(`Found ${len(Object.keys(errors))} validation errors when attempting to deploy():
+${dumps(errors, { indent: 4, sortKeys: true })}`);
+    }
+    let event = null;
+    let key = null;
+    if (confirmation) {
+      event = new Event();
+      key = event;
+    } else {
+      let first_res = Object.keys(deployment_dict)[0];
+      key = first_res.get_reservation_id();
+    }
+    let entry = { [key]: deployment_dict };
+    Object.assign(this.deployments, entry);
+    return event;
+  }
+  /**
+   * Python context manager protocol exit point.
+   * This is what gets called when you exit a with-statement.
+   * This triggers the initiation of the deployment.
+   * :return: True to suppress exception. False or null to propagate exception.
+   */
+  async __aexit__(exc_type, exc_val, exc_tb) {
+    await this._supporting_reservationist.deploy_one(this._supporting_reservation, this.deployments);
+    this._supporting_reservation = null;
+    this._external_networks = null;
+    this._mcp_servers = null;
+    this.deployments = {};
+  }
+  /**
+   * :param test_id:  The id string to test
+   *
+   * Will assert if the given id is not valid for external consumption
+   */
+  static validate_id(test_id) {
+    if (test_id == null) {
+      throw new Error("Reservation id is null");
+    }
+    if (len(test_id) == 0) {
+      throw new Error("Reservation id is empty");
+    }
+    let invalid_chars = "/: ";
+    for (const invalid_char of iter2(invalid_chars)) {
+      if (contains(invalid_char, test_id)) {
+        throw new Error(`Reservation id ${test_id} cannot contain any of these characters: '${invalid_chars}'`);
+      }
+    }
+  }
+}
+exposeClassAttributes(AccumulatingAgentReservationist);
 class MiddlewareFactory {
   /**
    * :param invocation_context: The invocation context for the request.
@@ -4290,7 +5522,7 @@ class LangChainRunContext extends RunContext {
         }
       }
     }
-    let use_run = new LangChainRun(this.run_id_base, this.chat_history, { tool_message });
+    let use_run = new LangChainRun(this.run_id_base, this.chat_history, null, null, tool_message);
     return use_run;
   }
   /**
@@ -4818,18 +6050,21 @@ class MasterTracingContextFactory {
 }
 exposeClassAttributes(MasterTracingContextFactory);
 export {
+  AbstractNetworkValidator,
+  AccumulatingAgentReservationist,
   AgentNetworkInspector,
-  BaseModelDictionaryConverter,
-  BaseToolFactory,
+  DirectAgentReservationist,
+  KeywordNetworkValidator,
   LangChainMcpAdapter,
-  LangChainOpenAIFunctionTool,
-  LangChainRun,
-  LangChainRunContext,
+  ManifestNetworkValidator,
   MasterLlmFactory,
   MasterToolboxFactory,
   MasterTracingContextFactory,
   McpToolErrorHandler,
-  NeuroSanRunnable,
-  PydanticArgumentDictionaryConverter,
-  RunContextFactory
+  MissingNodesNetworkValidator,
+  RunContextFactory,
+  ToolNameNetworkValidator,
+  ToolsShapeValidator,
+  UnreachableNodesNetworkValidator,
+  UrlNetworkValidator
 };

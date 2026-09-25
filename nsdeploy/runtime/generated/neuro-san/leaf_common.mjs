@@ -1,132 +1,151 @@
-import { is_dict, dict, contains, len, set, SelectorEventLoop, new_event_loop, ThreadPoolExecutor, Lock, eager_task_factory, Event, Thread, set_event_loop, all_tasks, gather, format_exception, isawaitable, iscoroutinefunction, to_thread, Future, run_coroutine_threadsafe, Task, current_thread, current_task, import_module, issubclass, BytesIO, PersistenceFactory, deepcopy, getLogRecordFactory, setLogRecordFactory, StringIO, exc_info, EPIPE, addLevelName, fromTimestamp, dictConfig, getfile } from "./stubs.mjs";
-import { isinstance2, slice2, sorted2, list3, platform, getLogger, hasattr2, tuple2, partial, iter2, monotonic, copy, type2, getattr2, repr2, at2, dumps, load, loads, range2, enumerate2, INFO, ERROR, CRITICAL, WARNING, DEBUG, basicConfig } from "../vendor/libraries.mjs";
+import { time, max2, sorted2, list3, isinstance2, Path, slice2, dumps, load, loads, platform, getLogger, hasattr2, tuple2, partial, iter2, monotonic, copy, type2, getattr2, repr2, at2, range2, enumerate2, INFO, ERROR, CRITICAL, WARNING, DEBUG, basicConfig } from "../vendor/libraries.mjs";
 import { exposeClassAttributes, ConfigFactory, ConfigTree } from "../browser/shims.mjs";
+import { set, len, is_dict, contains, dict, BytesIO, SelectorEventLoop, new_event_loop, ThreadPoolExecutor, Lock, eager_task_factory, Event, Thread, set_event_loop, all_tasks, gather, format_exception, isawaitable, iscoroutinefunction, to_thread, Future, run_coroutine_threadsafe, Task, current_thread, current_task, import_module, issubclass, PersistenceFactory, deepcopy, getLogRecordFactory, setLogRecordFactory, StringIO, exc_info, EPIPE, addLevelName, fromTimestamp, dictConfig, getfile } from "./stubs.mjs";
 import { process } from "../browser/process.mjs";
-class FieldExtractor {
-  /**
-   * :param dictionary: the dictionary in which the field
-   * is supposed exist.
-   * :param field_name: the fully specified field name.
-   * :param default_value: a default value if the field is not found.
-   * Default is null
-   * :param delimiter: a delimiting character for splitting deep-dictionary
-   * keys
-   * :return: the value of the field in the dictionary or
-   * null if the field did not exist.
-   */
-  get_field(dictionary, field_name, default_value = null, delimiter = ".") {
-    if (dictionary == null || (!is_dict(dictionary) || field_name == null)) {
-      return default_value;
-    }
-    if (field_name == null || !isinstance2(field_name, String)) {
-      return dict.get(dictionary, field_name, default_value);
-    }
-    if (!contains(delimiter, field_name)) {
-      return dict.get(dictionary, field_name, default_value);
-    }
-    let field_split = field_name.split(delimiter);
-    let use_field_name = field_split[0];
-    let value = dict.get(dictionary, use_field_name, null);
-    if (value == null || !is_dict(value)) {
-      return default_value;
-    }
-    let remaining_split = slice2(field_split, 1, len(field_split) + 1);
-    let remaining_field = remaining_split.join(delimiter);
-    let deep_value = this.get_field(value, remaining_field, default_value, delimiter);
-    return deep_value;
-  }
-}
-exposeClassAttributes(FieldExtractor);
-`
-See class comment for details.
-`;
-class DictionaryExtractor {
-  /**
-   * Constructor
-   *
-   * :param dictionary: The dictionary to operate on.
-   * :param delimiter: a delimiting character for splitting deep-dictionary keys
-   */
-  constructor(dictionary, delimiter = ".") {
-    this.my_dict = dictionary;
-    this.delimiter = delimiter;
-    this.extractor = new FieldExtractor();
-  }
-  /**
-   * :param field_name: the fully specified field name.
-   * :param default_value: a default value if the field is not found.
-   * Default is null
-   * :return: the value of the field in the dictionary or
-   * null if the field did not exist.
-   */
-  get(field_name, default_value = null) {
-    return this.extractor.get_field(this.my_dict, field_name, default_value, this.delimiter);
-  }
-}
-exposeClassAttributes(DictionaryExtractor);
 `
 See class comment for details
 `;
-class ConfigFilter {
-  /**
-   * Filters the given basis config.
-   *
-   * Ideally this would be a Pure Function in that it would not
-   * modify the caller's arguments so that the caller has a chance
-   * to decide whether to take any changes returned.
-   *
-   * :param basis_config: The config dictionary to act as the basis
-   * for filtering
-   * :return: A config dictionary, potentially modified as per the
-   * policy encapsulated by the implementation
-   */
-  filter_config(basis_config) {
-    throw Error("Method not implemented");
-  }
-}
-exposeClassAttributes(ConfigFilter);
-`
-See class comment for details.
-`;
-class ConfigFilterChain extends ConfigFilter {
+class TimeoutReachedException extends Error {
   /**
    * Constructor.
+   * Store timeout information to pass it
+   * to anyone who will handle this exception.
+   *
+   * :param timeout: The Timeout object which reached the timeout.
+   * Note we do not type this to prevent circular dependencies
    */
-  constructor() {
+  constructor(timeout) {
     super();
-    this._filters = [];
-  }
-  /**
-   * Registers a single filter with this filter chain instance.
-   * The order that these calls are made matters.
-   *
-   * :param one_filter: a ConfigFilter to add to the filter chain.
-   */
-  register(one_filter) {
-    this._filters.push(one_filter);
-  }
-  /**
-   * Filters the given basis config.
-   *
-   * Ideally this would be a Pure Function in that it would not
-   * modify the caller's arguments so that the caller has a chance
-   * to decide whether to take any changes returned.
-   *
-   * :param basis_config: The config dictionary to act as the basis
-   * for filtering
-   * :return: A config dictionary, potentially modified as per the
-   * policy encapsulated by the implementation
-   */
-  filter_config(basis_config) {
-    let filtered = basis_config;
-    let one_filter = null;
-    for (const one_filter2 of this._filters) {
-      filtered = one_filter2.filter_config(filtered);
-    }
-    return filtered;
+    this;
+    this.timeout = timeout;
   }
 }
-exposeClassAttributes(ConfigFilterChain);
+exposeClassAttributes(TimeoutReachedException);
+`
+See class comment for details
+`;
+class Timeout {
+  /**
+   * Constructor.
+   *
+   * :param name: name (possibly empty) used to identify this timeout object
+   * :param limit_in_seconds: timeout limit in seconds
+   * if this value is negative (< 0),
+   * timeout limit will never be reached (infinite timeout)
+   */
+  constructor(name, limit_in_seconds) {
+    this.name = name;
+    this.limit_in_seconds = limit_in_seconds;
+    this.start_time = -1;
+  }
+  /**
+   * Check if the timeout is reached.
+   *
+   * :return: True if timeout is reached at current time,
+   * False otherwise
+   */
+  is_reached() {
+    return this.get_remaining_time_in_seconds() == 0;
+  }
+  /**
+   * Sets the name for timeout object.
+   *
+   * :param name: name to set.
+   * :return: null
+   */
+  set_name(name) {
+    this.name = name;
+  }
+  /**
+   * Returns the name of timeout object.
+   *
+   * :return: current name of timeout
+   */
+  get_name() {
+    return this.name;
+  }
+  /**
+   * Sets timeout active with given limit in seconds
+   * Start time will be set to current time.
+   *
+   * :param timeout_limit_in_seconds: timeout limit in seconds
+   * :return: null
+   */
+  set_limit_in_seconds(timeout_limit_in_seconds) {
+    this.limit_in_seconds = timeout_limit_in_seconds;
+    this.start_time = time();
+  }
+  /**
+   * Get currently set timeout limit in seconds.
+   *
+   * :return: timeout limit in seconds.
+   */
+  get_limit_in_seconds() {
+    return this.limit_in_seconds;
+  }
+  /**
+   * Get time in seconds remaining until current timeout is reached.
+   *
+   * Returned value will be negative if:
+   * timeout is not set, or
+   * timeout limit is set to be infinite ("limit_in_seconds" < 0)
+   *
+   * :return: remaining time in seconds
+   */
+  get_remaining_time_in_seconds() {
+    if (this.start_time < 0 || this.limit_in_seconds < 0) {
+      return -1;
+    }
+    let remain = this.start_time + this.limit_in_seconds - time();
+    let new_remain = max2(remain, 0);
+    return new_remain;
+  }
+  /**
+   * Helper method that allows loops to asks whether they have enough
+   * time, given then information in the timeout.
+   * :param interval_seconds: The invertval of time to be queried,
+   * in seconds.
+   * :param timeout: The Timeout class to test against.
+   * This can be null, in which case there is always enough time.
+   * :return: True if there is enough time in the given interval and a loop
+   * should continue, False otherwise.
+   */
+  static has_time(interval_seconds, timeout) {
+    if (timeout == null) {
+      return true;
+    }
+    let secs_remaining = timeout.get_remaining_time_in_seconds();
+    if (secs_remaining < 0) {
+      return true;
+    }
+    if (secs_remaining > interval_seconds) {
+      return true;
+    }
+    return false;
+  }
+  /**
+   * Check if the task timeout is reached.
+   * If so, raise TimeoutReachedException exception
+   * and pass timeout information along with it.
+   *
+   * :return: null
+   */
+  check_timeout() {
+    if (this.is_reached()) {
+      throw new TimeoutReachedException(this);
+    }
+  }
+  /**
+   * Helper that calls check_timeout() as long as the given timeout is not null.
+   * :param timeout:
+   */
+  static check_if_not_none(timeout) {
+    if (timeout != null) {
+      timeout.check_timeout();
+    }
+  }
+}
+exposeClassAttributes(Timeout);
 class DictionaryOverlay {
   /**
    * :param basis: The basis dictionary to be overlayed.
@@ -240,6 +259,675 @@ class DictionaryOverlay {
   }
 }
 exposeClassAttributes(DictionaryOverlay);
+class FileOfClass {
+  /**
+   * Constructor
+   *
+   * :param source_file: The source file which will be the starting point for relative paths.
+   * :param path_to_basis: An optional path to a relative basis, so as to be
+   * able to find other relevant files in an absolute manner.
+   * This is expected to be a single string of multiple degrees of
+   * ".." (or "../..", etc).
+   * The default is the directory of the source_file.
+   */
+  constructor(source_file, path_to_basis = ".") {
+    this.source_file = source_file;
+    this.path_to_basis = path_to_basis;
+  }
+  /**
+   * :return: A pathlib Path pointing to the file of the source_file
+   */
+  get_file_path() {
+    return new Path(this.source_file);
+  }
+  /**
+   * :return: A string pointing to the absolute file path of the source_file
+   */
+  get_file() {
+    return String(this.get_file_path().resolve());
+  }
+  /**
+   * :return: A pathlib Path pointing to the directory of the source_file
+   */
+  get_dir_path() {
+    return new Path(this.source_file).parent;
+  }
+  /**
+   * :return: The pathlib Path of the provided basis.
+   */
+  get_basis_path() {
+    return new Path(this.get_dir_path() + "/" + this.path_to_basis);
+  }
+  /**
+   * :return: The absolute file path of the provided basis.
+   */
+  get_basis() {
+    return String(this.get_basis_path().resolve());
+  }
+  /**
+   * :return: An absolute path to a file that resides within the basis.
+   */
+  get_file_in_basis(filename) {
+    return String((this.get_basis_path() + "/" + filename).resolve());
+  }
+  /**
+   * Used to quell Path Traversal vulnerabilities
+   * :param filepath: The filepath to verify
+   * :param basis: The directory under which the file must reside
+   * :return: A fully resolved path if successful.
+   * Otherwise a Error will be thrown.
+   */
+  static check_file(filepath, basis = "/") {
+    if (filepath == null) {
+      return filepath;
+    }
+    if (basis == null) {
+      throw new Error("basis for file checking is null");
+    }
+    let test_abs_path = String(new Path(filepath).resolve());
+    if (basis == "~") {
+      basis = expanduser("~");
+    }
+    let basis_abs_path = String(new Path(basis).resolve());
+    if (!test_abs_path.startsWith(basis_abs_path)) {
+      throw new Error(`${test_abs_path} must be under ${basis_abs_path}`);
+    }
+    return test_abs_path;
+  }
+}
+exposeClassAttributes(FileOfClass);
+`
+See class comment for details.
+`;
+class ConditionalLogger {
+  /**
+   * Constructor.
+   *
+   * :param logger: The wrapped logger to redirect write() calls to.
+   */
+  constructor(logger, env_var) {
+    this.logger = logger;
+    this._should_log = (process.env[env_var] ?? "true").toLowerCase() == "true";
+  }
+  /**
+   * :return: True if this logger should log
+   */
+  should_log() {
+    return this._should_log;
+  }
+  /**
+   * Log 'msg % args' with severity 'DEBUG'.
+   *
+   * To pass exception information, use the keyword argument exc_info with
+   * a true value, e.g.
+   *
+   * logger.debug("Houston, we have a %s", "thorny problem", exc_info=True)
+   */
+  debug(msg, ...args) {
+    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
+    if (!this.should_log()) {
+      return;
+    }
+    this.logger.debug(msg, ...args, kwargs);
+  }
+  /**
+   * Log 'msg % args' with severity 'INFO'.
+   *
+   * To pass exception information, use the keyword argument exc_info with
+   * a true value, e.g.
+   *
+   * logger.info("Houston, we have a %s", "notable problem", exc_info=True)
+   */
+  info(msg, ...args) {
+    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
+    if (!this.should_log()) {
+      return;
+    }
+    this.logger.info(msg, ...args, kwargs);
+  }
+  /**
+   * Log 'msg % args' with severity 'WARNING'.
+   *
+   * To pass exception information, use the keyword argument exc_info with
+   * a true value, e.g.
+   *
+   * logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
+   */
+  warning(msg, ...args) {
+    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
+    if (!this.should_log()) {
+      return;
+    }
+    this.logger.warning(msg, ...args, kwargs);
+  }
+  /**
+   * Log 'msg % args' with severity 'ERROR'.
+   *
+   * To pass exception information, use the keyword argument exc_info with
+   * a true value, e.g.
+   *
+   * logger.error("Houston, we have a %s", "major problem", exc_info=True)
+   */
+  error(msg, ...args) {
+    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
+    if (!this.should_log()) {
+      return;
+    }
+    this.logger.error(msg, ...args, kwargs);
+  }
+  /**
+   * Convenience method for logging an ERROR with exception information.
+   */
+  exception(msg, exc_info2 = true, ...args) {
+    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
+    if (!this.should_log()) {
+      return;
+    }
+    this.logger.exception(msg, ...args, { ...kwargs, exc_info: exc_info2 });
+  }
+  /**
+   * Log 'msg % args' with severity 'CRITICAL'.
+   *
+   * To pass exception information, use the keyword argument exc_info with
+   * a true value, e.g.
+   *
+   * logger.critical("Houston, we have a %s", "major disaster", exc_info=True)
+   */
+  critical(msg, ...args) {
+    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
+    if (!this.should_log()) {
+      return;
+    }
+    this.logger.critical(msg, ...args, kwargs);
+  }
+  /**
+   * Don't use this method, use critical() instead.
+   */
+  fatal(msg, ...args) {
+    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
+    if (!this.should_log()) {
+      return;
+    }
+    this.logger.fatal(msg, ...args, kwargs);
+  }
+  /**
+   * Log 'msg % args' with the integer severity 'level'.
+   *
+   * To pass exception information, use the keyword argument exc_info with
+   * a true value, e.g.
+   *
+   * logger.log(level, "We have a %s", "mysterious problem", exc_info=True)
+   */
+  log(level, msg, ...args) {
+    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
+    if (!this.should_log()) {
+      return;
+    }
+    this.logger.log(level, msg, ...args, kwargs);
+  }
+}
+exposeClassAttributes(ConditionalLogger);
+;
+`
+See class comment for details.
+`;
+class SensitiveLogger extends ConditionalLogger {
+  /**
+   * Constructor.
+   *
+   * :param logger: The wrapped logger to redirect write() calls to.
+   */
+  constructor(logger) {
+    super(logger, "LEAF_LOG_SENSITIVE");
+  }
+}
+exposeClassAttributes(SensitiveLogger);
+`
+See class comment for details.
+`;
+class Restorer {
+  /**
+   * :param file_reference: The file reference to use when restoring.
+   * Default is null, implying the file reference is up to the
+   * implementation.
+   * :return: an object from some persisted store
+   */
+  restore(file_reference) {
+    throw Error("Method not implemented");
+  }
+}
+exposeClassAttributes(Restorer);
+`
+See class comment for details
+`;
+class ConfigFilter {
+  /**
+   * Filters the given basis config.
+   *
+   * Ideally this would be a Pure Function in that it would not
+   * modify the caller's arguments so that the caller has a chance
+   * to decide whether to take any changes returned.
+   *
+   * :param basis_config: The config dictionary to act as the basis
+   * for filtering
+   * :return: A config dictionary, potentially modified as per the
+   * policy encapsulated by the implementation
+   */
+  filter_config(basis_config) {
+    throw Error("Method not implemented");
+  }
+}
+exposeClassAttributes(ConfigFilter);
+`
+See class comment for details.
+`;
+class ConfigFilterChain extends ConfigFilter {
+  /**
+   * Constructor.
+   */
+  constructor() {
+    super();
+    this._filters = [];
+  }
+  /**
+   * Registers a single filter with this filter chain instance.
+   * The order that these calls are made matters.
+   *
+   * :param one_filter: a ConfigFilter to add to the filter chain.
+   */
+  register(one_filter) {
+    this._filters.push(one_filter);
+  }
+  /**
+   * Filters the given basis config.
+   *
+   * Ideally this would be a Pure Function in that it would not
+   * modify the caller's arguments so that the caller has a chance
+   * to decide whether to take any changes returned.
+   *
+   * :param basis_config: The config dictionary to act as the basis
+   * for filtering
+   * :return: A config dictionary, potentially modified as per the
+   * policy encapsulated by the implementation
+   */
+  filter_config(basis_config) {
+    let filtered = basis_config;
+    let one_filter = null;
+    for (const one_filter2 of this._filters) {
+      filtered = one_filter2.filter_config(filtered);
+    }
+    return filtered;
+  }
+}
+exposeClassAttributes(ConfigFilterChain);
+class FieldExtractor {
+  /**
+   * :param dictionary: the dictionary in which the field
+   * is supposed exist.
+   * :param field_name: the fully specified field name.
+   * :param default_value: a default value if the field is not found.
+   * Default is null
+   * :param delimiter: a delimiting character for splitting deep-dictionary
+   * keys
+   * :return: the value of the field in the dictionary or
+   * null if the field did not exist.
+   */
+  get_field(dictionary, field_name, default_value = null, delimiter = ".") {
+    if (dictionary == null || (!is_dict(dictionary) || field_name == null)) {
+      return default_value;
+    }
+    if (field_name == null || !isinstance2(field_name, String)) {
+      return dict.get(dictionary, field_name, default_value);
+    }
+    if (!contains(delimiter, field_name)) {
+      return dict.get(dictionary, field_name, default_value);
+    }
+    let field_split = field_name.split(delimiter);
+    let use_field_name = field_split[0];
+    let value = dict.get(dictionary, use_field_name, null);
+    if (value == null || !is_dict(value)) {
+      return default_value;
+    }
+    let remaining_split = slice2(field_split, 1, len(field_split) + 1);
+    let remaining_field = remaining_split.join(delimiter);
+    let deep_value = this.get_field(value, remaining_field, default_value, delimiter);
+    return deep_value;
+  }
+}
+exposeClassAttributes(FieldExtractor);
+`
+See class comment for details.
+`;
+class DictionaryExtractor {
+  /**
+   * Constructor
+   *
+   * :param dictionary: The dictionary to operate on.
+   * :param delimiter: a delimiting character for splitting deep-dictionary keys
+   */
+  constructor(dictionary, delimiter = ".") {
+    this.my_dict = dictionary;
+    this.delimiter = delimiter;
+    this.extractor = new FieldExtractor();
+  }
+  /**
+   * :param field_name: the fully specified field name.
+   * :param default_value: a default value if the field is not found.
+   * Default is null
+   * :return: the value of the field in the dictionary or
+   * null if the field did not exist.
+   */
+  get(field_name, default_value = null) {
+    return this.extractor.get_field(this.my_dict, field_name, default_value, this.delimiter);
+  }
+}
+exposeClassAttributes(DictionaryExtractor);
+`
+See class comment for details.
+`;
+class ConversionPolicy {
+  /**
+   * Constructor.
+   *
+   * :param reference_pruner: A ReferencePruner implementation
+   * that knows how to prune/graft repeated references
+   * throughout the object hierarchy
+   * :param dictionary_converter: A DictionaryConverter implementation
+   * that knows how to convert from a dictionary to the object type
+   * in question.
+   * :param pretty: a boolean which says whether the output is to be
+   * nicely formatted or not.  Try for: indent=4, sort_keys=True
+   */
+  constructor(reference_pruner, dictionary_converter, pretty) {
+    this._reference_pruner = reference_pruner;
+    this._dictionary_converter = dictionary_converter;
+    this._pretty = pretty;
+  }
+  /**
+   * :return: Whether or not the output should be pretty
+   */
+  is_pretty() {
+    return this._pretty;
+  }
+  /**
+   * :param obj: The object to convert into a pruned dictionary
+   * :return: a pruned dictionary representation of the object
+   */
+  convert_from_object(obj) {
+    let pruned_obj = obj;
+    if (this._reference_pruner != null) {
+      pruned_obj = this._reference_pruner.prune(obj);
+    }
+    let pruned_dict = null;
+    if (this._dictionary_converter != null) {
+      pruned_dict = this._dictionary_converter.to_dict(pruned_obj);
+    } else if (is_dict(pruned_obj)) {
+      pruned_dict = pruned_obj;
+    } else {
+      pruned_dict = pruned_obj.this;
+    }
+    return pruned_dict;
+  }
+  /**
+   * :param pruned_dict: The pruned dictionary that is to
+   * be converted back into the object.
+   * Can be null.
+   * :return: the deserialized object
+   */
+  convert_to_object(pruned_dict) {
+    let pruned_obj = null;
+    if (this._dictionary_converter != null) {
+      pruned_obj = this._dictionary_converter.from_dict(pruned_dict);
+    } else {
+      pruned_obj = pruned_dict;
+    }
+    let obj = pruned_obj;
+    if (this._reference_pruner != null) {
+      obj = this._reference_pruner.graft(pruned_obj);
+    }
+    return obj;
+  }
+}
+exposeClassAttributes(ConversionPolicy);
+`
+See class comment for details.
+`;
+class Serializer {
+  /**
+   * :param obj: The object to serialize
+   * :return: an open file-like object for streaming the serialized
+   * bytes. , unknown file cursors should be set to the beginning
+   * of the data (ala seek to the beginning).
+   */
+  from_object(obj) {
+    throw Error("Method not implemented");
+  }
+}
+exposeClassAttributes(Serializer);
+`
+See class comment for details.
+`;
+class SerializationFormat extends Serializer {
+  /**
+   * :param obj: The object to serialize
+   * :return: an open file-like object for streaming the serialized
+   * bytes. , unknown file cursors should be set to the beginning
+   * of the data (ala seek to the beginning).
+   */
+  from_object(obj) {
+    throw Error("Method not implemented");
+  }
+  /**
+   * :param fileobj: The file-like object to deserialize.
+   * It is expected that the file-like object be open
+   * and be pointing at the beginning of the data
+   * (ala seek to the beginning).
+   *
+   * After calling this method, the seek pointer
+   * will be at the end of the data. Closing of the
+   * fileobj is left to the caller.
+   * :return: the deserialized object
+   */
+  to_object(fileobj) {
+    throw Error("Method not implemented");
+  }
+  /**
+   * :return: A string representing a file extension for the
+   * serialization method, including the ".".
+   *
+   * While the parent interface allows for returning
+   * lists, a SerializationFormat implementation should
+   * only ever have a single file extension associated
+   * with it.
+   */
+  get_file_extension() {
+    throw Error("Method not implemented");
+  }
+}
+exposeClassAttributes(SerializationFormat);
+`
+See class comment for details.
+`;
+class JsonSerializationFormat extends SerializationFormat {
+  /**
+   * Constructor.
+   *
+   * :param reference_pruner: A ReferencePruner implementation
+   * that knows how to prune/graft repeated references
+   * throughout the object hierarchy
+   * :param dictionary_converter: A DictionaryConverter implementation
+   * that knows how to convert from a dictionary to the object type
+   * in question.
+   * :param pretty: a boolean which says whether the output is to be
+   * nicely formatted or not.  Try for: indent=4, sort_keys=True
+   */
+  constructor(reference_pruner, dictionary_converter, pretty) {
+    super();
+    this.conversion_policy = new ConversionPolicy(reference_pruner, dictionary_converter, pretty);
+  }
+  /**
+   * :param obj: The object to serialize
+   * :return: an open file-like object for streaming the serialized
+   * bytes. , unknown file cursors should be set to the beginning
+   * of the data (ala seek to the beginning).
+   */
+  from_object(obj) {
+    let pruned_dict = this.conversion_policy.convert_from_object(obj);
+    let indent = null;
+    let sort_keys = false;
+    if (this.conversion_policy.is_pretty()) {
+      indent = 4;
+      sort_keys = true;
+    }
+    let json_str = dumps(pruned_dict, { indent, sortKeys: sort_keys });
+    let byte_array = new Uint8Array(json_str, "utf-8");
+    let fileobj = new BytesIO(byte_array);
+    fileobj.seek(0, SEEK_SET);
+    return fileobj;
+  }
+  /**
+   * :param fileobj: The file-like object to deserialize.
+   * It is expected that the file-like object be open and be
+   * pointing at the beginning of the data (ala seek to the
+   * beginning).
+   *
+   * After calling this method, the seek pointer will be at the end
+   * of the data. Closing of the fileobj is left to the caller.
+   * :return: the deserialized object
+   */
+  to_object(fileobj) {
+    let pruned_dict = null;
+    if (fileobj != null) {
+      pruned_dict = load(fileobj);
+    }
+    let obj = this.conversion_policy.convert_to_object(pruned_dict);
+    return obj;
+  }
+  /**
+   * :return: A string representing a file extension for the
+   * serialization method, including the ".".
+   */
+  get_file_extension() {
+    return ".json";
+  }
+}
+exposeClassAttributes(JsonSerializationFormat);
+;
+`
+See class comment for details.
+`;
+class BytesDecoder {
+  static {
+    this.COMMON_ENCODINGS = ["utf-8", "cp1252", "latin-1"];
+  }
+  /**
+   * Decodes the given Uint8Array data to a string by sequentially trying the encodings listed
+   * in :attr:`COMMON_ENCODINGS` and returning as soon as one succeeds.
+   *
+   * With the default encodings (including ``latin-1``), this method is expected to always
+   * return a decoded string, although the content may be garbled for non-text or
+   * unexpectedly encoded inputs. The final ``UnicodeDecodeError`` is only raised if none
+   * of the configured encodings can decode the data.
+   *
+   * :param bytes_data: The Uint8Array data to decode.
+   * :param source_name: Optional name of the source of the Uint8Array data, used for logging purposes.
+   * :return: The tuple of decoded string and the encoding used for decoding.
+   */
+  static decode_bytes(bytes_data, source_name) {
+    const bytes = bytes_data instanceof Uint8Array ? bytes_data : new Uint8Array(bytes_data == null ? [] : bytes_data);
+    const encoding_names = { "utf-8": "utf-8", "cp1252": "windows-1252", "latin-1": "iso-8859-1" };
+    for (const encoding of BytesDecoder.COMMON_ENCODINGS) {
+      try {
+        const decoder = new TextDecoder(encoding_names[encoding] || encoding, { fatal: true });
+        return [decoder.decode(bytes), encoding];
+      } catch (e) {
+        continue;
+      }
+    }
+    throw new Error(`Unable to decode Uint8Array data from source '${source_name}'`);
+  }
+}
+exposeClassAttributes(BytesDecoder);
+`
+See class comment for details.
+`;
+class HoconSerializationFormat extends JsonSerializationFormat {
+  /**
+   * Constructor.
+   *
+   * :param reference_pruner: A ReferencePruner implementation
+   * that knows how to prune/graft repeated references
+   * throughout the object hierarchy
+   * :param dictionary_converter: A DictionaryConverter implementation
+   * that knows how to convert from a dictionary to the object type
+   * in question.
+   * :param pretty: a boolean which says whether the output is to be
+   * nicely formatted or not.  Try for: indent=4, sort_keys=True
+   * :param sanitize_keys: When True, to_object() removes the quotation
+   * marks that pyhocon embeds in keys that had to be quoted in
+   * the HOCON source because they contain characters that are
+   * special in HOCON keys -- "$", "}", "[", "]", ":", "=",
+   * "+", "#", "`", "^", "?", "!", "@", "*", "&", and "." --
+   * e.g. "llama3.1" or "llama3:8b".
+   * Default is False, preserving the existing (quote-retaining)
+   * behavior for current callers.
+   */
+  constructor(reference_pruner, dictionary_converter, pretty, sanitize_keys) {
+    super(reference_pruner, dictionary_converter, pretty);
+    this.sanitize_keys = sanitize_keys;
+  }
+  /**
+   * :param fileobj: The file-like object to deserialize.
+   * It is expected that the file-like object be open and be
+   * pointing at the beginning of the data (ala seek to the
+   * beginning).
+   *
+   * After calling this method, the seek pointer will be at the end
+   * of the data. Closing of the fileobj is left to the caller.
+   * :param basedir: Optional base directory for resolving include directives.
+   * When provided, HOCON include paths are resolved relative to this
+   * directory rather than the process working directory. Pass the
+   * directory of the file being parsed so that sibling includes work
+   * correctly regardless of where the server is started from.
+   * :return: the deserialized object
+   */
+  to_object(fileobj, basedir = null) {
+    let pruned_dict = null;
+    if (fileobj != null) {
+      let hocon_bytes = fileobj.getvalue();
+      let [hocon_string, _] = BytesDecoder.decode_bytes(hocon_bytes);
+      pruned_dict = ConfigFactory.parse_String(hocon_string, { basedir });
+      if (pruned_dict != null && this.sanitize_keys) {
+        let wrapper = new ConfigTree();
+        wrapper.put("root", pruned_dict);
+        pruned_dict = wrapper.as_plain_ordered_dict()["root"];
+      }
+      if (pruned_dict != null) {
+        pruned_dict = loads(dumps(pruned_dict));
+      }
+    }
+    let obj = this.conversion_policy.convert_to_object(pruned_dict);
+    return obj;
+  }
+  /**
+   * :return: A string representing a file extension for the
+   * serialization method, including the ".".
+   */
+  get_file_extension() {
+    return ".hocon";
+  }
+}
+exposeClassAttributes(HoconSerializationFormat);
+class StringFilter {
+  /**
+   * :param in_string: an input string to filter
+   * :return: a filtered version of the in_string, according to implementation policy
+   */
+  filter(in_string) {
+    throw Error("Method not implemented");
+  }
+}
+exposeClassAttributes(StringFilter);
 class DictionaryValidator {
   /**
    * Validate the given dictionary
@@ -252,6 +940,77 @@ class DictionaryValidator {
   }
 }
 exposeClassAttributes(DictionaryValidator);
+class CompositeDictionaryValidator extends DictionaryValidator {
+  /**
+   * Constructor
+   *
+   * :param validators: A list of validators to use
+   * :param stop_on_error: When True, return after the first validator that produces
+   * errors instead of running every validator. Useful for ordering phases
+   * where later validators assume earlier validators passed (e.g., shape
+   * checks before semantic checks that would crash on malformed input).
+   * Default False preserves the "collect all errors" behavior.
+   */
+  constructor(validators, stop_on_error = false) {
+    super();
+    this.validators = validators;
+    this.stop_on_error = stop_on_error;
+  }
+  /**
+   * Validate the agent network.
+   *
+   * :param candidate: The dictionary to validate
+   * :return: A list of error messages
+   */
+  validate(candidate) {
+    let errors = [];
+    if (!candidate) {
+      errors.push("Nothing to validate.");
+      return errors;
+    }
+    if (this.validators == null || len(this.validators) == 0) {
+      errors.push("No validation policy.");
+      return errors;
+    }
+    for (const validator of this.validators) {
+      let new_errors = validator.validate(candidate);
+      errors.push(...new_errors);
+      if (new_errors && this.stop_on_error) {
+        break;
+      }
+    }
+    return errors;
+  }
+}
+exposeClassAttributes(CompositeDictionaryValidator);
+`
+See class comment for details.
+`;
+class DictionaryConverter {
+  /**
+   * :param obj: The object to be converted into a dictionary
+   * :return: A data-only dictionary that represents all the data for
+   * the given object, either in primitives
+   * (booleans, ints, floats, strings), arrays, or dictionaries.
+   * If obj is null, then the returned dictionary should also be
+   * null.  If obj is not the correct type, it is also reasonable
+   * to return null.
+   */
+  to_dict(obj) {
+    throw Error("Method not implemented");
+  }
+  /**
+   * :param obj_dict: The data-only dictionary to be converted into an object
+   * :return: An object instance created from the given dictionary.
+   * If obj_dict is null, the returned object should also be null.
+   * If obj_dict is not the correct type, it is also reasonable
+   * to return null.
+   */
+  from_dict(obj_dict) {
+    throw Error("Method not implemented");
+  }
+}
+exposeClassAttributes(DictionaryConverter);
 `
 See class comment for details.
 `;
@@ -414,152 +1173,6 @@ class AsyncioThreadPoolExecutor extends ThreadPoolExecutor {
   }
 }
 exposeClassAttributes(AsyncioThreadPoolExecutor);
-`
-See class comment for details.
-`;
-class ConditionalLogger {
-  /**
-   * Constructor.
-   *
-   * :param logger: The wrapped logger to redirect write() calls to.
-   */
-  constructor(logger, env_var) {
-    this.logger = logger;
-    this._should_log = (process.env[env_var] ?? "true").toLowerCase() == "true";
-  }
-  /**
-   * :return: True if this logger should log
-   */
-  should_log() {
-    return this._should_log;
-  }
-  /**
-   * Log 'msg % args' with severity 'DEBUG'.
-   *
-   * To pass exception information, use the keyword argument exc_info with
-   * a true value, e.g.
-   *
-   * logger.debug("Houston, we have a %s", "thorny problem", exc_info=True)
-   */
-  debug(msg, ...args) {
-    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
-    if (!this.should_log()) {
-      return;
-    }
-    this.logger.debug(msg, ...args, kwargs);
-  }
-  /**
-   * Log 'msg % args' with severity 'INFO'.
-   *
-   * To pass exception information, use the keyword argument exc_info with
-   * a true value, e.g.
-   *
-   * logger.info("Houston, we have a %s", "notable problem", exc_info=True)
-   */
-  info(msg, ...args) {
-    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
-    if (!this.should_log()) {
-      return;
-    }
-    this.logger.info(msg, ...args, kwargs);
-  }
-  /**
-   * Log 'msg % args' with severity 'WARNING'.
-   *
-   * To pass exception information, use the keyword argument exc_info with
-   * a true value, e.g.
-   *
-   * logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
-   */
-  warning(msg, ...args) {
-    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
-    if (!this.should_log()) {
-      return;
-    }
-    this.logger.warning(msg, ...args, kwargs);
-  }
-  /**
-   * Log 'msg % args' with severity 'ERROR'.
-   *
-   * To pass exception information, use the keyword argument exc_info with
-   * a true value, e.g.
-   *
-   * logger.error("Houston, we have a %s", "major problem", exc_info=True)
-   */
-  error(msg, ...args) {
-    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
-    if (!this.should_log()) {
-      return;
-    }
-    this.logger.error(msg, ...args, kwargs);
-  }
-  /**
-   * Convenience method for logging an ERROR with exception information.
-   */
-  exception(msg, exc_info2 = true, ...args) {
-    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
-    if (!this.should_log()) {
-      return;
-    }
-    this.logger.exception(msg, ...args, { ...kwargs, exc_info: exc_info2 });
-  }
-  /**
-   * Log 'msg % args' with severity 'CRITICAL'.
-   *
-   * To pass exception information, use the keyword argument exc_info with
-   * a true value, e.g.
-   *
-   * logger.critical("Houston, we have a %s", "major disaster", exc_info=True)
-   */
-  critical(msg, ...args) {
-    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
-    if (!this.should_log()) {
-      return;
-    }
-    this.logger.critical(msg, ...args, kwargs);
-  }
-  /**
-   * Don't use this method, use critical() instead.
-   */
-  fatal(msg, ...args) {
-    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
-    if (!this.should_log()) {
-      return;
-    }
-    this.logger.fatal(msg, ...args, kwargs);
-  }
-  /**
-   * Log 'msg % args' with the integer severity 'level'.
-   *
-   * To pass exception information, use the keyword argument exc_info with
-   * a true value, e.g.
-   *
-   * logger.log(level, "We have a %s", "mysterious problem", exc_info=True)
-   */
-  log(level, msg, ...args) {
-    const kwargs = args.length > 0 && args[args.length - 1] != null && typeof args[args.length - 1] === "object" && !Array.isArray(args[args.length - 1]) && Object.keys(args[args.length - 1]).length === 0 ? args.pop() : {};
-    if (!this.should_log()) {
-      return;
-    }
-    this.logger.log(level, msg, ...args, kwargs);
-  }
-}
-exposeClassAttributes(ConditionalLogger);
-;
-`
-See class comment for details.
-`;
-class SensitiveLogger extends ConditionalLogger {
-  /**
-   * Constructor.
-   *
-   * :param logger: The wrapped logger to redirect write() calls to.
-   */
-  constructor(logger) {
-    super(logger, "LEAF_LOG_SENSITIVE");
-  }
-}
-exposeClassAttributes(SensitiveLogger);
 `
 See class comment for details.
 `;
@@ -1606,317 +2219,6 @@ class ResolverUtil {
   }
 }
 exposeClassAttributes(ResolverUtil);
-`
-See class comment for details.
-`;
-class Restorer {
-  /**
-   * :param file_reference: The file reference to use when restoring.
-   * Default is null, implying the file reference is up to the
-   * implementation.
-   * :return: an object from some persisted store
-   */
-  restore(file_reference) {
-    throw Error("Method not implemented");
-  }
-}
-exposeClassAttributes(Restorer);
-`
-See class comment for details.
-`;
-class ConversionPolicy {
-  /**
-   * Constructor.
-   *
-   * :param reference_pruner: A ReferencePruner implementation
-   * that knows how to prune/graft repeated references
-   * throughout the object hierarchy
-   * :param dictionary_converter: A DictionaryConverter implementation
-   * that knows how to convert from a dictionary to the object type
-   * in question.
-   * :param pretty: a boolean which says whether the output is to be
-   * nicely formatted or not.  Try for: indent=4, sort_keys=True
-   */
-  constructor(reference_pruner, dictionary_converter, pretty) {
-    this._reference_pruner = reference_pruner;
-    this._dictionary_converter = dictionary_converter;
-    this._pretty = pretty;
-  }
-  /**
-   * :return: Whether or not the output should be pretty
-   */
-  is_pretty() {
-    return this._pretty;
-  }
-  /**
-   * :param obj: The object to convert into a pruned dictionary
-   * :return: a pruned dictionary representation of the object
-   */
-  convert_from_object(obj) {
-    let pruned_obj = obj;
-    if (this._reference_pruner != null) {
-      pruned_obj = this._reference_pruner.prune(obj);
-    }
-    let pruned_dict = null;
-    if (this._dictionary_converter != null) {
-      pruned_dict = this._dictionary_converter.to_dict(pruned_obj);
-    } else if (is_dict(pruned_obj)) {
-      pruned_dict = pruned_obj;
-    } else {
-      pruned_dict = pruned_obj.this;
-    }
-    return pruned_dict;
-  }
-  /**
-   * :param pruned_dict: The pruned dictionary that is to
-   * be converted back into the object.
-   * Can be null.
-   * :return: the deserialized object
-   */
-  convert_to_object(pruned_dict) {
-    let pruned_obj = null;
-    if (this._dictionary_converter != null) {
-      pruned_obj = this._dictionary_converter.from_dict(pruned_dict);
-    } else {
-      pruned_obj = pruned_dict;
-    }
-    let obj = pruned_obj;
-    if (this._reference_pruner != null) {
-      obj = this._reference_pruner.graft(pruned_obj);
-    }
-    return obj;
-  }
-}
-exposeClassAttributes(ConversionPolicy);
-`
-See class comment for details.
-`;
-class Serializer {
-  /**
-   * :param obj: The object to serialize
-   * :return: an open file-like object for streaming the serialized
-   * bytes. , unknown file cursors should be set to the beginning
-   * of the data (ala seek to the beginning).
-   */
-  from_object(obj) {
-    throw Error("Method not implemented");
-  }
-}
-exposeClassAttributes(Serializer);
-`
-See class comment for details.
-`;
-class SerializationFormat extends Serializer {
-  /**
-   * :param obj: The object to serialize
-   * :return: an open file-like object for streaming the serialized
-   * bytes. , unknown file cursors should be set to the beginning
-   * of the data (ala seek to the beginning).
-   */
-  from_object(obj) {
-    throw Error("Method not implemented");
-  }
-  /**
-   * :param fileobj: The file-like object to deserialize.
-   * It is expected that the file-like object be open
-   * and be pointing at the beginning of the data
-   * (ala seek to the beginning).
-   *
-   * After calling this method, the seek pointer
-   * will be at the end of the data. Closing of the
-   * fileobj is left to the caller.
-   * :return: the deserialized object
-   */
-  to_object(fileobj) {
-    throw Error("Method not implemented");
-  }
-  /**
-   * :return: A string representing a file extension for the
-   * serialization method, including the ".".
-   *
-   * While the parent interface allows for returning
-   * lists, a SerializationFormat implementation should
-   * only ever have a single file extension associated
-   * with it.
-   */
-  get_file_extension() {
-    throw Error("Method not implemented");
-  }
-}
-exposeClassAttributes(SerializationFormat);
-`
-See class comment for details.
-`;
-class JsonSerializationFormat extends SerializationFormat {
-  /**
-   * Constructor.
-   *
-   * :param reference_pruner: A ReferencePruner implementation
-   * that knows how to prune/graft repeated references
-   * throughout the object hierarchy
-   * :param dictionary_converter: A DictionaryConverter implementation
-   * that knows how to convert from a dictionary to the object type
-   * in question.
-   * :param pretty: a boolean which says whether the output is to be
-   * nicely formatted or not.  Try for: indent=4, sort_keys=True
-   */
-  constructor(reference_pruner, dictionary_converter, pretty) {
-    super();
-    this.conversion_policy = new ConversionPolicy(reference_pruner, dictionary_converter, pretty);
-  }
-  /**
-   * :param obj: The object to serialize
-   * :return: an open file-like object for streaming the serialized
-   * bytes. , unknown file cursors should be set to the beginning
-   * of the data (ala seek to the beginning).
-   */
-  from_object(obj) {
-    let pruned_dict = this.conversion_policy.convert_from_object(obj);
-    let indent = null;
-    let sort_keys = false;
-    if (this.conversion_policy.is_pretty()) {
-      indent = 4;
-      sort_keys = true;
-    }
-    let json_str = dumps(pruned_dict, { indent, sortKeys: sort_keys });
-    let byte_array = new Uint8Array(json_str, "utf-8");
-    let fileobj = new BytesIO(byte_array);
-    fileobj.seek(0, SEEK_SET);
-    return fileobj;
-  }
-  /**
-   * :param fileobj: The file-like object to deserialize.
-   * It is expected that the file-like object be open and be
-   * pointing at the beginning of the data (ala seek to the
-   * beginning).
-   *
-   * After calling this method, the seek pointer will be at the end
-   * of the data. Closing of the fileobj is left to the caller.
-   * :return: the deserialized object
-   */
-  to_object(fileobj) {
-    let pruned_dict = null;
-    if (fileobj != null) {
-      pruned_dict = load(fileobj);
-    }
-    let obj = this.conversion_policy.convert_to_object(pruned_dict);
-    return obj;
-  }
-  /**
-   * :return: A string representing a file extension for the
-   * serialization method, including the ".".
-   */
-  get_file_extension() {
-    return ".json";
-  }
-}
-exposeClassAttributes(JsonSerializationFormat);
-;
-`
-See class comment for details.
-`;
-class BytesDecoder {
-  static {
-    this.COMMON_ENCODINGS = ["utf-8", "cp1252", "latin-1"];
-  }
-  /**
-   * Decodes the given Uint8Array data to a string by sequentially trying the encodings listed
-   * in :attr:`COMMON_ENCODINGS` and returning as soon as one succeeds.
-   *
-   * With the default encodings (including ``latin-1``), this method is expected to always
-   * return a decoded string, although the content may be garbled for non-text or
-   * unexpectedly encoded inputs. The final ``UnicodeDecodeError`` is only raised if none
-   * of the configured encodings can decode the data.
-   *
-   * :param bytes_data: The Uint8Array data to decode.
-   * :param source_name: Optional name of the source of the Uint8Array data, used for logging purposes.
-   * :return: The tuple of decoded string and the encoding used for decoding.
-   */
-  static decode_bytes(bytes_data, source_name) {
-    const bytes = bytes_data instanceof Uint8Array ? bytes_data : new Uint8Array(bytes_data == null ? [] : bytes_data);
-    const encoding_names = { "utf-8": "utf-8", "cp1252": "windows-1252", "latin-1": "iso-8859-1" };
-    for (const encoding of BytesDecoder.COMMON_ENCODINGS) {
-      try {
-        const decoder = new TextDecoder(encoding_names[encoding] || encoding, { fatal: true });
-        return [decoder.decode(bytes), encoding];
-      } catch (e) {
-        continue;
-      }
-    }
-    throw new Error(`Unable to decode Uint8Array data from source '${source_name}'`);
-  }
-}
-exposeClassAttributes(BytesDecoder);
-`
-See class comment for details.
-`;
-class HoconSerializationFormat extends JsonSerializationFormat {
-  /**
-   * Constructor.
-   *
-   * :param reference_pruner: A ReferencePruner implementation
-   * that knows how to prune/graft repeated references
-   * throughout the object hierarchy
-   * :param dictionary_converter: A DictionaryConverter implementation
-   * that knows how to convert from a dictionary to the object type
-   * in question.
-   * :param pretty: a boolean which says whether the output is to be
-   * nicely formatted or not.  Try for: indent=4, sort_keys=True
-   * :param sanitize_keys: When True, to_object() removes the quotation
-   * marks that pyhocon embeds in keys that had to be quoted in
-   * the HOCON source because they contain characters that are
-   * special in HOCON keys -- "$", "}", "[", "]", ":", "=",
-   * "+", "#", "`", "^", "?", "!", "@", "*", "&", and "." --
-   * e.g. "llama3.1" or "llama3:8b".
-   * Default is False, preserving the existing (quote-retaining)
-   * behavior for current callers.
-   */
-  constructor(reference_pruner, dictionary_converter, pretty, sanitize_keys) {
-    super(reference_pruner, dictionary_converter, pretty);
-    this.sanitize_keys = sanitize_keys;
-  }
-  /**
-   * :param fileobj: The file-like object to deserialize.
-   * It is expected that the file-like object be open and be
-   * pointing at the beginning of the data (ala seek to the
-   * beginning).
-   *
-   * After calling this method, the seek pointer will be at the end
-   * of the data. Closing of the fileobj is left to the caller.
-   * :param basedir: Optional base directory for resolving include directives.
-   * When provided, HOCON include paths are resolved relative to this
-   * directory rather than the process working directory. Pass the
-   * directory of the file being parsed so that sibling includes work
-   * correctly regardless of where the server is started from.
-   * :return: the deserialized object
-   */
-  to_object(fileobj, basedir = null) {
-    let pruned_dict = null;
-    if (fileobj != null) {
-      let hocon_bytes = fileobj.getvalue();
-      let [hocon_string, _] = BytesDecoder.decode_bytes(hocon_bytes);
-      pruned_dict = ConfigFactory.parse_String(hocon_string, { basedir });
-      if (pruned_dict != null && this.sanitize_keys) {
-        let wrapper = new ConfigTree();
-        wrapper.put("root", pruned_dict);
-        pruned_dict = wrapper.as_plain_ordered_dict()["root"];
-      }
-      if (pruned_dict != null) {
-        pruned_dict = loads(dumps(pruned_dict));
-      }
-    }
-    let obj = this.conversion_policy.convert_to_object(pruned_dict);
-    return obj;
-  }
-  /**
-   * :return: A string representing a file extension for the
-   * serialization method, including the ".".
-   */
-  get_file_extension() {
-    return ".hocon";
-  }
-}
-exposeClassAttributes(HoconSerializationFormat);
 class ConfigUtil {
   /**
    * Read a boolean-valued config entry, accepting common boolean-like
@@ -1969,34 +2271,6 @@ class ConfigUtil {
   }
 }
 exposeClassAttributes(ConfigUtil);
-`
-See class comment for details.
-`;
-class DictionaryConverter {
-  /**
-   * :param obj: The object to be converted into a dictionary
-   * :return: A data-only dictionary that represents all the data for
-   * the given object, either in primitives
-   * (booleans, ints, floats, strings), arrays, or dictionaries.
-   * If obj is null, then the returned dictionary should also be
-   * null.  If obj is not the correct type, it is also reasonable
-   * to return null.
-   */
-  to_dict(obj) {
-    throw Error("Method not implemented");
-  }
-  /**
-   * :param obj_dict: The data-only dictionary to be converted into an object
-   * :return: An object instance created from the given dictionary.
-   * If obj_dict is null, the returned object should also be null.
-   * If obj_dict is not the correct type, it is also reasonable
-   * to return null.
-   */
-  from_dict(obj_dict) {
-    throw Error("Method not implemented");
-  }
-}
-exposeClassAttributes(DictionaryConverter);
 class ExceptionUtil {
   /**
    * Recursively extract detailed information from nested exceptions.
@@ -2039,49 +2313,6 @@ class ExceptionUtil {
   }
 }
 exposeClassAttributes(ExceptionUtil);
-class CompositeDictionaryValidator extends DictionaryValidator {
-  /**
-   * Constructor
-   *
-   * :param validators: A list of validators to use
-   * :param stop_on_error: When True, return after the first validator that produces
-   * errors instead of running every validator. Useful for ordering phases
-   * where later validators assume earlier validators passed (e.g., shape
-   * checks before semantic checks that would crash on malformed input).
-   * Default False preserves the "collect all errors" behavior.
-   */
-  constructor(validators, stop_on_error) {
-    super();
-    this.validators = validators;
-    this.stop_on_error = stop_on_error;
-  }
-  /**
-   * Validate the agent network.
-   *
-   * :param candidate: The dictionary to validate
-   * :return: A list of error messages
-   */
-  validate(candidate) {
-    let errors = [];
-    if (!candidate) {
-      errors.push("Nothing to validate.");
-      return errors;
-    }
-    if (this.validators == null || len(this.validators) == 0) {
-      errors.push("No validation policy.");
-      return errors;
-    }
-    for (const validator of this.validators) {
-      let new_errors = validator.validate(candidate);
-      errors.push(...new_errors);
-      if (new_errors && this.stop_on_error) {
-        break;
-      }
-    }
-    return errors;
-  }
-}
-exposeClassAttributes(CompositeDictionaryValidator);
 `
 See class comment for details.
 `;
@@ -3004,6 +3235,7 @@ export {
   DictionaryValidator,
   ExceptionUtil,
   FieldExtractor,
+  FileOfClass,
   HoconSerializationFormat,
   JsonSerializationFormat,
   LoggingSetup,
@@ -3011,5 +3243,7 @@ export {
   ResolverUtil,
   Restorer,
   SensitiveLogger,
-  Startable
+  Startable,
+  StringFilter,
+  Timeout
 };

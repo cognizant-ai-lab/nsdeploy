@@ -29,54 +29,6 @@ function exposeClassAttributes(cls) {
     });
   }
 }
-const FILES = {
-  "data/internals/run_context/langchain/llms/default_llm_info.hocon": defaultLlmInfo,
-  "data/internals/run_context/langchain/toolbox/toolbox_info.hocon": toolboxInfo
-};
-function lookup(path) {
-  const p = String(path);
-  for (const [suffix, text] of Object.entries(FILES)) {
-    if (p.endsWith("/" + suffix)) return text;
-  }
-  return null;
-}
-function notFound(path) {
-  const err = new Error(`ENOENT: no such file or directory, open '${path}'`);
-  err.code = "ENOENT";
-  return err;
-}
-function existsSync(path) {
-  return lookup(path) != null;
-}
-function readFileSync(path) {
-  const text = lookup(path);
-  if (text == null) throw notFound(path);
-  return text;
-}
-async function readFile(path) {
-  return readFileSync(path);
-}
-function statSync(path) {
-  if (lookup(path) == null) throw notFound(path);
-  return { isFile: () => true, isDirectory: () => false };
-}
-const promises = { readFile };
-const fs = { existsSync, readFileSync, readFile, statSync, promises };
-const fs$1 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
-  __proto__: null,
-  default: fs,
-  existsSync,
-  promises,
-  readFile,
-  readFileSync,
-  statSync
-}, Symbol.toStringTag, { value: "Module" }));
-function createRequire() {
-  return (id) => {
-    throw new Error(`require('${id}') is not available in the browser`);
-  };
-}
-const module$1 = { createRequire };
 const sep = "/";
 function normalizeParts(parts, absolute) {
   const out = [];
@@ -138,6 +90,48 @@ function pathToFileURL(path) {
   return new URL("file://" + path);
 }
 const url = { fileURLToPath, pathToFileURL };
+const FILES = {
+  "data/internals/run_context/langchain/llms/default_llm_info.hocon": defaultLlmInfo,
+  "data/internals/run_context/langchain/toolbox/toolbox_info.hocon": toolboxInfo
+};
+function lookup(path) {
+  const p = String(path);
+  for (const [suffix, text] of Object.entries(FILES)) {
+    if (p.endsWith("/" + suffix)) return text;
+  }
+  return null;
+}
+function notFound(path) {
+  const err = new Error(`ENOENT: no such file or directory, open '${path}'`);
+  err.code = "ENOENT";
+  return err;
+}
+function existsSync(path) {
+  return lookup(path) != null;
+}
+function readFileSync(path) {
+  const text = lookup(path);
+  if (text == null) throw notFound(path);
+  return text;
+}
+async function readFile(path) {
+  return readFileSync(path);
+}
+function statSync(path) {
+  if (lookup(path) == null) throw notFound(path);
+  return { isFile: () => true, isDirectory: () => false };
+}
+const promises = { readFile };
+const fs = { existsSync, readFileSync, readFile, statSync, promises };
+const fs$1 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  default: fs,
+  existsSync,
+  promises,
+  readFile,
+  readFileSync,
+  statSync
+}, Symbol.toStringTag, { value: "Module" }));
 class ConfigTree {
   constructor(obj) {
     Object.assign(this, obj || {});
@@ -169,6 +163,12 @@ class ConfigFactory {
   }
 }
 const pyhocon = { ConfigFactory, ConfigTree };
+function createRequire() {
+  return (id) => {
+    throw new Error(`require('${id}') is not available in the browser`);
+  };
+}
+const module$1 = { createRequire };
 function spawn() {
   throw new Error("spawning processes is not available in the browser");
 }

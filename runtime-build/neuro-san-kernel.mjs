@@ -11,24 +11,19 @@
 // Do not fix these by editing the package: a rebundled package has to be
 // reproducible from the transpiling source.
 
-// PORT BACK: the package root only exports ConciergeSessionFactory,
-// DirectAgentSessionFactory and ChatMessageType, and its "exports" map blocks deep
-// imports, so these reach into dist by relative path. Exporting these classes from
-// the package's src/index.ts would let them be imported by name.
-import { AgentNetwork } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/internals/graph/registry/agent_network.js";
-import { NetworkConfigFilterChain } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/internals/graph/filters/network_config_filter_chain.js";
-import { SlyDataRedactor } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/message/utils/sly_data_redactor.js";
+import {
+  AgentNetwork,
+  NetworkConfigFilterChain,
+  SlyDataRedactor,
+  KeywordNetworkValidator,
+  MissingNodesNetworkValidator,
+  ToolNameNetworkValidator,
+  ToolsShapeValidator,
+  UnreachableNodesNetworkValidator,
+  UrlNetworkValidator,
+  ChatMessageType as PackageChatMessageType,
+} from "@cognizant-ai-lab/neuro-san-npm";
 import { ExternalAgentParsing } from "./external-agent-parsing.mjs";
-import { KeywordNetworkValidator } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/internals/validation/network/keyword_network_validator.js";
-import { MissingNodesNetworkValidator } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/internals/validation/network/missing_nodes_network_validator.js";
-import { ToolNameNetworkValidator } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/internals/validation/network/tool_name_network_validator.js";
-import { ToolsShapeValidator } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/internals/validation/network/tools_shape_validator.js";
-import { UnreachableNodesNetworkValidator } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/internals/validation/network/unreachable_nodes_network_validator.js";
-import { UrlNetworkValidator } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/internals/validation/network/url_network_validator.js";
-// ChatMessageType is imported from its own module rather than the package root:
-// the root also exports the session factories, whose imports reach the whole
-// LangChain run context and Node-only code that cannot bundle for a browser.
-import { ChatMessageType as PackageChatMessageType } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/message/types/chat_message_type.js";
 
 // --- config filter chain -----------------------------------------------------
 

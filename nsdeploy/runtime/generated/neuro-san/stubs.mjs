@@ -1,6 +1,6 @@
 import { contains2, len2, set3, dict3, bufferExports, ChatOpenAI, createAgent, AIMessage, AIMessageChunk, mapChatMessagesToStoredMessages, jsonrepair } from "../vendor/libraries.mjs";
-import { fs, exposeClassAttributes, join, existsSync, createRequire, posix, fileURLToPath } from "../browser/shims.mjs";
 import { process } from "../browser/process.mjs";
+import { exposeClassAttributes, posix, fileURLToPath, fs, join, existsSync, createRequire } from "../browser/shims.mjs";
 function is_plain_object(value) {
   return typeof value === "object" && value !== null && !(Symbol.iterator in Object(value));
 }
@@ -93,14 +93,21 @@ function set(value) {
   }
   return set3(value);
 }
-const dict = Object.assign((entries) => entries == null ? {} : entries instanceof Map || typeof entries[Symbol.iterator] === "function" ? Object.fromEntries(entries) : { ...entries }, dict3, {
-  get(container, key, default_value) {
-    if (container instanceof Map) {
-      return container.has(key) ? container.get(key) : default_value;
+const dict = Object.assign(
+  // (vibed) python's dict(x) copies, and every transpiled python dict is a plain
+  // object, so this returns one. pythonlib's dict() is new Map(x), which throws for
+  // a plain object; BaseToolFactory.create_function_tool calls dict(function_json).
+  (entries) => entries == null ? {} : entries instanceof Map || typeof entries[Symbol.iterator] === "function" ? Object.fromEntries(entries) : { ...entries },
+  dict3,
+  {
+    get(container, key, default_value) {
+      if (container instanceof Map) {
+        return container.has(key) ? container.get(key) : default_value;
+      }
+      return dict3.get(container, key, default_value);
     }
-    return dict3.get(container, key, default_value);
   }
-});
+);
 function is_instance_named(value, names) {
   const wanted = new Set(names);
   let proto = value === null || value === void 0 ? null : Object.getPrototypeOf(value);
@@ -112,42 +119,26 @@ function is_instance_named(value, names) {
   }
   return false;
 }
-function get_deep_size(obj, value) {
-  return 0;
+function cpu_count() {
+  const concurrency = globalThis.navigator?.hardwareConcurrency;
+  return typeof concurrency === "number" && concurrency > 0 ? concurrency : 1;
 }
-function open$1(path, mode = "r") {
-  const binary = String(mode).includes("b");
-  const data = binary ? fs.readFileSync(path) : fs.readFileSync(path, "utf8");
-  return {
-    read() {
-      return data;
-    },
-    close() {
-    }
-  };
+const pathsep = typeof process !== "undefined" && process.platform === "win32" ? ";" : ":";
+function addLevelName(_level, _name) {
 }
-function next(iterable, ...fallback) {
-  const iterator = typeof iterable.next === "function" ? iterable : iterable[Symbol.iterator]();
-  const result = iterator.next();
-  if (!result.done) {
-    return result.value;
-  }
-  if (fallback.length > 0) {
-    return fallback[0];
-  }
-  throw new Error("StopIteration");
+let logRecordFactory = () => ({});
+function getLogRecordFactory() {
+  return logRecordFactory;
 }
-function frozenset(iterable = []) {
-  return new Set(iterable);
+function setLogRecordFactory(factory) {
+  logRecordFactory = factory;
 }
-function issubclass(subject, base) {
-  if (typeof subject !== "function" || typeof base !== "function") {
-    return false;
-  }
-  return subject === base || subject.prototype instanceof base;
+function exc_info() {
+  return [null, null, null];
 }
-function callable(subject) {
-  return typeof subject === "function";
+const modules = {};
+function fromTimestamp(secondsSinceEpoch) {
+  return new Date(secondsSinceEpoch * 1e3);
 }
 function py_callable$1(cls) {
   return new Proxy(cls, {
@@ -884,6 +875,220 @@ AsyncioSemaphore.prototype[DISPOSE_SYMBOL$1] = function() {
 const Event$1 = py_callable$1(AsyncioEvent);
 const Lock$1 = py_callable$1(AsyncioLock);
 const Semaphore$1 = py_callable$1(AsyncioSemaphore);
+const Future = Future$1;
+const TimeoutError = TimeoutError$1;
+class ThreadPoolExecutor {
+  constructor() {
+    this._threads = /* @__PURE__ */ new Set();
+  }
+  submit(fn, ...args) {
+    const future = new Future();
+    try {
+      future.set_result(fn(...args));
+    } catch (error) {
+      future.set_exception(error);
+    }
+    return future;
+  }
+  shutdown() {
+  }
+}
+class ProcessPoolExecutor {
+}
+exposeClassAttributes(ThreadPoolExecutor);
+exposeClassAttributes(ProcessPoolExecutor);
+const _handler$6 = {
+  get(_t, prop) {
+    if (prop === "__esModule")
+      return true;
+    if (prop === "then")
+      return void 0;
+    if (prop === "default")
+      return new Proxy({}, _handler$6);
+    const fn = (..._a) => new Proxy({}, _handler$6);
+    return new Proxy(fn, _handler$6);
+  },
+  apply() {
+    return new Proxy({}, _handler$6);
+  },
+  construct() {
+    return new Proxy({}, _handler$6);
+  }
+};
+const _stub$7 = new Proxy({}, _handler$6);
+const get_context = _stub$7.get_context;
+class FileOfClass {
+  constructor(basis) {
+    this.basis = basis;
+  }
+  get_file_in_basis(relative) {
+    return this.basis ? posix.join(this.basis, relative) : relative;
+  }
+}
+const PACKAGED_DATA = posix.join(posix.dirname(fileURLToPath(import.meta.url)), "..", "data");
+const PACKAGE_BASIS = process.env.NEURO_SAN_ROOT ?? PACKAGED_DATA;
+const TOP_LEVEL_DIR = new FileOfClass(PACKAGE_BASIS);
+const REGISTRIES_DIR = new FileOfClass(PACKAGE_BASIS ? posix.join(PACKAGE_BASIS, "registries") : "");
+exposeClassAttributes(FileOfClass);
+function get_deep_size(obj, value) {
+  return 0;
+}
+function open$1(path, mode = "r") {
+  const binary = String(mode).includes("b");
+  const data = binary ? fs.readFileSync(path) : fs.readFileSync(path, "utf8");
+  return {
+    read() {
+      return data;
+    },
+    close() {
+    }
+  };
+}
+function next(iterable, ...fallback) {
+  const iterator = typeof iterable.next === "function" ? iterable : iterable[Symbol.iterator]();
+  const result = iterator.next();
+  if (!result.done) {
+    return result.value;
+  }
+  if (fallback.length > 0) {
+    return fallback[0];
+  }
+  throw new Error("StopIteration");
+}
+function frozenset(iterable = []) {
+  return new Set(iterable);
+}
+function issubclass(subject, base) {
+  if (typeof subject !== "function" || typeof base !== "function") {
+    return false;
+  }
+  return subject === base || subject.prototype instanceof base;
+}
+function callable(subject) {
+  return typeof subject === "function";
+}
+class NullContext {
+  constructor(enter_result = null) {
+    this.enter_result = enter_result;
+  }
+  close() {
+  }
+}
+function nullcontext(enter_result = null) {
+  return new NullContext(enter_result);
+}
+function suppress(...value) {
+  return new NullContext();
+}
+function contextmanager(my_function) {
+  return (...args) => {
+    const iterator = my_function(...args);
+    const first = iterator.next();
+    if (first.done) {
+      throw new TypeError("generator did not yield");
+    }
+    const value = first.value;
+    if (value === null || typeof value !== "object" && typeof value !== "function") {
+      iterator.return();
+      return value;
+    }
+    const holder = value;
+    const previous_close = typeof holder.close === "function" ? holder.close.bind(holder) : null;
+    holder.close = () => {
+      if (previous_close !== null) {
+        previous_close();
+      }
+      iterator.return();
+    };
+    return value;
+  };
+}
+exposeClassAttributes(NullContext);
+class BytesIO {
+  constructor(buf) {
+    if (bufferExports.Buffer.isBuffer(buf))
+      this._buf = buf;
+    else if (buf instanceof Uint8Array)
+      this._buf = bufferExports.Buffer.from(buf);
+    else if (typeof buf === "string")
+      this._buf = bufferExports.Buffer.from(buf);
+    else if (buf == null)
+      this._buf = bufferExports.Buffer.alloc(0);
+    else
+      this._buf = bufferExports.Buffer.from(buf);
+    this._pos = 0;
+  }
+  getvalue() {
+    return this._buf;
+  }
+  read(n) {
+    if (n == null || n === void 0) {
+      const out2 = this._buf.subarray(this._pos);
+      this._pos = this._buf.length;
+      return out2;
+    }
+    const out = this._buf.subarray(this._pos, this._pos + n);
+    this._pos += out.length;
+    return out;
+  }
+  seek(pos) {
+    this._pos = pos;
+    return this._pos;
+  }
+  tell() {
+    return this._pos;
+  }
+  close() {
+  }
+}
+class StringIO {
+  constructor(s = "") {
+    this._s = String(s);
+    this._pos = 0;
+  }
+  getvalue() {
+    return this._s;
+  }
+  read(n) {
+    if (n == null || n === void 0) {
+      const out2 = this._s.slice(this._pos);
+      this._pos = this._s.length;
+      return out2;
+    }
+    const out = this._s.slice(this._pos, this._pos + n);
+    this._pos += out.length;
+    return out;
+  }
+  seek(pos) {
+    this._pos = pos;
+    return this._pos;
+  }
+  close() {
+  }
+}
+const io = { BytesIO, StringIO };
+exposeClassAttributes(BytesIO);
+exposeClassAttributes(StringIO);
+const _handler$5 = {
+  get(_t, prop) {
+    if (prop === "__esModule")
+      return true;
+    if (prop === "then")
+      return void 0;
+    if (prop === "default")
+      return new Proxy({}, _handler$5);
+    const fn = (..._a) => new Proxy({}, _handler$5);
+    return new Proxy(fn, _handler$5);
+  },
+  apply() {
+    return new Proxy({}, _handler$5);
+  },
+  construct() {
+    return new Proxy({}, _handler$5);
+  }
+};
+const _stub$6 = new Proxy({}, _handler$5);
+const open = _stub$6.open;
 function py_callable(cls) {
   return new Proxy(cls, {
     apply(target, _this_arg, args) {
@@ -1167,6 +1372,69 @@ const Semaphore = py_callable(ThreadingSemaphore);
 const Event = py_callable(ThreadingEvent);
 const local = py_callable(ThreadingLocal);
 const Thread = py_callable(ThreadingThread);
+const _handler$4 = {
+  get(_t, prop) {
+    if (prop === "__esModule")
+      return true;
+    if (prop === "then")
+      return void 0;
+    if (prop === "default")
+      return new Proxy({}, _handler$4);
+    const fn = (..._a) => new Proxy({}, _handler$4);
+    return new Proxy(fn, _handler$4);
+  },
+  apply() {
+    return new Proxy({}, _handler$4);
+  },
+  construct() {
+    return new Proxy({}, _handler$4);
+  }
+};
+const _stub$5 = new Proxy({}, _handler$4);
+const croniter = _stub$5.croniter;
+function ConfigDict(opts = {}) {
+  return { ...opts };
+}
+class BaseModel {
+  constructor(data = {}) {
+    Object.assign(this, data);
+  }
+  static model_validate(data) {
+    return new this(data);
+  }
+}
+function Field(defaultValue, opts = {}) {
+  return { default: defaultValue, ...opts };
+}
+function create_model(name, fieldDefs = {}) {
+  return class extends BaseModel {
+    static {
+      this.model_fields = fieldDefs;
+    }
+  };
+}
+const pydantic = { ConfigDict, BaseModel, Field, create_model };
+exposeClassAttributes(BaseModel);
+const _handler$3 = {
+  get(_t, prop) {
+    if (prop === "__esModule")
+      return true;
+    if (prop === "then")
+      return void 0;
+    if (prop === "default")
+      return new Proxy({}, _handler$3);
+    const fn = (..._a) => new Proxy({}, _handler$3);
+    return new Proxy(fn, _handler$3);
+  },
+  apply() {
+    return new Proxy({}, _handler$3);
+  },
+  construct() {
+    return new Proxy({}, _handler$3);
+  }
+};
+const _stub$4 = new Proxy({}, _handler$3);
+const get = _stub$4.get;
 function isawaitable(value) {
   return value !== null && value !== void 0 && typeof value.then === "function";
 }
@@ -1199,28 +1467,6 @@ function print_exception(..._args) {
 }
 function print_exc() {
 }
-const Future = Future$1;
-const TimeoutError = TimeoutError$1;
-class ThreadPoolExecutor {
-  constructor() {
-    this._threads = /* @__PURE__ */ new Set();
-  }
-  submit(fn, ...args) {
-    const future = new Future();
-    try {
-      future.set_result(fn(...args));
-    } catch (error) {
-      future.set_exception(error);
-    }
-    return future;
-  }
-  shutdown() {
-  }
-}
-class ProcessPoolExecutor {
-}
-exposeClassAttributes(ThreadPoolExecutor);
-exposeClassAttributes(ProcessPoolExecutor);
 const MODULE_ALIASES = {
   "langchain_openai": "@langchain/openai",
   "langchain_openai.chat_models": "@langchain/openai",
@@ -1283,141 +1529,6 @@ function import_module(name) {
   throw err;
 }
 const importlib = { import_module };
-class FileOfClass {
-  constructor(basis) {
-    this.basis = basis;
-  }
-  get_file_in_basis(relative) {
-    return this.basis ? posix.join(this.basis, relative) : relative;
-  }
-}
-const PACKAGED_DATA = posix.join(posix.dirname(fileURLToPath(import.meta.url)), "..", "data");
-const PACKAGE_BASIS = process.env.NEURO_SAN_ROOT ?? PACKAGED_DATA;
-const TOP_LEVEL_DIR = new FileOfClass(PACKAGE_BASIS);
-const REGISTRIES_DIR = new FileOfClass(PACKAGE_BASIS ? posix.join(PACKAGE_BASIS, "registries") : "");
-exposeClassAttributes(FileOfClass);
-class NullContext {
-  constructor(enter_result = null) {
-    this.enter_result = enter_result;
-  }
-  close() {
-  }
-}
-function nullcontext(enter_result = null) {
-  return new NullContext(enter_result);
-}
-function suppress(...value) {
-  return new NullContext();
-}
-function contextmanager(my_function) {
-  return (...args) => {
-    const iterator = my_function(...args);
-    const first = iterator.next();
-    if (first.done) {
-      throw new TypeError("generator did not yield");
-    }
-    const value = first.value;
-    if (value === null || typeof value !== "object" && typeof value !== "function") {
-      iterator.return();
-      return value;
-    }
-    const holder = value;
-    const previous_close = typeof holder.close === "function" ? holder.close.bind(holder) : null;
-    holder.close = () => {
-      if (previous_close !== null) {
-        previous_close();
-      }
-      iterator.return();
-    };
-    return value;
-  };
-}
-exposeClassAttributes(NullContext);
-class BytesIO {
-  constructor(buf) {
-    if (bufferExports.Buffer.isBuffer(buf))
-      this._buf = buf;
-    else if (buf instanceof Uint8Array)
-      this._buf = bufferExports.Buffer.from(buf);
-    else if (typeof buf === "string")
-      this._buf = bufferExports.Buffer.from(buf);
-    else if (buf == null)
-      this._buf = bufferExports.Buffer.alloc(0);
-    else
-      this._buf = bufferExports.Buffer.from(buf);
-    this._pos = 0;
-  }
-  getvalue() {
-    return this._buf;
-  }
-  read(n) {
-    if (n == null || n === void 0) {
-      const out2 = this._buf.subarray(this._pos);
-      this._pos = this._buf.length;
-      return out2;
-    }
-    const out = this._buf.subarray(this._pos, this._pos + n);
-    this._pos += out.length;
-    return out;
-  }
-  seek(pos) {
-    this._pos = pos;
-    return this._pos;
-  }
-  tell() {
-    return this._pos;
-  }
-  close() {
-  }
-}
-class StringIO {
-  constructor(s = "") {
-    this._s = String(s);
-    this._pos = 0;
-  }
-  getvalue() {
-    return this._s;
-  }
-  read(n) {
-    if (n == null || n === void 0) {
-      const out2 = this._s.slice(this._pos);
-      this._pos = this._s.length;
-      return out2;
-    }
-    const out = this._s.slice(this._pos, this._pos + n);
-    this._pos += out.length;
-    return out;
-  }
-  seek(pos) {
-    this._pos = pos;
-    return this._pos;
-  }
-  close() {
-  }
-}
-const io = { BytesIO, StringIO };
-exposeClassAttributes(BytesIO);
-exposeClassAttributes(StringIO);
-const _handler$3 = {
-  get(_t, prop) {
-    if (prop === "__esModule")
-      return true;
-    if (prop === "then")
-      return void 0;
-    if (prop === "default")
-      return new Proxy({}, _handler$3);
-    const fn = (..._a) => new Proxy({}, _handler$3);
-    return new Proxy(fn, _handler$3);
-  },
-  apply() {
-    return new Proxy({}, _handler$3);
-  },
-  construct() {
-    return new Proxy({}, _handler$3);
-  }
-};
-const _stub$4 = new Proxy({}, _handler$3);
-const open = _stub$4.open;
 const RENAMED = {
   model_name: "model",
   model: "model",
@@ -1524,29 +1635,6 @@ function AsyncClient(...args) {
   return new Proxy({ args, aclose: async () => {
   } }, {});
 }
-function ConfigDict(opts = {}) {
-  return { ...opts };
-}
-class BaseModel {
-  constructor(data = {}) {
-    Object.assign(this, data);
-  }
-  static model_validate(data) {
-    return new this(data);
-  }
-}
-function Field(defaultValue, opts = {}) {
-  return { default: defaultValue, ...opts };
-}
-function create_model(name, fieldDefs = {}) {
-  return class extends BaseModel {
-    static {
-      this.model_fields = fieldDefs;
-    }
-  };
-}
-const pydantic = { ConfigDict, BaseModel, Field, create_model };
-exposeClassAttributes(BaseModel);
 function create_agent(opts = {}) {
   const { model, tools = [], middleware, checkpointer, system_prompt, systemPrompt } = opts;
   return createAgent({
@@ -1718,6 +1806,22 @@ const _handler$1 = {
 const _stub$1 = new Proxy({}, _handler$1);
 const ClientSession = _stub$1.ClientSession;
 const ClientTimeout = _stub$1.ClientTimeout;
+class ClientError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ClientError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+class ClientPayloadError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ClientPayloadError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+exposeClassAttributes(ClientError);
+exposeClassAttributes(ClientPayloadError);
 function dictConfig(_config) {
 }
 class PersistenceFactory {
@@ -1726,27 +1830,6 @@ class PersistenceFactory {
   }
 }
 exposeClassAttributes(PersistenceFactory);
-function cpu_count() {
-  const concurrency = globalThis.navigator?.hardwareConcurrency;
-  return typeof concurrency === "number" && concurrency > 0 ? concurrency : 1;
-}
-const pathsep = typeof process !== "undefined" && process.platform === "win32" ? ";" : ":";
-function addLevelName(_level, _name) {
-}
-let logRecordFactory = () => ({});
-function getLogRecordFactory() {
-  return logRecordFactory;
-}
-function setLogRecordFactory(factory) {
-  logRecordFactory = factory;
-}
-function exc_info() {
-  return [null, null, null];
-}
-const modules = {};
-function fromTimestamp(secondsSinceEpoch) {
-  return new Date(secondsSinceEpoch * 1e3);
-}
 const _handler = {
   get(_t, prop) {
     if (prop === "__esModule")
@@ -1826,8 +1909,10 @@ export {
   Lock,
   Lock$1,
   PersistenceFactory,
+  ProcessPoolExecutor,
   PythonChatOpenAI,
   Queue,
+  REGISTRIES_DIR,
   RuntimeError,
   SelectorEventLoop,
   StringIO,
@@ -1842,8 +1927,10 @@ export {
   contains,
   contextmanager,
   copy_context,
+  cpu_count,
   create_agent,
   create_model,
+  croniter,
   current_task,
   current_thread,
   deepcopy,
@@ -1856,7 +1943,9 @@ export {
   fromTimestamp,
   frozenset,
   gather,
+  get,
   getLogRecordFactory,
+  get_context,
   get_deep_size,
   get_running_loop,
   getfile,
@@ -1877,6 +1966,7 @@ export {
   nullcontext,
   open$1 as open,
   open as open$1,
+  pathsep,
   run_coroutine_threadsafe,
   set,
   setLogRecordFactory,

@@ -1,7 +1,9 @@
 // external-agent-parsing.mjs: neuro-san's ExternalAgentParsing, made to work.
 //
-import { ExternalAgentParsing } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/internals/utils/external_agent_parsing.js";
-import { AgentSessionConstants } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/interfaces/agent_session_constants.js";
+import {
+  ExternalAgentParsing,
+  AgentSessionConstants,
+} from "@cognizant-ai-lab/neuro-san-npm";
 
 // WORKAROUND: ExternalAgentParsing.parse_external_agent throws on every URL or
 // path, because the transpiled code calls Python str methods on a JS string:

@@ -1,11 +1,65 @@
-import { iter2, isinstance2, list3, enumerate2, slice2, getLogger, string2, copy, dumps, AIMessage, uuid4, at2, perfCounter, range2, Path } from "../vendor/libraries.mjs";
-import { get_deep_size, contains, dict, len, deepcopy, is_dict, suppress, issubclass, format_exc, TOP_LEVEL_DIR } from "./stubs.mjs";
-import { DictionaryExtractor, ConfigFilter, DictionaryOverlay, ConfigFilterChain, FieldExtractor, ResolverUtil, Resolver, ConfigUtil } from "./leaf_common.mjs";
-import { AgentNetworkInspector, RunContextFactory } from "./run_context.mjs";
-import { exposeClassAttributes, posix } from "../browser/shims.mjs";
 import { process } from "../browser/process.mjs";
-import { CallableActivation, ExternalAgentParsing, Origination, AccumulatingAgentReservationist, ProgressJournal, CodedTool, ToolArgumentReporting, AgentToolFactory } from "./internals.mjs";
+import { get_deep_size, contains, dict, len, is_dict, croniter, REGISTRIES_DIR, pathsep, cpu_count, ProcessPoolExecutor, get_context, ThreadPoolExecutor, suppress, deepcopy, issubclass, format_exc, TOP_LEVEL_DIR } from "./stubs.mjs";
+import { Path, PurePosixPath, iter2, isinstance2, list3, getLogger, repr2, enumerate2, sorted2, perfCounter, min2, tuple2, partial, dumps, copy, AIMessage, slice2, string2, uuid4, at2, range2 } from "../vendor/libraries.mjs";
+import { DictionaryExtractor, ConfigFilter, ConfigFilterChain, Restorer, DictionaryOverlay, FileOfClass, SensitiveLogger, FieldExtractor, ResolverUtil, Resolver, ConfigUtil } from "./leaf_common.mjs";
+import { AgentNameMapper, StorageClass, CallableActivation, CodedTool, AgentToolFactory } from "./interfaces.mjs";
+import { exposeClassAttributes, posix } from "../browser/shims.mjs";
+import { NetworkConfigFilterChain } from "./filters.mjs";
+import { AgentNetworkInspector, ManifestNetworkValidator, RunContextFactory, AccumulatingAgentReservationist } from "./run_context.mjs";
+import { AbstractAsyncConfigRestorer, McpToolNamePolicy, ExternalAgentParsing, Origination, ProgressJournal, ToolArgumentReporting } from "./internals.mjs";
 import { MessageProcessor, BaseMessageDictionaryConverter, BasicMessageProcessor, AgentMessage, SlyDataRedactor, ChatMessageType, ContentUtils } from "./message.mjs";
+class AgentFileTreeMapper extends AgentNameMapper {
+  /**
+   * Constructor
+   *
+   * :param path_method: Optional Path method to use for path manipulations.
+   * Default is pathlib.Path, but can be overridden for testing purposes.
+   */
+  constructor(path_method = (...args) => new Path(...args.map((one) => one == null ? one : String(one)))) {
+    super();
+    this.path_method = path_method;
+  }
+  /**
+   * Converts an agent name from registry manifest to file path to this agent definition file.
+   */
+  agent_name_to_filepath(agent_name) {
+    return String(this.path_method(new PurePosixPath(agent_name)));
+  }
+  /**
+   * Converts a file path to agent definition file (relative to registry root directory)
+   * to agent network name identifying it to the service.
+   */
+  filepath_to_agent_network_name(filepath) {
+    return String(new PurePosixPath(this.path_method(filepath).asPosix()).withSuffix(""));
+  }
+}
+exposeClassAttributes(AgentFileTreeMapper);
+class AgentStandaloneMapper extends AgentNameMapper {
+  /**
+   * Constructor
+   *
+   * :param path_method: Optional Path method to use for path manipulations.
+   * Default is pathlib.Path, but can be overridden for testing purposes.
+   */
+  constructor(path_method, Path2) {
+    super();
+    this.path_method = path_method;
+  }
+  /**
+   * Agent name is its filepath.
+   */
+  agent_name_to_filepath(agent_name) {
+    return String(this.path_method(new PurePosixPath(agent_name)));
+  }
+  /**
+   * Converts a file path to agent standalone definition file
+   * to agent network name identifying it to the service.
+   */
+  filepath_to_agent_network_name(filepath) {
+    return String(this.path_method(filepath).stem);
+  }
+}
+exposeClassAttributes(AgentStandaloneMapper);
 class AgentNetwork extends AgentNetworkInspector {
   /**
    * Constructor
@@ -48,7 +102,7 @@ class AgentNetwork extends AgentNetworkInspector {
    * network.set_as_mcp_tool(new McpToolNameFilter().filter(network.name))
    * get_mcp_tool_name() -> "deep__math_guy"
    * network.set_as_mcp_tool("calculator")
-   * get_mcp_tool_name() -> "calculator"   (an explicit manifest "mcp_name")
+   * get_mcp_tool_name() -> "calculator"   (an explicit "name" in the manifest's "mcp" settings)
    *
    * For a top-level network (this.name is "math_guy") the first two calls both
    * give "math_guy", since there is nothing to replace.
@@ -58,7 +112,7 @@ class AgentNetwork extends AgentNetworkInspector {
    * the network name from new McpToolNameFilter().filter()
    * ("deep/math_guy" gives "deep__math_guy"; a top-level
    * "math_guy" is already safe and stays "math_guy"), or an
-   * explicit "mcp_name" from the network's manifest entry.
+   * explicit "name" from the "mcp" settings of the network's manifest entry.
    * When null or empty (the default) the network name itself is
    * used unchanged, which preserves the historical behavior for
    * callers that do not care about provider-safe names. Note that
@@ -217,23 +271,116 @@ However, the front man must not be:
   }
 }
 exposeClassAttributes(AgentNetwork);
-class DefaultsConfigFilter extends ConfigFilter {
+class AgentNetworkRestorer extends AbstractAsyncConfigRestorer {
+  /**
+   * Constructor
+   *
+   * :param registry_dir: The directory under which file_references
+   * for registry files are allowed to be found.
+   * If null, there are no limits, but paths must be absolute
+   * :param agent_mapper: optional AgentNameMapper;
+   * if null, default will be used:
+   * if registry_dir is null, AgentStandaloneMapper instance will be used;
+   * otherwise, we use AgentFileTreeMapper.
+   */
+  constructor(registry_dir, agent_mapper) {
+    super("agent network", null, true);
+    this.registry_dir = registry_dir;
+    this.agent_mapper = agent_mapper;
+    if (!this.agent_mapper) {
+      if (this.registry_dir != null) {
+        this.agent_mapper = new AgentFileTreeMapper();
+      } else {
+        this.agent_mapper = new AgentStandaloneMapper();
+      }
+    }
+  }
+  /**
+   * :param file_reference: The file reference to use when restoring.
+   * Default is null, implying the file reference is up to the
+   * implementation.
+   * :return: an string of the file path to use
+   */
+  get_file_path(file_reference) {
+    if (file_reference == null || len(file_reference) == 0) {
+      throw new Error(`file_reference ${file_reference} cannot be null or empty string`);
+    }
+    let use_file = file_reference;
+    if (this.registry_dir != null) {
+      use_file = String(new Path(this.registry_dir).joinpath(file_reference));
+    }
+    return use_file;
+  }
+  /**
+   * Synchronous restore from the given file reference.
+   * :param file_reference: The file reference to use when restoring.
+   * Default is null, implying the file reference is up to the
+   * implementation.
+   * :return: an AgentNetwork.
+   */
+  restore(file_reference) {
+    let config = super.restore(file_reference);
+    return this.create_network(config, file_reference);
+  }
+  /**
+   * Asynchronous restore from the given file reference.
+   * :param file_reference: The file reference to use when restoring.
+   * Default is null, implying the file reference is up to the
+   * implementation.
+   * :return: an AgentNetwork.
+   */
+  async async_restore(file_reference) {
+    let config = await super.async_restore(file_reference);
+    return this.create_network(config, file_reference);
+  }
+  /**
+   * :param config: agent configuration dictionary, built or parsed from external sources
+   * :param file_reference: The file reference used for restoring
+   * :return: AgentNetwork instance for an agent.
+   */
+  create_network(config, file_reference) {
+    if (config == null) {
+      return null;
+    }
+    let name = this.agent_mapper.filepath_to_agent_network_name(file_reference);
+    let agent_network = new AgentNetwork(config, name);
+    return agent_network;
+  }
+  /**
+   * :param basis_config: agent configuration dictionary, built or parsed from external sources
+   * :param file_path: The file path the config was read from, supplied by the
+   * base class restore() for diagnostic context. Unused here.
+   * :return: An agent network dictionary that has gone through the standard filter chain.
+   */
+  filter_config(basis_config, file_path) {
+    return new NetworkConfigFilterChain().filter_config(basis_config);
+  }
+}
+exposeClassAttributes(AgentNetworkRestorer);
+class McpManifestDictConfigFilter extends ConfigFilter {
   static {
-    this.DEFAULTS_MAPPING = { "llm_config": null, "llm_config.verbose": { "dest_key": "verbose" }, "verbose": null, "max_steps": null, "max_iterations": null, "max_execution_seconds": null, "max_attempts": null, "error_formatter": null, "error_fragments": null, "sly_data_schema": { "dest_key": "function.sly_data_schema", "front_man_only": true, "union_fields": ["required"] } };
+    this.MCP_KEY = "mcp";
+  }
+  static {
+    this.ENABLE_KEY = "enable";
+  }
+  static {
+    this.NAME_KEY = "name";
   }
   /**
    * Constructor
+   *
+   * :param manifest_file: The name of the manifest file we are processing for logging purposes
+   * :param agent_network: The name of the agent network for logging purposes
    */
-  constructor() {
+  constructor(manifest_file, agent_network) {
     super();
-    this.overlayer = new DictionaryOverlay();
+    this.manifest_file = manifest_file;
+    this.agent_network = agent_network;
+    this.logger = getLogger(this.constructor.name);
   }
   /**
    * Filters the given basis config.
-   *
-   * Ideally this would be a Pure Function in that it would not
-   * modify the caller's arguments so that the caller has a chance
-   * to decide whether to take any changes returned.
    *
    * :param basis_config: The config dictionary to act as the basis
    * for filtering
@@ -241,484 +388,684 @@ class DefaultsConfigFilter extends ConfigFilter {
    * policy encapsulated by the implementation
    */
   filter_config(basis_config) {
-    if (basis_config == null) {
-      return basis_config;
-    }
-    let tools = dict.get(basis_config, "tools");
-    if (tools == null || len(tools) == 0) {
-      return basis_config;
-    }
-    let result_config = deepcopy(basis_config);
-    let basis_extractor = new DictionaryExtractor(result_config, ".");
-    let use_tools = dict.get(result_config, "tools");
-    let idx = 0;
-    let tool = null;
-    for (const [idx2, tool2] of enumerate2(use_tools)) {
-      let tool_extractor = new DictionaryExtractor(tool2, ".");
-      let is_front_man = idx2 == 0;
-      let basis_source_key = null;
-      let tool_dest_dict = null;
-      for (const [basis_source_key2, tool_dest_dict2] of Object.entries(DefaultsConfigFilter.DEFAULTS_MAPPING)) {
-        let basis_value = basis_extractor.get(basis_source_key2, null);
-        if (basis_value == null) {
-          continue;
-        }
-        let use_tool_dest_dict = tool_dest_dict2;
-        if (use_tool_dest_dict == null) {
-          use_tool_dest_dict = { "dest_key": basis_source_key2, "front_man_only": false, "union_fields": null };
-        }
-        let tool_dest_key = dict.get(use_tool_dest_dict, "dest_key", basis_source_key2);
-        let tool_front_man_only = dict.get(use_tool_dest_dict, "front_man_only", false);
-        if (tool_front_man_only && !is_front_man) {
-          continue;
-        }
-        let tool_value = tool_extractor.get(tool_dest_key, null);
-        if (tool_value == null) {
-          this.set_tool_value(tool2, tool_dest_key, deepcopy(basis_value));
-        } else if (is_dict(tool_value) && is_dict(basis_value)) {
-          let union_fields = dict.get(use_tool_dest_dict, "union_fields");
-          this.merge_dictionaries(tool2, tool_dest_key, basis_value, tool_value, union_fields);
-        }
-      }
-    }
-    return result_config;
-  }
-  /**
-   * Merges the basis and tool dictionaries
-   * :param tool: The tool dictionary itself
-   * :param tool_dest_key: The destination key in the tool dictionary
-   * :param basis_value: The dictionary value from the global basis
-   * :param tool_value: The dictionary value from the tool
-   * :param union_fields: The fields to union. Currently can not be a multi-part key.
-   */
-  merge_dictionaries(tool, tool_dest_key, basis_value, tool_value, union_fields = null) {
-    this.set_tool_value(tool, tool_dest_key, this.overlayer.overlay(basis_value, tool_value));
-    if (union_fields != null) {
-      if (isinstance2(union_fields, String)) {
-        let union_fields_string = union_fields;
-        union_fields = [union_fields_string];
-      }
-      let one_field = null;
-      for (const one_field2 of iter2(union_fields)) {
-        let basis_field = dict.get(basis_value, one_field2, []);
-        let tool_field = dict.get(tool_value, one_field2, []);
-        let one_field_key = `${tool_dest_key}.${one_field2}`;
-        let merged_lists = [...basis_field, ...tool_field];
-        let merged_dict = dict.fromKeys(merged_lists);
-        let merged_field = list3(Object.keys(merged_dict));
-        this.set_tool_value(tool, one_field_key, merged_field);
-      }
-    }
-  }
-  /**
-   * Sets the value of a key in the tool dictionary
-   *
-   * :param target: The dictionary to set the value in
-   * :param key: The key to set the value for. This can be a multi-part key delimited by "."
-   * :param value: The value to set
-   */
-  set_tool_value(target, key, value) {
-    let delimiter = ".";
-    if (!contains(delimiter, key)) {
-      target[key] = value;
-      return;
-    }
-    let parts = key.split(delimiter);
-    let first_part = parts[0];
-    let part_value = dict.get(target, first_part);
-    if (part_value == null) {
-      target[first_part] = {};
-      part_value = target[first_part];
-    } else if (!is_dict(part_value)) {
-      return;
-    }
-    let remaining_parts_list = slice2(parts, 1, void 0);
-    let remaining_parts = remaining_parts_list.join(".");
-    this.set_tool_value(part_value, remaining_parts, value);
-  }
-}
-exposeClassAttributes(DefaultsConfigFilter);
-class AbstractCommonDefsConfigFilter extends ConfigFilter {
-  /**
-   * Constructor
-   *
-   * :param commondefs_key: The string key in the commondefs section
-   * that contains the replacement dictionary.
-   * :param replacements: An initial replacements dictionary to start out with
-   * whose (copied) contents will be updated with commondefs definitions
-   * in the basis_config during the filter_config() entry point.
-   * Default is null, indicating everything needed comes from the config.
-   */
-  constructor(commondefs_key, replacements) {
-    super();
-    this.commondefs_key = commondefs_key;
-    this.starting_replacements = replacements;
-    if (replacements == null) {
-      this.starting_replacements = {};
-    }
-  }
-  /**
-   * Filters the given basis config.
-   *
-   * Ideally this would be a Pure Function in that it would not
-   * modify the caller's arguments so that the caller has a chance
-   * to decide whether to take any changes returned.
-   *
-   * :param basis_config: The config dictionary to act as the basis
-   * for filtering
-   * :return: A config dictionary, potentially modified as per the
-   * policy encapsulated by the implementation
-   */
-  filter_config(basis_config) {
-    if (basis_config == null || !basis_config) {
-      return basis_config;
-    }
-    let replacements = deepcopy(this.starting_replacements);
-    let empty = {};
-    let commondefs = dict.get(basis_config, "commondefs", empty);
-    if (commondefs) {
-      let new_replacements2 = deepcopy(dict.get(commondefs, this.commondefs_key, empty));
-      Object.assign(replacements, new_replacements2);
-    }
-    if (!replacements || Object.keys(replacements).length === 0) {
-      return basis_config;
-    }
-    let new_config = deepcopy(basis_config);
-    let new_replacements = this.filter_one_dict(replacements, replacements);
-    let tools = dict.get(basis_config, "tools");
-    new_config["tools"] = this.filter_one_list(tools, new_replacements);
-    return new_config;
-  }
-  /**
-   * Performs the filter on the values of a dictionary
-   *
-   * :param source: The dictionary to filter
-   * :param replacements: A dictionary of string keys to their replacements
-   * :return: A new dictionary whose value are (maybe) replaced per the
-   * replacements dictionary
-   */
-  filter_one_dict(source, replacements) {
-    let new_dict = deepcopy(source);
-    for (const [key, value] of Object.entries(source)) {
-      let replacement_value = null;
-      if (is_dict(value)) {
-        replacement_value = this.filter_one_dict(value, replacements);
-      } else if (isinstance2(value, Array)) {
-        replacement_value = this.filter_one_list(value, replacements);
-      } else {
-        replacement_value = this.make_replacements(value, replacements);
-      }
-      if (replacement_value != null) {
-        new_dict[key] = replacement_value;
-      }
-    }
-    return new_dict;
-  }
-  /**
-   * Performs the filter on the elements of a list
-   *
-   * :param source: The list to filter
-   * :param replacements: A dictionary of string keys to their replacements
-   * :return: A new List whose components are (maybe) replaced per the
-   * replacements dictionary
-   */
-  filter_one_list(source, replacements) {
-    let new_list = [];
-    for (const component of iter2(source)) {
-      let replacement_value = component;
-      if (is_dict(component)) {
-        replacement_value = this.filter_one_dict(component, replacements);
-      } else if (isinstance2(component, Array)) {
-        replacement_value = this.filter_one_list(component, replacements);
-      } else {
-        replacement_value = this.make_replacements(component, replacements);
-      }
-      new_list.push(replacement_value);
-    }
-    return new_list;
-  }
-  /**
-   * Make replacements per the keys and values in the replacements dictionary
-   *
-   * :param source_value: The value to potentially do replacements on
-   * :param replacements: A dictionary of string keys to their replacements
-   * :return: A potentially new value if some key in the replacements dictionary
-   * is found to trigger a replacement, otherwise, the same source_value
-   * that came in.
-   */
-  make_replacements(source_value, replacements) {
-    throw Error("Method not implemented");
-  }
-}
-exposeClassAttributes(AbstractCommonDefsConfigFilter);
-class DictionaryCommonDefsConfigFilter extends AbstractCommonDefsConfigFilter {
-  /**
-   * Constructor
-   *
-   * :param replacements: An initial replacements dictionary to start out with
-   * whose (copied) contents will be updated with commondefs definitions
-   * in the basis_config during the filter_config() entry point.
-   * Default is null, indicating everything needed comes from the config.
-   */
-  constructor(replacements) {
-    super("replacement_values", replacements);
-  }
-  /**
-   * Make replacements per the keys and values in the replacements dictionary
-   *
-   * :param source_value: The value to potentially do replacements on
-   * :param replacements: A dictionary of string keys to their replacements
-   * :return: A potentially new value if some key in the replacements dictionary
-   * is found to trigger a replacement, otherwise, the same source_value
-   * that came in.
-   */
-  make_replacements(source_value, replacements) {
-    if (!isinstance2(source_value, String)) {
-      return source_value;
-    }
-    let replacement_value = dict.get(replacements, source_value);
-    if (replacement_value == null) {
-      return source_value;
-    }
-    let replacement_value_copy = deepcopy(replacement_value);
-    return replacement_value_copy;
-  }
-}
-exposeClassAttributes(DictionaryCommonDefsConfigFilter);
-`
-See class comment for details
-`;
-class NameCorrectionConfigFilter extends ConfigFilter {
-  /**
-   * Filters the given basis config.
-   *
-   * Ideally this would be a Pure Function in that it would not
-   * modify the caller's arguments so that the caller has a chance
-   * to decide whether to take any changes returned.
-   *
-   * :param basis_config: The config dictionary to act as the basis
-   * for filtering
-   * :return: A config dictionary, potentially modified as per the
-   * policy encapsulated by the implementation
-   */
-  filter_config(basis_config) {
-    if (basis_config == null) {
-      return basis_config;
-    }
-    let tools = dict.get(basis_config, "tools");
-    if (tools == null || len(tools) == 0) {
-      return basis_config;
-    }
-    let corrections = {};
-    let errors = [];
-    let tool = null;
-    for (const tool2 of iter2(tools)) {
-      let use_tool = tool2;
-      let name = dict.get(use_tool, "name");
-      let new_name = this.validate_name(name);
-      if (new_name.startsWith("Error: ")) {
-        errors.push(new_name);
-      } else if (new_name != name) {
-        use_tool["name"] = new_name;
-        corrections[name] = new_name;
-      }
-    }
-    for (const tool2 of iter2(tools)) {
-      let use_tool = tool2;
-      let agent_tools = [];
-      agent_tools = dict.get(use_tool, "tools", agent_tools);
-      if (isinstance2(agent_tools, Array) && len(agent_tools) > 0) {
-        let new_agent_tools = [];
-        for (const agent_tool of iter2(agent_tools)) {
-          if (isinstance2(agent_tool, String)) {
-            new_agent_tools.push(dict.get(corrections, agent_tool, agent_tool));
-          } else {
-            new_agent_tools.push(agent_tool);
-          }
-        }
-        tool2["tools"] = new_agent_tools;
-      }
-      NameCorrectionConfigFilter.correct_args_tools(use_tool, corrections);
-    }
-    let logger = getLogger(this.constructor.name);
-    for (const error of iter2(errors)) {
-      logger.error(error);
-    }
-    for (const [original, correction] of Object.entries(corrections)) {
-      logger.info("Correcting %s to %s", String(original), String(correction));
+    let mcp_settings = this.normalize_mcp_settings(dict.get(basis_config, this.MCP_KEY));
+    basis_config[this.MCP_KEY] = mcp_settings;
+    if (dict.get(mcp_settings, this.ENABLE_KEY)) {
+      basis_config[StorageClass.PUBLIC] = true;
     }
     return basis_config;
   }
   /**
-   * Rewrites, in place, the agent-name references a tool holds in its args.tools
-   * using the given corrections table.
+   * Turns whatever the manifest author wrote for "mcp" into the settings dictionary.
    *
-   * args.tools is accepted in the same two shapes ToolsShapeValidator.validate_args_tools
-   * and AbstractNetworkValidator.coerce_args_tools understand: a list of agent-name
-   * strings, or a dict of label -> agent-name string. Only string entries (list elements,
-   * dict values) are rewritten. Dict keys, non-string entries and any other shape are left
-   * untouched, since ToolsShapeValidator is the place that reports malformed shapes.
-   * Neither "args" nor "args.tools" is created where absent.
-   *
-   * :param tool: The agent/tool spec dictionary whose args.tools is corrected in place
-   * :param corrections: A dictionary of original agent name -> corrected agent name
+   * :param value: The raw "mcp" value from the manifest entry: null when absent,
+   * a boolean, or a dictionary of settings.
+   * :return: A new dictionary with at least the "enable" and "name" keys
    */
-  static correct_args_tools(tool, corrections) {
-    let args = dict.get(tool, "args");
-    if (!is_dict(args)) {
-      return;
+  normalize_mcp_settings(value) {
+    let settings = /* @__PURE__ */ new Map([[this.ENABLE_KEY, false], [this.NAME_KEY, null]]);
+    if (value == null) {
+      return settings;
     }
-    let args_dict = args;
-    if (!contains("tools", Object.keys(args_dict))) {
-      return;
+    if (isinstance2(value, Boolean)) {
+      settings[this.ENABLE_KEY] = value;
+      return settings;
     }
-    let args_tools = dict.get(args_dict, "tools");
-    if (isinstance2(args_tools, Array)) {
-      let args_tools_list = args_tools;
-      let index = 0;
-      let agent_tool = null;
-      for (const [index2, agent_tool2] of enumerate2(args_tools_list)) {
-        if (isinstance2(agent_tool2, String)) {
-          let agent_tool_string = agent_tool2;
-          args_tools_list[index2] = dict.get(corrections, agent_tool_string, agent_tool_string);
-        }
-      }
-    } else if (is_dict(args_tools)) {
-      let args_tools_dict = args_tools;
-      let label = null;
-      let agent_tool = null;
-      for (const [label2, agent_tool2] of Object.entries(args_tools_dict)) {
-        if (isinstance2(agent_tool2, String)) {
-          let agent_tool_string = agent_tool2;
-          args_tools_dict[label2] = dict.get(corrections, agent_tool_string, agent_tool_string);
-        }
-      }
+    if (!is_dict(value)) {
+      this.logger.warning('Manifest entry for %s in file %s has an "mcp" value that is neither a boolean nor a dictionary (%s). Treating it as false.', this.agent_network, this.manifest_file, repr2(value));
+      return settings;
     }
-  }
-  /**
-   * :param name: The name of an agent/tool as given in the hocon file.
-   * :return: If the name itself is valid, simply return the input.
-   * If the given name is invalid, attempt to correct it and return
-   * a new string.  If it is not correctable, return a string that starts
-   * with "Error: " that describes the problem..
-   */
-  validate_name(name) {
-    if (name == null) {
-      return "Error: no name for agent/tool";
+    settings[this.ENABLE_KEY] = true;
+    Object.assign(settings, value);
+    let enable = dict.get(settings, this.ENABLE_KEY);
+    if (!isinstance2(enable, Boolean)) {
+      this.logger.warning('Manifest entry for %s in file %s has an "mcp" "enable" value that is not a boolean (%s). Reading it as %s.', this.agent_network, this.manifest_file, repr2(enable), Boolean(enable));
+      settings[this.ENABLE_KEY] = Boolean(enable);
     }
-    if (!isinstance2(name, String)) {
-      return `Error: agent/tool name must be a string ${name}`;
+    let name = dict.get(settings, this.NAME_KEY);
+    if (contains(this.NAME_KEY, value) && !(isinstance2(name, String) && name)) {
+      this.logger.warning('Manifest entry for %s in file %s has an "mcp" "name" that is not a non-empty string (%s). Ignoring it; if the entry is an MCP tool, its tool name will be derived from the network name.', this.agent_network, this.manifest_file, repr2(name));
+      settings[this.NAME_KEY] = null;
     }
-    if (len(name) == 0) {
-      return "Error: agent/tool name cannot be empty";
-    }
-    let new_name = name;
-    if (contains("/", new_name)) {
-      new_name = string2.replace(new_name, "/", "_");
-    }
-    return new_name;
+    return settings;
   }
 }
-exposeClassAttributes(NameCorrectionConfigFilter);
-class StringCommonDefsConfigFilter extends AbstractCommonDefsConfigFilter {
+exposeClassAttributes(McpManifestDictConfigFilter);
+class PeriodicManifestDictConfigFilter extends ConfigFilter {
+  static {
+    this.ONCE_A_MINUTE = "*/1 * * * * 0";
+  }
+  static {
+    this.DEFAULT_CRON_SCHEDULE = this.ONCE_A_MINUTE;
+  }
   /**
    * Constructor
    *
-   * :param replacements: An initial replacements dictionary to start out with
-   * whose (copied) contents will be updated with commondefs definitions
-   * in the basis_config during the filter_config() entry point.
-   * Default is null, indicating everything needed comes from the config.
+   * :param manifest_file: The name of the manifest file we are processing for logging purposes
+   * :param agent_network: The name of the agent network for logging purposes
    */
-  constructor(replacements) {
-    super("replacement_strings", replacements);
+  constructor(manifest_file, agent_network) {
+    super();
+    this.manifest_file = manifest_file;
+    this.agent_network = agent_network;
   }
   /**
-   * Make replacements per the keys and values in the replacements dictionary
+   * Filters the given basis config.
    *
-   * :param source_value: The value to potentially do replacements on
-   * :param replacements: A dictionary of string keys to their replacements
-   * :return: A potentially new value if some key in the replacements dictionary
-   * is found to trigger a replacement, otherwise, the same source_value
-   * that came in.
-   */
-  make_replacements(source_value, replacements) {
-    if (!isinstance2(source_value, String)) {
-      return source_value;
-    }
-    let replacement_value = source_value;
-    let search = null;
-    let replace = null;
-    for (const [search2, replace2] of Object.entries(replacements)) {
-      if (replace2 == null) {
-        continue;
-      }
-      if (!isinstance2(replace2, String) || !isinstance2(search2, String)) {
-        continue;
-      }
-      let replace_string = replace2;
-      if (len(replace_string) == 0) {
-        continue;
-      }
-      if (!contains(search2, replacement_value)) {
-        continue;
-      }
-      replacement_value = string2.replace(replacement_value, `{${search2}}`, replace_string);
-    }
-    return replacement_value;
-  }
-}
-exposeClassAttributes(StringCommonDefsConfigFilter);
-class NetworkConfigFilterChain extends ConfigFilter {
-  /**
-   * :param basis_config: Raw agent network config dictionary
-   * :return: A fully resolved config dictionary
+   * :param basis_config: The config dictionary to act as the basis
+   * for filtering
+   * :return: A config dictionary, potentially modified as per the
+   * policy encapsulated by the implementation
    */
   filter_config(basis_config) {
-    let filter_chain = new ConfigFilterChain();
-    filter_chain.register(new DictionaryCommonDefsConfigFilter());
-    filter_chain.register(new StringCommonDefsConfigFilter());
-    filter_chain.register(new DefaultsConfigFilter());
-    filter_chain.register(new NameCorrectionConfigFilter());
-    let config = filter_chain.filter_config(basis_config);
-    return config;
+    if (!contains("periodic", basis_config)) {
+      basis_config["periodic"] = false;
+      return basis_config;
+    }
+    let template = { "interactions": { "enable": true, "cron_schedule": this.DEFAULT_CRON_SCHEDULE, "second_at_beginning": false, "text": "Do your thing", "sly_data": {}, "metadata": { "user_id": "system" } } };
+    let value = dict.get(basis_config, "periodic");
+    if (isinstance2(value, Boolean)) {
+      if (!value) {
+        return basis_config;
+      }
+    } else if (isinstance2(value, String)) {
+      template["interactions"][0]["cron_schedule"] = value;
+    } else if (is_dict(value)) {
+      if (!contains("interactions", value)) {
+        template["interactions"][0] = value;
+      } else {
+        Object.assign(template, value);
+      }
+    }
+    basis_config["periodic"] = template;
+    let logger = getLogger(this.constructor.name);
+    let empty = [];
+    let interactions = dict.get(template, "interactions", empty);
+    for (const [index, interaction] of enumerate2(interactions)) {
+      let cron_schedule = dict.get(interaction, "cron_schedule");
+      if (cron_schedule == null) {
+        interaction["cron_schedule"] = this.DEFAULT_CRON_SCHEDULE;
+      } else if (!croniter.is_valid(cron_schedule)) {
+        let message = `
+The cron_schedule "${cron_schedule}", from the ${index}th interaction for network ${this.agent_network}
+in manifest ${this.manifest_file}, does not pass strict validation.
+See https://github.com/pallets-eco/croniter?tab=readme-ov-file#strict-validation as to why this might happen.
+Disabling this interaction to continue.
+`;
+        logger.warning(message);
+        interaction["enable"] = false;
+      }
+    }
+    return basis_config;
   }
 }
-exposeClassAttributes(NetworkConfigFilterChain);
-class ResolvedNetworkConfigFilter extends ConfigFilter {
+exposeClassAttributes(PeriodicManifestDictConfigFilter);
+class ManifestDictFilterChain extends ConfigFilterChain {
+  /**
+   * Constructor
+   *
+   * :param manifest_file: The name of the manifest file we are processing for logging purposes
+   * :param agent_network: The name of the agent network for logging purposes
+   */
+  constructor(manifest_file, agent_network) {
+    super();
+    this.register(new McpManifestDictConfigFilter(manifest_file, agent_network));
+    this.register(new PeriodicManifestDictConfigFilter(manifest_file, agent_network));
+  }
+}
+exposeClassAttributes(ManifestDictFilterChain);
+class ManifestDictConfigFilter extends ConfigFilter {
+  static {
+    this.MCP_DEFAULT_MODE = true;
+  }
+  /**
+   * Constructor
+   *
+   * :param manifest_file: The name of the manifest file we are processing for logging purposes
+   */
+  constructor(manifest_file) {
+    super();
+    this.logger = getLogger(this.constructor.name);
+    this.manifest_file = manifest_file;
+  }
+  /**
+   * Filters the given basis config.
+   *
+   * Manifest entries can either be a boolean or a dictionary.
+   * This translates any boolean entries into all dictionary form:
+   * {
+   * "serve": <bool>,
+   * "public": <bool>,
+   * "mcp": <bool or dict>,
+   * "periodic": <bool or dict>,
+   * }
+   *
+   * The "mcp" value is itself either a boolean or a dictionary of MCP settings
+   * ({"enable": <bool>, "name": <string>}); McpManifestDictConfigFilter normalises
+   * every form to that dictionary. See that class for the keys and defaults.
+   *
+   * :param basis_config: The config dictionary to act as the basis
+   * for filtering
+   * :return: A config dictionary, potentially modified as per the
+   * policy encapsulated by the implementation
+   */
+  filter_config(basis_config) {
+    let filtered = {};
+    for (const [key, value] of Object.entries(basis_config)) {
+      let expanded_value = { "serve": true, [StorageClass.PUBLIC]: true, "mcp": this.MCP_DEFAULT_MODE, "periodic": false };
+      if (isinstance2(value, Boolean)) {
+        if (!value) {
+          let updated_value = { "serve": false, [StorageClass.PUBLIC]: false };
+          Object.assign(expanded_value, updated_value);
+        }
+      } else if (is_dict(value)) {
+        expanded_value = value;
+      } else {
+        this.logger.warning("Manifest entry for %s in file %s must be either a boolean or a dictionary. Skipping.", key, this.manifest_file);
+        continue;
+      }
+      let entry_filter_chain = new ManifestDictFilterChain(this.manifest_file, key);
+      filtered[key] = entry_filter_chain.filter_config(expanded_value);
+    }
+    return filtered;
+  }
+}
+exposeClassAttributes(ManifestDictConfigFilter);
+class ManifestKeyConfigFilter extends ConfigFilter {
+  /**
+   * Constructor
+   *
+   * :param manifest_file: The name of the manifest file we are processing for logging purposes
+   */
+  constructor(manifest_file) {
+    super();
+    this.logger = getLogger(this.constructor.name);
+    this.manifest_file = manifest_file;
+  }
+  /**
+   * Filters the given basis config.
+   *
+   * :param basis_config: The config dictionary to act as the basis
+   * for filtering
+   * :return: A config dictionary, potentially modified as per the
+   * policy encapsulated by the implementation
+   */
+  filter_config(basis_config) {
+    let filtered = {};
+    for (const [key, value] of Object.entries(basis_config)) {
+      let manifest_key = key.trim();
+      filtered[manifest_key] = value;
+    }
+    return filtered;
+  }
+}
+exposeClassAttributes(ManifestKeyConfigFilter);
+class ServedManifestConfigFilter extends ConfigFilter {
+  /**
+   * Constructor
+   *
+   * :param manifest_file: The name of the manifest file we are processing for logging purposes
+   * :param warn_on_skip: If True, a warning will be logged if an entry is skipped
+   * :param entry_for_skipped: If True, the skipped entry will be included in the keys of the
+   * output dictionary but the value will be null.
+   */
+  constructor(manifest_file, warn_on_skip, entry_for_skipped) {
+    super();
+    this.logger = getLogger(this.constructor.name);
+    this.manifest_file = manifest_file;
+    this.warn_on_skip = warn_on_skip;
+    this.entry_for_skipped = entry_for_skipped;
+  }
+  /**
+   * Filters the given basis config.
+   *
+   * :param basis_config: The config dictionary to act as the basis
+   * for filtering
+   * :return: A config dictionary, potentially modified as per the
+   * policy encapsulated by the implementation
+   */
+  filter_config(basis_config) {
+    let filtered = {};
+    for (const [key, value] of Object.entries(basis_config)) {
+      let skip = false;
+      if (value == null) {
+        skip = true;
+      } else if (is_dict(value) && !dict.get(value, "serve", false)) {
+        skip = true;
+      }
+      if (skip) {
+        if (this.warn_on_skip) {
+          this.logger.warning("Manifest entry for %s in file %s will not be served, per the 'serve' key in its config (default is False). Skipping.", key, this.manifest_file);
+        }
+        if (this.entry_for_skipped) {
+          filtered[key] = value;
+        }
+      } else {
+        filtered[key] = value;
+      }
+    }
+    return filtered;
+  }
+}
+exposeClassAttributes(ServedManifestConfigFilter);
+class ManifestFilterChain extends ConfigFilterChain {
+  /**
+   * Constructor
+   *
+   * :param manifest_file: The name of the manifest file we are processing for logging purposes
+   */
+  constructor(manifest_file) {
+    super();
+    this.register(new ManifestKeyConfigFilter(manifest_file));
+    this.register(new ManifestDictConfigFilter(manifest_file));
+    this.register(new ServedManifestConfigFilter(manifest_file, { warn_on_skip: true, entry_for_skipped: true }));
+  }
+}
+exposeClassAttributes(ManifestFilterChain);
+class RawManifestRestorer extends AbstractAsyncConfigRestorer {
   /**
    * Constructor
    */
   constructor() {
-    super();
-    this.filter_chain = new NetworkConfigFilterChain();
-  }
-  /**
-   * Resolves the given agent network spec.
-   *
-   * :param basis_config: The agent network spec dictionary as deployed.
-   * Never modified.
-   * :return: A new, fully resolved spec dictionary with the "commondefs"
-   * block removed.  null if basis_config is null.
-   */
-  filter_config(basis_config) {
-    if (basis_config == null) {
-      return null;
-    }
-    let resolved = this.filter_chain.filter_config(basis_config);
-    if (resolved === basis_config) {
-      resolved = deepcopy(basis_config);
-    }
-    if (!is_dict(resolved)) {
-      return resolved;
-    }
-    let resolved_dict = resolved;
-    if (contains("commondefs", Object.keys(resolved_dict))) {
-      delete resolved_dict["commondefs"];
-    }
-    return resolved_dict;
+    super("agent network manifest", "AGENT_MANIFEST_FILE", false);
   }
 }
-exposeClassAttributes(ResolvedNetworkConfigFilter);
+exposeClassAttributes(RawManifestRestorer);
+class RegistryManifestRestorer extends Restorer {
+  /**
+   * Constructor
+   *
+   * :param manifest_files: Either:
+   * * A single local name for the manifest file listing the agents to host.
+   * * A list of local names for multiple manifest files to host
+   * * null (the default) which gets a single manifest file from a known source.
+   * :param agent_mapper: optional AgentNameMapper;
+   * if null, AgentFileTreeMapper instance will be used.
+   */
+  constructor(manifest_files, agent_mapper) {
+    super();
+    this.agent_mapper = agent_mapper;
+    if (!this.agent_mapper) {
+      this.agent_mapper = new AgentFileTreeMapper();
+    }
+    this.manifest_files = [];
+    this.periodic_configs = {};
+    if (manifest_files == null) {
+      let manifest_file = dict.get(process.env, "AGENT_MANIFEST_FILE");
+      if (manifest_file == null) {
+        manifest_file = REGISTRIES_DIR.get_file_in_basis("manifest.hocon");
+      }
+      let use_files = manifest_file.split(pathsep);
+      this.manifest_files.push(...use_files);
+    } else if (isinstance2(manifest_files, String)) {
+      let use_files = manifest_files.split(pathsep);
+      this.manifest_files.push(...use_files);
+    } else {
+      this.manifest_files = manifest_files;
+    }
+    this.logger = getLogger(this.constructor.name);
+  }
+  /**
+   * :param file_references: The sequence of file references to use when restoring.
+   * :return: a nested map of storage type -> (mapping of name -> agent networks)
+   */
+  restore_from_files(file_references) {
+    let all_agent_networks = {};
+    let overlayer = new DictionaryOverlay();
+    for (const manifest_file of iter2(file_references)) {
+      let agents_from_one_manifest = this.restore_one_manifest(manifest_file);
+      all_agent_networks = overlayer.overlay(all_agent_networks, agents_from_one_manifest);
+    }
+    let config_filter = new ServedManifestConfigFilter({ manifest_file: null, warn_on_skip: false, entry_for_skipped: false });
+    for (const [storage_type, storage_dict] of Object.entries(all_agent_networks)) {
+      all_agent_networks[storage_type] = config_filter.filter_config(storage_dict);
+    }
+    this.resolve_mcp_tool_name_collisions(all_agent_networks);
+    return all_agent_networks;
+  }
+  /**
+   * Makes sure no two public networks are advertised under the same MCP tool name.
+   *
+   * Tool names are derived from network names by replacing "/" with "__"
+   * (or come from an explicit "name" in the manifest's "mcp" settings), so distinct networks
+   * such as "a/b" and "a__b" can end up with the same tool name. MCP clients
+   * address tools by name alone, so one of the two has to stop being an MCP tool.
+   * The loser stays served over the regular APIs; only its MCP exposure is withdrawn.
+   *
+   * Every public network's network name is reserved as well, whether or not it
+   * is an MCP tool and whatever it is advertised as: the name "a__b" belongs to
+   * the network "a__b", so "a/b" may not be advertised as "a__b" while that
+   * network exists. A client that has not seen tools/list (or predates the
+   * rename) addresses a network by its network name, and McpToolsProcessor
+   * passes that name through to the network, so letting "a/b" take "a__b" would
+   * route such calls to the wrong network, or answer them instead of refusing
+   * them when "a__b" is not an MCP tool.
+   *
+   * :param all_agent_networks: a nested map of storage type -> (mapping of name -> agent networks),
+   * modified in place for any losing network.
+   */
+  resolve_mcp_tool_name_collisions(all_agent_networks) {
+    let public_networks = dict.get(all_agent_networks, StorageClass.PUBLIC, {});
+    if (!public_networks) {
+      return;
+    }
+    let owners = {};
+    for (const network_name of sorted2(Object.keys(public_networks))) {
+      let agent_network = dict.get(public_networks, network_name);
+      if (agent_network == null) {
+        continue;
+      }
+      let claims = [network_name];
+      if (agent_network.is_mcp_tool()) {
+        let tool_name = agent_network.get_mcp_tool_name();
+        if (tool_name != network_name) {
+          claims.push(tool_name);
+        }
+      }
+      for (const claim of iter2(claims)) {
+        if (!contains(claim, owners)) {
+          owners[claim] = network_name;
+          continue;
+        }
+        this.resolve_one_mcp_tool_name_collision(public_networks, owners, claim, network_name);
+      }
+    }
+  }
+  /**
+   * Decides which of two networks keeps a contested MCP tool name and withdraws the other.
+   *
+   * :param public_networks: mapping of network name -> AgentNetwork for the public storage class
+   * :param owners: mapping of tool name -> network name currently holding it; updated in place
+   * when the contender wins.
+   * :param tool_name: The contested MCP tool name
+   * :param contender_name: The network name that also wants tool_name, found after the current owner
+   */
+  resolve_one_mcp_tool_name_collision(public_networks, owners, tool_name, contender_name) {
+    let owner_name = dict.get(owners, tool_name);
+    let loser_name = contender_name;
+    if (tool_name == contender_name && tool_name != owner_name) {
+      loser_name = owner_name;
+      owners[tool_name] = contender_name;
+    }
+    let winner_name = dict.get(owners, tool_name);
+    let loser = dict.get(public_networks, loser_name);
+    loser.clear_mcp_tool();
+    this.logger.error(`MCP tool name '%s' is claimed by both network '%s' and network '%s'. Keeping it for '%s'; '%s' will not be served as an MCP tool. Give one of them a distinct "name" in the "mcp" settings of its manifest entry to resolve this.`, tool_name, owner_name, contender_name, winner_name, loser_name);
+  }
+  /**
+   * :param manifest_file: The file reference to use when restoring.
+   * :return: a nested map of storage type -> (mapping of name -> agent networks)
+   */
+  restore_one_manifest(manifest_file) {
+    let start = perfCounter();
+    let agent_networks = {};
+    for (const storage_class of StorageClass.ALL_PERMANENT) {
+      agent_networks[storage_class] = {};
+    }
+    let raw_restorer = new RawManifestRestorer();
+    let raw_manifest = raw_restorer.restore(manifest_file);
+    if (!raw_manifest) {
+      this.logger.warning("Manifest file %s did not exist or was essentially empty.", manifest_file);
+      return agent_networks;
+    }
+    let manifest_filter = new ManifestFilterChain(manifest_file);
+    let one_manifest = manifest_filter.filter_config(raw_manifest);
+    let file_of_class = new FileOfClass(manifest_file);
+    let manifest_dir = file_of_class.get_basis();
+    let external_network_names = this.find_external_network_names(one_manifest);
+    if (!one_manifest) {
+      return agent_networks;
+    }
+    let my_cpu_count = cpu_count() || 1;
+    let max_workers = min2(len(one_manifest), my_cpu_count);
+    let concurrency_context = dict.get(process.env, "AGENT_MANIFEST_CONCURRENCY_CONTEXT", "thread");
+    try {
+      for (const manifest_key of Object.keys(one_manifest)) {
+        const result = RegistryManifestRestorer.read_one_agent_network(manifest_key, dict.get(one_manifest, manifest_key), manifest_file, manifest_dir, external_network_names, this.agent_mapper);
+        if (result) {
+          this.maybe_store_agent_network(result[0], result[1], result[2], agent_networks);
+        }
+      }
+    } catch (e) {
+      let sensitive_logger = new SensitiveLogger(this.logger);
+      sensitive_logger.exception("Manifest file %s could not be restored.", manifest_file);
+    }
+    let stop = perfCounter();
+    let duration = stop - start;
+    if (duration > 5) {
+      this.logger.warning("Manifest file %s restored in %.2f seconds.", manifest_file, duration);
+    }
+    return agent_networks;
+  }
+  /**
+   * :param concurrency_context: The concurrency context to use.
+   * :param max_workers: The maximum number of workers to use.
+   * :return: The executor factory to use as a no-args constructor.
+   */
+  find_executory_factory(concurrency_context, max_workers) {
+    let executor_factory = null;
+    let lower_concurrency_context = concurrency_context.trim().toLowerCase();
+    if (contains(lower_concurrency_context, tuple2("spawn", "fork", "forkserver"))) {
+      executor_factory = partial(ProcessPoolExecutor, { max_workers, mp_context: get_context(lower_concurrency_context) });
+    } else if (lower_concurrency_context == "thread") {
+      executor_factory = partial(ThreadPoolExecutor, { max_workers });
+    } else {
+      this.logger.warning("Unknown concurrency context '%s'. Defaulting to ThreadPoolExecutor.", lower_concurrency_context);
+      executor_factory = partial(ThreadPoolExecutor, { max_workers });
+    }
+    return executor_factory;
+  }
+  /**
+   * :param manifest_dir: The directory of the manifest file.
+   * :param manifest_file: The file reference to use when restoring.
+   * :param manifest_key: The key in the manifest file.
+   * :param manifest_dict: The dictionary of the manifest file.
+   * :param external_network_names: The list of external network names
+   * :param agent_mapper: The AgentFileTreeMapper to use
+   * :return: A tuple of (agent_network, network_name, manifest_dict)
+   */
+  static read_one_agent_network(manifest_key, manifest_dict, manifest_file, manifest_dir, external_network_names, agent_mapper) {
+    let usable_network = is_dict(manifest_dict) && dict.get(manifest_dict, "serve", false);
+    let agent_filepath = agent_mapper.agent_name_to_filepath(manifest_key);
+    let network_name = agent_mapper.filepath_to_agent_network_name(agent_filepath);
+    let validator = new ManifestNetworkValidator(external_network_names, null, network_name);
+    let agent_network = null;
+    try {
+      if (usable_network) {
+        agent_network = RegistryManifestRestorer.restore_one_agent_network(manifest_dir, agent_filepath, manifest_key, agent_mapper);
+      }
+      agent_network = RegistryManifestRestorer.process_one_agent_network(agent_network, usable_network, agent_filepath, manifest_file, manifest_key, manifest_dict, validator, agent_mapper);
+    } catch (ex) {
+      agent_network = null;
+      let sensitive_logger = new SensitiveLogger(getLogger("__name__"));
+      sensitive_logger.error("Failed to restore agent_network %s from %s. Skipping. - %s", manifest_key, manifest_file, String(ex));
+    }
+    return [agent_network, network_name, manifest_dict];
+  }
+  /**
+   * Determine whether and where to store the agent network
+   *
+   * :param agent_network: The agent network to store
+   * :param network_name: The name of the network
+   * :param manifest_dict: The manifest dictionary
+   * :param agent_networks: a nested map of storage type -> (mapping of name -> agent networks)
+   * potentially modified
+   */
+  maybe_store_agent_network(agent_network, network_name, manifest_dict, agent_networks) {
+    if (agent_network == null && is_dict(manifest_dict) && dict.get(manifest_dict, "serve", false)) {
+      return;
+    }
+    let storage = StorageClass.PUBLIC;
+    if (!dict.get(manifest_dict, StorageClass.PUBLIC)) {
+      storage = StorageClass.PROTECTED;
+    }
+    if (dict.get(manifest_dict, "periodic", false)) {
+      this.periodic_configs[network_name] = manifest_dict["periodic"];
+    }
+    agent_networks[storage][network_name] = agent_network;
+  }
+  /**
+   * :param agent_network: The agent network to process.
+   * :param usable_network: Is this agent network usable?
+   * :param agent_filepath: The filepath to the agent definition file.
+   * :param manifest_file: The manifest file.
+   * :param manifest_key: The manifest key.
+   * :param manifest_dict: The manifest dictionary.
+   * :param validator: The validator.
+   * :param agent_mapper: The agent mapper.
+   * :return: The agent network
+   */
+  static process_one_agent_network(agent_network, usable_network, agent_filepath, manifest_file, manifest_key, manifest_dict, validator, agent_mapper) {
+    let network_name = agent_mapper.filepath_to_agent_network_name(agent_filepath);
+    let logger = getLogger("__name__");
+    if (agent_network != null) {
+      logger.info("Validating %s agent network...", network_name);
+      let validation_errors = validator.validate(agent_network.get_config());
+      if (len(validation_errors) > 0) {
+        logger.error("manifest registry %s has validation errors. Skipping. Errors: %s", agent_filepath, dumps(validation_errors, { indent: 4, sortKeys: true }));
+        agent_network = null;
+        return agent_network;
+      }
+    }
+    if (usable_network && agent_network == null) {
+      logger.error("manifest registry %s not found in %s", manifest_key, manifest_file);
+      return agent_network;
+    }
+    let mcp_settings = RegistryManifestRestorer.get_mcp_settings(manifest_dict);
+    if (usable_network && dict.get(mcp_settings, McpManifestDictConfigFilter.ENABLE_KEY)) {
+      let tool_name = RegistryManifestRestorer.derive_mcp_tool_name(network_name, mcp_settings);
+      agent_network.set_as_mcp_tool(tool_name);
+    }
+    return agent_network;
+  }
+  /**
+   * Reads the "mcp" settings of a manifest entry.
+   *
+   * The manifest filter chain has normally already turned "mcp" into the
+   * settings dictionary (see McpManifestDictConfigFilter). Callers that bypass
+   * the chain get the same defaults here, minus the warnings and the type
+   * checks: a dictionary is on unless it says otherwise, and any other value
+   * is read for its truth value as "enable".
+   *
+   * :param manifest_dict: The manifest dictionary for the network
+   * :return: A new dictionary with at least the "enable" and "name" keys
+   */
+  static get_mcp_settings(manifest_dict) {
+    let value = dict.get(manifest_dict, McpManifestDictConfigFilter.MCP_KEY);
+    let settings = /* @__PURE__ */ new Map([[McpManifestDictConfigFilter.ENABLE_KEY, false], [McpManifestDictConfigFilter.NAME_KEY, null]]);
+    if (is_dict(value)) {
+      settings[McpManifestDictConfigFilter.ENABLE_KEY] = true;
+      Object.assign(settings, value);
+    } else {
+      settings[McpManifestDictConfigFilter.ENABLE_KEY] = Boolean(value);
+    }
+    return settings;
+  }
+  /**
+   * Works out the name an MCP-enabled network is advertised under as a tool.
+   *
+   * An explicit "name" in the manifest entry's "mcp" settings wins. Otherwise
+   * the name is derived from the network name by McpToolNamePolicy, so the "/"
+   * that registry sub-directories put into network names never reaches LLM
+   * providers (OpenAI, Anthropic) that reject it in tool names.
+   *
+   * Problems are warned about rather than refused: lenient clients such as
+   * local models still accept unusual names, so refusing to expose the tool
+   * would be a regression for them.
+   *
+   * :param network_name: The network name, used as the derivation basis and in log lines
+   * :param mcp_settings: The (already filtered) "mcp" settings of the manifest entry
+   * :return: The tool name to advertise. Never null or empty for a non-empty network_name.
+   */
+  static derive_mcp_tool_name(network_name, mcp_settings) {
+    let logger = getLogger("__name__");
+    let policy = new McpToolNamePolicy();
+    let tool_name = dict.get(mcp_settings, McpManifestDictConfigFilter.NAME_KEY);
+    if (!tool_name) {
+      tool_name = policy.filter(network_name);
+    }
+    if (!policy.is_valid_tool_name(tool_name)) {
+      logger.warning(`MCP tool name '%s' for network '%s' does not match %s, which OpenAI and Anthropic require of tool names. Exposing it anyway; clients using those providers will fail to call it. Set a conforming "name" in the manifest entry's "mcp" settings.`, tool_name, network_name, McpToolNamePolicy.TOOL_NAME_PATTERN);
+    }
+    if (policy.is_over_soft_limit(tool_name)) {
+      logger.warning(`MCP tool name '%s' for network '%s' is longer than %d characters, which is OpenAI's limit for tool names. Exposing it anyway; consider a shorter "name" in the manifest entry's "mcp" settings.`, tool_name, network_name, McpToolNamePolicy.SOFT_MAX_LENGTH);
+    }
+    return tool_name;
+  }
+  /**
+   * :param manifest_dir: The directory of the manifest file
+   * :param agent_filepath: The file reference for the agent network description to restore
+   * :param manifest_key: the key to use when restoring
+   * :param agent_mapper: the agent mapper
+   * :return: a built map of agent networks
+   */
+  static restore_one_agent_network(manifest_dir, agent_filepath, manifest_key, agent_mapper) {
+    let agent_network = null;
+    let registry_restorer = new AgentNetworkRestorer(manifest_dir, agent_mapper);
+    try {
+      agent_network = registry_restorer.restore(agent_filepath);
+    } catch (exception) {
+      if (exception instanceof Error) {
+        let message = `Failed to restore registry item ${manifest_key}. Skipping. - ${String(exception)}`;
+        let sensitive_logger = new SensitiveLogger(getLogger("__name__"));
+        sensitive_logger.error(message);
+        agent_network = null;
+      } else if (exception instanceof Error) {
+        let use_exception = exception;
+        if (exception.__cause__ != null) {
+          use_exception = exception.__cause__;
+        }
+        let message = `Parse error in registry item ${manifest_key}. Skipping. - ${String(use_exception)}`;
+        let sensitive_logger = new SensitiveLogger(getLogger("__name__"));
+        sensitive_logger.error(message);
+        agent_network = null;
+      }
+    }
+    return agent_network;
+  }
+  /**
+   * :param file_reference: The file reference to use when restoring.
+   * Default is null, implying the file reference is up to the
+   * implementation.
+   * :return: a nested map of storage type -> (mapping of name -> agent networks)
+   */
+  restore(file_reference) {
+    this.periodic_configs = {};
+    if (file_reference != null) {
+      return this.restore_from_files([file_reference]);
+    }
+    let agent_networks = this.restore_from_files(this.manifest_files);
+    return agent_networks;
+  }
+  /**
+   * Return current list of manifest files.
+   */
+  get_manifest_files() {
+    return this.manifest_files;
+  }
+  /**
+   * Find the list of valid external agent network names
+   *
+   * :param manifest_entries: The manifest entries
+   * :return: A list of valid external network references.
+   */
+  find_external_network_names(manifest_entries) {
+    let external_network_names = [];
+    for (const manifest_key of Object.keys(manifest_entries)) {
+      let agent_filepath = this.agent_mapper.agent_name_to_filepath(manifest_key);
+      let network_name = this.agent_mapper.filepath_to_agent_network_name(agent_filepath);
+      external_network_names.push(`/${network_name}`);
+    }
+    return external_network_names;
+  }
+  /**
+   * :return: a map of agent name -> periodic config
+   */
+  get_periodic_configs() {
+    return this.periodic_configs;
+  }
+}
+exposeClassAttributes(RegistryManifestRestorer);
 class AbstractCallableActivation extends CallableActivation {
   /**
    * Constructor
@@ -874,7 +1221,7 @@ context with which it will proces input, essentially telling it what to do.
       use_instructions = this.get_instructions();
     }
     let tool_names = CallingActivation.get_callable_tool_names(this.agent_tool_spec);
-    await this.run_context.create_resources(name, use_instructions, assignments, { tool_names });
+    await this.run_context.create_resources(name, use_instructions, assignments, tool_names);
   }
   /**
    * :return: The names of the callable tools this instance will call
@@ -2054,7 +2401,7 @@ Check to be sure your value for PYTHONPATH includes where you expect where your 
    * :return: A list of ActivationPrepper instances
    */
   _create_preppers() {
-    let preppers = copy(this.BASE_PREPPERS);
+    let preppers = copy(ActivationFactory.BASE_PREPPERS);
     let external_preppers = [];
     let prepper_class_name = null;
     let agent_prepper_classes = dict.get(process.env, "AGENT_ACTIVATION_PREPPER_CLASSES") || "";
@@ -2229,7 +2576,7 @@ class AgentToolRegistry extends AgentNetworkInspector {
 exposeClassAttributes(AgentToolRegistry);
 export {
   AgentNetwork,
+  AgentNetworkRestorer,
   AgentToolRegistry,
-  NetworkConfigFilterChain,
-  ResolvedNetworkConfigFilter
+  RegistryManifestRestorer
 };

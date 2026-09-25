@@ -1,123 +1,7 @@
-import { is_dict, dict, len, ConfigDict, set, contains, is_instance_named, loads } from "./stubs.mjs";
-import { isinstance2, iter2, BaseMessage, AIMessage, copy, type2, KNOWN_BLOCK_TYPES, tuple2, isfinite, b64encode, getattr2, SystemMessage, HumanMessage, escape, search, DOTALL, slice2, dumps } from "../vendor/libraries.mjs";
-import { ConfigFilter, DictionaryExtractor, DictionaryConverter } from "./leaf_common.mjs";
+import { dict, len, ConfigDict, set, contains, is_dict, is_instance_named, loads } from "./stubs.mjs";
+import { iter2, BaseMessage, AIMessage, copy, isinstance2, KNOWN_BLOCK_TYPES, tuple2, isfinite, b64encode, getattr2, SystemMessage, HumanMessage, escape, search, DOTALL, slice2, dumps, any2 } from "../vendor/libraries.mjs";
+import { DictionaryConverter, ConfigFilter, DictionaryExtractor } from "./leaf_common.mjs";
 import { exposeClassAttributes } from "../browser/shims.mjs";
-class SlyDataRedactor extends ConfigFilter {
-  /**
-   * Constructor
-   *
-   * :param calling_agent_tool_spec: The dictionary describing the JSON agent tool
-   * that is providing the sly_data.
-   * :param config_keys: A list of config keys in reverse precedence order.
-   * That is, the further on in the list you get, the greater the precedence.
-   * Each string is a fully qualified identifier that can span multiple
-   * dictionaries like: "allow.to_upstream.sly_data".
-   * :param allow_empty_dict: Default is true which allows filter_config() to return
-   * an empty dictionary.  When set to False and empty this yields
-   * a null value.
-   */
-  constructor(calling_agent_tool_spec, config_keys, allow_empty_dict) {
-    super();
-    this.agent_tool_spec = calling_agent_tool_spec;
-    this.config_keys = config_keys;
-    if (this.config_keys == null) {
-      this.config_keys = [];
-    }
-    this.allow_empty_dict = allow_empty_dict;
-  }
-  /**
-   * :param basis_config: Source of the sly_data to redact.
-   * :return: A new sly_data dictionary with proper redactions per the config_keys on the
-   * agent_tool_spec.  If no such keys exist, then no sly_data
-   * gets through to the agent to be called.  Also, if allow_empty_dict
-   * is set to true, this method can return an empty dictionary.
-   * When allow_empty_dict is set to False and empty dictionary returns a null value.
-   */
-  filter_config(basis_config) {
-    let empty = {};
-    let extractor = new DictionaryExtractor(this.agent_tool_spec, ".");
-    let allow_dict = empty;
-    for (const config_key of this.config_keys) {
-      allow_dict = extractor.get(config_key, allow_dict);
-    }
-    if (!Boolean(allow_dict)) {
-      return this.maybe_empty(empty);
-    }
-    if (isinstance2(allow_dict, Boolean) && Boolean(allow_dict)) {
-      return this.maybe_empty(basis_config);
-    }
-    if (!Boolean(basis_config) || !is_dict(basis_config)) {
-      return this.maybe_empty(empty);
-    }
-    if (isinstance2(allow_dict, Array)) {
-      let true_dict = {};
-      let key = null;
-      for (const key2 of iter2(allow_dict)) {
-        let use_key = key2;
-        true_dict[use_key] = true;
-      }
-      allow_dict = true_dict;
-    }
-    let redacted = {};
-    let source_key = null;
-    let dest_key = null;
-    for (const [source_key2, dest_key2] of Object.entries(allow_dict)) {
-      let source_value = dict.get(basis_config, source_key2);
-      if (source_value == null) {
-        continue;
-      }
-      if (isinstance2(dest_key2, String)) {
-        let use_dest_key = dest_key2;
-        redacted[use_dest_key] = source_value;
-      } else if (isinstance2(dest_key2, Boolean) && Boolean(dest_key2)) {
-        redacted[source_key2] = source_value;
-      }
-    }
-    return this.maybe_empty(redacted);
-  }
-  /**
-   * :param test_dict: The dictionary to test for emptiness
-   * :return: If the test_dict is empty and the instance is not configured
-   * to return empty dictionaries, then return null. Otherise return
-   * the test_dict in its entirety
-   */
-  maybe_empty(test_dict) {
-    if (!this.allow_empty_dict && !Boolean(test_dict)) {
-      return null;
-    }
-    return test_dict;
-  }
-}
-exposeClassAttributes(SlyDataRedactor);
-const ChatMessageType = {
-  UNKNOWN_MESSAGE_TYPE: 0,
-  SYSTEM: 1,
-  HUMAN: 2,
-  AI: 4,
-  AGENT: 100,
-  AGENT_FRAMEWORK: 101,
-  AGENT_TOOL_RESULT: 103,
-  AGENT_PROGRESS: 104
-};
-const MESSAGE_TYPE_TO_CHAT_MESSAGE_TYPE = {
-  "system": ChatMessageType.SYSTEM,
-  "human": ChatMessageType.HUMAN,
-  "ai": ChatMessageType.AI,
-  "AGENT": ChatMessageType.AGENT,
-  "AGENT_FRAMEWORK": ChatMessageType.AGENT_FRAMEWORK,
-  "AGENT_TOOL_RESULT": ChatMessageType.AGENT_TOOL_RESULT,
-  "AGENT_PROGRESS": ChatMessageType.AGENT_PROGRESS
-};
-const CHAT_MESSAGE_TYPE_TO_STRING = {
-  [ChatMessageType.UNKNOWN_MESSAGE_TYPE]: "UNKNOWN",
-  [ChatMessageType.SYSTEM]: "SYSTEM",
-  [ChatMessageType.HUMAN]: "HUMAN",
-  [ChatMessageType.AI]: "AI",
-  [ChatMessageType.AGENT]: "AGENT",
-  [ChatMessageType.AGENT_FRAMEWORK]: "AGENT_FRAMEWORK",
-  [ChatMessageType.AGENT_TOOL_RESULT]: "AGENT_TOOL_RESULT",
-  [ChatMessageType.AGENT_PROGRESS]: "AGENT_PROGRESS"
-};
 class MessageProcessor {
   /**
    * Resets any previously accumulated state
@@ -157,9 +41,10 @@ class MessageProcessor {
    * :param chat_message_dicts: The messages to process.
    */
   process_messages(chat_message_dicts) {
-    for (const message of iter2(chat_message_dicts)) {
-      let message_type = dict.get(message, "type");
-      this.process_message(message, message_type);
+    let message = null;
+    for (const message2 of iter2(chat_message_dicts)) {
+      let message_type = dict.get(message2, "type");
+      this.process_message(message2, message_type);
     }
   }
   /**
@@ -167,13 +52,44 @@ class MessageProcessor {
    * :param chat_message_dicts: The messages to process.
    */
   async async_process_messages(chat_message_dicts) {
-    for (const message of iter2(chat_message_dicts)) {
-      let message_type = dict.get(message, "type");
-      await this.async_process_message(message, message_type);
+    let message = null;
+    for (const message2 of iter2(chat_message_dicts)) {
+      let message_type = dict.get(message2, "type");
+      await this.async_process_message(message2, message_type);
     }
   }
 }
 exposeClassAttributes(MessageProcessor);
+var ChatMessageType;
+(function(ChatMessageType2) {
+  ChatMessageType2[ChatMessageType2["UNKNOWN_MESSAGE_TYPE"] = 0] = "UNKNOWN_MESSAGE_TYPE";
+  ChatMessageType2[ChatMessageType2["SYSTEM"] = 1] = "SYSTEM";
+  ChatMessageType2[ChatMessageType2["HUMAN"] = 2] = "HUMAN";
+  ChatMessageType2[ChatMessageType2["AI"] = 4] = "AI";
+  ChatMessageType2[ChatMessageType2["AGENT"] = 100] = "AGENT";
+  ChatMessageType2[ChatMessageType2["AGENT_FRAMEWORK"] = 101] = "AGENT_FRAMEWORK";
+  ChatMessageType2[ChatMessageType2["AGENT_TOOL_RESULT"] = 103] = "AGENT_TOOL_RESULT";
+  ChatMessageType2[ChatMessageType2["AGENT_PROGRESS"] = 104] = "AGENT_PROGRESS";
+})(ChatMessageType || (ChatMessageType = {}));
+const MESSAGE_TYPE_TO_CHAT_MESSAGE_TYPE = {
+  "system": ChatMessageType.SYSTEM,
+  "human": ChatMessageType.HUMAN,
+  "ai": ChatMessageType.AI,
+  "AGENT": ChatMessageType.AGENT,
+  "AGENT_FRAMEWORK": ChatMessageType.AGENT_FRAMEWORK,
+  "AGENT_TOOL_RESULT": ChatMessageType.AGENT_TOOL_RESULT,
+  "AGENT_PROGRESS": ChatMessageType.AGENT_PROGRESS
+};
+const CHAT_MESSAGE_TYPE_TO_STRING = {
+  [ChatMessageType.UNKNOWN_MESSAGE_TYPE]: "UNKNOWN",
+  [ChatMessageType.SYSTEM]: "SYSTEM",
+  [ChatMessageType.HUMAN]: "HUMAN",
+  [ChatMessageType.AI]: "AI",
+  [ChatMessageType.AGENT]: "AGENT",
+  [ChatMessageType.AGENT_FRAMEWORK]: "AGENT_FRAMEWORK",
+  [ChatMessageType.AGENT_TOOL_RESULT]: "AGENT_TOOL_RESULT",
+  [ChatMessageType.AGENT_PROGRESS]: "AGENT_PROGRESS"
+};
 class TracedMessage extends BaseMessage {
   /**
    * Pass in content as positional arg.
@@ -225,9 +141,9 @@ class TracedMessage extends BaseMessage {
   async translate_for_trace(key, value) {
     let displayable = value != null && len(value) > 0;
     if (!displayable) {
-      return null;
+      return [null, null];
     }
-    return key;
+    return [key, value];
   }
 }
 exposeClassAttributes(TracedMessage);
@@ -253,6 +169,12 @@ class AgentToolResultMessage extends AIMessage {
   /**
    * :return: the keyword arguments for serialization.
    */
+  static lc_name() {
+    return "AGENT_TOOL_RESULT";
+  }
+  get type() {
+    return "AGENT_TOOL_RESULT";
+  }
   get lc_kwargs() {
     return { "content": this.content, "tool_result_origin": this.tool_result_origin };
   }
@@ -280,6 +202,12 @@ class AgentMessage extends TracedMessage {
   /**
    * :return: the keyword arguments for serialization.
    */
+  static lc_name() {
+    return "AGENT";
+  }
+  get type() {
+    return "AGENT";
+  }
   get lc_kwargs() {
     return { "content": this.content, "structure": this.structure };
   }
@@ -302,7 +230,7 @@ class AgentFrameworkMessage extends TracedMessage {
     this._type = "agent-framework";
   }
   static {
-    this.model_config = new ConfigDict({ arbitrary_types_allowed: true });
+    this.model_config = ConfigDict({ arbitrary_types_allowed: true });
   }
   /**
    * Pass in content as positional arg.
@@ -333,6 +261,12 @@ class AgentFrameworkMessage extends TracedMessage {
   /**
    * :return: the keyword arguments for serialization.
    */
+  static lc_name() {
+    return "AGENT_FRAMEWORK";
+  }
+  get type() {
+    return "AGENT_FRAMEWORK";
+  }
   get lc_kwargs() {
     return { "content": this.content, "structure": this.structure, "sly_data": this.sly_data, "chat_context": this.chat_context };
   }
@@ -345,12 +279,30 @@ class AgentFrameworkMessage extends TracedMessage {
    * value to trace display to maximize information.
    */
   async translate_for_trace(key, value) {
-    let new_key, new_value = super.translate_for_trace(key, value);
+    let new_key = null;
+    let new_value = null;
+    [new_key, new_value] = await super.translate_for_trace(key, value);
     if (!new_key) {
-      return null;
+      return [null, null];
     }
-    if (new_key == "sly_data") ;
-    return new_key;
+    if (new_key == "sly_data") {
+      let allow_sly_data_keys = set();
+      if (this.redactor != null) {
+        let redacted = this.redactor.filter_config(new_value);
+        if (redacted != null) {
+          allow_sly_data_keys = set(Object.keys(redacted));
+        }
+      }
+      new_value = copy(value);
+      for (const [sly_data_key, sly_data_value] of Object.entries(new_value)) {
+        if (contains(sly_data_key, allow_sly_data_keys)) {
+          new_value[sly_data_key] = sly_data_value;
+        } else {
+          new_value[sly_data_key] = "<redacted>";
+        }
+      }
+    }
+    return [new_key, new_value];
   }
 }
 exposeClassAttributes(AgentFrameworkMessage);
@@ -376,6 +328,12 @@ class AgentProgressMessage extends TracedMessage {
   /**
    * :return: the keyword arguments for serialization.
    */
+  static lc_name() {
+    return "AGENT_PROGRESS";
+  }
+  get type() {
+    return "AGENT_PROGRESS";
+  }
   get lc_kwargs() {
     return { "content": this.content, "structure": this.structure };
   }
@@ -387,7 +345,7 @@ class ChatMessageTypeUtil {
    * :return: The ChatMessageType corresponding to the base_message
    */
   static from_message(base_message) {
-    let base_message_type = type2(base_message);
+    let base_message_type = Object.getOwnPropertyDescriptor(base_message?.constructor?.prototype ?? {}, "type")?.get?.call(base_message) ?? base_message?.type;
     let chat_message_type = dict.get(MESSAGE_TYPE_TO_CHAT_MESSAGE_TYPE, base_message_type, ChatMessageType.UNKNOWN_MESSAGE_TYPE);
     return chat_message_type;
   }
@@ -404,7 +362,7 @@ class ChatMessageTypeUtil {
       return response_type;
     }
     if (isinstance2(response_type, Number)) {
-      return new ChatMessageType(response_type);
+      return response_type;
     }
     try {
       message_type = ChatMessageType[response_type];
@@ -1123,7 +1081,9 @@ class JsonStructureParser extends StructureParser {
   parse_structure(content) {
     this.remainder = null;
     let delimiters = { "```json": "```", "```": "```", "`{": "}`", "{": "}" };
-    let meat, one_remainder = this._extract_delimited_block(content, delimiters);
+    let meat = null;
+    let one_remainder = null;
+    [meat, one_remainder] = this._extract_delimited_block(content, delimiters);
     this.remainder = one_remainder;
     let structure = null;
     try {
@@ -1152,16 +1112,22 @@ class JsonStructureParser extends StructureParser {
    * :return: A tuple of (main block content, remainder string)
    */
   _extract_delimited_block(text, delimiters) {
-    for (const [start, end] of Object.entries(delimiters)) {
-      let pattern = escape(start) + "(.*)" + escape(end);
+    let start = null;
+    let end = null;
+    for (const [start2, end2] of Object.entries(delimiters)) {
+      let pattern = escape(start2) + "(.*)" + escape(end2);
       let match = search(pattern, text, DOTALL);
       if (match) {
         let main = match.group(0).trim();
-        let remainder = slice2(text, void 0, match.start()) + slice2(text, match.end(), void 0);
-        return main;
+        let pre_remainder = slice2(text, void 0, match.start());
+        let post_remainder = slice2(text, match.end(), void 0);
+        let remainder = pre_remainder + post_remainder;
+        let stripped_remainder = remainder.trim();
+        return [main, stripped_remainder];
       }
     }
-    return null;
+    let stripped_text = text.trim();
+    return [null, stripped_text];
   }
 }
 exposeClassAttributes(JsonStructureParser);
@@ -1542,8 +1508,8 @@ class BasicMessageProcessor extends CompositeMessageProcessor {
    * this instance will process messages
    */
   constructor(message_processors) {
-    super(message_processors);
-    this.answer = new AnswerMessageProcessor();
+    super(message_processors, false);
+    this.answer = new AnswerMessageProcessor(null);
     this.chat_context = new ChatContextMessageProcessor();
     this.token_accounting = new TokenAccountingMessageProcessor();
     this.message_processors.unshift(this.chat_context);
@@ -1611,6 +1577,93 @@ ${string_struct}
   }
 }
 exposeClassAttributes(BasicMessageProcessor);
+class SlyDataRedactor extends ConfigFilter {
+  /**
+   * Constructor
+   *
+   * :param calling_agent_tool_spec: The dictionary describing the JSON agent tool
+   * that is providing the sly_data.
+   * :param config_keys: A list of config keys in reverse precedence order.
+   * That is, the further on in the list you get, the greater the precedence.
+   * Each string is a fully qualified identifier that can span multiple
+   * dictionaries like: "allow.to_upstream.sly_data".
+   * :param allow_empty_dict: Default is true which allows filter_config() to return
+   * an empty dictionary.  When set to False and empty this yields
+   * a null value.
+   */
+  constructor(calling_agent_tool_spec, config_keys, allow_empty_dict) {
+    super();
+    this.agent_tool_spec = calling_agent_tool_spec;
+    this.config_keys = config_keys;
+    if (this.config_keys == null) {
+      this.config_keys = [];
+    }
+    this.allow_empty_dict = allow_empty_dict;
+  }
+  /**
+   * :param basis_config: Source of the sly_data to redact.
+   * :return: A new sly_data dictionary with proper redactions per the config_keys on the
+   * agent_tool_spec.  If no such keys exist, then no sly_data
+   * gets through to the agent to be called.  Also, if allow_empty_dict
+   * is set to true, this method can return an empty dictionary.
+   * When allow_empty_dict is set to False and empty dictionary returns a null value.
+   */
+  filter_config(basis_config) {
+    let empty = {};
+    let extractor = new DictionaryExtractor(this.agent_tool_spec, ".");
+    let allow_dict = empty;
+    for (const config_key of this.config_keys) {
+      allow_dict = extractor.get(config_key, allow_dict);
+    }
+    if (!Boolean(allow_dict)) {
+      return this.maybe_empty(empty);
+    }
+    if (isinstance2(allow_dict, Boolean) && Boolean(allow_dict)) {
+      return this.maybe_empty(basis_config);
+    }
+    if (!Boolean(basis_config) || !is_dict(basis_config)) {
+      return this.maybe_empty(empty);
+    }
+    if (isinstance2(allow_dict, Array)) {
+      let true_dict = {};
+      let key = null;
+      for (const key2 of iter2(allow_dict)) {
+        let use_key = key2;
+        true_dict[use_key] = true;
+      }
+      allow_dict = true_dict;
+    }
+    let redacted = {};
+    let source_key = null;
+    let dest_key = null;
+    for (const [source_key2, dest_key2] of Object.entries(allow_dict)) {
+      let source_value = dict.get(basis_config, source_key2);
+      if (source_value == null) {
+        continue;
+      }
+      if (isinstance2(dest_key2, String)) {
+        let use_dest_key = dest_key2;
+        redacted[use_dest_key] = source_value;
+      } else if (isinstance2(dest_key2, Boolean) && Boolean(dest_key2)) {
+        redacted[source_key2] = source_value;
+      }
+    }
+    return this.maybe_empty(redacted);
+  }
+  /**
+   * :param test_dict: The dictionary to test for emptiness
+   * :return: If the test_dict is empty and the instance is not configured
+   * to return empty dictionaries, then return null. Otherise return
+   * the test_dict in its entirety
+   */
+  maybe_empty(test_dict) {
+    if (!this.allow_empty_dict && !Boolean(test_dict)) {
+      return null;
+    }
+    return test_dict;
+  }
+}
+exposeClassAttributes(SlyDataRedactor);
 class MaximalMessageFilter extends MessageFilter {
   /**
    * Determine whether to allow the message through.
@@ -1620,7 +1673,7 @@ class MaximalMessageFilter extends MessageFilter {
    * :return: True if the message should be allowed through to the client. False otherwise.
    */
   allow_message(chat_message_dict, message_type) {
-    if (chat_message_dict != null && Object.keys(chat_message_dict).length > 0) {
+    if (any2(Object.keys(chat_message_dict))) {
       return true;
     }
     return false;
@@ -1686,7 +1739,8 @@ class MessageFilterFactory {
       chat_filter_type = dict.get(chat_filter, "chat_filter_type", chat_filter_type);
     }
     if (isinstance2(chat_filter_type, String)) {
-      chat_filter_type = chat_filter_type.toUpperCase();
+      let chat_filter_type_string = chat_filter_type;
+      chat_filter_type = chat_filter_type_string.toUpperCase();
     }
     let chat_filter_class = dict.get(TYPE_TO_MESSAGE_FILTER_CLASS, chat_filter_type);
     if (chat_filter_class == null) {
@@ -1762,7 +1816,6 @@ export {
   BaseMessageDictionaryConverter,
   BasicMessageProcessor,
   ChatMessageType,
-  ChatMessageTypeUtil,
   ContentUtils,
   DecodeUtils,
   MaximalMessageFilter,

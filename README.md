@@ -543,8 +543,7 @@ so a deployed site needs no build step. The output is laid out to be read in rev
 - `browser/`: our code from `runtime-build/` (the kernel and session adapters, and the
   Node stand-ins in `shims.mjs`), unminified. `browser/neuro-san.mjs` is the entry.
 - `neuro-san/`: the package's own code, unminified, one file per area of the package
-  (`graph`, `run_context`, `session`, `message`, ...), with the build-time source patches
-  applied in place.
+  (`graph`, `run_context`, `session`, `message`, ...).
 - `vendor/libraries.mjs`: the third-party libraries (LangChain, the MCP SDK, pythonlib,
   ...), minified and pinned by `runtime-build/package-lock.json`.
 
