@@ -1,7 +1,7 @@
 """
 Generate a runnable, serverless site for the neuro-san-web runtime from a
 DeploymentPlan: rewrite the resolved network so every hostable tool becomes an MCP
-URL (and missing/external tools are dropped), then emit the network JSON, an
+URL (while public agent-network URLs are preserved), then emit the network JSON, an
 agent-manifest.json, and a themed index.html.
 
 The output directory is fully static; the browser runtime loads it with no
@@ -108,7 +108,7 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
                    cruse: bool = True) -> Dict[str, Any]:
     """Produce the deployed network config: agents only, with tool references mapped
     to local MCP URLs (hostable tools) or same-origin MCP-proxy URLs (external MCP
-    servers), and missing/other-external refs dropped."""
+    servers), with public agent-network URLs preserved and missing refs dropped."""
     hostable_url = {
         t.name: f"{site_base.rstrip('/')}/_mcp/{i}/mcp"
         for i, t in enumerate(plan.hostable_tools)
@@ -116,7 +116,7 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
     # External MCP servers are reached through a same-origin proxy (avoids CORS) and
     # given a clean /mcp URL so the runtime classifies them as MCP.
     ext_url = {url: f"{site_base}/ext-mcp/{i}/mcp" for i, url in enumerate(plan.external_mcps)}
-    drop = set(plan.missing_tools) | set(plan.omitted_tools) | set(plan.external_other)
+    drop = set(plan.missing_tools) | set(plan.omitted_tools)
 
     config = copy.deepcopy(plan.config)
     _seed_default_model(config)
@@ -140,7 +140,7 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
             elif ref in plan.links:
                 mapped.append(plan.links[ref])
             elif ref in drop:
-                continue  # missing tool / non-MCP external URL — dropped (reported separately)
+                continue  # missing or intentionally omitted tool
             else:
                 mapped.append(ref)  # sub-agent or unresolved link-slot reference
         if "tools" in agent:
@@ -380,6 +380,9 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
     if plan.hostable_tools or plan.external_mcps:  # legacy compatibility for older runtimes
         allowed_peers.append(site_base)
     allowed_peers.extend(origin for origin in (_origin(url) for url in plan.links.values()) if origin)
+    # Modern runtimes use peer_policy.mode=open, but publish direct URL-tool origins
+    # for compatibility with older allow-list runtimes.
+    allowed_peers.extend(origin for origin in (_origin(url) for url in plan.external_networks) if origin)
     allowed_peers = list(dict.fromkeys(allowed_peers))
     manifest: Dict[str, Any] = {
         "brand": _brand_display(plan, theme),

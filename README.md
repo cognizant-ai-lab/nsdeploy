@@ -213,18 +213,19 @@ additions from the private-steward manifest.
    - LLM agents (run in the browser),
    - `toolbox`/`class` tools resolved against the studio's `toolbox_info.hocon` +
      `coded_tools/` → **hostable** (can run as MCP) or **missing**,
-   - MCP/remote URLs,
-   - and it flags **`demo_mode`** agents, **missing includes**, and **external MCP
-     URLs**.
+   - URL tools, classified as either **external MCP servers** or **public agent
+     networks**,
+   - and it flags **`demo_mode`** agents and **missing includes**.
 3. **Host** each hostable tool as a standalone **FastMCP** streamable-HTTP server
    (with CORS), exposing its `CodedTool.invoke(args, sly_data)` as an MCP tool whose
    input schema is built from the tool's JSON-Schema parameters. The launcher picks
    an available private port for each process, avoiding collisions between sites.
 4. **Rewrite** the resolved network (a copy): each hostable tool reference becomes its
    stable same-origin `/_mcp/<i>/mcp` URL; each **external MCP** URL becomes a proxy URL
-   (`/ext-mcp/<i>/mcp`) so the browser can call it without CORS; missing tools and
-   non-MCP external URLs are dropped. This removes any assumption of a local neuro-san
-   server — tools are reached purely over MCP.
+   (`/ext-mcp/<i>/mcp`) so the browser can call it without CORS; each non-MCP HTTP(S)
+   URL is preserved as a **public agent network**; and missing tools are dropped. This
+   removes any assumption of a local neuro-san server—tools are reached over MCP or
+   by loading a public agent network into the browser.
 5. **Generate** `index.html` + `theme.css` + `site.js` + `agent-manifest.json` +
    `<network>.network.json` + `agent-mcp.json` + `<network>_private_steward.hocon` +
    `theme.json` from the editable site source and network.
@@ -360,7 +361,18 @@ hard-coded under a top-level HOCON
 `links { link_demo_airline = "https://site.example/link_demo_airline" }` block.
 
 A referenced demo leaf continues to run locally until `nsdeploy link`, `--link`,
-or a HOCON `links` entry replaces it. Truly undefined references are still
+or a HOCON `links` entry replaces it. A caller may also put the published network
+URL directly in an agent's tool list, with no link sidecar or `links` entry:
+
+```hocon
+tools = ["http://127.0.0.1:8092/link_demo_airline"]
+```
+
+Non-MCP HTTP(S) tool URLs are treated as public agent networks: after user consent,
+the browser fetches their public manifest and network definition and runs them
+locally. The URL's final path component must match the published network name.
+
+Truly undefined references are still
 supported as interactive link slots: when called, the browser asks for the target
 site URL and stores the resulting outbound link. Without a local HOCON, a
 hard-coded link, or an explicit peer URL, the linker cannot discover an unknown
@@ -372,8 +384,8 @@ site.
 `${demo_mode}` are listed under **"DEMO-MODE agents — NOT GROUNDED"**: they fabricate
 realistic-looking answers instead of using real data/tools. **Ground them later** by
 giving each a real tool/data source and removing `demo_mode` from its instructions.
-Tools that can't be resolved from the repo (and non-MCP external URLs) are likewise
-reported and dropped. **External MCP servers are kept** — proxied same-origin so the
+Tools that can't be resolved from the repo are likewise reported and dropped.
+**External MCP servers are kept** — proxied same-origin so the
 browser can call them; whether a given call succeeds then depends on that remote
 server (reachability/auth) and the user's run-time consent.
 

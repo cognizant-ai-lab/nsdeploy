@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import { isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopRouter } from "../nsdeploy/runtime/engine.js";
+import { AgentNetwork } from "../nsdeploy/runtime/kernel.js";
 import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
 import { LlmClient, isMockResponse } from "../nsdeploy/runtime/llm.js";
 import { McpClient, parseMaybeSse } from "../nsdeploy/runtime/mcp.js";
@@ -59,6 +60,14 @@ assert.equal(manifestAllowsPeer("https://public.example/agent", {peer_policy: {m
 assert.equal(manifestAllowsPeer("https://blocked.example/agent", {
   peer_policy: {mode: "open", deny_origins: ["https://blocked.example"]},
 }), false);
+
+const urlToolNetwork = new AgentNetwork({tools: [{
+  name: "commercial_sales_manager",
+  instructions: "Coordinate farm sales.",
+  tools: ["http://127.0.0.1:8093/seabreeze_inn", "https://tools.example/mcp"],
+}]}, "greenbank_farm");
+assert.equal(urlToolNetwork.classifyTool("http://127.0.0.1:8093/seabreeze_inn").kind, "remote");
+assert.equal(urlToolNetwork.classifyTool("https://tools.example/mcp").kind, "mcp");
 
 const chain = [
   "http://127.0.0.1:8095::deneman_place",

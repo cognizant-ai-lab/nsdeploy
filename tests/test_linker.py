@@ -53,6 +53,45 @@ class LinkerTests(unittest.TestCase):
         )
         self.assertEqual(deployed["link_slots"], {})
 
+    def test_direct_url_tool_is_preserved_as_public_agent_network(self):
+        remote = "http://127.0.0.1:8093/seabreeze_inn"
+        config = {
+            "tools": [{
+                "name": "commercial_sales_manager",
+                "instructions": "Coordinate farm sales.",
+                "tools": [remote],
+            }],
+        }
+        plan = build_plan(config, {}, "greenbank_farm", [], self.source)
+
+        self.assertEqual(plan.external_networks, [remote])
+        self.assertEqual(plan.external_mcps, [])
+        deployed = rewrite_config(plan, "http://127.0.0.1:8094", cruse=False)
+        self.assertEqual(deployed["tools"][0]["tools"], [remote])
+
+        manifest = build_manifest(
+            plan, deployed,
+            "http://127.0.0.1:8094/v1",
+            "http://127.0.0.1:8094/byok/v1",
+            "http://127.0.0.1:8094",
+            ThemeSpec(),
+        )
+        self.assertIn("http://127.0.0.1:8093", manifest["allowed_peers"])
+
+    def test_mcp_url_is_not_classified_as_public_agent_network(self):
+        remote = "https://tools.example/mcp"
+        config = {
+            "tools": [{
+                "name": "front",
+                "instructions": "Help.",
+                "tools": [remote],
+            }],
+        }
+        plan = build_plan(config, {}, "demo", [], self.source)
+
+        self.assertEqual(plan.external_mcps, [remote])
+        self.assertEqual(plan.external_networks, [])
+
     def test_unlinked_demo_leaf_remains_as_local_fallback(self):
         config = {
             "tools": [
