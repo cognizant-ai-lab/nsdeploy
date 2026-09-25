@@ -939,7 +939,7 @@ export function mountApp(root, { engine, trace, manifest }) {
     } catch {}
     if (router) p.set("router", router); else p.delete("router");
     if (model) p.set("model", model); else p.delete("model");
-    p.delete("runner"); // the old choice of vibed agent loop; neuro-san's loop is the only one
+    p.delete("runner"); // not a setting; strip it from links that carry it
     const qs = p.toString();
     // Rewrite the (key-free) query string, then reload so the change applies even
     // when only the key changed (router/model unchanged).
