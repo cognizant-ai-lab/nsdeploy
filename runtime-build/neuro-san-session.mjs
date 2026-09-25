@@ -29,6 +29,7 @@ import { AgentFrameworkMessage } from "./node_modules/@cognizant-ai-lab/neuro-sa
 import { AgentToolResultMessage } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/message/types/agent_tool_result_message.js";
 import { AgentProgressMessage } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/message/types/agent_progress_message.js";
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { NeuroSanRunnable } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/internals/run_context/langchain/tracing/neuro_san_runnable.js";
 import { LangChainRunContext } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/internals/run_context/langchain/core/langchain_run_context.js";
 import { AsyncDirectAgentSession } from "./node_modules/@cognizant-ai-lab/neuro-san-npm/dist/generated/neuro_san/session/async_direct_agent_session.js";
 import { MultiServerMCPClient } from "@langchain/mcp-adapters";
@@ -200,6 +201,23 @@ BaseToolFactory.prototype.ensure_external_parameters = async function ensureExte
 // the keyword-argument calls, in the transpiling source.
 // The schema is the parameters object from_function_json keeps as function_json (JSON
 // Schema, which LangChain.js accepts); _call follows python's _arun line for line.
+// WORKAROUND: in python LangChainOpenAIFunctionTool is a pydantic model, so
+// LangChainOpenAIFunctionTool(**function_json) sets name, description and parameters
+// from the dict. The transpiled class has no constructor of its own, and LangChain.js's
+// StructuredTool constructor ignores those fields, so a sub-agent's tool reaches the
+// model with no name or description and the model cannot call it. (An external agent
+// only worked because from_function_json sets its name afterwards.)
+// PORT BACK: give the transpiled class a constructor that assigns its declared fields.
+// Fields from_function_json has already set (an external agent's safe name) are kept.
+const fromFunctionJson = LangChainOpenAIFunctionTool.from_function_json;
+LangChainOpenAIFunctionTool.from_function_json = function (functionJson, toolCaller) {
+  const tool = fromFunctionJson.call(this, functionJson, toolCaller);
+  for (const field of ["name", "description", "parameters"]) {
+    if (tool[field] == null && functionJson?.[field] != null) tool[field] = functionJson[field];
+  }
+  return tool;
+};
+
 Object.defineProperty(LangChainOpenAIFunctionTool.prototype, "schema", {
   configurable: true,
   get() {
@@ -228,6 +246,23 @@ LangChainOpenAIFunctionTool.prototype._call = async function call(args) {
     return null;
   }
   return ContentUtils.history_safe_text(theAnswer);
+};
+
+// WORKAROUND: NeuroSanRunnable.prepare_runnable_config builds the RunnableConfig with
+// python LangChain's key names, recursion_limit and run_name. LangChain.js reads
+// recursionLimit and runName, so neuro-san's step limit (max_steps, 10000 by default)
+// never reaches LangGraph, which then stops an agent at its own default of 25 steps.
+// PORT BACK: map RunnableConfig keys to their LangChain.js names in the transpiling source.
+const prepareRunnableConfig = NeuroSanRunnable.prototype.prepare_runnable_config;
+NeuroSanRunnable.prototype.prepare_runnable_config = function (...args) {
+  const config = prepareRunnableConfig.apply(this, args);
+  for (const [python, js] of [["recursion_limit", "recursionLimit"], ["run_name", "runName"]]) {
+    if (config && python in config) {
+      config[js] ??= config[python];
+      delete config[python];
+    }
+  }
+  return config;
 };
 
 // --- MCP ---------------------------------------------------------------------------

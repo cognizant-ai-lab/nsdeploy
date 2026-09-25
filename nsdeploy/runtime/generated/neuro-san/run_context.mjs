@@ -4829,6 +4829,7 @@ export {
   MasterToolboxFactory,
   MasterTracingContextFactory,
   McpToolErrorHandler,
+  NeuroSanRunnable,
   PydanticArgumentDictionaryConverter,
   RunContextFactory
 };

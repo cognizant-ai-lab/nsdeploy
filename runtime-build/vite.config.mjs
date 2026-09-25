@@ -69,6 +69,14 @@ const browserShims = {
 // PORT BACK: fix each in the transpiling source.
 const SOURCE_PATCHES = [
   {
+    // python: self.properties.get(args_name) on a dict. A transpiled dict is a plain
+    // object with no get(), so passing arguments to any sub-agent threw. It is the
+    // package's only `x.get(key)` on a dict; everywhere else uses dict.get.
+    file: /activations\/argument_assigner\.js$/,
+    from: "let atttribute = this.properties.get(args_name);",
+    to: "let atttribute = dict.get(this.properties, args_name);",
+  },
+  {
     // The importlib stub searches a developer's own checkouts (absolute paths under a
     // home directory) for a require() root. A browser has no filesystem to search, and
     // those paths would be published in the committed bundle, so only process.cwd()

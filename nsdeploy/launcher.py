@@ -18,6 +18,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -219,7 +220,10 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 if tool_call:
                     message["tool_calls"] = [{k: v for k, v in tool_call.items() if k != "index"}]
                 payload = json.dumps({
-                    "id": "chatcmpl-neuro-san-mock", "object": "chat.completion", "model": "neuro-san-mock",
+                    # Unique per completion, as OpenAI's are. LangChain uses it as the message
+                    # id, and LangGraph replaces a message whose id it has already seen.
+                    "id": f"chatcmpl-neuro-san-mock-{uuid.uuid4().hex}", "object": "chat.completion",
+                    "model": "neuro-san-mock",
                     "choices": [{"index": 0, "message": message,
                                  "finish_reason": "tool_calls" if tool_call else "stop"}],
                     "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},

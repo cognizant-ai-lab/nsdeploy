@@ -572,7 +572,7 @@ export class Engine {
       const loop = session.createSession(this._runnableConfig(network), network.name);
       const request = {
         user_message: { type: ChatMessageType.HUMAN, text: userText },
-        sly_data: { ...(slyData || {}) },
+        sly_data: withLlmKey(slyData, this.byokKey),
         // MAXIMAL so the trace can show every agent's messages; the answer is the final
         // AGENT_FRAMEWORK message either way.
         chat_filter: { chat_filter_type: "MAXIMAL" },
@@ -621,6 +621,17 @@ export class Engine {
       });
     }
   }
+}
+
+// A network's llm_config can ask for its key from the request instead of the
+// environment ("openai_api_key": "sly_data", common in fallbacks), and neuro-san then
+// reads it from sly_data.llm_config. The BYOK key is put there too, so those networks
+// run on it as well. The key never leaves this browser: partner networks run here, and
+// neuro-san's own redaction decides what sly_data they see.
+function withLlmKey(slyData, apiKey) {
+  const out = { ...(slyData || {}) };
+  out.llm_config = { ...(out.llm_config || {}), openai_api_key: apiKey || "demo" };
+  return out;
 }
 
 // An unlinked link slot, until the developer links it: resolvePeer asks for the URL.

@@ -1350,7 +1350,7 @@ class ArgumentAssigner {
       }
       let args_value_type = null;
       if (this.properties) {
-        let atttribute = this.properties.get(args_name);
+        let atttribute = dict.get(this.properties, args_name);
         if (!atttribute) {
           continue;
         }

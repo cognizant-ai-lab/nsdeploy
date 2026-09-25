@@ -1,7 +1,7 @@
 import { AgentNetwork } from "../neuro-san/graph.mjs";
 import { AsyncioExecutorPool } from "../neuro-san/leaf_common.mjs";
 import { StorageClass, ExpiringAgentNetworkStorage, DirectAgentReservationist } from "../neuro-san/internals.mjs";
-import { MasterLlmFactory, MasterToolboxFactory, LangChainRunContext, BaseToolFactory, LangChainOpenAIFunctionTool, PydanticArgumentDictionaryConverter, LangChainRun, LangChainMcpAdapter, McpToolErrorHandler } from "../neuro-san/run_context.mjs";
+import { MasterLlmFactory, MasterToolboxFactory, LangChainRunContext, BaseToolFactory, LangChainOpenAIFunctionTool, PydanticArgumentDictionaryConverter, LangChainRun, NeuroSanRunnable, LangChainMcpAdapter, McpToolErrorHandler } from "../neuro-san/run_context.mjs";
 import { SessionInvocationContext, DirectAgentSession, ExternalAgentSessionFactory, AsyncDirectAgentSession } from "../neuro-san/session.mjs";
 import { ChatMessageType, AgentMessage, AgentFrameworkMessage, AgentToolResultMessage, AgentProgressMessage, ChatMessageTypeUtil, ContentUtils } from "../neuro-san/message.mjs";
 import { SystemMessage, HumanMessage, AIMessage, MultiServerMCPClient } from "../vendor/libraries.mjs";
@@ -116,6 +116,14 @@ BaseToolFactory.prototype.ensure_external_parameters = async function ensureExte
   }
   return { ...functionJson, parameters: structuredClone(BaseToolFactory.DEFAULT_EXTERNAL_PARAMETERS) };
 };
+const fromFunctionJson = LangChainOpenAIFunctionTool.from_function_json;
+LangChainOpenAIFunctionTool.from_function_json = function(functionJson, toolCaller) {
+  const tool = fromFunctionJson.call(this, functionJson, toolCaller);
+  for (const field of ["name", "description", "parameters"]) {
+    if (tool[field] == null && functionJson?.[field] != null) tool[field] = functionJson[field];
+  }
+  return tool;
+};
 Object.defineProperty(LangChainOpenAIFunctionTool.prototype, "schema", {
   configurable: true,
   get() {
@@ -142,6 +150,17 @@ LangChainOpenAIFunctionTool.prototype._call = async function call(args) {
     return null;
   }
   return ContentUtils.history_safe_text(theAnswer);
+};
+const prepareRunnableConfig = NeuroSanRunnable.prototype.prepare_runnable_config;
+NeuroSanRunnable.prototype.prepare_runnable_config = function(...args) {
+  const config = prepareRunnableConfig.apply(this, args);
+  for (const [python, js] of [["recursion_limit", "recursionLimit"], ["run_name", "runName"]]) {
+    if (config && python in config) {
+      config[js] ??= config[python];
+      delete config[python];
+    }
+  }
+  return config;
 };
 LangChainMcpAdapter.prototype.get_mcp_tools = async function getMcpTools(serverUrl, allowedTools = null, headers = null) {
   if (this._mcp_servers_info == null) {
