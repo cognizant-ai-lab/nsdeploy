@@ -408,7 +408,7 @@ Each child returns its answer **and a presentation proposal to its parent**. Eac
 parent is instructed to consolidate its children's proposals during its normal
 response: merge redundant questions, use known answers, preserve distinct needs,
 and choose the right presentation for the current request. This applies across
-local agents and linked networks, with both manual and LangChain runners. Only the
+local agents and linked networks. Only the
 final root composition is rendered; child proposals remain in the developer trace.
 Exact duplicate components are also removed by the runtime; semantic consolidation
 is performed by the model, so quality still depends on the selected model.
@@ -571,23 +571,27 @@ low-footprint default (~4.7 GB).
 ## The agent loop
 
 Agents run on neuro-san's `DirectAgentSession`, not on a reimplementation of it.
-[`runtime-build/`](runtime-build) builds the neuro-san npm package for the browser with
+The package is built for the browser: its Node stand-ins and third-party libraries are
+bundled into it. [`runtime-build/`](runtime-build) builds nsdeploy's adapters over it with
 Vite into `nsdeploy/runtime/generated/`. That folder is build output, like a `dist`, so
 it is not checked in: build it before running nsdeploy or building a wheel, which ships
 whatever is there. The layout:
 
-- `browser/`: our code from `runtime-build/` (the kernel and session adapters, and the
-  Node stand-ins in `shims.mjs`), unminified. `browser/neuro-san.mjs` is the entry.
-- `neuro-san/`: the package's own code, unminified, one file per area of the package
-  (`graph`, `run_context`, `session`, `message`, ...).
-- `vendor/libraries.mjs`: the third-party libraries (LangChain, the MCP SDK, pythonlib,
-  ...), minified and pinned by `runtime-build/package-lock.json`.
+- `browser/`: our code from `runtime-build/` (the kernel and session adapters),
+  unminified. `browser/neuro-san.mjs` is the entry.
+- `neuro-san/neuro-san.mjs`: the package, minified and pinned by
+  `runtime-build/package-lock.json`.
 
 ```bash
 cd runtime-build
 npm install     # expects ../../neuro-san-ts-package/ts-package/package.tgz
-npm run build   # DEBUG=1 npm run build leaves vendor/ unminified and adds source maps
+npm run build   # DEBUG=1 npm run build leaves the package unminified and adds source maps
 ```
+
+neuro-san uses OpenAI's Responses API for OpenAI models by default, and the launcher's
+mock router and BYOK proxy both speak it as well as chat completions. For a local model
+that only speaks chat completions, set `"use_responses_api": false` in the network's
+`llm_config`.
 
 What comes from neuro-san: the config filter chain, `AgentNetwork`, the network
 validators, `sly_data` redaction, external agent and MCP reference parsing, and the
@@ -607,8 +611,7 @@ runs it as its own `AsyncDirectAgentSession` with the caller's router.
 The package's transpiled code does not all run as-is yet. Each gap is worked around in
 `runtime-build/` (never by editing the package, so a rebundled package stays reproducible
 from its transpiling source) and marked `WORKAROUND` / `PORT BACK` with what to fix
-upstream. The browser stand-ins for Node builtins are listed in
-[`runtime-build/browser-shims/README.md`](runtime-build/browser-shims/README.md).
+upstream.
 
 ## Runtime UI
 

@@ -4,6 +4,9 @@
 # the browser runtime's build output (cd runtime-build && npm install && npm run build)
 nsdeploy/runtime/generated/
 
+# editable site sources the bundled examples write next to their HOCON when run
+examples/sites/
+
 # python
 __pycache__/
 *.pyc

@@ -2,7 +2,7 @@
   "name": "nsdeploy-runtime-build",
   "private": true,
   "type": "module",
-  "description": "Bundles @cognizant-ai-lab/neuro-san-npm for the browser into nsdeploy/runtime/generated/.",
+  "description": "Builds nsdeploy's adapters over @cognizant-ai-lab/neuro-san-npm into nsdeploy/runtime/generated/.",
   "engines": {
     "node": ">=26"
   },
@@ -13,8 +13,6 @@
     "@cognizant-ai-lab/neuro-san-npm": "file:../../neuro-san-ts-package/ts-package/package.tgz"
   },
   "devDependencies": {
-    "@rollup/plugin-inject": "^5.0.5",
-    "buffer": "^6.0.3",
     "vite": "^7.3.6"
   }
 }

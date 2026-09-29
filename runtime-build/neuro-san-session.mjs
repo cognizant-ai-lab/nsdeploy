@@ -16,11 +16,10 @@ import {
   ExternalAgentSessionFactory,
   SessionInvocationContext,
   LangChainMcpAdapter,
-  McpToolErrorHandler,
   ChatMessageType,
   AsyncDirectAgentSession,
+  environ,
 } from "@cognizant-ai-lab/neuro-san-npm";
-import { MultiServerMCPClient } from "@langchain/mcp-adapters";
 // Imported for its side effect too: it makes the package's ExternalAgentParsing work.
 import { parseExternalAgent } from "./external-agent-parsing.mjs";
 
@@ -60,7 +59,7 @@ export function setHooks(values) {
 }
 
 export function setEnv(values) {
-  Object.assign(globalThis.process.env, values);
+  Object.assign(environ, values);
 }
 
 export function createSession(config, name) {
@@ -79,66 +78,32 @@ export function createSession(config, name) {
 
 // --- MCP ---------------------------------------------------------------------------
 
-// LangChainMcpAdapter.get_mcp_tools, line for line as in python, plus the runtime's
-// hooks: consent before any contact with the server, and before and after each tool
-// call. The package's own method gives no place for those, which is why this
-// replaces it rather than wrapping it.
-LangChainMcpAdapter.prototype.get_mcp_tools = async function getMcpTools(serverUrl, allowedTools = null, headers = null) {
-  if (LangChainMcpAdapter._mcp_servers_info == null) {
-    this._load_mcp_servers_info();
-  }
-  const serversInfo = LangChainMcpAdapter._mcp_servers_info || {};
-  const serverInfo = serversInfo[serverUrl] || {};
-
+// LangChainMcpAdapter.get_mcp_tools, with the runtime's hooks around it: consent
+// before any contact with the server, and before and after each tool call. The
+// package's own method connects, filters the allowed tools and wraps each one's
+// func in McpToolErrorHandler, and the per-call hooks go around that.
+const getMcpTools = LangChainMcpAdapter.prototype.get_mcp_tools;
+LangChainMcpAdapter.prototype.get_mcp_tools = async function (serverUrl, allowedTools = null, headers = null) {
   if (hooks.mcpConsent && !(await hooks.mcpConsent({ kind: "mcp", url: serverUrl }))) {
     this.client_allowed_tools = allowedTools;
     return [];
   }
-
-  const connection = { url: serverUrl, transport: "http" };
-  const headersDict = headers || serverInfo.http_headers;
-  if (headersDict) {
-    if (typeof headersDict === "object" && !Array.isArray(headersDict)) {
-      connection.headers = { ...headersDict };
-    } else {
-      this.logger.error("MCP client headers for server %s must be a dictionary.", serverUrl);
-    }
-  }
-  const client = new MultiServerMCPClient({
-    mcpServers: { server: connection },
-    // The Python client names tools exactly as the server does.
-    prefixToolNameWithServerName: false,
-    additionalToolNamePrefix: "",
-  });
-  let mcpTools = await client.getTools();
-
-  let clientAllowedTools = allowedTools;
-  if (clientAllowedTools == null) {
-    clientAllowedTools = serverInfo.tools || [];
-  }
-  if (clientAllowedTools && clientAllowedTools.length) {
-    mcpTools = mcpTools.filter((tool) => clientAllowedTools.includes(tool.name));
-  }
-  this.client_allowed_tools = clientAllowedTools;
-
+  const mcpTools = await getMcpTools.call(this, serverUrl, allowedTools, headers);
   for (const tool of mcpTools) {
-    tool.tags = ["langchain_tool"];
-    if (typeof tool.func === "function") {
-      const handler = new McpToolErrorHandler(tool);
-      handler.original_coroutine = tool.func.bind(tool);
-      tool.func = async (args, ...rest) => {
-        const instead = hooks.mcpCall ? await hooks.mcpCall({ url: serverUrl, tool: tool.name, args }) : null;
-        if (instead != null) return instead;
-        try {
-          const result = await handler.async_invoke(args, ...rest);
-          hooks.mcpResult?.({ url: serverUrl, tool: tool.name, result });
-          return result;
-        } catch (error) {
-          hooks.mcpResult?.({ url: serverUrl, tool: tool.name, error });
-          throw error;
-        }
-      };
-    }
+    if (typeof tool.func !== "function") continue;
+    const call = tool.func;
+    tool.func = async (args, ...rest) => {
+      const instead = hooks.mcpCall ? await hooks.mcpCall({ url: serverUrl, tool: tool.name, args }) : null;
+      if (instead != null) return instead;
+      try {
+        const result = await call(args, ...rest);
+        hooks.mcpResult?.({ url: serverUrl, tool: tool.name, result });
+        return result;
+      } catch (error) {
+        hooks.mcpResult?.({ url: serverUrl, tool: tool.name, error });
+        throw error;
+      }
+    };
   }
   return mcpTools;
 };

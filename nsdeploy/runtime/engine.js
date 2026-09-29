@@ -336,7 +336,15 @@ export class Engine {
   _runnableConfig(network) {
     const config = structuredClone(network.config);
     const override = this.modelOverride ? { model_name: this.modelOverride } : {};
-    const llmConfig = (agentConfig) => ({ ...(agentConfig || {}), class: "openai", ...override });
+    // Every model call goes to the one router the user configured. When they chose a
+    // model, that model is the whole llm_config: the fallbacks it lists (often other
+    // providers) would otherwise be what neuro-san calls, and with one router and one
+    // model there is nothing left to fall back to.
+    const llmConfig = (agentConfig) => {
+      const out = { ...(agentConfig || {}), class: "openai", ...override };
+      if (this.modelOverride) delete out.fallbacks;
+      return out;
+    };
     config.llm_config = llmConfig(config.llm_config);
     // CRUSE's presentation context for each agent (see cruse.js): whether its
     // presentation reaches the user or is a proposal for the agent that called it.
