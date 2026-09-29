@@ -70,6 +70,10 @@ def _facade_command(python_exe: str, site_dir: Path, plan: DeploymentPlan, port:
             "--port", str(facade_port), "--upstream", facade_upstream]
 
 
+# The most text the mock LLM passes on, in a tool call's arguments or a summary.
+MOCK_TEXT_LIMIT = 1200
+
+
 def _sse(obj: Dict[str, Any]) -> bytes:
     return f"data: {json.dumps(obj)}\n\n".encode("utf-8")
 
@@ -84,6 +88,40 @@ def _last_user_text(messages: List[Dict[str, Any]]) -> str:
 
 def _called_tool_names(messages: List[Dict[str, Any]]) -> set:
     return {m.get("name") for m in messages if m.get("role") == "tool" and m.get("name")}
+
+
+def _responses_text(content: Any) -> str:
+    """The text of a Responses API message content: a string, or a list of parts."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+    return ""
+
+
+def _responses_to_chat(body: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    A Responses API request's input and tools, in the chat-completions shape the mock
+    router reads: messages with a "tool" role for each function result, named after
+    the call it answers, and tools as {"function": {...}}.
+    """
+    raw_input = body.get("input", [])
+    items = [{"type": "message", "role": "user", "content": raw_input}] if isinstance(raw_input, str) else raw_input or []
+    names_by_call: Dict[str, str] = {}
+    messages: List[Dict[str, Any]] = []
+    for item in items:
+        kind = item.get("type", "message")
+        if kind == "message":
+            messages.append({"role": item.get("role"), "content": _responses_text(item.get("content"))})
+        elif kind == "function_call":
+            names_by_call[item.get("call_id", "")] = item.get("name", "")
+            messages.append({"role": "assistant", "tool_calls": [{"function": {"name": item.get("name")}}]})
+        elif kind == "function_call_output":
+            messages.append({"role": "tool", "name": names_by_call.get(item.get("call_id", ""), ""),
+                             "content": item.get("output", "")})
+    tools = [{"function": {"name": t.get("name"), "parameters": t.get("parameters", {})}}
+             for t in body.get("tools", []) or [] if t.get("type") == "function"]
+    return messages, tools
 
 
 def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: List[str],
@@ -118,8 +156,10 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             raw = self.rfile.read(length) if length else b""
             if path == "/v1/chat/completions":
                 return self._mock_router(raw)
-            if path == "/byok/v1/chat/completions":
-                return self._byok_proxy(raw)
+            if path == "/v1/responses":
+                return self._mock_responses(raw)
+            if path in ("/byok/v1/chat/completions", "/byok/v1/responses"):
+                return self._byok_proxy(raw, path[len("/byok/v1"):])
             if path == "/_nsdeploy/links":
                 return self._save_link(raw)
             if path == "/mcp" and facade_mcp:
@@ -186,28 +226,12 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 body = json.loads(raw or b"{}")
             except Exception:
                 body = {}
-            messages = body.get("messages", []) or []
-            tools = body.get("tools", []) or []
-            available = [t.get("function", {}).get("name") for t in tools if t.get("function")]
-            called = _called_tool_names(messages)
-            uncalled = [n for n in available if n not in called]
-            text = _last_user_text(messages)
-
+            call, summary = self._mock_decision(body.get("messages", []) or [], body.get("tools", []) or [])
             tool_call: Optional[Dict[str, Any]] = None
-            summary = ""
-            if uncalled:
-                name = uncalled[0]
-                schema = next((t["function"].get("parameters", {}) for t in tools
-                               if t.get("function", {}).get("name") == name), {})
-                args: Dict[str, Any] = {}
-                for p in (schema.get("required") or []):
-                    args[p] = text
-                for common in ("request", "inquiry", "search_terms", "query", "input"):
-                    args.setdefault(common, text)
+            if call:
+                name, arguments = call
                 tool_call = {"index": 0, "id": f"call_{name}", "type": "function",
-                             "function": {"name": name, "arguments": json.dumps(args)}}
-            else:
-                summary = self._summarize(messages)
+                             "function": {"name": name, "arguments": arguments}}
 
             self.send_response(200)
             self._cors()
@@ -253,18 +277,110 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 self.wfile.write(_sse({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}))
             self.wfile.write(b"data: [DONE]\n\n")
 
+        def _mock_decision(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]):
+            """
+            What the mock LLM does next, whichever API asked: call the first tool it
+            hasn't called yet, with the user's request as its arguments, or once every
+            tool has answered, summarize what they returned. Returns
+            ((tool name, arguments JSON) or None, summary text).
+            """
+            available = [t.get("function", {}).get("name") for t in tools if t.get("function")]
+            called = _called_tool_names(messages)
+            uncalled = [n for n in available if n not in called]
+            # Capped like the summary: each agent's request quotes the one before it,
+            # so passing it on whole would double its size at every hop of a deep
+            # chain of networks, where a real model writes a short request instead.
+            text = _last_user_text(messages)[:MOCK_TEXT_LIMIT]
+            if not uncalled:
+                return None, self._summarize(messages)
+            name = uncalled[0]
+            schema = next((t["function"].get("parameters", {}) for t in tools
+                           if t.get("function", {}).get("name") == name), {})
+            args: Dict[str, Any] = {}
+            for p in (schema.get("required") or []):
+                args[p] = text
+            for common in ("request", "inquiry", "search_terms", "query", "input"):
+                args.setdefault(common, text)
+            return (name, json.dumps(args)), ""
+
+        def _mock_responses(self, raw: bytes):
+            """
+            The mock LLM on OpenAI's Responses API, which neuro-san uses for OpenAI
+            models by default ("use_responses_api" in its llm info). Same decisions as
+            _mock_router, answered as a response object, or streamed as the response.*
+            events OpenAI sends.
+            """
+            try:
+                body = json.loads(raw or b"{}")
+            except Exception:
+                body = {}
+            messages, tools = _responses_to_chat(body)
+            call, summary = self._mock_decision(messages, tools)
+            response_id = f"resp_neuro_san_mock_{uuid.uuid4().hex}"
+            if call:
+                name, arguments = call
+                item: Dict[str, Any] = {"type": "function_call", "id": f"fc_{uuid.uuid4().hex}", "status": "completed",
+                                        "call_id": f"call_{name}", "name": name, "arguments": arguments}
+            else:
+                item = {"type": "message", "id": f"msg_{uuid.uuid4().hex}", "status": "completed", "role": "assistant",
+                        "content": [{"type": "output_text", "text": summary, "annotations": []}]}
+            response: Dict[str, Any] = {
+                "id": response_id, "object": "response", "created_at": int(time.time()), "status": "completed",
+                "model": "neuro-san-mock", "output": [item],
+                "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            }
+
+            self.send_response(200)
+            self._cors()
+            self.send_header("X-Nsdeploy-LLM-Route", "mock")
+            if not body.get("stream"):
+                payload = json.dumps(response).encode("utf-8")
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.close_connection = True
+            self.end_headers()
+            sequence = iter(range(1_000_000))
+
+            def event(kind: str, **fields):
+                self.wfile.write(f"event: {kind}\ndata: {json.dumps({'type': kind, 'sequence_number': next(sequence), **fields})}\n\n".encode("utf-8"))
+
+            event("response.created", response={**response, "status": "in_progress", "output": []})
+            if call:
+                event("response.output_item.added", output_index=0, item={**item, "status": "in_progress", "arguments": ""})
+                event("response.function_call_arguments.delta", item_id=item["id"], output_index=0, delta=item["arguments"])
+                event("response.function_call_arguments.done", item_id=item["id"], output_index=0, arguments=item["arguments"])
+            else:
+                event("response.output_item.added", output_index=0, item={**item, "status": "in_progress", "content": []})
+                part = {"type": "output_text", "text": "", "annotations": []}
+                event("response.content_part.added", item_id=item["id"], output_index=0, content_index=0, part=part)
+                for i, piece in enumerate(summary.split(" ")):
+                    event("response.output_text.delta", item_id=item["id"], output_index=0, content_index=0,
+                          delta=piece if i == 0 else " " + piece)
+                event("response.output_text.done", item_id=item["id"], output_index=0, content_index=0, text=summary)
+                event("response.content_part.done", item_id=item["id"], output_index=0, content_index=0,
+                      part={**part, "text": summary})
+            event("response.output_item.done", output_index=0, item=item)
+            event("response.completed", response=response)
+
         def _summarize(self, messages: List[Dict[str, Any]]) -> str:
             results = [m.get("content", "") for m in messages if m.get("role") == "tool"]
             if not results:
                 return "(mock) I have no grounded tool output to summarize for this request."
-            joined = " ".join(str(r) for r in results)[:1200]
+            joined = " ".join(str(r) for r in results)[:MOCK_TEXT_LIMIT]
             return "(mock summary) Based on the tools I consulted: " + joined
 
         # --- BYOK CORS pass-through proxy to a real OpenAI-compatible upstream ----
-        def _byok_proxy(self, raw: bytes):
+        def _byok_proxy(self, raw: bytes, endpoint: str):
+            """Pass one request on to the upstream's endpoint, e.g. /chat/completions or /responses."""
             auth = self.headers.get("Authorization", "")
             req = urllib.request.Request(
-                f"{upstream}/chat/completions", data=raw, method="POST",
+                f"{upstream}{endpoint}", data=raw, method="POST",
                 headers={"Content-Type": "application/json", "Authorization": auth, "Accept": "text/event-stream"},
             )
             try:

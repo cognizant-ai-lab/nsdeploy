@@ -539,7 +539,9 @@ export class Engine {
     globalThis.fetch = async (input, init) => {
       const url = String(input?.url ?? input);
       const router = this.top?.llm?.baseUrl;
-      if (!router || !url.startsWith(router.replace(/\/$/, "") + "/chat/completions")) {
+      // Chat completions, or the Responses API that neuro-san uses for OpenAI models.
+      const base = router ? router.replace(/\/$/, "") : "";
+      if (!router || !(url.startsWith(base + "/chat/completions") || url.startsWith(base + "/responses"))) {
         return originalFetch(input, init);
       }
       assertRouterKey(this.top.llm, this.byokKey);

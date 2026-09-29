@@ -214,11 +214,13 @@ class _ChatUpstreamHandler(BaseHTTPRequestHandler):
     """Fake OpenAI-compatible upstream: records what the BYOK proxy forwards."""
     headers_seen = {}
     body_seen = b""
+    path_seen = ""
 
     def log_message(self, *args):
         pass
 
     def do_POST(self):
+        type(self).path_seen = self.path
         type(self).headers_seen = {k: v for k, v in self.headers.items()}
         length = int(self.headers.get("Content-Length", 0) or 0)
         type(self).body_seen = self.rfile.read(length)
@@ -287,6 +289,53 @@ class ByokOnlyTests(unittest.TestCase):
             self.assertIn(b"missing key", denied.read())
         self.assertFalse(_ChatUpstreamHandler.headers_seen.get("Authorization"))
         self.assertNotIn("server-secret", json.dumps(_ChatUpstreamHandler.headers_seen))
+
+    def test_byok_responses_proxy_forwards_to_the_upstream_responses_endpoint(self):
+        port = self._serve(_ChatUpstreamHandler, lambda p: f"http://127.0.0.1:{p}", Path("."), [])
+        body = json.dumps({"model": "visitor-model", "input": "hi", "stream": True}).encode()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/byok/v1/responses", data=body, method="POST",
+            headers={"Content-Type": "application/json", "Authorization": "Bearer visitor-key"})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertEqual(response.status, 200)
+        self.assertEqual(_ChatUpstreamHandler.path_seen, "/responses")
+        self.assertEqual(_ChatUpstreamHandler.headers_seen.get("Authorization"), "Bearer visitor-key")
+        self.assertEqual(_ChatUpstreamHandler.body_seen, body)
+
+    def _mock_responses(self, port: int, body: dict) -> str:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("POST", "/v1/responses", body=json.dumps(body), headers={"Content-Type": "application/json"})
+        response = conn.getresponse()
+        text = response.read().decode()
+        conn.close()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("X-Nsdeploy-LLM-Route"), "mock")
+        return text
+
+    def test_mock_responses_calls_the_next_tool_then_summarizes_its_output(self):
+        port = self._serve(None, "http://unused", Path("."), [])
+        tools = [{"type": "function", "name": "lookup", "parameters": {"type": "object", "required": ["q"]}}]
+        user = {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "find it"}]}
+        with patch("urllib.request.urlopen", side_effect=AssertionError("mock router must not call out")):
+            first = json.loads(self._mock_responses(port, {"model": "m", "input": [user], "tools": tools}))
+            call = first["output"][0]
+            self.assertEqual(call["type"], "function_call")
+            self.assertEqual(call["name"], "lookup")
+            self.assertEqual(json.loads(call["arguments"])["q"], "find it")
+
+            answered = [user, call, {"type": "function_call_output", "call_id": call["call_id"], "output": "found it"}]
+            second = json.loads(self._mock_responses(port, {"model": "m", "input": answered, "tools": tools}))
+        message = second["output"][0]
+        self.assertEqual(message["type"], "message")
+        self.assertIn("found it", message["content"][0]["text"])
+
+    def test_mock_responses_streams_response_events(self):
+        port = self._serve(None, "http://unused", Path("."), [])
+        text = self._mock_responses(port, {"model": "m", "input": "hi", "stream": True})
+        events = [line[len("event: "):] for line in text.splitlines() if line.startswith("event: ")]
+        self.assertEqual(events[0], "response.created")
+        self.assertIn("response.output_text.delta", events)
+        self.assertEqual(events[-1], "response.completed")
 
     def test_mock_router_makes_no_network_call(self):
         port = self._serve(None, "http://unused", Path("."), [])
