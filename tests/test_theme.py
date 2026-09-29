@@ -40,12 +40,15 @@ class ThemeChatTests(unittest.TestCase):
 
 class ThemeLayoutTests(unittest.TestCase):
     def test_prompt_requests_composed_runtime_slots(self):
-        self.assertEqual(PROMPT_VERSION, "8")
+        self.assertEqual(PROMPT_VERSION, "9")
         self.assertIn('data-ns-layout="composed"', _SYSTEM_PROMPT)
         self.assertIn('data-ns-slot="chat"', _SYSTEM_PROMPT)
         self.assertIn('data-ns-slot="agents"', _SYSTEM_PROMPT)
         self.assertIn("<details><summary>", _SYSTEM_PROMPT)
         self.assertIn("CRUSE forms must remain reachable", _SYSTEM_PROMPT)
+        self.assertIn("OPTIONAL starting point", _SYSTEM_PROMPT)
+        self.assertIn("supplement/correct submitted information through chat", _SYSTEM_PROMPT)
+        self.assertIn("reports, comparison tables, charts", _SYSTEM_PROMPT)
 
     def test_composed_layout_and_native_drawer_survive_sanitizing(self):
         spec = ThemeSpec.coerce({

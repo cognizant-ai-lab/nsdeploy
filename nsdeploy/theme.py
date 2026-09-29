@@ -26,7 +26,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-PROMPT_VERSION = "8"
+PROMPT_VERSION = "9"
 CACHE_DIR = Path.home() / ".cache" / "nsdeploy" / "themes"
 DEFAULT_THEME_MODEL = "gpt-5.6"
 
@@ -314,12 +314,21 @@ _SYSTEM_PROMPT = (
     "\"hero\"(one sentence), \"font\"(a web-safe CSS font stack), \"radius\"(int 6-28), "
     "\"colors\":{\"primary\",\"accent\",\"bg\",\"bg_tint\",\"fg\",\"muted\",\"border\",\"msgbg\",\"panelbg\"} as #hex, "
     f"and optionally \"welcome\":{_WELCOME_SHAPE} collecting the USER'S OWN intake details}}\n"
+    "The welcome form is an OPTIONAL starting point. Users can ignore it and type their "
+    "request, or supplement/correct submitted information through chat. You may make "
+    "these equally valid paths clear in the welcome message, nearby helper copy, or "
+    "visual treatment (for example: Use the form, or tell us what you need below. You can "
+    "add details in chat anytime.). Do not imply that unsent form drafts have been received. "
+    "Keep the welcome widget available and the chat input easy to discover.\n"
     "===STYLE===\n"
     "a COMPLETE CSS stylesheet for the page — backgrounds/gradients, layout (grid/flex), "
     "the hero, typography, decorative effects, responsiveness. BOLDLY restyle the "
     "assistant itself so it reads as part of your design: .ns-header, .ns-title, .ns-chat, "
     ".ns-msgs, .ns-msg, .ns-msg.user, .ns-inputbar, .ns-agents, .ns-graph, .ns-log, "
-    ".ns-widget, .ns-w-btn. Give surfaces your borders/shadows/fills, bubbles their shape, "
+    ".ns-widget, .ns-w-btn, .ns-presentation, .ns-rich. CRUSE responses may contain "
+    "formatted reports, comparison tables, charts, visual HTML or optional forms; allow "
+    "these varied response surfaces to read clearly in the assistant area. "
+    "Give surfaces your borders/shadows/fills, bubbles their shape, "
     "and buttons your accent. The runtime owns the INTERNAL behavior of every .ns-* "
     "component: do not set display, position, grid placement, width, height, min-height, "
     "or overflow on .ns-* classes. Control placement and sizing with your own wrappers and "

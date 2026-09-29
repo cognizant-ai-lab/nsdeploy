@@ -1,7 +1,7 @@
 """
 Generate a runnable, serverless site for the neuro-san-web runtime from a
 DeploymentPlan: rewrite the resolved network so every hostable tool becomes an MCP
-URL (and missing/external tools are dropped), then emit the network JSON, an
+URL (while public agent-network URLs are preserved), then emit the network JSON, an
 agent-manifest.json, and a themed index.html.
 
 The output directory is fully static; the browser runtime loads it with no
@@ -27,31 +27,62 @@ from nsdeploy.theme import ThemeSpec
 
 DEFAULT_PRIVATE_STEWARD_MAX_EXECUTION_SECONDS = 3600
 
-# Domain-agnostic CRUSE directive injected into each agent's instructions at deploy
-# time so any network produces generative-UI widgets — without editing the source
-# HOCON. The shapes match the neuro-san-web runtime's widget renderer. (Widgets are
-# emitted by the LLM following this guidance; the deterministic mock won't, so this
-# only takes visible effect with a real BYOK model.)
+# Every agent proposes a presentation to its parent; only the final root
+# composition is rendered. Keep this protocol aligned with runtime/cruse.js.
 CRUSE_DIRECTIVE = """\
-GENERATIVE UI (CRUSE): the app renders interactive widgets from a fenced ```cruse-ui```
-block of JSON in your reply and sends the user's interaction back as your next input.
-Prefer widgets over plain text when interacting:
-- need details from the user before proceeding → emit a FORM widget (don't ask in prose);
-- offering a set of options to choose from → emit a CHOICE widget;
-- about to finalize/commit an action → offer a CONFIRM widget;
-- summarizing key facts → optionally an INFO card.
-Rules: keep any prose short and OUTSIDE the block; at most ONE block per reply; valid
-JSON; build widgets ONLY from real data you actually have — never invent values.
-Shapes:
+GENERATIVE UI (CRUSE): intelligently choose how to communicate the answer: readable
+chat, a visual/report, an interactive input, or a useful combination. CRUSE is NOT
+limited to forms. For an informational request, answer it before collecting details
+for later actions. Use Markdown headings, lists, emphasis and links for readable chat.
+Use tables for comparisons, charts for meaningful numeric relationships, reports for
+structured explanations, and presentational HTML for other contextual layouts.
+Use a small form only when multiple structured inputs help the current task; a simple
+question may be better in chat. Use choices for real alternatives and confirmation
+for a specific proposed action. A chart must contain actual data, never invented values.
+
+HIERARCHICAL CONSOLIDATION: a child returns {cruse:1,text,presentation,protocol,source}.
+Read both the answer and its presentation proposal. At EVERY level of the hierarchy,
+consider all relevant children together and synthesize your own consolidated result.
+Deduplicate questions by meaning (e.g. dates vs pickup/return), account for answers
+already given, combine overlapping information, and remove irrelevant or premature
+inputs. Preserve distinct requirements, source distinctions and disagreements; never
+merge unrelated people's details or approvals. Child UI is a suggestion: you may
+redesign, combine, replace or omit it. Do not concatenate child forms. Keep essential
+facts and unresolved requirements in your answer if any proposal cannot be displayed.
+Only the final top-level composition is displayed. Usually use one focused input
+step, with complementary tables/charts/reports where useful; avoid a large questionnaire.
+
+Forms are optional ways to answer. Users may skip them, answer in chat, or supplement
+or correct previously submitted values in chat. Carry known facts forward. Unsubmitted
+form drafts have not been sent to you. CRUSE interaction metadata identifies the
+originating turn, component, selected value or submitted field values; interpret it
+with the conversation history and ask only for what is still needed.
+
+Return your answer text OUTSIDE at most ONE fenced cruse-ui block of valid JSON.
+If using AAOSA, keep its protocol envelope and place the block after it, not inside a
+quoted Response. Omit the block when chat alone is best. A composition can include
+several complementary components; do not repeat the same content in every channel.
+Keep stable, meaningful component IDs and form property keys across revisions.
 ```cruse-ui
-{"title":"…","icon":"📝","schema":{"type":"object","properties":{"field_name":{"type":"string","title":"Label","description":"hint"}},"required":["field_name"]},"submitLabel":"Continue"}
+{"version":1,"components":[{"id":"availability","kind":"table","title":"Available options","columns":["Option","Availability"],"rows":[["Known option","Known availability"]]}]}
 ```
-(form field types: string; integer/number with optional minimum/maximum; boolean;
-string with "format":"date"; "enum":["a","b"] for a dropdown; "x-ui":{"widget":"textarea"}
-or {"widget":"radio"}.) Other kinds:
-{"kind":"choice","title":"…","options":[{"title":"…","subtitle":"…","meta":"…","value":"…"}]}
-{"kind":"confirm","title":"…","confirmLabel":"Yes","cancelLabel":"No","confirmText":"…"}
-{"kind":"info","title":"…","fields":{"Label":"Value"}}
+Supported component shapes (examples of structure, not factual data):
+{"id":"details","kind":"form","title":"…","schema":{"type":"object","properties":{"start_date":{"type":"string","format":"date","title":"Start date"}},"required":["start_date"]},"submitLabel":"Continue"}
+Field types: string, integer/number (minimum/maximum), boolean, string format date,
+enum dropdown, x-ui:{widget:textarea} or {widget:radio}, array with items.enum for
+multiple selections. Use default only for known values. Mark only essential fields required.
+{"id":"options","kind":"choice","title":"…","options":[{"title":"…","subtitle":"…","meta":"…","value":"stable-option-id"}]}
+{"id":"approval","kind":"confirm","title":"…","confirmLabel":"Yes","cancelLabel":"No","confirmText":"Explicit action being approved"}
+{"id":"facts","kind":"info","title":"…","fields":{"Label":"Value"}}
+{"id":"report","kind":"report","title":"…","markdown":"## Findings\\n\\nStructured explanation with **emphasis**, lists and links."}
+{"id":"comparison","kind":"table","title":"…","columns":["Label","Value"],"rows":[["A","Known value"]]}
+{"id":"trend","kind":"chart","title":"…","chartType":"bar","unit":"Units","labels":["A","B"],"series":[{"name":"Series","values":[10,20]}],"summary":"Text explanation of the actual data."}
+Charts support bar or line, up to 8 series and 120 labels. Values must be finite numbers;
+each series must match labels. Include a useful summary. Chart data is also accessible as a table.
+{"id":"visual","kind":"html","title":"…","html":"<article><h2>Findings</h2><p>Context</p></article>"}
+HTML supports semantic sections, headings, lists, tables, details/summary and safe links.
+No scripts, CSS, event handlers, embedded resources, SVG, iframes or HTML form controls;
+use chart/form components for those functions. The runtime supplies theme and layout.
 """
 
 
@@ -77,7 +108,7 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
                    cruse: bool = True) -> Dict[str, Any]:
     """Produce the deployed network config: agents only, with tool references mapped
     to local MCP URLs (hostable tools) or same-origin MCP-proxy URLs (external MCP
-    servers), and missing/other-external refs dropped."""
+    servers), with public agent-network URLs preserved and missing refs dropped."""
     hostable_url = {
         t.name: f"{site_base.rstrip('/')}/_mcp/{i}/mcp"
         for i, t in enumerate(plan.hostable_tools)
@@ -85,10 +116,12 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
     # External MCP servers are reached through a same-origin proxy (avoids CORS) and
     # given a clean /mcp URL so the runtime classifies them as MCP.
     ext_url = {url: f"{site_base}/ext-mcp/{i}/mcp" for i, url in enumerate(plan.external_mcps)}
-    drop = set(plan.missing_tools) | set(plan.omitted_tools) | set(plan.external_other)
+    drop = set(plan.missing_tools) | set(plan.omitted_tools)
 
     config = copy.deepcopy(plan.config)
     _seed_default_model(config)
+    if cruse:
+        config["cruse"] = {"version": 1}
     new_tools: List[Dict[str, Any]] = []
     for entry in config.get("tools", []) or []:
         # Keep only LLM agents; the leaf coded/toolbox entries are replaced by inline
@@ -107,7 +140,7 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
             elif ref in plan.links:
                 mapped.append(plan.links[ref])
             elif ref in drop:
-                continue  # missing tool / non-MCP external URL — dropped (reported separately)
+                continue  # missing or intentionally omitted tool
             else:
                 mapped.append(ref)  # sub-agent or unresolved link-slot reference
         if "tools" in agent:
@@ -347,6 +380,9 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
     if plan.hostable_tools or plan.external_mcps:  # legacy compatibility for older runtimes
         allowed_peers.append(site_base)
     allowed_peers.extend(origin for origin in (_origin(url) for url in plan.links.values()) if origin)
+    # Modern runtimes use peer_policy.mode=open, but publish direct URL-tool origins
+    # for compatibility with older allow-list runtimes.
+    allowed_peers.extend(origin for origin in (_origin(url) for url in plan.external_networks) if origin)
     allowed_peers = list(dict.fromkeys(allowed_peers))
     manifest: Dict[str, Any] = {
         "brand": _brand_display(plan, theme),

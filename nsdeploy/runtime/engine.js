@@ -21,7 +21,8 @@ import {
 import { neuroSanSession } from "./generated-bridge.js";
 import { TraceBus } from "./trace.js";
 import { fetchManifest, fetchText, resolveUrl, RemoteRegistry } from "./remote.js";
-import { argsToText, consumeRemoteBudget, estimateRemoteCost, extractWidgets, peerRequestText, remoteIsInChain } from "./composition.js";
+import { argsToText, consumeRemoteBudget, estimateRemoteCost, peerRequestText, remoteIsInChain } from "./composition.js";
+import { agentPresentationContext, interactionMessage, parseAgentResponse } from "./cruse.js";
 import { isMockResponse, normalizeModelName } from "./model.js";
 
 function normOrigin(url) {
@@ -337,8 +338,13 @@ export class Engine {
     const override = this.modelOverride ? { model_name: this.modelOverride } : {};
     const llmConfig = (agentConfig) => ({ ...(agentConfig || {}), class: "openai", ...override });
     config.llm_config = llmConfig(config.llm_config);
+    // CRUSE's presentation context for each agent (see cruse.js): whether its
+    // presentation reaches the user or is a proposal for the agent that called it.
+    const presentationContext = { network, isTop: network === this.top?.network, frontMan: network.findFrontMan() };
     for (const agent of config.tools || []) {
       if (agent.llm_config || !agent.class) agent.llm_config = llmConfig(agent.llm_config);
+      const context = agent.name ? agentPresentationContext(presentationContext, agent.name) : "";
+      if (context && typeof agent.instructions === "string") agent.instructions = `${agent.instructions}\n\n${context}`;
       if (!Array.isArray(agent.tools)) continue;
       agent.tools = agent.tools.map((ref) => {
         if (typeof ref !== "string" || !network.linkSlots.has(ref)) return ref;
@@ -428,12 +434,18 @@ export class Engine {
         if (error) this.trace.fail(span, error);
         else this.trace.end(span, { type: ChatMessageType.AGENT });
       },
-      // Widgets a partner puts in its answer are shown here and taken out of the text
-      // its caller gets, since the caller's LLM would not pass them on.
+      // A partner's answer goes back to the agent that called it as CRUSE's
+      // {cruse, text, presentation} (see cruse.js), so its presentation is a proposal
+      // the caller consolidates, never shown to the user directly.
       peerAnswer: ({ url, text }) => {
         const owner = this.refOwners.get(url);
         const agentName = parseExternalAgent(url, owner?.base)?.agentName;
-        return extractWidgets(text, { trace: this.trace, displayOrigin: hostOf(url), network: { name: agentName } }, agentName);
+        const source = { origin: hostOf(url), network: agentName, agent: agentName, invocation: `peer-${agentName}` };
+        const result = parseAgentResponse(text, source);
+        this.trace.note("presentation_proposal", {
+          parent: this.runSpan, ...source, presentation: result.presentation, issues: result.presentationIssues,
+        });
+        return JSON.stringify(result);
       },
       peerFunction: (url) => {
         const owner = this.refOwners.get(url);
@@ -556,6 +568,10 @@ export class Engine {
   }
 
   async run(userText, { slyData } = {}) {
+    return (await this.runTurn(userText, { slyData })).text;
+  }
+
+  async runTurn(userText, { slyData, interaction } = {}) {
     if (!this.top) await this.loadTop();
     const runSpan = this.trace.start("run", { origin: hostOf(this.top.base), input: userText });
     this.runSpan = runSpan;
@@ -578,7 +594,7 @@ export class Engine {
       const network = this.top.network;
       const loop = session.createSession(this._runnableConfig(network), network.name);
       const request = {
-        user_message: { type: ChatMessageType.HUMAN, text: userText },
+        user_message: { type: ChatMessageType.HUMAN, text: interactionMessage(userText, interaction) },
         sly_data: withLlmKey(slyData, this.byokKey),
         // MAXIMAL so the trace can show every agent's messages; the answer is the final
         // AGENT_FRAMEWORK message either way.
@@ -597,9 +613,14 @@ export class Engine {
         }
       }
       for (const span of agentSpans.values()) this.trace.end(span, {});
-      const text = extractWidgets(answer, { trace: this.trace, displayOrigin: hostOf(this.top.base), network }, network.findFrontMan());
-      this.trace.end(runSpan, { answerPreview: text.slice(0, 300) });
-      return text;
+      // The answer's text for the chat, and the presentation the UI renders, if the
+      // front man proposed one (see cruse.js).
+      const result = parseAgentResponse(answer, {
+        origin: hostOf(this.top.base), network: network.name, agent: network.findFrontMan(), invocation: runSpan,
+      });
+      result.turnId = runSpan;
+      this.trace.end(runSpan, { answerPreview: result.text.slice(0, 300) });
+      return result;
     } catch (err) {
       this.trace.fail(runSpan, err);
       throw err;

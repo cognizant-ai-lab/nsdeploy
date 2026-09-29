@@ -4,7 +4,7 @@ import { assertRouterKey, isPublishedMockRouter, manifestAllowsPeer, selectPeerR
 import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
 import { isMockResponse, normalizeModelName } from "../nsdeploy/runtime/model.js";
 import { consumeAgentBudget, consumeRemoteBudget, remoteIsInChain } from "../nsdeploy/runtime/composition.js";
-import { loadNeuroSan, initKernel } from "../nsdeploy/runtime/kernel.js";
+import { AgentNetwork, loadNeuroSan, initKernel } from "../nsdeploy/runtime/kernel.js";
 
 // remoteIsInChain parses references with neuro-san's ExternalAgentParsing, from the
 // bundled kernel.
@@ -63,6 +63,14 @@ assert.equal(manifestAllowsPeer("https://public.example/agent", {peer_policy: {m
 assert.equal(manifestAllowsPeer("https://blocked.example/agent", {
   peer_policy: {mode: "open", deny_origins: ["https://blocked.example"]},
 }), false);
+
+const urlToolNetwork = new AgentNetwork({tools: [{
+  name: "commercial_sales_manager",
+  instructions: "Coordinate farm sales.",
+  tools: ["http://127.0.0.1:8093/seabreeze_inn", "https://tools.example/mcp"],
+}]}, "greenbank_farm");
+assert.equal(urlToolNetwork.classifyTool("http://127.0.0.1:8093/seabreeze_inn").kind, "remote");
+assert.equal(urlToolNetwork.classifyTool("https://tools.example/mcp").kind, "mcp");
 
 const chain = [
   "http://127.0.0.1:8095::deneman_place",

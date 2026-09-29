@@ -12,6 +12,7 @@ build/
 dist/
 venv/
 .venv/
+node_modules/
 
 # misc
 .DS_Store

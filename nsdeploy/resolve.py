@@ -11,7 +11,8 @@ This is the first stage of `nsdeploy`. It:
   * resolves toolbox tools against the studio's toolbox_info.hocon + coded_tools/,
     deciding which can be HOSTED as MCP servers and which are MISSING;
   * flags `demo_mode` agents (fabricate responses — not grounded);
-  * flags missing includes and external (non-hostable) MCP URLs.
+  * classifies URL tools as external MCP servers or public agent networks;
+  * flags missing includes.
 
 Nothing here depends on a running neuro-san SERVER; pyhocon is a build-time library
 only, and the produced plan/config is plain data the browser runtime consumes.
@@ -75,7 +76,7 @@ class DeploymentPlan:
     hostable_tools: List[HostableTool] = field(default_factory=list)
     missing_tools: List[str] = field(default_factory=list)       # referenced, unresolvable
     external_mcps: List[str] = field(default_factory=list)       # http(s) MCP URLs — proxied & callable
-    external_other: List[str] = field(default_factory=list)      # other http(s) URLs — not handled
+    external_networks: List[str] = field(default_factory=list)   # public agent-network URLs
     missing_includes: List[str] = field(default_factory=list)
     omitted_tools: List[str] = field(default_factory=list)      # recognized but not needed/hostable here
     link_slots: Dict[str, List[str]] = field(default_factory=dict)  # dangling agent ref -> callers
@@ -386,7 +387,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
     referenced_omitted: set[str] = set()
     referenced_links: Dict[str, set[str]] = {}
     external_mcp: set[str] = set()
-    external_other: set[str] = set()
+    external_networks: set[str] = set()
     configured_links = _configured_links(config)
     demo_leaf_names = {
         t.get("name", "") for t in tools
@@ -451,7 +452,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
     for agent in plan.agents:
         for ref in agent.get("tools", []) or []:
             if _is_url(ref):
-                (external_mcp if _looks_like_mcp(ref) else external_other).add(ref)
+                (external_mcp if _looks_like_mcp(ref) else external_networks).add(ref)
             elif ref in referenced_demo_leaves:
                 referenced_links.setdefault(ref, set()).add(agent.get("name", ""))
             elif ref in agent_names:
@@ -473,7 +474,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
     plan.missing_tools = sorted(referenced_missing)
     plan.omitted_tools = sorted(referenced_omitted)
     plan.external_mcps = sorted(external_mcp)
-    plan.external_other = sorted(external_other)
+    plan.external_networks = sorted(external_networks)
     plan.link_slots = {
         ref: sorted(name for name in callers if name)
         for ref, callers in sorted(referenced_links.items())
@@ -536,11 +537,11 @@ def format_report(plan: DeploymentPlan) -> str:
         out.append("    requires the remote server to be reachable + the user to consent at run time.")
         for url in plan.external_mcps:
             out.append(f"   • {url}")
-    if plan.external_other:
+    if plan.external_networks:
         out.append("")
-        out.append(f"⚠️  Other external URLs — NOT handled ({len(plan.external_other)}): not an MCP")
-        out.append("    endpoint (no /mcp path) and not a hostable tool — dropped from the network.")
-        for url in plan.external_other:
+        out.append(f"🌐 Public agent networks — callable ({len(plan.external_networks)}): loaded")
+        out.append("    into the browser and run locally after the user consents to contact the site.")
+        for url in plan.external_networks:
             out.append(f"   • {url}")
     if plan.missing_includes:
         out.append("")
