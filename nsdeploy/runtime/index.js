@@ -8,7 +8,7 @@
 export { Engine } from "./engine.js";
 export { TraceBus } from "./trace.js";
 export { mountApp } from "./ui.js";
-export { AgentNetwork, validateNetwork, ChatMessageType } from "./kernel.js";
+export { AgentNetwork, validateNetwork, ChatMessageType } from "./agent-network.js";
 export { parseHocon } from "./hocon.js";
 
 import { Engine } from "./engine.js";

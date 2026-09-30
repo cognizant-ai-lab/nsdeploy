@@ -5,7 +5,7 @@
 // public sites (per-query budgets, cycle checks), the consent card's cost estimate,
 // and CRUSE widget extraction from an agent's answer.
 
-import { parseExternalAgent } from "./kernel.js";
+import { parseExternalAgent } from "./agent-network.js";
 
 export function argsToText(args) {
   if (args == null) return "";

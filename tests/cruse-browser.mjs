@@ -3,7 +3,7 @@
 import { mountApp, renderPresentation } from "../nsdeploy/runtime/ui.js";
 import { renderMarkdown, renderSafeHtml } from "../nsdeploy/runtime/cruse-render.js";
 import { Engine } from "../nsdeploy/runtime/engine.js";
-import { AgentNetwork, initKernel, loadNeuroSan } from "../nsdeploy/runtime/kernel.js";
+import { AgentNetwork, initNetwork, loadNeuroSan } from "../nsdeploy/runtime/agent-network.js";
 
 const status = document.querySelector("#status");
 const passed = [];
@@ -42,7 +42,7 @@ try {
 
   // AgentNetwork is neuro-san's, from the runtime's bundle (runtime-build/).
   await loadNeuroSan();
-  initKernel();
+  initNetwork();
   const engine = new Engine({ originUrl: location.origin });
   const network = new AgentNetwork({ tools: [{ name: "root", instructions: "Fixture" }] }, "fixture");
   engine.top = { network, base: location.origin };

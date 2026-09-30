@@ -4,12 +4,12 @@ import { assertRouterKey, isPublishedMockRouter, manifestAllowsPeer, selectPeerR
 import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
 import { isMockResponse, normalizeModelName } from "../nsdeploy/runtime/model.js";
 import { consumeAgentBudget, consumeRemoteBudget, remoteIsInChain } from "../nsdeploy/runtime/composition.js";
-import { AgentNetwork, loadNeuroSan, initKernel } from "../nsdeploy/runtime/kernel.js";
+import { AgentNetwork, loadNeuroSan, initNetwork } from "../nsdeploy/runtime/agent-network.js";
 
 // remoteIsInChain parses references with neuro-san's ExternalAgentParsing, from the
-// bundled kernel.
+// bundled package.
 await loadNeuroSan();
-initKernel();
+initNetwork();
 
 const manifest = {
   llm_router: {

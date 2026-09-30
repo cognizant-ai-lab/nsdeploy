@@ -1,4 +1,4 @@
-// neuro-san-kernel.mjs: the browser kernel, taken from @cognizant-ai-lab/neuro-san-npm.
+// neuro-san-network.mjs: neuro-san's agent network code for the browser, taken from @cognizant-ai-lab/neuro-san-npm.
 //
 // The npm package is the real neuro-san Python sources transpiled to TypeScript, so
 // the neuro-san logic the runtime needs comes from there rather than being written

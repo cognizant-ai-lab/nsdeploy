@@ -5,7 +5,7 @@
 // (--ns-primary, --ns-bg, --ns-font, etc.) set on the host page; this module
 // imposes layout, not brand.
 
-import { ChatMessageType } from "./kernel.js";
+import { ChatMessageType } from "./agent-network.js";
 import {
   canUseByokCookie,
   deleteByokProfile,

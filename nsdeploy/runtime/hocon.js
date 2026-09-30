@@ -7,7 +7,7 @@
 // JSON scalar types. `include` directives are handled by the loader (engine.js),
 // not here.
 //
-// In the full design this parser is part of the cross-compiled kernel; here it is a
+// In the full design this parser is cross-compiled from neuro-san; here it is a
 // faithful hand-written reference so the demo runs end to end.
 
 export function parseHocon(text) {

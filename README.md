@@ -577,7 +577,7 @@ Vite into `nsdeploy/runtime/generated/`. That folder is build output, like a `di
 it is not checked in: build it before running nsdeploy or building a wheel, which ships
 whatever is there. The layout:
 
-- `browser/`: our code from `runtime-build/` (the kernel and session adapters),
+- `browser/`: our code from `runtime-build/` (the agent network and session adapters),
   unminified. `browser/neuro-san.mjs` is the entry.
 - `neuro-san/neuro-san.mjs`: the package, minified and pinned by
   `runtime-build/package-lock.json`.

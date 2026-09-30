@@ -16,8 +16,8 @@
 
 import { parseHocon } from "./hocon.js";
 import {
-  AgentNetwork, ChatMessageType, initKernel, loadNeuroSan, parseExternalAgent, redactSlyData, validateNetwork,
-} from "./kernel.js";
+  AgentNetwork, ChatMessageType, initNetwork, loadNeuroSan, parseExternalAgent, redactSlyData, validateNetwork,
+} from "./agent-network.js";
 import { neuroSanSession } from "./generated-bridge.js";
 import { TraceBus } from "./trace.js";
 import { fetchManifest, fetchText, resolveUrl, RemoteRegistry } from "./remote.js";
@@ -145,7 +145,7 @@ export class Engine {
   // Compile the origin's own published front network.
   async loadTop() {
     await loadNeuroSan();
-    initKernel();
+    initNetwork();
     this._installLoopHooks();
     this._observeModelCalls();
     const span = this.trace.start("compile", { origin: hostOf(this.originUrl), what: "top network" });

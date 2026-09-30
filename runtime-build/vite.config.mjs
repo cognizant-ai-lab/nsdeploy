@@ -1,7 +1,7 @@
 // vite.config.mjs: builds nsdeploy's adapters over @cognizant-ai-lab/neuro-san-npm
 // into nsdeploy/runtime/generated/, which is build output and not checked in:
 //   browser/     our code from runtime-build/, unminified: browser/neuro-san.mjs (the
-//                entry the runtime imports) and the kernel and session adapters
+//                entry the runtime imports) and the network and session adapters
 //   neuro-san/   the package, which is already built for the browser: its own Node
 //                stand-ins and third-party code are bundled into it
 // Run `npm install && npm run build` here after updating the package. DEBUG=1 leaves

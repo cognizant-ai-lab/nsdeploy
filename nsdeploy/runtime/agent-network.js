@@ -1,4 +1,4 @@
-// kernel.js: the browser-side view of a neuro-san agent network.
+// agent-network.js: the browser-side view of a neuro-san agent network.
 //
 // Logic that exists in neuro-san itself is not written here. It comes from
 // @cognizant-ai-lab/neuro-san-npm, the real neuro-san sources transpiled to
@@ -9,19 +9,19 @@
 // run time), the trace's display redaction, and adapting neuro-san's parsed
 // references to browser origins.
 
-import { neuroSanKernel } from "./generated-bridge.js";
+import { neuroSanNetwork } from "./generated-bridge.js";
 
 export { loadNeuroSan } from "./generated-bridge.js";
 
 // --- ChatMessage envelope (mirrors neuro_san/api/grpc/chat.proto) ------------
 
-// Filled from neuro-san's own ChatMessageType when the kernel loads, so the values
+// Filled from neuro-san's own ChatMessageType when the package loads, so the values
 // are not restated here. Modules import this object up front and read it at run
-// time, which is always after boot() has loaded the kernel.
+// time, which is always after boot() has loaded the package.
 export const ChatMessageType = {};
 
-export function initKernel() {
-  Object.assign(ChatMessageType, neuroSanKernel().ChatMessageType);
+export function initNetwork() {
+  Object.assign(ChatMessageType, neuroSanNetwork().ChatMessageType);
 }
 
 export function chatMessage(type, text, origin = [], extra = {}) {
@@ -43,18 +43,18 @@ export function redactSlyData(slyData) {
 // --- external / MCP references (neuro-san's ExternalAgentParsing) ----------------
 
 export function isExternalAgent(ref) {
-  return typeof ref === "string" && neuroSanKernel().isExternalAgent(ref);
+  return typeof ref === "string" && neuroSanNetwork().isExternalAgent(ref);
 }
 
 export function isMcpTool(ref) {
-  return neuroSanKernel().isMcpTool(ref);
+  return neuroSanNetwork().isMcpTool(ref);
 }
 
 // Adapts neuro-san's {host, port, agent_name, scheme} to the {origin, agentName, url}
 // this runtime passes around, resolving a same-server reference ("/name") against the
 // serving origin.
 export function parseExternalAgent(ref, baseOrigin) {
-  const parsed = neuroSanKernel().parseExternalAgent(ref);
+  const parsed = neuroSanNetwork().parseExternalAgent(ref);
   if (!parsed) return null;
   if (!parsed.scheme) {
     const origin = baseOrigin || (typeof location !== "undefined" ? location.origin : "");
@@ -68,7 +68,7 @@ export function parseExternalAgent(ref, baseOrigin) {
 
 export class AgentNetwork {
   constructor(config, name) {
-    this.config = neuroSanKernel().filterNetworkConfig(config);
+    this.config = neuroSanNetwork().filterNetworkConfig(config);
     this.name = name;
     this.linkSlots = new Set(Object.keys(this.config.link_slots || {}));
     this.links = { ...(this.config.links || {}) };
@@ -76,12 +76,12 @@ export class AgentNetwork {
   }
 
   getAgentSpec(name) {
-    return neuroSanKernel().getAgentToolSpec(this.config, name) || null;
+    return neuroSanNetwork().getAgentToolSpec(this.config, name) || null;
   }
 
   // neuro-san's own AgentNetwork.find_front_man; null when there is none.
   findFrontMan() {
-    return neuroSanKernel().findFrontMan(this.config);
+    return neuroSanNetwork().findFrontMan(this.config);
   }
 
   // How this runtime activates a tool reference, composed from neuro-san's own
@@ -121,7 +121,7 @@ export class AgentNetwork {
 export function validateNetwork(network) {
   // neuro-san's network validators. A link slot is a reference nsdeploy resolves at run
   // time, so it is not reported as a missing agent.
-  const errors = neuroSanKernel().validateNetwork(network.config, network.name).filter((message) =>
+  const errors = neuroSanNetwork().validateNetwork(network.config, network.name).filter((message) =>
     ![...network.linkSlots].some((ref) => message.includes("non-existent agent") && message.includes(`'${ref}'`))
   );
   const warnings = [];
