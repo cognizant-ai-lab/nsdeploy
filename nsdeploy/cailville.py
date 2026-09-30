@@ -522,6 +522,8 @@ def run_cailville_command(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--theme-model", default="gpt-5.5", help="site-design and connection model (default gpt-5.5)")
     parser.add_argument("--theme-upstream", default=None, help="OpenAI-compatible endpoint for design and connections")
     parser.add_argument("--theme-key", default=None, help="API key (else $OPENAI_API_KEY)")
+    parser.add_argument("--theme-prompt", default=None,
+                        help="additional design instructions (refreshes the theme unless --no-theme-refresh)")
     parser.add_argument("--no-ai-connections", action="store_true", help="use deterministic local connection inference")
     parser.add_argument("--upstream", default="https://api.openai.com/v1", help="runtime BYOK upstream")
     parser.add_argument("--studio", default=None, help="local neuro-san-studio checkout")
@@ -572,6 +574,8 @@ def run_cailville_command(argv: Optional[List[str]] = None) -> int:
         command.extend(("--theme-upstream", args.theme_upstream))
     if args.theme_key:
         command.extend(("--theme-key", args.theme_key))
+    if args.theme_prompt:
+        command.extend(("--theme-prompt", args.theme_prompt))
     result = subprocess.run(command, cwd=project_dir)
     if result.returncode:
         return result.returncode

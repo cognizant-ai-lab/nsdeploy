@@ -436,6 +436,10 @@ python -m nsdeploy net.hocon
 # LLM-polished with OpenAI (deploy-time key)
 OPENAI_API_KEY=sk-…  python -m nsdeploy net.hocon --theme [--theme-model gpt-5.6]
 
+# add project-specific design direction
+OPENAI_API_KEY=sk-…  python -m nsdeploy net.hocon --theme \
+    --theme-prompt "Use a restrained editorial layout with warm paper tones"
+
 # LLM-polished with a LOCAL model (Ollama) — does NOT touch the runtime
 python -m nsdeploy net.hocon --theme --theme-model qwen2.5:7b --theme-key x \
     --theme-upstream http://127.0.0.1:11434/v1
@@ -495,8 +499,10 @@ Theme proposals are also cached under `~/.cache/nsdeploy/themes/`. `--theme-refr
 is the explicit destructive refresh for `layout.html`, `theme.css`, and `theme.json`;
 it preserves `site.js` and `assets/`, and it preserves the current design if the LLM
 does not return a valid replacement. The theming key is supplied by *you* at deploy
-time; end users still need no key. Flags: `--theme`, `--theme-model`,
-`--theme-upstream`, `--theme-key`, `--theme-file`, `--theme-refresh`, `--site-dir`.
+time; end users still need no key. `--theme-prompt` appends custom design direction to
+the generator prompt and is included in the theme cache key. Flags: `--theme`,
+`--theme-model`, `--theme-upstream`, `--theme-key`, `--theme-prompt`, `--theme-file`,
+`--theme-refresh`, `--site-dir`.
 
 > Theme generation defaults to `gpt-5.6`, whose design judgment produces more polished
 > layouts. Use `gpt-5.6-terra` or `gpt-5.6-luna` for lower-cost generation, or a local
@@ -513,14 +519,18 @@ the editable HTML/CSS/metadata with a fresh design:
 # Re-ask the LLM, replace the cached proposal, and refresh the editable theme files
 python -m nsdeploy net.hocon --theme … --theme-refresh
 
+# Refresh an existing editable theme with new design direction
+python -m nsdeploy net.hocon --theme --theme-refresh \
+    --theme-prompt "Keep the editorial structure, but use a dark navy palette"
+
 # Or wipe the cache entirely (all designs regenerate on the next run)
 rm -rf ~/.cache/nsdeploy/themes/
 ```
 
-The cache key is a hash of the **network identity + model name + prompt version**, so
-a cached theme is reused only when all three match. Once source has been created,
-changing the model does not replace user edits; use `--theme-refresh` when that is
-really what you intend.
+The cache key is a hash of the **network identity + model name + prompt version**, plus
+the custom theme prompt when one is supplied. Once source has been created, changing
+the model does not replace user edits; use `--theme-refresh` when that is really what
+you intend.
 
 ## Use a local model (Ollama) — no key, no cloud
 

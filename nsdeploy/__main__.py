@@ -93,6 +93,8 @@ def main() -> int:
                     help="endpoint for the --theme call (defaults to OpenAI; set this when "
                          "theming via a different provider, e.g. a local Ollama)")
     ap.add_argument("--theme-key", default=None, help="API key for --theme (else $OPENAI_API_KEY)")
+    ap.add_argument("--theme-prompt", default=None,
+                    help="additional design instructions (use --theme-refresh for an existing theme)")
     ap.add_argument("--theme-file", default=None, help="use a pinned theme.json (no LLM, no key)")
     ap.add_argument("--theme-refresh", action="store_true",
                     help="re-ask the LLM and replace editable layout/CSS/theme metadata")
@@ -210,7 +212,8 @@ def main() -> int:
             else:
                 theme_upstream = args.theme_upstream or "https://api.openai.com/v1"
                 proposed = propose_theme(plan, model=args.theme_model, api_key=key,
-                                         upstream=theme_upstream, refresh=args.theme_refresh)
+                                         upstream=theme_upstream, refresh=args.theme_refresh,
+                                         theme_prompt=args.theme_prompt)
                 if has_site_source and args.theme_refresh and not proposed.body:
                     try:
                         theme = load_site_theme(site_dir)
