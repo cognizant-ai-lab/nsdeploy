@@ -11,6 +11,7 @@ Usage:
     python -m nsdeploy <network.hocon> [--repo R --ref REF | --studio DIR]
                        [--port N] [--out DIR] [--site-dir DIR] [--no-serve]
                        [--upstream URL]
+    python -m nsdeploy gateway --base-domain DOMAIN --route NETWORK=URL [...]
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ import sys
 from pathlib import Path
 
 from nsdeploy.generate import generate_site
+from nsdeploy.gateway import run_gateway_command
 from nsdeploy.linker import load_deploy_links, run_link_command
 from nsdeploy.launcher import serve
 from nsdeploy.resolve import build_plan, format_report, load_toolbox_info, resolve_hocon
@@ -44,6 +46,8 @@ def _load_cailville():
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "gateway":
+        return run_gateway_command(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "link":
         return run_link_command(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "cailville":
@@ -269,7 +273,8 @@ def main() -> int:
 
     runtime_dir = Path(args.runtime_dir).resolve() if args.runtime_dir else None
     # source.root holds the (materialized) coded-tool sources the MCP hosts import.
-    serve(out_dir, plan, source.root, port=args.port, upstream=args.upstream,
+    serve(out_dir, plan, source.root, port=args.port, site_base=site_base,
+          upstream=args.upstream,
           runtime_dir=runtime_dir, ext_mcps=plan.external_mcps,
           facade_upstream=args.facade_upstream)
     return 0

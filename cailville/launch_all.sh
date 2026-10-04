@@ -21,6 +21,17 @@ THEME_MODEL="${NSDEPLOY_THEME_MODEL:-gpt-5.6}"
 THEME_ENABLED="${NSDEPLOY_THEME:-1}"
 THEME_REFRESH="${NSDEPLOY_THEME_REFRESH:-0}"
 OPEN_BROWSER="${NSDEPLOY_OPEN_BROWSER:-1}"
+ROUTING="${NSDEPLOY_ROUTING:-port}"
+BASE_DOMAIN="${NSDEPLOY_BASE_DOMAIN:-localhost}"
+GATEWAY_BIND="${NSDEPLOY_GATEWAY_BIND:-127.0.0.1}"
+GATEWAY_PORT="${NSDEPLOY_GATEWAY_PORT:-8080}"
+PUBLIC_SCHEME="${NSDEPLOY_PUBLIC_SCHEME:-http}"
+PUBLIC_PORT="${NSDEPLOY_PUBLIC_PORT:-$GATEWAY_PORT}"
+
+if [[ "$ROUTING" != "port" && "$ROUTING" != "subdomain" ]]; then
+  printf 'NSDEPLOY_ROUTING must be port or subdomain, got %s\n' "$ROUTING" >&2
+  exit 2
+fi
 
 if [[ -z "$PRIVATE_STEWARD_BYOK_API_KEY" ]]; then
   printf 'Warning: no caller BYOK key in the launch environment.\n' >&2
@@ -49,16 +60,29 @@ ports=()
 hocons=()
 site_dirs=()
 studios=()
-while IFS=$'\t' read -r site port hocon site_dir studio; do
+link_files=()
+origins=()
+launch_row_args=(
+  --cailville-dir "$CAILVILLE_DIR" --project-dir "$PROJECT_DIR"
+)
+if [[ "$ROUTING" == "subdomain" ]]; then
+  launch_row_args+=(
+    --base-domain "$BASE_DOMAIN"
+    --public-scheme "$PUBLIC_SCHEME"
+    --public-port "$PUBLIC_PORT"
+  )
+fi
+while IFS=$'\t' read -r site port hocon site_dir studio link_file origin; do
   [[ -n "$site" ]] || continue
   sites+=("$site")
   ports+=("$port")
   hocons+=("$hocon")
   site_dirs+=("$site_dir")
   studios+=("$studio")
+  link_files+=("$link_file")
+  origins+=("$origin")
 done < <(
-  "$PYTHON_BIN" -m nsdeploy.cailville launch-rows \
-    --cailville-dir "$CAILVILLE_DIR" --project-dir "$PROJECT_DIR"
+  "$PYTHON_BIN" -m nsdeploy.cailville launch-rows "${launch_row_args[@]}"
 )
 if ((${#sites[@]} == 0)); then
   printf 'No sites found in %s\n' "$CAILVILLE_DIR/community.json" >&2
@@ -67,6 +91,7 @@ fi
 
 pids=()
 private_pid=""
+gateway_pid=""
 
 signal_tree() {
   local signal="$1"
@@ -85,6 +110,10 @@ demo_ports_busy() {
       return 0
     fi
   done
+  if [[ "$ROUTING" == "subdomain" ]] \
+     && lsof -nP -iTCP:"$GATEWAY_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    return 0
+  fi
   return 1
 }
 
@@ -93,6 +122,10 @@ cleanup() {
   if [[ -n "$private_pid" ]]; then
     printf '\nStopping private Neuro-SAN studio...\n'
     signal_tree TERM "$private_pid"
+  fi
+  if [[ -n "$gateway_pid" ]]; then
+    printf '\nStopping nsdeploy subdomain gateway...\n'
+    signal_tree TERM "$gateway_pid"
   fi
   if ((${#pids[@]})); then
     printf '\nStopping Cailville sites...\n'
@@ -111,6 +144,9 @@ cleanup() {
   if [[ -n "$private_pid" ]]; then
     signal_tree KILL "$private_pid"
   fi
+  if [[ -n "$gateway_pid" ]]; then
+    signal_tree KILL "$gateway_pid"
+  fi
   if ((${#pids[@]})); then
     for pid in "${pids[@]}"; do
       signal_tree KILL "$pid"
@@ -123,8 +159,14 @@ cleanup() {
       [[ -n "$listener_pid" ]] && signal_tree KILL "$listener_pid"
     done < <(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
   done
+  if [[ "$ROUTING" == "subdomain" ]]; then
+    while read -r listener_pid; do
+      [[ -n "$listener_pid" ]] && signal_tree KILL "$listener_pid"
+    done < <(lsof -tiTCP:"$GATEWAY_PORT" -sTCP:LISTEN 2>/dev/null || true)
+  fi
 
   [[ -z "$private_pid" ]] || wait "$private_pid" 2>/dev/null || true
+  [[ -z "$gateway_pid" ]] || wait "$gateway_pid" 2>/dev/null || true
   ((${#pids[@]} == 0)) || wait "${pids[@]}" 2>/dev/null || true
   if demo_ports_busy; then
     printf 'Warning: one or more Cailville ports did not stop cleanly. Run %s.\n' \
@@ -132,6 +174,7 @@ cleanup() {
   fi
   rm -f "$RUN_DIR/launcher.pid"
   rm -f "$RUN_DIR/private-studio.pid"
+  rm -f "$RUN_DIR/gateway.pid"
   for site in "${sites[@]}"; do
     rm -f "$RUN_DIR/$site.pid"
   done
@@ -156,6 +199,11 @@ for port in "$PRIVATE_STUDIO_HTTP_PORT" "$PRIVATE_STUDIO_GRPC_PORT" "$PRIVATE_ST
     exit 1
   fi
 done
+if [[ "$ROUTING" == "subdomain" ]] \
+   && lsof -nP -iTCP:"$GATEWAY_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  printf 'Subdomain gateway port %s is already in use.\n' "$GATEWAY_PORT" >&2
+  exit 1
+fi
 
 mkdir -p "$LOG_DIR" "$RUN_DIR"
 printf '%s\n' "$$" >"$RUN_DIR/launcher.pid"
@@ -167,16 +215,20 @@ for i in "${!sites[@]}"; do
   site_dir="${site_dirs[$i]}"
   studio="${studios[$i]}"
   log="$LOG_DIR/$site.log"
-  printf 'Starting %-27s http://127.0.0.1:%s/\n' "$site" "$port"
+  printf 'Starting %-27s %s\n' "$site" "${origins[$i]}"
   deploy_args=(
     "$hocon"
     --port "$port"
     --out "$PROJECT_DIR/.nsdeploy/cailville/$site"
     --site-dir "$site_dir"
+    --site-url "${origins[$i]}"
     --steward-sites "$STEWARD_SITES_FILE"
     --upstream "$UPSTREAM"
     --facade-upstream "$FACADE_UPSTREAM"
   )
+  if [[ "${link_files[$i]}" != "-" ]]; then
+    deploy_args+=(--links "${link_files[$i]}")
+  fi
   if ((${#theme_args[@]})); then
     deploy_args+=("${theme_args[@]}")
   fi
@@ -206,8 +258,38 @@ for i in "${!sites[@]}"; do
     fi
     sleep 1
   done
-  printf 'Ready    %-27s http://127.0.0.1:%s/\n' "$site" "$port"
+  printf 'Ready    %-27s %s\n' "$site" "${origins[$i]}"
 done
+
+if [[ "$ROUTING" == "subdomain" ]]; then
+  gateway_args=(
+    gateway --base-domain "$BASE_DOMAIN" --bind "$GATEWAY_BIND" --port "$GATEWAY_PORT"
+  )
+  for i in "${!sites[@]}"; do
+    gateway_args+=(--route "${sites[$i]}=http://127.0.0.1:${ports[$i]}")
+  done
+  gateway_log="$LOG_DIR/subdomain-gateway.log"
+  PYTHONUNBUFFERED=1 "$PYTHON_BIN" -m nsdeploy "${gateway_args[@]}" >"$gateway_log" 2>&1 &
+  gateway_pid="$!"
+  printf '%s\n' "$gateway_pid" >"$RUN_DIR/gateway.pid"
+  gateway_deadline=$((SECONDS + 30))
+  gateway_host="${origins[0]#*://}"
+  gateway_host="${gateway_host%%:*}"
+  while ! curl --fail --silent --show-error --output /dev/null \
+      -H "Host: $gateway_host" "http://127.0.0.1:$GATEWAY_PORT/" 2>/dev/null; do
+    if ! kill -0 "$gateway_pid" 2>/dev/null; then
+      printf '\nSubdomain gateway failed to start. Last log lines:\n' >&2
+      tail -30 "$gateway_log" >&2
+      exit 1
+    fi
+    if ((SECONDS >= gateway_deadline)); then
+      printf '\nTimed out waiting for subdomain gateway. See %s\n' "$gateway_log" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+  printf 'Ready    subdomain gateway          %s://*.%s\n' "$PUBLIC_SCHEME" "$BASE_DOMAIN"
+fi
 
 # Concurrent site generation writes a broad aggregate manifest. Rebuild it from
 # the active map so a base-map reset cannot retain private stewards from old demos.
@@ -276,6 +358,9 @@ if [[ ! "$OPEN_BROWSER" =~ ^(0|false|no)$ ]]; then
   open "$PRIVATE_STUDIO_URL"
 fi
 printf '\nCailville is running. Logs: %s\n' "$LOG_DIR"
+if [[ "$ROUTING" == "subdomain" ]]; then
+  printf 'Public site routing: %s://<network>.%s\n' "$PUBLIC_SCHEME" "$BASE_DOMAIN"
+fi
 printf 'Private steward manifest: %s\n' "$PRIVATE_STUDIO_MANIFEST"
 printf 'Private Neuro-SAN studio: %s\n' "$PRIVATE_STUDIO_URL"
 printf 'Press Ctrl-C to stop every site.\n'

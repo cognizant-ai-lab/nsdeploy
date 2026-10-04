@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
 
+from nsdeploy.gateway import network_slug, public_origin
+from nsdeploy.linker import write_link_file
 from nsdeploy.resolve import resolve_hocon
 from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio, StudioSource
 
@@ -52,10 +54,20 @@ def load_community(path: Path) -> Dict[str, Any]:
     return data
 
 
-def public_site_directory(community: Dict[str, Any]) -> Dict[str, str]:
+def site_origin(site: Dict[str, Any], *, base_domain: Optional[str] = None,
+                public_scheme: str = "http", public_port: Optional[int] = None) -> str:
+    if base_domain:
+        return public_origin(site["id"], base_domain, scheme=public_scheme, port=public_port)
+    return f"http://127.0.0.1:{site['port']}"
+
+
+def public_site_directory(community: Dict[str, Any], *, base_domain: Optional[str] = None,
+                          public_scheme: str = "http",
+                          public_port: Optional[int] = None) -> Dict[str, str]:
     """Return every active Cailville public-site origin for private stewards."""
     return {
-        site["id"]: f"http://127.0.0.1:{site['port']}"
+        site["id"]: site_origin(site, base_domain=base_domain,
+                                public_scheme=public_scheme, public_port=public_port)
         for site in community.get("sites", [])
     }
 
@@ -317,7 +329,9 @@ def choose_position(sites: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def augment_config(config: Dict[str, Any], network: str,
-                   community: Dict[str, Any]) -> Dict[str, Any]:
+                   community: Dict[str, Any], *, base_domain: Optional[str] = None,
+                   public_scheme: str = "http",
+                   public_port: Optional[int] = None) -> Dict[str, Any]:
     result = copy.deepcopy(config)
     sites = {site["id"]: site for site in community.get("sites", [])}
     targets = [target for source, target in community.get("relationships", [])
@@ -335,7 +349,9 @@ def augment_config(config: Dict[str, Any], network: str,
     for target in targets:
         if target not in tools:
             tools.append(target)
-        links[target] = f"http://127.0.0.1:{sites[target]['port']}/{target}"
+        origin = site_origin(sites[target], base_domain=base_domain,
+                             public_scheme=public_scheme, public_port=public_port)
+        links[target] = f"{origin}/{target}"
     front["tools"] = tools
     result["links"] = links
     return result
@@ -398,22 +414,31 @@ def plan_addition(config: Dict[str, Any], hocon_path: Path, *, port: Optional[in
                           profile["connect_from"], cailville_dir)
 
 
-def _map_payload(community: Dict[str, Any]) -> Dict[str, Any]:
+def _map_payload(community: Dict[str, Any], *, base_domain: Optional[str] = None,
+                 public_scheme: str = "http",
+                 public_port: Optional[int] = None) -> Dict[str, Any]:
     sites = []
     for item in community.get("sites", []):
         site = {key: item[key] for key in (
             "id", "name", "description", "kind", "type", "icon", "port", "position", "base"
         )}
-        site["url"] = f"http://127.0.0.1:{item['port']}"
+        site["url"] = site_origin(item, base_domain=base_domain,
+                                  public_scheme=public_scheme, public_port=public_port)
         sites.append(site)
     return {"version": 1, "sites": sites, "relationships": community.get("relationships", [])}
 
 
-def render_map_html(html_path: Path, community: Dict[str, Any]) -> None:
+def render_map_html(html_path: Path, community: Dict[str, Any], *,
+                    base_domain: Optional[str] = None, public_scheme: str = "http",
+                    public_port: Optional[int] = None) -> None:
     text = html_path.read_text(encoding="utf-8")
     if DATA_START not in text or DATA_END not in text:
         raise ValueError(f"Cailville data markers are missing from {html_path}")
-    raw = json.dumps(_map_payload(community), indent=2, ensure_ascii=False).replace("<", "\\u003c")
+    raw = json.dumps(
+        _map_payload(community, base_domain=base_domain, public_scheme=public_scheme,
+                     public_port=public_port),
+        indent=2, ensure_ascii=False,
+    ).replace("<", "\\u003c")
     replacement = f'{DATA_START}\n  <script id="cailville-community-data" type="application/json">\n{raw}\n  </script>\n  {DATA_END}'
     pattern = re.compile(re.escape(DATA_START) + ".*?" + re.escape(DATA_END), re.S)
     updated, count = pattern.subn(replacement, text, count=1)
@@ -449,7 +474,10 @@ def _member_path(cailville_dir: Path, value: str) -> Path:
     return path.resolve() if path.is_absolute() else (cailville_dir / path).resolve()
 
 
-def prepare_runtime_sources(cailville_dir: Path, project_dir: Path) -> Dict[str, Path]:
+def prepare_runtime_sources(cailville_dir: Path, project_dir: Path, *,
+                            base_domain: Optional[str] = None,
+                            public_scheme: str = "http",
+                            public_port: Optional[int] = None) -> Dict[str, Path]:
     community = load_community(cailville_dir / "community.json")
     sites = {site["id"]: site for site in community["sites"]}
     added = {site_id for site_id, site in sites.items() if not site.get("base", False)}
@@ -467,19 +495,26 @@ def prepare_runtime_sources(cailville_dir: Path, project_dir: Path) -> Dict[str,
         else:
             source = GithubStudio(site.get("repo", DEFAULT_REPO), site.get("ref", DEFAULT_REF))
         config, _ = resolve_hocon(hocon, source)
-        config = augment_config(config, site_id, community)
+        config = augment_config(config, site_id, community, base_domain=base_domain,
+                                public_scheme=public_scheme, public_port=public_port)
         destination = output_dir / f"{site_id}.hocon"
         destination.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         result[site_id] = destination
     return result
 
 
-def write_steward_sites_file(cailville_dir: Path, project_dir: Path) -> Path:
+def write_steward_sites_file(cailville_dir: Path, project_dir: Path, *,
+                             base_domain: Optional[str] = None,
+                             public_scheme: str = "http",
+                             public_port: Optional[int] = None) -> Path:
     community = load_community(cailville_dir / "community.json")
     destination = project_dir / ".nsdeploy" / "cailville" / "community-public-sites.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(
-        json.dumps(public_site_directory(community), indent=2, ensure_ascii=False) + "\n",
+        json.dumps(public_site_directory(
+            community, base_domain=base_domain, public_scheme=public_scheme,
+            public_port=public_port,
+        ), indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     return destination
@@ -495,16 +530,73 @@ def write_active_private_manifest(cailville_dir: Path, project_dir: Path) -> Pat
     )
 
 
-def emit_launch_rows(cailville_dir: Path, project_dir: Path) -> None:
+def write_runtime_link_files(cailville_dir: Path, project_dir: Path, *,
+                             base_domain: str, public_scheme: str = "http",
+                             public_port: Optional[int] = None) -> Dict[str, Path]:
+    """Write subdomain-aware sidecars without changing checked-in port sidecars."""
     community = load_community(cailville_dir / "community.json")
-    runtime_sources = prepare_runtime_sources(cailville_dir, project_dir)
-    write_steward_sites_file(cailville_dir, project_dir)
+    sites = {site["id"]: site for site in community["sites"]}
+    targets: Dict[str, List[str]] = {site_id: [] for site_id in sites}
+    for source, target in community.get("relationships", []):
+        if source in sites and target in sites:
+            targets[source].append(target)
+    output_dir = project_dir / ".nsdeploy" / "cailville" / "community-links"
+    result: Dict[str, Path] = {}
+    for source, linked in targets.items():
+        links = {
+            target: (
+                site_origin(sites[target], base_domain=base_domain,
+                            public_scheme=public_scheme, public_port=public_port)
+                + f"/{target}"
+            )
+            for target in linked
+        }
+        path = output_dir / f"{source}.links.json"
+        write_link_file(path, source, links)
+        result[source] = path
+    return result
+
+
+def emit_launch_rows(cailville_dir: Path, project_dir: Path, *,
+                     base_domain: Optional[str] = None,
+                     public_scheme: str = "http",
+                     public_port: Optional[int] = None) -> None:
+    community = load_community(cailville_dir / "community.json")
+    runtime_sources = prepare_runtime_sources(
+        cailville_dir, project_dir, base_domain=base_domain,
+        public_scheme=public_scheme, public_port=public_port,
+    )
+    write_steward_sites_file(
+        cailville_dir, project_dir, base_domain=base_domain,
+        public_scheme=public_scheme, public_port=public_port,
+    )
+    runtime_links = (
+        write_runtime_link_files(
+            cailville_dir, project_dir, base_domain=base_domain,
+            public_scheme=public_scheme, public_port=public_port,
+        )
+        if base_domain else {}
+    )
+    if base_domain:
+        slugs = [network_slug(site["id"]) for site in community["sites"]]
+        if len(slugs) != len(set(slugs)):
+            raise ValueError("Cailville network names produce duplicate subdomains")
+    # Regenerate for both modes so returning to the default port launcher restores
+    # port URLs after a prior subdomain run.
+    render_map_html(
+        cailville_dir / "cailville.html", community, base_domain=base_domain,
+        public_scheme=public_scheme, public_port=public_port,
+    )
     for site in community["sites"]:
         site_id = site["id"]
         hocon = runtime_sources.get(site_id) or _member_path(cailville_dir, site["hocon"])
         site_dir = _member_path(cailville_dir, site["site_dir"])
         studio = site.get("studio") or "-"
-        print("\t".join((site_id, str(site["port"]), str(hocon), str(site_dir), str(studio))))
+        links = runtime_links.get(site_id)
+        origin = site_origin(site, base_domain=base_domain, public_scheme=public_scheme,
+                             public_port=public_port)
+        print("\t".join((site_id, str(site["port"]), str(hocon), str(site_dir),
+                         str(studio), str(links) if links else "-", origin)))
 
 
 def run_cailville_command(argv: Optional[List[str]] = None) -> int:
@@ -592,6 +684,9 @@ def _internal_main(argv: Optional[List[str]] = None) -> int:
     rows = sub.add_parser("launch-rows")
     rows.add_argument("--cailville-dir", required=True)
     rows.add_argument("--project-dir", required=True)
+    rows.add_argument("--base-domain")
+    rows.add_argument("--public-scheme", choices=("http", "https"), default="http")
+    rows.add_argument("--public-port", type=int)
     ports = sub.add_parser("ports")
     ports.add_argument("--cailville-dir", required=True)
     ports.add_argument("--project-dir")
@@ -600,7 +695,11 @@ def _internal_main(argv: Optional[List[str]] = None) -> int:
     manifest.add_argument("--project-dir", required=True)
     args = parser.parse_args(argv)
     if args.command == "launch-rows":
-        emit_launch_rows(Path(args.cailville_dir).resolve(), Path(args.project_dir).resolve())
+        emit_launch_rows(
+            Path(args.cailville_dir).resolve(), Path(args.project_dir).resolve(),
+            base_domain=args.base_domain, public_scheme=args.public_scheme,
+            public_port=args.public_port,
+        )
     elif args.command == "ports":
         project_dir = Path(args.project_dir).resolve() if args.project_dir else None
         for port in cailville_ports(Path(args.cailville_dir).resolve(), project_dir):

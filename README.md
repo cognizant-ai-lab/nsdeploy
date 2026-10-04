@@ -47,6 +47,39 @@ instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
 `--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime),
 `--no-cruse` (skip generative-UI injection), and the theming flags below.
 
+## Shared subdomain gateway
+
+Port-based hosting remains the default for backward compatibility. When the hosting
+environment limits exposed ports, the optional gateway can publish any number of
+nsdeploy sites through one listener and select the site from the request hostname.
+The network name becomes a DNS-safe subdomain (`harbor_town_hall` becomes
+`harbor-town-hall`):
+
+```bash
+# Start the sites on loopback ports and advertise their public subdomain origins.
+python -m nsdeploy examples/link_demo_airline.hocon \
+  --port 9001 --site-url http://link-demo-airline.localhost:8080 &
+python -m nsdeploy examples/link_demo_travel_agency.hocon \
+  --port 9002 --site-url http://link-demo-travel-agency.localhost:8080 &
+
+# Expose both sites through one port.
+python -m nsdeploy gateway --base-domain localhost --port 8080 \
+  --route link_demo_airline=http://127.0.0.1:9001 \
+  --route link_demo_travel_agency=http://127.0.0.1:9002
+```
+
+Open <http://link-demo-airline.localhost:8080/> or
+<http://link-demo-travel-agency.localhost:8080/>. The backend site, facade, and MCP
+tool listeners remain loopback-only; only the gateway port needs to be exposed.
+Unknown hostnames are rejected, and startup fails if two network names normalize to
+the same subdomain.
+
+For Azure or another TLS-terminating ingress, point wildcard DNS such as
+`*.agents.example.com` at the ingress, map its public HTTPS listener to the gateway's
+single internal port, start the gateway with `--bind 0.0.0.0`, and give each site an
+external origin such as `--site-url https://link-demo-airline.agents.example.com`.
+The gateway itself speaks HTTP; TLS can terminate at the platform ingress.
+
 By default it runs on a deterministic **mock** LLM (no key needed). For real output,
 open **⚙ BYOK settings** in the page and enter your API key + model — calls route
 through the same-origin `/byok/v1` CORS proxy to your provider. A saved profile with
@@ -124,6 +157,23 @@ the demo, avoiding an initial concierge connection race.
 Override the private project or ports with `NSDEPLOY_PRIVATE_STUDIO_DIR`,
 `NSDEPLOY_PRIVATE_STUDIO_HTTP_PORT`, `NSDEPLOY_PRIVATE_STUDIO_GRPC_PORT`, and
 `NSDEPLOY_PRIVATE_STUDIO_NSFLOW_PORT`.
+
+The existing Cailville port mode is also the default. To expose every public site
+through one local gateway port instead, enable subdomain routing explicitly:
+
+```bash
+NSDEPLOY_ROUTING=subdomain \
+NSDEPLOY_BASE_DOMAIN=localhost \
+NSDEPLOY_GATEWAY_PORT=8080 \
+./cailville/launch_all.sh
+```
+
+This publishes URLs such as <http://harbor-guide.localhost:8080/> and rewrites the
+generated Cailville map, public-site directory, manifests, and runtime link sidecars
+to use those origins. The checked-in port-based link sidecars are not modified.
+For a cloud ingress, additionally set `NSDEPLOY_GATEWAY_BIND=0.0.0.0`,
+`NSDEPLOY_PUBLIC_SCHEME=https`, and `NSDEPLOY_PUBLIC_PORT=443`; the internal
+`NSDEPLOY_GATEWAY_PORT` can remain an unprivileged port such as `8080`.
 
 To run the agents with Docker Model Runner instead, explicitly select its upstream
 and enter one of the exact IDs returned by its `/models` endpoint in BYOK settings:

@@ -343,10 +343,18 @@ class ByokOnlyTests(unittest.TestCase):
 
     def test_facade_command_carries_no_credential(self):
         plan = types.SimpleNamespace(network_name="net", front_man="front")
-        cmd = _facade_command("python", Path("/site"), plan, 8091, 50000, "https://api.example/v1")
+        cmd = _facade_command(
+            "python", Path("/site"), plan, 8091, 50000, "https://api.example/v1",
+            "https://net.agents.example.com",
+        )
         flags = {arg for arg in cmd if arg.startswith("--")}
         self.assertEqual(flags, {"--config", "--site-base", "--front-man", "--port", "--upstream"})
         self.assertNotIn("--api-key", cmd)
+        self.assertEqual(cmd[cmd.index("--site-base") + 1], "https://net.agents.example.com")
+        legacy = _facade_command(
+            "python", Path("/site"), plan, 8091, 50000, "https://api.example/v1",
+        )
+        self.assertEqual(legacy[legacy.index("--site-base") + 1], "http://127.0.0.1:8091")
 
 
 if __name__ == "__main__":
