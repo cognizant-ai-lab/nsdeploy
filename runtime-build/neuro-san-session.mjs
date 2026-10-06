@@ -1,6 +1,6 @@
 // neuro-san-session.mjs: the package's agent loop (DirectAgentSession) for the browser.
 //
-// The loop is neuro-san's own, from @cognizant-ai-lab/neuro-san-npm. Where the
+// The loop is neuro-san's own, from @cognizant-ai-lab/neuro-san-ts-package. Where the
 // package's transpiled code does not work yet, this module replaces that one method
 // from here (the package on disk is never edited) and says what to fix in the
 // transpiling source. Each is marked WORKAROUND / PORT BACK.
@@ -19,7 +19,7 @@ import {
   ChatMessageType,
   AsyncDirectAgentSession,
   environ,
-} from "@cognizant-ai-lab/neuro-san-npm";
+} from "@cognizant-ai-lab/neuro-san-ts-package";
 // Imported for its side effect too: it makes the package's ExternalAgentParsing work.
 import { parseExternalAgent } from "./external-agent-parsing.mjs";
 

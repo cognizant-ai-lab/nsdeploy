@@ -1,7 +1,7 @@
 // agent-network.js: the browser-side view of a neuro-san agent network.
 //
 // Logic that exists in neuro-san itself is not written here. It comes from
-// @cognizant-ai-lab/neuro-san-npm, the real neuro-san sources transpiled to
+// @cognizant-ai-lab/neuro-san-ts-package, the real neuro-san sources transpiled to
 // TypeScript, through ./generated-bridge.js: the config filter chain (commondefs,
 // defaults, name correction), AgentNetwork's front man and agent specs, the network
 // validators, and external agent / MCP reference parsing. What stays here is

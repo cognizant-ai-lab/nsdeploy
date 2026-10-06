@@ -13,7 +13,7 @@ matching the repo's git tree, so the repo's internal layout doesn't matter. Any 
 dependency a hosted tool imports (e.g. `ddgs`) is auto-installed on demand.
 
 The browser runs the agents on **neuro-san's own agent loop**, from
-[`@cognizant-ai-lab/neuro-san-npm`](https://github.com/cognizant-ai-lab/neuro-san-ts-package)
+[`@cognizant-ai-lab/neuro-san-ts-package`](https://github.com/cognizant-ai-lab/neuro-san-ts-package)
 (the real neuro-san Python transpiled to TypeScript), bundled by
 [`runtime-build/`](runtime-build) into `nsdeploy/runtime/generated/` and driven by the page
 runtime in [`nsdeploy/runtime/`](nsdeploy/runtime). See

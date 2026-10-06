@@ -1,7 +1,7 @@
 // engine.js: load a published network from an origin, compile it, and run it on
 // neuro-san's own agent loop.
 //
-// The loop is neuro-san's DirectAgentSession, from @cognizant-ai-lab/neuro-san-npm
+// The loop is neuro-san's DirectAgentSession, from @cognizant-ai-lab/neuro-san-ts-package
 // (the real neuro-san sources transpiled to TypeScript), built into generated/
 // (entered at generated/browser/neuro-san.mjs). This module owns what is nsdeploy's
 // rather than neuro-san's:

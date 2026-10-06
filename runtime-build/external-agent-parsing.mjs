@@ -3,7 +3,7 @@
 import {
   ExternalAgentParsing,
   AgentSessionConstants,
-} from "@cognizant-ai-lab/neuro-san-npm";
+} from "@cognizant-ai-lab/neuro-san-ts-package";
 
 // WORKAROUND: ExternalAgentParsing.parse_external_agent throws on every URL or
 // path, because the transpiled code calls Python str methods on a JS string:
