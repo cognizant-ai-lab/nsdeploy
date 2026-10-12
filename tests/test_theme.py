@@ -1,9 +1,14 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from nsdeploy.generate import _index_html, _theme_css
-from nsdeploy.theme import DEFAULT_THEME_MODEL, PROMPT_VERSION, ThemeSpec, _SYSTEM_PROMPT, _chat
+from nsdeploy.theme import (
+    DEFAULT_THEME_MODEL, PROMPT_VERSION, ThemeSpec, _SYSTEM_PROMPT, _chat, propose_theme,
+)
 
 
 class _Response:
@@ -36,6 +41,33 @@ class ThemeChatTests(unittest.TestCase):
 
         request = urlopen.call_args.args[0]
         self.assertEqual(json.loads(request.data)["temperature"], 0.2)
+
+    def test_custom_prompt_is_appended_and_part_of_cache_identity(self):
+        plan = SimpleNamespace(
+            config={"metadata": {"description": "A test network"}},
+            network_name="test_network",
+            front_man="front",
+            agents=[{"name": "front", "function": {"description": "Helps users"}}],
+        )
+        response = """===META===
+{"brand":"Test"}
+===STYLE===
+.page { color: navy; }
+===BODY===
+<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div><main data-ns-slot="chat"></main><aside data-ns-slot="agents"></aside></div>
+"""
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch("nsdeploy.theme.CACHE_DIR", Path(tmp)), \
+                patch("nsdeploy.theme._chat", return_value=response) as chat:
+            kwargs = {"model": "test-model", "api_key": "key", "upstream": "https://example.test/v1"}
+            propose_theme(plan, theme_prompt="Use warm paper tones", **kwargs)
+            propose_theme(plan, theme_prompt="Use cool ocean tones", **kwargs)
+
+        self.assertEqual(chat.call_count, 2)
+        self.assertIn("Additional theme instructions from the deployer:\nUse warm paper tones",
+                      chat.call_args_list[0].args[4])
+        self.assertIn("Additional theme instructions from the deployer:\nUse cool ocean tones",
+                      chat.call_args_list[1].args[4])
 
 
 class ThemeLayoutTests(unittest.TestCase):

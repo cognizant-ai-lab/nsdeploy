@@ -480,10 +480,17 @@ def load_theme_file(path: Path) -> ThemeSpec:
     return ThemeSpec.coerce(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
-def propose_theme(plan, *, model: str, api_key: str, upstream: str, refresh: bool = False) -> ThemeSpec:
+def propose_theme(plan, *, model: str, api_key: str, upstream: str, refresh: bool = False,
+                  theme_prompt: Optional[str] = None) -> ThemeSpec:
     """Ask the LLM for a theme (cached). Falls back to the default on any failure."""
     ident = _identity(plan)
-    digest = hashlib.sha256(json.dumps([ident, model, PROMPT_VERSION], sort_keys=True).encode()).hexdigest()[:16]
+    extra_instructions = (theme_prompt or "").strip()
+    cache_identity = [ident, model, PROMPT_VERSION]
+    if extra_instructions:
+        cache_identity.append(extra_instructions)
+    digest = hashlib.sha256(
+        json.dumps(cache_identity, sort_keys=True).encode()
+    ).hexdigest()[:16]
     cache_path = CACHE_DIR / f"{digest}.json"
     if not refresh and cache_path.exists():
         try:
@@ -491,7 +498,12 @@ def propose_theme(plan, *, model: str, api_key: str, upstream: str, refresh: boo
         except Exception:
             pass
     try:
-        spec = ThemeSpec.coerce(_parse_sections(_chat(upstream, api_key, model, _SYSTEM_PROMPT, json.dumps(ident))))
+        user_prompt = json.dumps(ident)
+        if extra_instructions:
+            user_prompt += "\n\nAdditional theme instructions from the deployer:\n" + extra_instructions
+        spec = ThemeSpec.coerce(
+            _parse_sections(_chat(upstream, api_key, model, _SYSTEM_PROMPT, user_prompt))
+        )
     except Exception as exc:
         print(f"   …theme: LLM step failed ({str(exc)[:80]}); using the default look", flush=True)
         return ThemeSpec()
