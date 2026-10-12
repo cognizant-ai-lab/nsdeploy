@@ -163,6 +163,24 @@ Stop the complete demo from another terminal:
 ./cailville/stop_all.sh
 ```
 
+### Test Cailville in a browser
+
+With Cailville running, `tests/cailville_browser.mjs` opens the map and every site in
+headless Chromium. On each site it sends the first sample query, approves the partner
+sites the agent asks to contact, keeps the demo fallback when it offers to link a
+demo-mode agent, and waits for the answer. It runs on the mock LLM, so no key is needed.
+
+```bash
+npm install
+npx playwright install chromium
+npm run test:cailville              # every site in cailville/community.json
+npm run test:cailville -- 8091 8105 # just these ports
+HEADED=1 npm run test:cailville -- 8091  # watch it in a visible browser
+```
+
+It exits 1 if any site shows a page error, a failed request, or no answer. Screenshots
+go to `.nsdeploy/cailville-browser-test/`.
+
 ### Add a public site to Cailville
 
 Use the Cailville workflow to design a site, infer a small set of useful public-network

@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/runtime_regression.mjs && node --test tests/cruse.test.mjs"
+    "test": "node tests/runtime_regression.mjs && node --test tests/cruse.test.mjs",
+    "test:cailville": "node tests/cailville_browser.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
   }
 }
