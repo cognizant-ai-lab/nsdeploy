@@ -206,127 +206,127 @@ Stop the complete demo from another terminal:
 ./cailville/stop_all.sh
 ```
 
-### Human negotiation through the commerce arbiter
+### Book through Butterpink's private steward in nsFlow
 
-The map now includes **Cailville Commerce Arbiter**, linked to **Seabreeze Inn**.
-The Inn's page has a **Negotiate a Seabreeze stay** entry point, and its agent
-instructions direct transaction requests to that checkout. The arbiter is a normal
-nsdeploy site with its own chat, discovery manifest, public MCP facade and theme,
-plus a protected human checkout at <http://127.0.0.1:8105/commerce>.
+The Cailville map includes **Cailville Commerce Arbiter**, connected to **Seabreeze
+Inn** and **Butterpink Family**. Booking takes place in the existing private
+steward conversation in **nsFlow**, reached through the map's **Private stewards**
+toggle. There is no separate commerce page, form, pairing code or checkout.
 
-This integrates the actual SQLite arbiter from
+Ask Butterpink's private steward to book a night at the Inn for a stated USD maximum.
+It collects any missing date or budget, creates a fixed mandate at the public
+arbiter, and engages the Inn's coded seller adapter over HTTP. The Inn receives
+stay details and a scoped seller capability, never the raw private ceiling. The
+arbiter receives the sealed policy bid and computes the binding offer. The steward
+presents that offer in chat; a subsequent **Confirm booking** reply approves the
+exact offer and returns a simulated receipt in the same conversation.
+
+The implementation uses the actual SQLite arbiter from
 [babakatwork/agent-commerce-demo](https://github.com/babakatwork/agent-commerce-demo),
-pinned to commit `47fe668ff19c23cf1294685ef122d8ca9fad63e1`.
-Its engine is vendored unchanged, with the upstream Apache license and notice;
-see [`PROVENANCE.md`](nsdeploy/commerce/PROVENANCE.md). A Cailville fixture catalogue
-and HTTP adapters connect it to the existing Inn. No separate commerce-demo checkout,
-extra service process, API key or live LLM is needed for the transaction flow.
+pinned to commit `47fe668ff19c23cf1294685ef122d8ca9fad63e1`. Its engine is vendored
+unchanged with the Apache license and notice; see
+[`PROVENANCE.md`](nsdeploy/commerce/PROVENANCE.md). nsdeploy supplies the fixture
+catalogue, HTTP adapters, private coded tool and chat middleware. The negotiation
+and ledger are coded execution; the private LLM interprets the request and calls
+tools. Public sites retain their usual chat, discovery and MCP functionality.
 
-The human enters their dates and ceiling **on the arbiter's origin**, outside agent
-chat. The arbiter contacts the Inn's coded adapter over HTTP with only the public
-stay details and a scoped seller capability. The adapter calls back to commit its
-sealed policy bid. The arbiter computes and stores the offer; the human separately
-approves a hold and confirms simulated inventory. Chat and MCP agents cannot issue
-binding prices, approve holds or settle purchases. The surrounding chat remains
-the existing mock/BYOK agent experience; the transaction itself is deterministic
-coded execution. Private-steward commerce is intentionally left for the next example.
-
-The fixture is exactly two nights for two adults in Cailville, with parking, Wi-Fi,
-one local activity, taxes and fees. It excludes meals and travel to Cailville.
-The fixed catalogue price is **$1,050**. With a **$1,000** human ceiling, the arbiter's
-equal-weight Nash rule returns **$955**; a **$900** ceiling yields **NO_AGREEMENT**.
-Prices are integer USD cents. The rule takes the midpoint between the seller floor
-and the lower of the buyer ceiling and catalogue ask. Offers last 15 minutes;
-approved holds last 120 seconds. The final price may reveal information by inference;
-the raw ceiling and seller floor are not sent to the opposing agent.
+The fixture is **one night for two adults** with parking, Wi-Fi, one local activity,
+taxes and fees. It excludes meals and travel to Cailville. Catalogue price:
+**$525**. A **$500** ceiling produces **$477.50** under equal-weight Nash bargaining;
+**$450** produces **NO_AGREEMENT**. Other dates must be today or later. Other stay
+lengths or party sizes require a different catalogue fixture; the steward should
+explain that scope instead of silently changing the request. All amounts are
+integer USD cents. Offers expire 15 minutes after negotiation.
 
 #### Manual check before pushing
 
-From the repository root, start every public site without private Neuro-SAN studio
-or theme generation. This leaves the launcher's normal default behavior available:
+1. Launch Cailville normally, with its existing private studio and model credentials:
 
-```bash
-NSDEPLOY_THEME=0 NSDEPLOY_PRIVATE_STUDIO=0 ./cailville/launch_all.sh
-```
+   ```bash
+   NSDEPLOY_THEME=0 ./cailville/launch_all.sh
+   ```
 
-The launcher opens the map after all sites are ready. Existing community additions
-remain on the map. You can also open [`cailville/cailville.html`](cailville/cailville.html)
-directly. Use `NSDEPLOY_OPEN_BROWSER=0` to suppress automatic browser opening.
+   The launcher opens the map and starts nsFlow. `NSDEPLOY_THEME=0` preserves the
+   editable themes and skips paid theme generation. The private studio uses its
+   configured model credentials; booking adapters do not use or forward LLM keys.
+2. On [`cailville/cailville.html`](cailville/cailville.html), enable **Private
+   stewards**. Click the private steward badge beside **Butterpink Family**. It
+   opens nsFlow with `butterpink_family/butterpink_family_private_steward` selected.
+   The equivalent direct link is
+   [Butterpink private steward](http://127.0.0.1:4174/?network=butterpink_family%2Fbutterpink_family_private_steward).
+3. Start a new chat and ask:
 
-1. Find **Cailville Commerce Arbiter** on the map; hovering shows its Inn connection.
-   Open the arbiter and check its agent chat and **Open human negotiation & checkout** link.
-2. Open **Seabreeze Inn** at <http://127.0.0.1:8093/>. Click **Negotiate a Seabreeze stay**.
-   The browser moves to the arbiter checkout. Confirm it says **Human counterpart ·
-   Simulation** and shows the **$1,050** fixed catalogue price.
-3. Keep the suggested future dates and **$1,000** ceiling. Click **Create private mandate**,
-   then **Ask the Inn to negotiate**. Expect **$955**, the dates, inclusions, cancellation
-   terms, price breakdown and offer expiry. Held and spent should both be **$0**.
-4. Click **Approve & hold $955.00**. Expect **HELD**, **$955 held**, **$0 spent**.
-   Within two minutes, click **Confirm inventory & settle**. Expect **SETTLED**, **$0 held**,
-   **$955 spent**, and a `SIM-...` receipt. Reload: the same receipt remains.
-5. Expand **Inspect the transaction audit** and download it if useful. Look for
-   `MANDATE_CREATED`, `BID_COMMITTED`, `SELLER_ADAPTER_REQUEST`, `OFFER_REGISTERED`,
-   `FUNDS_HELD` and `SETTLED`. The seller request contains stay details, never the
-   private ceiling. The full downloaded audit is a **private human view**, not seller data.
-6. Create another mandate at **$900** and negotiate. Expect **NO AGREEMENT**, no offer,
-   and zero held/spent. Raise the ceiling to **$1,000**, create a new mandate, negotiate
-   and approve; choose **Simulate inventory failure**. Expect **CANCELLED**, zero held/spent.
-7. Repeat and approve a hold, then wait over **120 seconds** without confirming. The
-   page refreshes state every five seconds: expect **EXPIRED**, zero held/spent. Also
-   test **Cancel & release** during a negotiation or hold. Changing an active mandate
-   requires cancellation first; retries never reprice an offer or charge twice.
-8. Check ordinary Inn chat, another site's mock chat, the map filters and existing
-   links. With your own BYOK profile, optionally ask: “How do I negotiate a two-night
-   stay through the arbiter?” The agent should point to checkout, not invent a receipt.
-   BYOK model behavior is not required to complete this deterministic demo.
+   ```text
+   Book a night at Seabreeze Inn for two adults on 2026-12-15 for no more than $500.
+   ```
 
-Stop this public-only run with Ctrl-C in its terminal, or:
+   Use a future date if this example date has passed. You can instead start with
+   “Book a night at the Inn for under $500”; the steward should ask for the date.
+   Expect an arbiter-issued **$477.50** offer, the correct dates and inclusions,
+   cancellation terms, and an invitation to confirm. Nothing is held or spent yet.
+4. Reply **Confirm booking** in that chat. Expect a **SIM-...** receipt, **$477.50**
+   paid in the simulation and the same dates. Ask “What is my booking status?”:
+   the same receipt should return. Repeating confirmation must not charge twice.
+5. In a new chat, repeat with **$450**. Expect no agreement and no booking. Try a
+   **$500** offer followed by **Cancel the offer**. Ask for status: it should be
+   cancelled with zero spent. Changing the budget or date on an active offer
+   requires cancelling it first. An offer older than 15 minutes cannot be approved.
+6. Verify other private-steward requests, public-site chat, map filters and links
+   still behave normally. The arbiter and Inn public pages explain the mechanism;
+   they have no commerce banner or checkout. `/commerce` returns 404.
 
-```bash
-NSDEPLOY_PRIVATE_STUDIO=0 ./cailville/stop_all.sh
-```
+The private graph keeps its booking context between nsFlow turns through a single
+opaque SlyData handle. The private middleware reads the new human message, records
+the user's dollar ceiling, and only permits approval of an offer already presented
+in an earlier turn. A model-supplied approval flag or a request to settle during the
+initial negotiation cannot bypass this. Canonical offers, status and receipts are
+rendered from coded results, rather than model-invented prices or confirmations.
+For predictable confirmation use **Confirm booking**; ambiguous replies do not
+approve a purchase. Ordinary public MCP gateway calls remain available to this
+steward, and other generated stewards are unchanged.
 
-For a focused two-site run, use two terminals with your nsdeploy environment active:
-
-```bash
-python -m nsdeploy cailville/commerce_arbiter.hocon --port 8105
-python -m nsdeploy cailville/seabreeze_inn.hocon --port 8093
-```
-
-The usual `NSDEPLOY_ROUTING=subdomain` launcher mode also works. Use the map's links
-or <http://commerce-arbiter.localhost:8080/commerce>; human session checks use the
-advertised public origin. Seller callbacks use the configured loopback backends, so
-they do not depend on wildcard DNS. If you change the two backend ports or deploy
-them on separate hosts, update `commerce.seller_backend` and `commerce.arbiter_backend`
-in the two HOCON files as well as the normal links/public origins.
-
-#### Verification and state
+#### Verification and deployment state
 
 ```bash
 python -m unittest discover -s tests -v
 npm test
 ```
 
-`tests/test_commerce.py` exercises the unchanged upstream engine, real two-site HTTP
-negotiation, gateway routing, session/CSRF isolation, scoped capabilities, forged
-prices/offers, no agreement, expiry, failure, concurrent retries, persistence, and
-opt-in generation. Existing BYOK, MCP, linking, resolver, theme, launcher, steward,
-runtime and CRUSE regressions remain in the full suites. Local test servers need
-permission to bind loopback ports. Live paid model calls are not part of these tests.
+The commerce tests execute real private Neuro-SAN graphs with a scripted test
+model and real local HTTP calls through the arbiter and Inn. They test natural
+booking requests, follow-up confirmation and status, missing details, no agreement,
+cancellation, premature or negated approval, a lowered budget, credential/session
+isolation, forged offers, expiry, inventory failure, retries and persistence. Existing BYOK, MCP, linking,
+resolver, theme, launcher and browser-runtime regressions remain in the full suites.
+The scripted model lives only in tests. Normal nsFlow uses the configured private LLM.
+The chat integration was also exercised in nsFlow 0.6.17 with Neuro-SAN 0.6.92,
+using a temporary scripted-model setting and the real private tool, arbiter and Inn.
+A live-model manual check still requires the private studio's model credentials.
 
-The SQLite database lives at `.nsdeploy/cailville/.commerce/commerce_arbiter.sqlite`,
-outside the served site directories, with owner-only file permissions. The human
-session cookie is HttpOnly, same-site, scoped to checkout, and lasts 24 hours;
-capabilities remain server-side. Reloading or restarting preserves an unexpired
-session and its current deal. A new mandate replaces the session's current view;
-older deals remain in SQLite, so download an audit before moving on if needed.
-After a cookie expires or is cleared, this demo has no account-based recovery.
+The launcher provisions an owner-only local credential file at
+`.nsdeploy/cailville/.commerce/steward.key`, shared by the arbiter and private studio.
+It also stores the ledger at `.nsdeploy/cailville/.commerce/commerce_arbiter.sqlite`.
+Both are outside public site directories. Runtime credentials and per-chat session
+capabilities are never model arguments, tool responses or seller messages. The
+arbiter API rejects browser-origin writes and unauthenticated private actions.
+Public seller callbacks require separate scoped engine capabilities.
 
-This is a trusted-host, local **simulation**: no bank/payment or live inventory API,
-real reservation, refund implementation, or production identity system is supplied.
-Both sites and their coded adapters are trusted. The audit is an application event
-log, not tamper-proof evidence. A seller outage produces an explicit retryable error
-with no charge; it does not fabricate a successful negotiation.
+`NSDEPLOY_COMMERCE_KEY_FILE` overrides the shared credential file; set the same
+protected file for the arbiter and private runtime. `NSDEPLOY_COMMERCE_ARBITER_URL`
+sets the private runtime's arbiter origin (default `http://127.0.0.1:8105`). The tool
+honors `NSDEPLOY_STEWARD_DENY_ORIGINS`. Models cannot choose these settings. Existing
+subdomain routing works through the same internal backend; update the HOCON
+`commerce.seller_backend` and `commerce.arbiter_backend` if backend ports move.
+
+This is a trusted-host simulation: no real room reservation or money transfer,
+refund API, production identity provider, or distributed private-session store.
+Keep nsFlow and its SlyData private. The private runtime holds booking bindings in
+memory for 24 hours; restarting it requires a new chat. The arbiter ledger persists,
+but this example does not recover old chat bindings after a private-runtime restart.
+The audit is an application event log, not tamper-proof evidence. Raw ceilings and
+floors are withheld from the opposing party, although prices can reveal information
+by inference. The old standalone checkout has been retired; its historical ledger
+rows, if any, are preserved but its browser sessions no longer authorize actions.
 
 ### Add a public site to Cailville
 

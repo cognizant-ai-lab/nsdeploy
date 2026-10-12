@@ -9,14 +9,14 @@ PROVIDERS = CONNECTED = ("seabreeze_inn",)
 RETAIL_SCOPE = "Retail transactions are not enabled."
 CAVEAT = (
     "Informational, fixed catalogue price; no reservation or payment. "
-    "Negotiate and approve a simulated transaction through Cailville Commerce Arbiter."
+    "Ask your private steward in nsFlow to negotiate through Cailville Commerce Arbiter."
 )
 CATALOG = {
     "seabreeze_inn": {
-        "item_id": "seabreeze-two-night-stay",
-        "title": "Seabreeze Inn · two-night coastal stay for two",
-        "list_cents": 105000, "floor_cents": 91000,
-        "lodging_cents": 79000, "fees_cents": 16000, "activity_cents": 10000,
+        "item_id": "seabreeze-one-night-stay",
+        "title": "Seabreeze Inn · one-night coastal stay for two",
+        "list_cents": 52500, "floor_cents": 45500,
+        "lodging_cents": 39500, "fees_cents": 8000, "activity_cents": 5000,
         "cancellation": "Demo terms: full refund until 24 hours before arrival; refunds are not implemented.",
     },
 }
@@ -30,7 +30,7 @@ def default_trip():
     today = date.today()
     arrival = today + timedelta(days=7 - today.weekday() + 4)
     return {"destination": "Cailville", "arrival": arrival.isoformat(),
-            "departure": (arrival + timedelta(days=2)).isoformat(),
+            "departure": (arrival + timedelta(days=1)).isoformat(),
             "travelers": 2, "amenities": ["parking", "wifi"]}
 
 
@@ -44,8 +44,8 @@ def validate_trip(trip):
         raise ValueError("Dates must use YYYY-MM-DD.")
     arrival, departure = date.fromisoformat(trip["arrival"]), date.fromisoformat(trip["departure"])
     if (arrival.isoformat() != trip["arrival"] or departure.isoformat() != trip["departure"]
-            or arrival < date.today() or departure - arrival != timedelta(days=2)):
-        raise ValueError("Choose exactly two nights, arriving today or later.")
+            or arrival < date.today() or departure - arrival != timedelta(days=1)):
+        raise ValueError("Choose exactly one night, arriving today or later.")
     return {**trip, "amenities": list(trip["amenities"])}
 
 
@@ -54,7 +54,7 @@ def validate_retail_purchase(purchase):
 
 
 def travel_scope(trip):
-    return ("Two nights for two adults in Cailville, parking, Wi-Fi and one local activity. "
+    return ("One night for two adults in Cailville, parking, Wi-Fi and one local activity. "
             "Taxes and fees included; meals and travel to Cailville excluded. "
             "Fixture inventory and simulated payment only; no real reservation.")
 

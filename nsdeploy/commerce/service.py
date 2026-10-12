@@ -1,29 +1,29 @@
-"""Explicitly enabled HTTP adapter around the upstream commerce authority.
+"""Server-to-server commerce for private stewards and the public Seabreeze site.
 
-Human capabilities remain in a private SQLite session table. Agent/MCP routes
-have no access to that table. The merchant receives only a bounded public trip
-and a deal-scoped seller capability; callbacks go to its configured arbiter.
+The upstream arbiter remains the sole authority. There is no checkout UI or
+browser session API. Private-runtime credentials never enter model arguments.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from http.cookies import SimpleCookie
 from pathlib import Path
 
 from .arbiter import Arbiter, CommerceError
 from .catalog import default_trip, public_catalog, validate_trip
 
-ASSETS = Path(__file__).with_name("static")
 PROVIDER = "seabreeze_inn"
 ARBITER = "commerce_arbiter"
+STEWARD = "butterpink_family"
 API = "/commerce/api/"
+KEY_HEADER = "X-Commerce-Steward-Key"
 
 
 def origin(url):
@@ -34,24 +34,44 @@ def origin(url):
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def post_json(url, body):
-    # Only trusted deployment configuration supplies URLs. Never follow a redirect
-    # with a seller capability, and never forward browser cookies or BYOK headers.
+def credential_path():
+    return Path(os.environ.get("NSDEPLOY_COMMERCE_KEY_FILE", str(
+        Path(__file__).resolve().parents[2] / ".nsdeploy/cailville/.commerce/steward.key")))
+
+
+def provision_key(path):
+    """Shared only by the trusted local arbiter and private studio processes."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(secrets.token_urlsafe(48))
+    path.chmod(0o600)
+    value = path.read_text().strip()
+    if len(value) < 32:
+        raise ValueError("Invalid private commerce credential file.")
+    return value
+
+
+def post_json(url, body, headers=None):
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs):
             return None
-
     request = urllib.request.Request(url, json.dumps(body).encode(),
-                                     {"Content-Type": "application/json"})
+                                     {"Content-Type": "application/json", **(headers or {})})
     with urllib.request.build_opener(NoRedirect).open(request, timeout=15) as response:
-        result = json.loads(response.read(65537))
+        result = json.loads(response.read(1048577))
         if not isinstance(result, dict):
             raise ValueError("Invalid commerce adapter response.")
         return result
 
 
 class CommerceSite:
-    def __init__(self, config, site_base, links, database=None, clock=time.time):
+    def __init__(self, config, site_base, links, database=None, clock=time.time, steward_key=None):
         self.role = config["role"]
         if self.role not in ("arbiter", "seller"):
             raise ValueError("Commerce role must be arbiter or seller.")
@@ -62,105 +82,92 @@ class CommerceSite:
         self.seller_url = origin(links.get(PROVIDER) or config.get("seller_backend", site_base))
         self.backend = origin(config["seller_backend"] if self.role == "arbiter"
                               else config["arbiter_backend"])
-        self.cookie_name = "nscommerce_" + hashlib.sha256(self.site_base.encode()).hexdigest()[:12]
+        self.inventory_available = config.get("inventory_available", True)
         self.engine = Arbiter(database, clock=clock) if self.role == "arbiter" else None
+        self.steward_key = steward_key
         if self.engine:
+            if not steward_key:
+                raise ValueError("The arbiter requires a private-runtime credential.")
             with self.engine.db() as db:
-                db.execute("""CREATE TABLE IF NOT EXISTS human_sessions (
-                    digest TEXT PRIMARY KEY, csrf TEXT NOT NULL, expires REAL NOT NULL,
-                    deal TEXT, owner TEXT, buyer TEXT)""")
-
-    def _session(self, handler, create=False):
-        cookie = SimpleCookie()
-        try:
-            cookie.load(handler.headers.get("Cookie", ""))
-        except ValueError:
-            pass
-        token = cookie[self.cookie_name].value if self.cookie_name in cookie else ""
-        digest = hashlib.sha256(token.encode()).hexdigest()
-        with self.engine.db() as db:
-            row = db.execute("SELECT * FROM human_sessions WHERE digest=? AND expires>?",
-                             (digest, self.clock())).fetchone()
-            if row:
-                return dict(row), None
-            if not create:
-                raise PermissionError("Open the arbiter checkout to establish your human session.")
-            token = secrets.token_urlsafe(32)
-            digest = hashlib.sha256(token.encode()).hexdigest()
-            csrf = secrets.token_urlsafe(32)
-            db.execute("INSERT INTO human_sessions(digest,csrf,expires) VALUES(?,?,?)",
-                       (digest, csrf, self.clock() + 86400))
-            row = db.execute("SELECT * FROM human_sessions WHERE digest=?", (digest,)).fetchone()
-        secure = "; Secure" if self.site_base.startswith("https:") else ""
-        return dict(row), (f"{self.cookie_name}={token}; HttpOnly; SameSite=Strict; "
-                           f"Path=/commerce/api/; Max-Age=86400{secure}")
-
-    def _view(self, session):
-        if not session["owner"]:
-            return {"state": "NEW", "offers": [], "events": [], "simulation": True}
-        state = self.engine.snapshot(session["owner"])
-        state["offers"] = self.engine.offers(session["buyer"])["offers"]
-        state["simulation"] = True
-        return state
-
-    def _human_action(self, session, operation, body):
-        if operation == "create":
-            self._fields(body, {"trip", "budget_cents"})
-            validate_trip(body["trip"])
-            if type(body["budget_cents"]) is not int or not 1 <= body["budget_cents"] <= 10000000:
-                raise ValueError("Budget must be a positive integer amount in cents, up to USD 100,000.")
-            # Retry a lost create response without minting another mandate.
-            if session["owner"]:
-                current = self._view(session)
-                if current["state"] not in ("SETTLED", "CANCELLED", "EXPIRED", "NO_AGREEMENT"):
-                    if current["trip"] == body["trip"] and current["budget_cents"] == body["budget_cents"]:
-                        return current
-                    raise CommerceError("Cancel the current negotiation before changing its mandate.")
-            deal = self.engine.create(body["trip"], body["budget_cents"], created_by="human_checkout")
-            with self.engine.db() as db:
-                db.execute("UPDATE human_sessions SET deal=?,owner=?,buyer=? WHERE digest=?",
-                           (deal["deal_id"], deal["owner_token"], deal["buyer_token"], session["digest"]))
-            session.update(deal=deal["deal_id"], owner=deal["owner_token"], buyer=deal["buyer_token"])
-            return self._view(session)
-
-        fields = {"deal_id", "offer_id"} if operation == "authorize" else {"deal_id"}
-        self._fields(body, fields)
-        if not session["deal"] or body["deal_id"] != session["deal"]:
-            raise PermissionError("This deal does not belong to the active human session. Refresh the checkout.")
-        if operation == "negotiate":
-            current = self._view(session)
-            if current["state"] not in ("OPEN", "NEGOTIATING"):
-                raise CommerceError("This deal is closed. Start a new negotiation.")
-            # Repeated calls read the immutable offer, never contact or reprice.
-            with self.engine.db() as db:
-                resolved = db.execute("SELECT 1 FROM offers WHERE deal=?", (session["deal"],)).fetchone()
-            if not resolved:
-                capability = self.engine.provider_capability(session["buyer"], PROVIDER, 1)
-                public = self.engine.public_request(capability, PROVIDER)
-                # A separate HTTP request executes the Inn's coded seller adapter.
-                result = post_json(self.backend + API + "seller-bid",
-                                   {"trip": public["trip"], "capability": capability})
-                committed = self.engine.bid_receipt(session["deal"], PROVIDER)
-                if result.get("commitment") != committed.get("commitment") or committed["status"] != "BID_COMMITTED":
-                    raise CommerceError("The Inn did not commit a valid sealed bid. Retry negotiation.")
-                self.engine.resolve(session["buyer"])
-        elif operation == "authorize":
-            if not isinstance(body["offer_id"], str):
-                raise ValueError("An arbiter-issued offer ID is required.")
-            self.engine.authorize(session["owner"], body["offer_id"])
-        elif operation in ("confirm", "fail-inventory"):
-            # Demo-only trusted inventory simulator, absent from all agent tools.
-            self.engine.confirm(session["owner"], inventory_available=operation == "confirm")
-        elif operation == "cancel":
-            self.engine.cancel(session["owner"])
-        else:
-            raise ValueError("Unknown human commerce action.")
-        return self._view(session)
+                db.execute("""CREATE TABLE IF NOT EXISTS private_chats (
+                    digest TEXT PRIMARY KEY, deal TEXT NOT NULL, owner TEXT NOT NULL,
+                    buyer TEXT NOT NULL, expires REAL NOT NULL)""")
 
     @staticmethod
     def _fields(body, expected):
         if not isinstance(body, dict) or set(body) != expected:
             raise ValueError("Unexpected fields in commerce request.")
+
+    @staticmethod
+    def _digest(value):
+        if not isinstance(value, str) or not 32 <= len(value) <= 200:
+            raise PermissionError("A private chat capability is required.")
+        return hashlib.sha256(value.encode()).hexdigest()
+
+    def _view(self, chat):
+        state = self.engine.snapshot(chat["owner"])
+        state["offers"] = self.engine.offers(chat["buyer"])["offers"]
+        return {**state, "steward": STEWARD, "simulation": True}
+
+    def _negotiate(self, chat):
+        state = self._view(chat)
+        if state["state"] not in ("OPEN", "NEGOTIATING") or state["offers"]:
+            return state
+        capability = self.engine.provider_capability(chat["buyer"], PROVIDER, 1)
+        public = self.engine.public_request(capability, PROVIDER)
+        result = post_json(self.backend + API + "seller-bid",
+                           {"trip": public["trip"], "capability": capability})
+        committed = self.engine.bid_receipt(chat["deal"], PROVIDER)
+        if result.get("commitment") != committed.get("commitment") or committed["status"] != "BID_COMMITTED":
+            raise CommerceError("The Inn did not commit a valid sealed bid. Retry negotiation.")
+        self.engine.resolve(chat["buyer"])
+        return self._view(chat)
+
+    def _steward_action(self, operation, body):
+        if operation not in ("negotiate", "status", "approve", "cancel"):
+            raise PermissionError("Unknown private commerce operation.")
+        fields = {"session", "trip", "budget_cents"} if operation == "negotiate" else {"session"}
+        if operation == "approve":
+            fields.add("offer_id")
+        self._fields(body, fields)
+        digest = self._digest(body["session"])
+        # Seller callbacks must remain outside this lock to avoid deadlock.
+        with self.action_lock:
+            with self.engine.db() as db:
+                row = db.execute("SELECT * FROM private_chats WHERE digest=?", (digest,)).fetchone()
+            chat = dict(row) if row else None
+            if chat and chat["expires"] <= self.clock():
+                raise PermissionError("Private booking session expired. Start a new private chat.")
+            if operation == "negotiate":
+                trip = validate_trip(body["trip"])
+                budget = body["budget_cents"]
+                if type(budget) is not int or not 1 <= budget <= 10000000:
+                    raise ValueError("Budget must be positive integer USD cents, at most $100,000.")
+                if chat:
+                    previous = self._view(chat)
+                    if previous["trip"] == trip and previous["budget_cents"] == budget:
+                        return self._negotiate(chat)  # Retry never creates another booking.
+                    if previous["state"] not in ("SETTLED", "CANCELLED", "EXPIRED", "NO_AGREEMENT"):
+                        raise CommerceError("Cancel the current offer before changing dates or budget.")
+                deal = self.engine.create(trip, budget, created_by=STEWARD + "_private_steward")
+                chat = {"digest": digest, "deal": deal["deal_id"], "owner": deal["owner_token"],
+                        "buyer": deal["buyer_token"], "expires": self.clock() + 86400}
+                with self.engine.db() as db:
+                    db.execute("INSERT OR REPLACE INTO private_chats VALUES(?,?,?,?,?)", tuple(chat.values()))
+                    self.engine._event(db, chat["deal"], "STEWARD_NEGOTIATION_REQUESTED", {"steward": STEWARD})
+                return self._negotiate(chat)
+            if not chat:
+                raise PermissionError("This private chat has no booking mandate.")
+            if operation == "approve":
+                if not isinstance(body["offer_id"], str):
+                    raise ValueError("An arbiter-issued offer ID is required.")
+                # The private runtime verifies a fresh human confirmation before
+                # calling this authenticated operation. Models never receive this key.
+                self.engine.authorize(chat["owner"], body["offer_id"])
+                self.engine.confirm(chat["owner"], inventory_available=self.inventory_available)
+            elif operation == "cancel":
+                self.engine.cancel(chat["owner"])
+            return self._view(chat)
 
     def _provider_action(self, operation, body):
         self._fields(body, {"trip", "capability"})
@@ -182,36 +189,24 @@ class CommerceSite:
 
     def handle(self, handler):
         path = urllib.parse.urlsplit(handler.path).path
-        assets = {"/commerce": ("checkout.html", "text/html; charset=utf-8"),
-                  "/commerce/checkout.js": ("checkout.js", "text/javascript; charset=utf-8"),
-                  "/commerce/commerce.css": ("commerce.css", "text/css; charset=utf-8")}
+        operation = path.removeprefix(API) if path.startswith(API) else ""
         try:
-            if handler.command == "GET" and path in assets:
-                if path == "/commerce" and self.role == "seller":
-                    return self._send(handler, 303, b"", "text/plain",
-                                      {"Location": self.arbiter_url + "/commerce"})
-                name, mime = assets[path]
-                return self._send(handler, 200, (ASSETS / name).read_bytes(), mime)
-            operation = path.removeprefix(API) if path.startswith(API) else ""
-            if handler.command == "GET":
-                if operation == "info":
-                    return self._json(handler, 200, {"role": self.role, "arbiter_url": self.arbiter_url,
-                        "seller_url": self.seller_url, "catalog": public_catalog(PROVIDER, default_trip())})
-                if operation == "session" and self.engine:
-                    session, cookie = self._session(handler, create=True)
-                    return self._json(handler, 200, {"csrf": session["csrf"], **self._view(session)},
-                                      {"Set-Cookie": cookie} if cookie else None)
-                return self._json(handler, 404, {"error": "Unknown commerce endpoint."})
+            if handler.command == "GET" and operation == "info":
+                return self._json(handler, 200, {"role": self.role, "arbiter_url": self.arbiter_url,
+                    "seller_url": self.seller_url, "catalog": public_catalog(PROVIDER, default_trip())})
+            allowed = {"negotiate", "status", "approve", "cancel", "seller-bid", "provider-bid"}
+            if not operation or operation not in allowed:
+                return self._json(handler, 404, {"error": "No commerce web interface. Use your private steward in nsFlow."})
             if handler.command != "POST":
                 return self._json(handler, 405, {"error": "Method not allowed."})
-            # Reject cross-origin browser writes before reading the body. Provider
-            # callbacks carry no browser Origin and still require a scoped capability.
-            provider_action = operation in ("seller-bid", "provider-bid")
-            request_origin = handler.headers.get("Origin")
-            if ((not provider_action and request_origin != self.site_base)
-                    or (provider_action and request_origin is not None)):
+            if handler.headers.get("Origin") is not None:
                 handler.close_connection = True
-                raise PermissionError("Commerce changes require the arbiter's own checkout origin.")
+                raise PermissionError("Commerce is called by private runtimes, not browser scripts.")
+            provider_action = operation in ("seller-bid", "provider-bid")
+            if not provider_action and (not self.engine or not secrets.compare_digest(
+                    handler.headers.get(KEY_HEADER, ""), self.steward_key)):
+                handler.close_connection = True
+                raise PermissionError("A trusted private runtime is required.")
             if handler.headers.get("Content-Type", "").split(";")[0] != "application/json":
                 handler.close_connection = True
                 raise ValueError("Commerce requests must use application/json.")
@@ -220,16 +215,7 @@ class CommerceSite:
                 handler.close_connection = True
                 raise ValueError("Invalid commerce request size.")
             body = json.loads(handler.rfile.read(length))
-            if provider_action:
-                return self._json(handler, 200, self._provider_action(operation, body))
-            if not self.engine:
-                raise PermissionError("Human mandates and approval belong on the arbiter site.")
-            # Serializes a session's competing human actions, but not seller callbacks.
-            with self.action_lock:
-                session, _ = self._session(handler)
-                if not secrets.compare_digest(handler.headers.get("X-Commerce-CSRF", ""), session["csrf"]):
-                    raise PermissionError("Invalid checkout CSRF token. Refresh the page.")
-                result = self._human_action(session, operation, body)
+            result = self._provider_action(operation, body) if provider_action else self._steward_action(operation, body)
             return self._json(handler, 200, result)
         except PermissionError as exc:
             return self._json(handler, 403, {"error": str(exc)})
@@ -238,38 +224,32 @@ class CommerceSite:
         except (ValueError, TypeError, KeyError) as exc:
             return self._json(handler, 400, {"error": str(exc)})
         except (urllib.error.URLError, TimeoutError, OSError):
-            return self._json(handler, 502, {"error": "Commerce peer unavailable. Start both sites, then retry; no funds were charged."})
-
-    def _json(self, handler, status, body, extra=None):
-        return self._send(handler, status, json.dumps(body).encode(), "application/json", extra)
+            return self._json(handler, 502, {"error": "Commerce peer unavailable. Retry or inspect booking status; no receipt is fabricated."})
 
     @staticmethod
-    def _send(handler, status, body, mime, extra=None):
+    def _json(handler, status, body):
+        payload = json.dumps(body).encode()
         handler.send_response(status)
-        handler.send_header("Content-Type", mime)
-        handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("Content-Type", "application/json")
+        handler.send_header("Content-Length", str(len(payload)))
         handler.send_header("Cache-Control", "no-store")
         handler.send_header("X-Content-Type-Options", "nosniff")
-        handler.send_header("Referrer-Policy", "no-referrer")
-        handler.send_header("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
-        # Deliberately no permissive CORS headers on private commerce routes.
-        for key, value in (extra or {}).items():
-            handler.send_header(key, value)
         handler.end_headers()
-        handler.wfile.write(body)
+        handler.wfile.write(payload)
 
 
 def from_plan(plan, site_dir, site_base):
     config = plan.config.get("commerce")
     if not config:
         return None
-    # Never place capabilities, budgets or the ledger in the statically served tree.
     database = site_dir.parent / ".commerce" / f"{plan.network_name}.sqlite"
     database.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    # HTTP commerce peers need not be conversational agent tools. In particular,
-    # keep the arbiter concierge from calling back into the Inn's agent graph.
     links = {**(plan.config.get("links") or {}), **plan.links}
-    service = CommerceSite(config, site_base, links, database)
+    key = None
+    if config["role"] == "arbiter":
+        path = Path(os.environ.get("NSDEPLOY_COMMERCE_KEY_FILE", database.parent / "steward.key"))
+        key = provision_key(path)
+    service = CommerceSite(config, site_base, links, database, steward_key=key)
     if service.engine:
         database.chmod(0o600)
     return service

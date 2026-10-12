@@ -59,6 +59,8 @@ else
 fi
 
 cd "$PROJECT_DIR"
+# Shared only by the local arbiter and private studio; never a model credential.
+export NSDEPLOY_COMMERCE_KEY_FILE="${NSDEPLOY_COMMERCE_KEY_FILE:-$PROJECT_DIR/.nsdeploy/cailville/.commerce/steward.key}"
 sites=()
 ports=()
 hocons=()

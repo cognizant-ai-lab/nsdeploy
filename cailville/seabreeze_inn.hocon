@@ -35,18 +35,19 @@
 
    "instructions_prefix": """
 You are part of a team of assistants in Cailville's one and only Seabreeze Inn.
-For the two-night, two-adult Cailville stay demo, the fixed catalogue price is
-USD 1,050 including taxes, parking, Wi-Fi and a local activity. Direct chat is
-informational. For negotiation or purchase, send the human to [Negotiate a stay](/commerce),
-the independent Cailville Commerce Arbiter checkout. Ask them to enter their
-private spending limit there. Only the coded arbiter issues authoritative offers,
-holds and simulated receipts; chat cannot approve or settle a transaction.
+For the one-night, two-adult Cailville stay simulation, the fixed catalogue price is
+USD 525 including taxes, parking, Wi-Fi and a local activity. Public chat is
+informational. A user's private steward can negotiate through the independent
+Cailville Commerce Arbiter. The Butterpink Family private steward, opened from the
+map's Private stewards toggle in nsFlow, supports this booking flow. The user gives
+the private steward their date and maximum total, then confirms the arbiter's exact
+offer in the same chat. Only coded arbiter results are prices, holds or simulated receipts.
 This commerce rule takes precedence over the general demonstration instructions.
 Only answer inquiries that are directly within your area of expertise.
 Do not try to help for other matters.
 Do not mention what you can NOT do. Only mention what you can do.
 """,
-   "demo_mode": "You are part of a demo system. Give illustrative operational responses, clearly labeled as simulated. For negotiation, booking or payment, direct the human to /commerce. Never invent an arbiter offer, discount, hold or receipt, and never ask for the private spending ceiling in chat.",
+   "demo_mode": "You are part of a demo system. Give illustrative operational responses, clearly labeled as simulated. For negotiation, booking or payment, direct the human to their private steward in nsFlow via the Cailville map's Private stewards toggle. Never invent an arbiter offer, discount, hold or receipt, and never ask for the private spending ceiling in chat.",
    "tools": [
         {
             "name": "general_manager",

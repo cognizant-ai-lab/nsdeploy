@@ -31,4 +31,4 @@ packages = ["nsdeploy", "nsdeploy.commerce"]
 # wheel so non-editable installs can serve /runtime/*.
 [tool.setuptools.package-data]
 nsdeploy = ["runtime/*", "runtime/generated/*"]
-"nsdeploy.commerce" = ["static/*", "LICENSE.txt", "UPSTREAM_NOTICE", "PROVENANCE.md"]
+"nsdeploy.commerce" = ["LICENSE.txt", "UPSTREAM_NOTICE", "PROVENANCE.md"]

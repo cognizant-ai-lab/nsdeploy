@@ -6,8 +6,10 @@ https://github.com/babakatwork/agent-commerce-demo at commit
 The upstream license and notice are included as `LICENSE.txt` and `UPSTREAM_NOTICE`.
 
 nsdeploy supplies its own `catalog.py`: a single Cailville / Seabreeze Inn fixture,
-with stricter two-night, two-adult scope validation. `service.py` provides the
-HTTP human-session boundary and a remote seller adapter. The upstream Neuro-SAN
+with stricter one-night, two-adult scope validation. `service.py` provides the
+authenticated private-runtime HTTP boundary and a remote seller adapter.
+`steward.py` and `middleware.py` integrate the generated Butterpink private network
+with nsFlow chat, including a fresh-human-confirmation boundary. The upstream Neuro-SAN
 graphs, web server, middleware, and replay model are not copied or executed.
 The same upstream capability checks, sealed-bid mechanism, immutable mandates,
 offer records, hold expiry, and atomic simulated settlement execute here.
