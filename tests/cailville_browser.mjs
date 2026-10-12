@@ -94,7 +94,10 @@ async function checkSite(browser, port) {
   const partners = new Set();
   page.on("pageerror", (error) => errors.push(String(error)));
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push("console: " + message.text());
+    // A visible browser also asks for /favicon.ico, which the sites don't have.
+    if (message.type() === "error" && !message.location().url.endsWith("/favicon.ico")) {
+      errors.push("console: " + message.text());
+    }
   });
   page.on("response", (response) => {
     if (response.status() >= 400) {
