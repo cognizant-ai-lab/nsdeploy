@@ -765,9 +765,13 @@ whatever is there. The layout:
 - `neuro-san/neuro-san.mjs`: the package, minified and pinned by
   `runtime-build/package-lock.json`.
 
+The package comes from GitHub Packages, which needs a GitHub token even to read, so
+set `NODE_AUTH_TOKEN` before installing. `runtime-build/.npmrc` reads it from there.
+
 ```bash
 cd runtime-build
-npm install     # expects ../../neuro-san-ts-package/ts-package/package.tgz
+export NODE_AUTH_TOKEN=$(gh auth token)   # or a token with read:packages
+npm install
 npm run build   # DEBUG=1 npm run build leaves the package unminified and adds source maps
 ```
 
