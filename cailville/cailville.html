@@ -545,7 +545,7 @@
     </div>
 
     <div class="site-readout" aria-live="polite">
-      <strong id="readout-name">Explore 13 independent agentic sites</strong>
+      <strong id="readout-name">Explore independent agentic sites</strong>
       <span id="readout-description">Hover to trace relationships. Select a location to open its site.</span>
     </div>
 
@@ -868,6 +868,23 @@
       },
       "base": true,
       "url": "http://127.0.0.1:8094"
+    },
+    {
+      "id": "commerce_arbiter",
+      "name": "Cailville Commerce Arbiter",
+      "description": "Independent negotiation for private stewards, sealed bids, and simulated settlement",
+      "kind": "Commerce arbiter",
+      "type": "broker",
+      "icon": "scale",
+      "port": 8105,
+      "position": {
+        "x": 76,
+        "y": 57,
+        "mx": 25,
+        "my_px": 1390
+      },
+      "base": true,
+      "url": "http://127.0.0.1:8105"
     }
   ],
   "relationships": [
@@ -1102,6 +1119,18 @@
     [
       "harbor_town_hall",
       "fix_and_found"
+    ],
+    [
+      "seabreeze_inn",
+      "commerce_arbiter"
+    ],
+    [
+      "commerce_arbiter",
+      "seabreeze_inn"
+    ],
+    [
+      "butterpink_family",
+      "commerce_arbiter"
     ]
   ]
 }
@@ -1174,7 +1203,8 @@
     const siteElements = [...document.querySelectorAll(".site")];
     const baseReadoutName = `Explore ${siteElements.length} independent agentic sites`;
     const additionCount = community.sites.filter(site => !site.base).length;
-    townMap.style.setProperty("--mobile-map-height", `${1450 + additionCount * 110}px`);
+    const lastMobileSite = Math.max(0, ...community.sites.map(site => site.position.my_px || 0));
+    townMap.style.setProperty("--mobile-map-height", `${Math.max(1450 + additionCount * 110, lastMobileSite + 180)}px`);
     readoutName.textContent = baseReadoutName;
     let activeStewardId = null;
 

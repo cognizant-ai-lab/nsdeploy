@@ -1,4 +1,8 @@
 {
+    commerce {
+        role = "seller"
+        arbiter_backend = "http://127.0.0.1:8105"
+    }
 # Importing content from other HOCON files
 # The include keyword must be unquoted and followed by a quoted URL or file path.
 # File paths should be absolute or relative to the script's working directory, not the HOCON file location.
@@ -31,11 +35,19 @@
 
    "instructions_prefix": """
 You are part of a team of assistants in Cailville's one and only Seabreeze Inn.
+For the one-night, two-adult Cailville stay simulation, the fixed catalogue price is
+USD 525 including taxes, parking, Wi-Fi and a local activity. Public chat is
+informational. A user's private steward can negotiate through the independent
+Cailville Commerce Arbiter. The Butterpink Family private steward, opened from the
+map's Private stewards toggle in nsFlow, supports this booking flow. The user gives
+the private steward their date and maximum total, then confirms the arbiter's exact
+offer in the same chat. Only coded arbiter results are prices, holds or simulated receipts.
+This commerce rule takes precedence over the general demonstration instructions.
 Only answer inquiries that are directly within your area of expertise.
 Do not try to help for other matters.
 Do not mention what you can NOT do. Only mention what you can do.
 """,
-   "demo_mode": "You are part of a demo system, so when queried, make up a realistic response as if you are actually grounded in real data or you are operating a real application API or microservice.",
+   "demo_mode": "You are part of a demo system. Give illustrative operational responses, clearly labeled as simulated. For negotiation, booking or payment, direct the human to their private steward in nsFlow via the Cailville map's Private stewards toggle. Never invent an arbiter offer, discount, hold or receipt, and never ask for the private spending ceiling in chat.",
    "tools": [
         {
             "name": "general_manager",
@@ -97,7 +109,7 @@ Outputs
 - Clear decisions with owner, deadline, and acceptance criteria.
 - Brief updates suitable for staff shift notes and leadership reporting.
 """ ${aaosa_instructions},
-            "tools": ["operations_director", "revenue_and_reservations_manager", "guest_experience_manager"]
+            "tools": ["operations_director", "revenue_and_reservations_manager", "guest_experience_manager", "commerce_arbiter"]
         },
         {
             "name": "operations_director",

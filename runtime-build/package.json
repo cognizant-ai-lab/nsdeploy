@@ -10,7 +10,7 @@
     "build": "vite build"
   },
   "dependencies": {
-    "@cognizant-ai-lab/neuro-san-ts-package": "file:../../neuro-san-ts-package/ts-package/package.tgz"
+    "@cognizant-ai-lab/neuro-san-ts-package": "0.0.2"
   },
   "devDependencies": {
     "vite": "^7.3.6"
