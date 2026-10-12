@@ -324,7 +324,8 @@ def choose_position(sites: List[Dict[str, Any]]) -> Dict[str, Any]:
         "x": x,
         "y": y,
         "mx": 25 if addition_index % 2 == 0 else 73,
-        "my_px": 1390 + addition_index * 110,
+        "my_px": max(1390 + addition_index * 110,
+                     max((pos.get("my_px", 0) for pos in occupied), default=0) + 110),
     }
 
 

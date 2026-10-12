@@ -98,8 +98,8 @@ for compatibility and ignored.
 
 ## Cailville multi-site demo
 
-[`cailville/`](cailville) contains thirteen independently deployed household,
-business, broker, and civic agent networks, their decentralized link sidecars, and
+[`cailville/`](cailville) contains fourteen base household,
+business, broker, civic, and commerce-arbiter agent networks, their decentralized link sidecars, and
 an interactive town map. Start the complete demo from the repository root:
 
 ```bash
@@ -137,7 +137,8 @@ public links it discovers, so transport success does not guarantee that one turn
 will cover every requested business category.
 
 The launcher uses `.venv/bin/python` or `venv/bin/python` when available, starts the sites on ports
-8091-8103, waits for every site, and then opens `cailville/cailville.html`. Logs are
+8091-8103 plus the commerce arbiter on 8105 (and any added sites), waits for every site,
+and then opens `cailville/cailville.html`. Logs are
 written to `.nsdeploy/cailville-logs/`. Its runtime BYOK proxy defaults to OpenAI and
 theme generation defaults to `gpt-5.6`; override those with `NSDEPLOY_UPSTREAM`,
 `NSDEPLOY_THEME_MODEL`, or `NSDEPLOY_PYTHON`. Existing editable themes are preserved;
@@ -149,7 +150,7 @@ to the manifest directory, for example
 and portable with the bundle directory. To run those stewards in a standard
 Neuro-SAN server, set `AGENT_MANIFEST_FILE` to that manifest.
 `launch_all.sh` also starts the private Neuro-SAN studio from
-`/Users/m_754339/PycharmProjects/cailville-private` (using its installed
+`/Users/754339/projects/cailville-private` (using its installed
 `neuro-san-studio` package), points its `AGENT_MANIFEST_FILE` at this generated
 manifest, and opens nsFlow on port `4174`.
 It waits for both the Neuro-SAN HTTP server and nsFlow to be ready before opening
@@ -205,6 +206,128 @@ Stop the complete demo from another terminal:
 ./cailville/stop_all.sh
 ```
 
+### Human negotiation through the commerce arbiter
+
+The map now includes **Cailville Commerce Arbiter**, linked to **Seabreeze Inn**.
+The Inn's page has a **Negotiate a Seabreeze stay** entry point, and its agent
+instructions direct transaction requests to that checkout. The arbiter is a normal
+nsdeploy site with its own chat, discovery manifest, public MCP facade and theme,
+plus a protected human checkout at <http://127.0.0.1:8105/commerce>.
+
+This integrates the actual SQLite arbiter from
+[babakatwork/agent-commerce-demo](https://github.com/babakatwork/agent-commerce-demo),
+pinned to commit `47fe668ff19c23cf1294685ef122d8ca9fad63e1`.
+Its engine is vendored unchanged, with the upstream Apache license and notice;
+see [`PROVENANCE.md`](nsdeploy/commerce/PROVENANCE.md). A Cailville fixture catalogue
+and HTTP adapters connect it to the existing Inn. No separate commerce-demo checkout,
+extra service process, API key or live LLM is needed for the transaction flow.
+
+The human enters their dates and ceiling **on the arbiter's origin**, outside agent
+chat. The arbiter contacts the Inn's coded adapter over HTTP with only the public
+stay details and a scoped seller capability. The adapter calls back to commit its
+sealed policy bid. The arbiter computes and stores the offer; the human separately
+approves a hold and confirms simulated inventory. Chat and MCP agents cannot issue
+binding prices, approve holds or settle purchases. The surrounding chat remains
+the existing mock/BYOK agent experience; the transaction itself is deterministic
+coded execution. Private-steward commerce is intentionally left for the next example.
+
+The fixture is exactly two nights for two adults in Cailville, with parking, Wi-Fi,
+one local activity, taxes and fees. It excludes meals and travel to Cailville.
+The fixed catalogue price is **$1,050**. With a **$1,000** human ceiling, the arbiter's
+equal-weight Nash rule returns **$955**; a **$900** ceiling yields **NO_AGREEMENT**.
+Prices are integer USD cents. The rule takes the midpoint between the seller floor
+and the lower of the buyer ceiling and catalogue ask. Offers last 15 minutes;
+approved holds last 120 seconds. The final price may reveal information by inference;
+the raw ceiling and seller floor are not sent to the opposing agent.
+
+#### Manual check before pushing
+
+From the repository root, start every public site without private Neuro-SAN studio
+or theme generation. This leaves the launcher's normal default behavior available:
+
+```bash
+NSDEPLOY_THEME=0 NSDEPLOY_PRIVATE_STUDIO=0 ./cailville/launch_all.sh
+```
+
+The launcher opens the map after all sites are ready. Existing community additions
+remain on the map. You can also open [`cailville/cailville.html`](cailville/cailville.html)
+directly. Use `NSDEPLOY_OPEN_BROWSER=0` to suppress automatic browser opening.
+
+1. Find **Cailville Commerce Arbiter** on the map; hovering shows its Inn connection.
+   Open the arbiter and check its agent chat and **Open human negotiation & checkout** link.
+2. Open **Seabreeze Inn** at <http://127.0.0.1:8093/>. Click **Negotiate a Seabreeze stay**.
+   The browser moves to the arbiter checkout. Confirm it says **Human counterpart ·
+   Simulation** and shows the **$1,050** fixed catalogue price.
+3. Keep the suggested future dates and **$1,000** ceiling. Click **Create private mandate**,
+   then **Ask the Inn to negotiate**. Expect **$955**, the dates, inclusions, cancellation
+   terms, price breakdown and offer expiry. Held and spent should both be **$0**.
+4. Click **Approve & hold $955.00**. Expect **HELD**, **$955 held**, **$0 spent**.
+   Within two minutes, click **Confirm inventory & settle**. Expect **SETTLED**, **$0 held**,
+   **$955 spent**, and a `SIM-...` receipt. Reload: the same receipt remains.
+5. Expand **Inspect the transaction audit** and download it if useful. Look for
+   `MANDATE_CREATED`, `BID_COMMITTED`, `SELLER_ADAPTER_REQUEST`, `OFFER_REGISTERED`,
+   `FUNDS_HELD` and `SETTLED`. The seller request contains stay details, never the
+   private ceiling. The full downloaded audit is a **private human view**, not seller data.
+6. Create another mandate at **$900** and negotiate. Expect **NO AGREEMENT**, no offer,
+   and zero held/spent. Raise the ceiling to **$1,000**, create a new mandate, negotiate
+   and approve; choose **Simulate inventory failure**. Expect **CANCELLED**, zero held/spent.
+7. Repeat and approve a hold, then wait over **120 seconds** without confirming. The
+   page refreshes state every five seconds: expect **EXPIRED**, zero held/spent. Also
+   test **Cancel & release** during a negotiation or hold. Changing an active mandate
+   requires cancellation first; retries never reprice an offer or charge twice.
+8. Check ordinary Inn chat, another site's mock chat, the map filters and existing
+   links. With your own BYOK profile, optionally ask: “How do I negotiate a two-night
+   stay through the arbiter?” The agent should point to checkout, not invent a receipt.
+   BYOK model behavior is not required to complete this deterministic demo.
+
+Stop this public-only run with Ctrl-C in its terminal, or:
+
+```bash
+NSDEPLOY_PRIVATE_STUDIO=0 ./cailville/stop_all.sh
+```
+
+For a focused two-site run, use two terminals with your nsdeploy environment active:
+
+```bash
+python -m nsdeploy cailville/commerce_arbiter.hocon --port 8105
+python -m nsdeploy cailville/seabreeze_inn.hocon --port 8093
+```
+
+The usual `NSDEPLOY_ROUTING=subdomain` launcher mode also works. Use the map's links
+or <http://commerce-arbiter.localhost:8080/commerce>; human session checks use the
+advertised public origin. Seller callbacks use the configured loopback backends, so
+they do not depend on wildcard DNS. If you change the two backend ports or deploy
+them on separate hosts, update `commerce.seller_backend` and `commerce.arbiter_backend`
+in the two HOCON files as well as the normal links/public origins.
+
+#### Verification and state
+
+```bash
+python -m unittest discover -s tests -v
+npm test
+```
+
+`tests/test_commerce.py` exercises the unchanged upstream engine, real two-site HTTP
+negotiation, gateway routing, session/CSRF isolation, scoped capabilities, forged
+prices/offers, no agreement, expiry, failure, concurrent retries, persistence, and
+opt-in generation. Existing BYOK, MCP, linking, resolver, theme, launcher, steward,
+runtime and CRUSE regressions remain in the full suites. Local test servers need
+permission to bind loopback ports. Live paid model calls are not part of these tests.
+
+The SQLite database lives at `.nsdeploy/cailville/.commerce/commerce_arbiter.sqlite`,
+outside the served site directories, with owner-only file permissions. The human
+session cookie is HttpOnly, same-site, scoped to checkout, and lasts 24 hours;
+capabilities remain server-side. Reloading or restarting preserves an unexpired
+session and its current deal. A new mandate replaces the session's current view;
+older deals remain in SQLite, so download an audit before moving on if needed.
+After a cookie expires or is cleared, this demo has no account-based recovery.
+
+This is a trusted-host, local **simulation**: no bank/payment or live inventory API,
+real reservation, refund implementation, or production identity system is supplied.
+Both sites and their coded adapters are trusted. The audit is an application event
+log, not tamper-proof evidence. A seller outage produces an explicit retryable error
+with no charge; it does not fabricate a successful negotiation.
+
 ### Add a public site to Cailville
 
 Use the Cailville workflow to design a site, infer a small set of useful public-network
@@ -222,7 +345,7 @@ modified `*.hocon` file directly inside `~/Downloads`:
 python -m nsdeploy cailville
 ```
 
-Additions are cumulative by default. Start this demo from the original 13-site map while
+Additions are cumulative by default. Start this demo from the 14-site base map while
 still adding the requested site with `--base-map`, or restore only the base map with
 `--reset-map`:
 

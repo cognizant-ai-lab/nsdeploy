@@ -540,7 +540,18 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     bindings.update(plan.links)
     links_doc = {"version": 1, "networks": {plan.network_name: bindings}}
     links_path.write_text(json.dumps(links_doc, indent=2), encoding="utf-8")
-    (out_dir / "index.html").write_text(_index_html(theme, _brand_display(plan, theme)), encoding="utf-8")
+    index_html = _index_html(theme, _brand_display(plan, theme))
+    if plan.config.get("commerce"):
+        # Outside the agent UI so the human checkout works even without an LLM
+        # or when an editable theme is refreshed. Only explicit opt-in sites change.
+        label = ("Negotiate a Seabreeze stay" if plan.config["commerce"]["role"] == "seller"
+                 else "Open human negotiation & checkout")
+        banner = (f'<aside aria-label="Commerce demo" style="padding:16px 24px;'
+                  f'background:#173f45;color:white;font:15px system-ui;position:relative;z-index:1">'
+                  f'<a href="/commerce" style="color:white;font-weight:700">{label} →</a>'
+                  f' <span> · Independent arbiter · Simulated payment · You approve the offer</span></aside>')
+        index_html = index_html.replace("<body>", "<body>" + banner, 1)
+    (out_dir / "index.html").write_text(index_html, encoding="utf-8")
     (out_dir / "theme.css").write_text(_theme_css(theme), encoding="utf-8")
     site_js = DEFAULT_SITE_JS
     if site_source_dir and (site_source_dir / "site.js").is_file():

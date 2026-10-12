@@ -21,6 +21,8 @@ THEME_MODEL="${NSDEPLOY_THEME_MODEL:-gpt-5.6}"
 THEME_ENABLED="${NSDEPLOY_THEME:-1}"
 THEME_REFRESH="${NSDEPLOY_THEME_REFRESH:-0}"
 OPEN_BROWSER="${NSDEPLOY_OPEN_BROWSER:-1}"
+PRIVATE_STUDIO_ENABLED="${NSDEPLOY_PRIVATE_STUDIO:-1}"
+private_studio_ports=("$PRIVATE_STUDIO_HTTP_PORT" "$PRIVATE_STUDIO_GRPC_PORT" "$PRIVATE_STUDIO_NSFLOW_PORT")
 ROUTING="${NSDEPLOY_ROUTING:-port}"
 BASE_DOMAIN="${NSDEPLOY_BASE_DOMAIN:-localhost}"
 GATEWAY_BIND="${NSDEPLOY_GATEWAY_BIND:-127.0.0.1}"
@@ -33,7 +35,7 @@ if [[ "$ROUTING" != "port" && "$ROUTING" != "subdomain" ]]; then
   exit 2
 fi
 
-if [[ -z "$PRIVATE_STEWARD_BYOK_API_KEY" ]]; then
+if [[ ! "$PRIVATE_STUDIO_ENABLED" =~ ^(0|false|no)$ && -z "$PRIVATE_STEWARD_BYOK_API_KEY" ]]; then
   printf 'Warning: no caller BYOK key in the launch environment.\n' >&2
   printf 'The private studio must load OPENAI_API_KEY itself, or public calls will be rejected.\n' >&2
 fi
@@ -48,6 +50,8 @@ fi
 
 if [[ -n "${NSDEPLOY_PYTHON:-}" ]]; then
   PYTHON_BIN="$NSDEPLOY_PYTHON"
+elif [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+  PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
 elif [[ -x "$PROJECT_DIR/venv/bin/python" ]]; then
   PYTHON_BIN="$PROJECT_DIR/venv/bin/python"
 else
@@ -89,6 +93,11 @@ if ((${#sites[@]} == 0)); then
   exit 1
 fi
 
+demo_ports=("${ports[@]}")
+if [[ ! "$PRIVATE_STUDIO_ENABLED" =~ ^(0|false|no)$ ]]; then
+  demo_ports+=("${private_studio_ports[@]}")
+fi
+
 pids=()
 private_pid=""
 gateway_pid=""
@@ -104,8 +113,7 @@ signal_tree() {
 
 demo_ports_busy() {
   local port
-  for port in "${ports[@]}" \
-    "$PRIVATE_STUDIO_HTTP_PORT" "$PRIVATE_STUDIO_GRPC_PORT" "$PRIVATE_STUDIO_NSFLOW_PORT"; do
+  for port in "${demo_ports[@]}"; do
     if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
       return 0
     fi
@@ -153,8 +161,7 @@ cleanup() {
     done
   fi
   local port listener_pid
-  for port in "${ports[@]}" \
-    "$PRIVATE_STUDIO_HTTP_PORT" "$PRIVATE_STUDIO_GRPC_PORT" "$PRIVATE_STUDIO_NSFLOW_PORT"; do
+  for port in "${demo_ports[@]}"; do
     while read -r listener_pid; do
       [[ -n "$listener_pid" ]] && signal_tree KILL "$listener_pid"
     done < <(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
@@ -173,7 +180,9 @@ cleanup() {
       "$CAILVILLE_DIR/stop_all.sh" >&2
   fi
   rm -f "$RUN_DIR/launcher.pid"
-  rm -f "$RUN_DIR/private-studio.pid"
+  if [[ -n "$private_pid" ]]; then
+    rm -f "$RUN_DIR/private-studio.pid"
+  fi
   rm -f "$RUN_DIR/gateway.pid"
   for site in "${sites[@]}"; do
     rm -f "$RUN_DIR/$site.pid"
@@ -193,12 +202,14 @@ for i in "${!sites[@]}"; do
   fi
 done
 
-for port in "$PRIVATE_STUDIO_HTTP_PORT" "$PRIVATE_STUDIO_GRPC_PORT" "$PRIVATE_STUDIO_NSFLOW_PORT"; do
-  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    printf 'Private Neuro-SAN studio port %s is already in use.\n' "$port" >&2
-    exit 1
-  fi
-done
+if [[ ! "$PRIVATE_STUDIO_ENABLED" =~ ^(0|false|no)$ ]]; then
+  for port in "${private_studio_ports[@]}"; do
+    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      printf 'Private Neuro-SAN studio port %s is already in use.\n' "$port" >&2
+      exit 1
+    fi
+  done
+fi
 if [[ "$ROUTING" == "subdomain" ]] \
    && lsof -nP -iTCP:"$GATEWAY_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   printf 'Subdomain gateway port %s is already in use.\n' "$GATEWAY_PORT" >&2
@@ -296,72 +307,78 @@ fi
 "$PYTHON_BIN" -m nsdeploy.cailville active-manifest \
   --cailville-dir "$CAILVILLE_DIR" --project-dir "$PROJECT_DIR"
 
-if [[ ! -d "$PRIVATE_STUDIO_DIR" ]]; then
-  printf '\nPrivate Neuro-SAN studio project not found: %s\n' "$PRIVATE_STUDIO_DIR" >&2
-  printf 'Set NSDEPLOY_PRIVATE_STUDIO_DIR to its location and rerun.\n' >&2
-  exit 1
-fi
-if [[ ! -f "$PRIVATE_STUDIO_MANIFEST" ]]; then
-  printf '\nPrivate steward manifest not found: %s\n' "$PRIVATE_STUDIO_MANIFEST" >&2
-  exit 1
-fi
-
-if [[ -x "$PRIVATE_STUDIO_DIR/.venv/bin/python" ]]; then
-  PRIVATE_STUDIO_PYTHON="$PRIVATE_STUDIO_DIR/.venv/bin/python"
-elif [[ -x "$PRIVATE_STUDIO_DIR/venv/bin/python" ]]; then
-  PRIVATE_STUDIO_PYTHON="$PRIVATE_STUDIO_DIR/venv/bin/python"
-else
-  PRIVATE_STUDIO_PYTHON="${NSDEPLOY_PRIVATE_STUDIO_PYTHON:-$(command -v python3 || command -v python)}"
-fi
-PRIVATE_STUDIO_LOG="$LOG_DIR/private-neuro-san-studio.log"
-PRIVATE_STUDIO_URL="http://127.0.0.1:$PRIVATE_STUDIO_NSFLOW_PORT"
-PRIVATE_STUDIO_SERVER_URL="http://127.0.0.1:$PRIVATE_STUDIO_HTTP_PORT"
-printf 'Starting private Neuro-SAN studio with %s\n' "$PRIVATE_STUDIO_MANIFEST"
-(
-  cd "$PRIVATE_STUDIO_DIR"
-  AGENT_MANIFEST_FILE="$PRIVATE_STUDIO_MANIFEST" \
-  AGENT_TOOL_PATH="$PRIVATE_STUDIO_AGENT_TOOL_PATH" \
-  NSDEPLOY_STEWARD_SITE_TIMEOUT_SECONDS="$PRIVATE_STEWARD_SITE_TIMEOUT_SECONDS" \
-  NSDEPLOY_STEWARD_BYOK_API_KEY="$PRIVATE_STEWARD_BYOK_API_KEY" \
-  NSDEPLOY_STEWARD_BYOK_MODEL="$PRIVATE_STEWARD_BYOK_MODEL" \
-  NSDEPLOY_PRIVATE_STUDIO_ROOT="$PRIVATE_STUDIO_DIR" \
-  NEURO_SAN_SERVER_GRPC_PORT="$PRIVATE_STUDIO_GRPC_PORT" \
-  PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
-  PYTHONUNBUFFERED=1 "$PRIVATE_STUDIO_PYTHON" -m nsdeploy.private_studio \
-    --server-http-port "$PRIVATE_STUDIO_HTTP_PORT" \
-    --server-grpc-port "$PRIVATE_STUDIO_GRPC_PORT" \
-    --nsflow-port "$PRIVATE_STUDIO_NSFLOW_PORT" \
-    --no-html
-) >"$PRIVATE_STUDIO_LOG" 2>&1 &
-private_pid="$!"
-printf '%s\n' "$private_pid" >"$RUN_DIR/private-studio.pid"
-
-private_deadline=$((SECONDS + 180))
-while ! curl --fail --silent --show-error --output /dev/null "$PRIVATE_STUDIO_SERVER_URL" 2>/dev/null \
-   || ! curl --fail --silent --show-error --output /dev/null "$PRIVATE_STUDIO_URL" 2>/dev/null; do
-  if ! kill -0 "$private_pid" 2>/dev/null; then
-    printf '\nPrivate Neuro-SAN studio failed to start. Last log lines:\n' >&2
-    tail -40 "$PRIVATE_STUDIO_LOG" >&2
+if [[ ! "$PRIVATE_STUDIO_ENABLED" =~ ^(0|false|no)$ ]]; then
+  if [[ ! -d "$PRIVATE_STUDIO_DIR" ]]; then
+    printf '\nPrivate Neuro-SAN studio project not found: %s\n' "$PRIVATE_STUDIO_DIR" >&2
+    printf 'Set NSDEPLOY_PRIVATE_STUDIO_DIR to its location and rerun.\n' >&2
     exit 1
   fi
-  if ((SECONDS >= private_deadline)); then
-    printf '\nTimed out waiting for private Neuro-SAN studio. See %s\n' "$PRIVATE_STUDIO_LOG" >&2
+  if [[ ! -f "$PRIVATE_STUDIO_MANIFEST" ]]; then
+    printf '\nPrivate steward manifest not found: %s\n' "$PRIVATE_STUDIO_MANIFEST" >&2
     exit 1
   fi
-  sleep 1
-done
-printf 'Ready    private Neuro-SAN server   %s\n' "$PRIVATE_STUDIO_SERVER_URL"
-printf 'Ready    private Neuro-SAN nsFlow    %s\n' "$PRIVATE_STUDIO_URL"
+
+  if [[ -x "$PRIVATE_STUDIO_DIR/.venv/bin/python" ]]; then
+    PRIVATE_STUDIO_PYTHON="$PRIVATE_STUDIO_DIR/.venv/bin/python"
+  elif [[ -x "$PRIVATE_STUDIO_DIR/venv/bin/python" ]]; then
+    PRIVATE_STUDIO_PYTHON="$PRIVATE_STUDIO_DIR/venv/bin/python"
+  else
+    PRIVATE_STUDIO_PYTHON="${NSDEPLOY_PRIVATE_STUDIO_PYTHON:-$(command -v python3 || command -v python)}"
+  fi
+  PRIVATE_STUDIO_LOG="$LOG_DIR/private-neuro-san-studio.log"
+  PRIVATE_STUDIO_URL="http://127.0.0.1:$PRIVATE_STUDIO_NSFLOW_PORT"
+  PRIVATE_STUDIO_SERVER_URL="http://127.0.0.1:$PRIVATE_STUDIO_HTTP_PORT"
+  printf 'Starting private Neuro-SAN studio with %s\n' "$PRIVATE_STUDIO_MANIFEST"
+  (
+    cd "$PRIVATE_STUDIO_DIR"
+    AGENT_MANIFEST_FILE="$PRIVATE_STUDIO_MANIFEST" \
+    AGENT_TOOL_PATH="$PRIVATE_STUDIO_AGENT_TOOL_PATH" \
+    NSDEPLOY_STEWARD_SITE_TIMEOUT_SECONDS="$PRIVATE_STEWARD_SITE_TIMEOUT_SECONDS" \
+    NSDEPLOY_STEWARD_BYOK_API_KEY="$PRIVATE_STEWARD_BYOK_API_KEY" \
+    NSDEPLOY_STEWARD_BYOK_MODEL="$PRIVATE_STEWARD_BYOK_MODEL" \
+    NSDEPLOY_PRIVATE_STUDIO_ROOT="$PRIVATE_STUDIO_DIR" \
+    NEURO_SAN_SERVER_GRPC_PORT="$PRIVATE_STUDIO_GRPC_PORT" \
+    PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+    PYTHONUNBUFFERED=1 "$PRIVATE_STUDIO_PYTHON" -m nsdeploy.private_studio \
+      --server-http-port "$PRIVATE_STUDIO_HTTP_PORT" \
+      --server-grpc-port "$PRIVATE_STUDIO_GRPC_PORT" \
+      --nsflow-port "$PRIVATE_STUDIO_NSFLOW_PORT" \
+      --no-html
+  ) >"$PRIVATE_STUDIO_LOG" 2>&1 &
+  private_pid="$!"
+  printf '%s\n' "$private_pid" >"$RUN_DIR/private-studio.pid"
+
+  private_deadline=$((SECONDS + 180))
+  while ! curl --fail --silent --show-error --output /dev/null "$PRIVATE_STUDIO_SERVER_URL" 2>/dev/null \
+     || ! curl --fail --silent --show-error --output /dev/null "$PRIVATE_STUDIO_URL" 2>/dev/null; do
+    if ! kill -0 "$private_pid" 2>/dev/null; then
+      printf '\nPrivate Neuro-SAN studio failed to start. Last log lines:\n' >&2
+      tail -40 "$PRIVATE_STUDIO_LOG" >&2
+      exit 1
+    fi
+    if ((SECONDS >= private_deadline)); then
+      printf '\nTimed out waiting for private Neuro-SAN studio. See %s\n' "$PRIVATE_STUDIO_LOG" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+  printf 'Ready    private Neuro-SAN server   %s\n' "$PRIVATE_STUDIO_SERVER_URL"
+  printf 'Ready    private Neuro-SAN nsFlow    %s\n' "$PRIVATE_STUDIO_URL"
+fi
 
 if [[ ! "$OPEN_BROWSER" =~ ^(0|false|no)$ ]]; then
   open "$CAILVILLE_DIR/cailville.html"
-  open "$PRIVATE_STUDIO_URL"
+  if [[ ! "$PRIVATE_STUDIO_ENABLED" =~ ^(0|false|no)$ ]]; then
+    open "$PRIVATE_STUDIO_URL"
+  fi
 fi
 printf '\nCailville is running. Logs: %s\n' "$LOG_DIR"
 if [[ "$ROUTING" == "subdomain" ]]; then
   printf 'Public site routing: %s://<network>.%s\n' "$PUBLIC_SCHEME" "$BASE_DOMAIN"
 fi
 printf 'Private steward manifest: %s\n' "$PRIVATE_STUDIO_MANIFEST"
-printf 'Private Neuro-SAN studio: %s\n' "$PRIVATE_STUDIO_URL"
+if [[ ! "$PRIVATE_STUDIO_ENABLED" =~ ^(0|false|no)$ ]]; then
+  printf 'Private Neuro-SAN studio: %s\n' "$PRIVATE_STUDIO_URL"
+fi
 printf 'Press Ctrl-C to stop every site.\n'
 wait

@@ -89,7 +89,8 @@ def _called_tool_names(messages: List[Dict[str, Any]]) -> set:
 
 
 def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: List[str],
-                 local_mcps: Optional[List[str]] = None, facade_mcp: Optional[str] = None):
+                 local_mcps: Optional[List[str]] = None, facade_mcp: Optional[str] = None,
+                 commerce=None):
     ext_mcp_re = re.compile(r"^/ext-mcp/(\d+)/mcp$")
     local_mcp_re = re.compile(r"^/_mcp/(\d+)/mcp$")
     local_mcps = local_mcps or []
@@ -116,6 +117,8 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
 
         def do_POST(self):
             path = self.path.split("?")[0]
+            if commerce and (path == "/commerce" or path.startswith("/commerce/")):
+                return commerce.handle(self)
             length = int(self.headers.get("Content-Length", 0) or 0)
             raw = self.rfile.read(length) if length else b""
             if path == "/v1/chat/completions":
@@ -345,6 +348,8 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
         # --- static files: /runtime/* from the runtime, else from the site -------
         def do_GET(self):
             path = self.path.split("?")[0]
+            if commerce and (path == "/commerce" or path.startswith("/commerce/")):
+                return commerce.handle(self)
             if path == "/mcp" and facade_mcp:
                 return self._mcp_proxy(facade_mcp, b"", "public facade", "GET")
             m = local_mcp_re.match(path)
@@ -500,9 +505,11 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
             env=env, cwd=repo_root,
         )
         _wait_for_listener(facade_proc, facade_port)
+        from nsdeploy.commerce.service import from_plan
+        commerce = from_plan(plan, site_dir, site_base or f"http://127.0.0.1:{port}")
         httpd = ThreadingHTTPServer(
             ("127.0.0.1", port), make_handler(site_dir, upstream, runtime_dir, ext_mcps,
-                                               local_mcps, f"http://127.0.0.1:{facade_port}/mcp"))
+                                               local_mcps, f"http://127.0.0.1:{facade_port}/mcp", commerce))
         url = (site_base or f"http://127.0.0.1:{port}").rstrip("/") + "/"
         print(f"\n🌐  {plan.network_name} is live:  {url}")
         if site_base:

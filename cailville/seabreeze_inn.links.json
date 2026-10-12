@@ -2,6 +2,7 @@
   "version": 1,
   "networks": {
     "seabreeze_inn": {
+      "commerce_arbiter": "http://127.0.0.1:8105/commerce_arbiter",
       "fix_and_found": "http://127.0.0.1:8102/fix_and_found",
       "greenbank_farm": "http://127.0.0.1:8094/greenbank_farm",
       "harbor_town_hall": "http://127.0.0.1:8103/harbor_town_hall",

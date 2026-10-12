@@ -8,6 +8,8 @@ ROUTING="${NSDEPLOY_ROUTING:-port}"
 GATEWAY_PORT="${NSDEPLOY_GATEWAY_PORT:-8080}"
 if [[ -n "${NSDEPLOY_PYTHON:-}" ]]; then
   PYTHON_BIN="$NSDEPLOY_PYTHON"
+elif [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+  PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
 elif [[ -x "$PROJECT_DIR/venv/bin/python" ]]; then
   PYTHON_BIN="$PROJECT_DIR/venv/bin/python"
 else
@@ -26,7 +28,10 @@ private_studio_ports=(
   "${NSDEPLOY_PRIVATE_STUDIO_GRPC_PORT:-31021}"
   "${NSDEPLOY_PRIVATE_STUDIO_NSFLOW_PORT:-4174}"
 )
-all_ports=("${ports[@]}" "${private_studio_ports[@]}")
+all_ports=("${ports[@]}")
+if [[ ! "${NSDEPLOY_PRIVATE_STUDIO:-1}" =~ ^(0|false|no)$ ]]; then
+  all_ports+=("${private_studio_ports[@]}")
+fi
 if [[ "$ROUTING" == "subdomain" ]]; then
   all_ports+=("$GATEWAY_PORT")
 fi
@@ -66,7 +71,7 @@ if [[ -f "$RUN_DIR/gateway.pid" ]]; then
   fi
 fi
 
-if [[ -f "$RUN_DIR/private-studio.pid" ]]; then
+if [[ ! "${NSDEPLOY_PRIVATE_STUDIO:-1}" =~ ^(0|false|no)$ && -f "$RUN_DIR/private-studio.pid" ]]; then
   private_pid="$(<"$RUN_DIR/private-studio.pid")"
   if stop_pid "$private_pid"; then
     stopped=1
@@ -75,6 +80,9 @@ fi
 
 for pid_file in "$RUN_DIR"/*.pid; do
   [[ -f "$pid_file" && "$pid_file" != "$RUN_DIR/launcher.pid" ]] || continue
+  if [[ "$pid_file" == "$RUN_DIR/private-studio.pid" && "${NSDEPLOY_PRIVATE_STUDIO:-1}" =~ ^(0|false|no)$ ]]; then
+    continue
+  fi
   pid="$(<"$pid_file")"
   command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
   if [[ "$command" == *"-m nsdeploy"* && "$command" == *"/cailville/"* ]] && stop_pid "$pid"; then
@@ -142,7 +150,12 @@ if ((${#remaining[@]})); then
   exit 1
 fi
 
-rm -f "$RUN_DIR"/*.pid 2>/dev/null || true
+for pid_file in "$RUN_DIR"/*.pid; do
+  if [[ "$pid_file" == "$RUN_DIR/private-studio.pid" && "${NSDEPLOY_PRIVATE_STUDIO:-1}" =~ ^(0|false|no)$ ]]; then
+    continue
+  fi
+  rm -f "$pid_file"
+done
 if ((stopped)); then
   printf 'Stopped all Cailville sites.\n'
 else

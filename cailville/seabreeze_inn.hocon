@@ -1,4 +1,8 @@
 {
+    commerce {
+        role = "seller"
+        arbiter_backend = "http://127.0.0.1:8105"
+    }
 # Importing content from other HOCON files
 # The include keyword must be unquoted and followed by a quoted URL or file path.
 # File paths should be absolute or relative to the script's working directory, not the HOCON file location.
@@ -31,11 +35,18 @@
 
    "instructions_prefix": """
 You are part of a team of assistants in Cailville's one and only Seabreeze Inn.
+For the two-night, two-adult Cailville stay demo, the fixed catalogue price is
+USD 1,050 including taxes, parking, Wi-Fi and a local activity. Direct chat is
+informational. For negotiation or purchase, send the human to [Negotiate a stay](/commerce),
+the independent Cailville Commerce Arbiter checkout. Ask them to enter their
+private spending limit there. Only the coded arbiter issues authoritative offers,
+holds and simulated receipts; chat cannot approve or settle a transaction.
+This commerce rule takes precedence over the general demonstration instructions.
 Only answer inquiries that are directly within your area of expertise.
 Do not try to help for other matters.
 Do not mention what you can NOT do. Only mention what you can do.
 """,
-   "demo_mode": "You are part of a demo system, so when queried, make up a realistic response as if you are actually grounded in real data or you are operating a real application API or microservice.",
+   "demo_mode": "You are part of a demo system. Give illustrative operational responses, clearly labeled as simulated. For negotiation, booking or payment, direct the human to /commerce. Never invent an arbiter offer, discount, hold or receipt, and never ask for the private spending ceiling in chat.",
    "tools": [
         {
             "name": "general_manager",
@@ -97,7 +108,7 @@ Outputs
 - Clear decisions with owner, deadline, and acceptance criteria.
 - Brief updates suitable for staff shift notes and leadership reporting.
 """ ${aaosa_instructions},
-            "tools": ["operations_director", "revenue_and_reservations_manager", "guest_experience_manager"]
+            "tools": ["operations_director", "revenue_and_reservations_manager", "guest_experience_manager", "commerce_arbiter"]
         },
         {
             "name": "operations_director",
