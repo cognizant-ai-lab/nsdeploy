@@ -151,12 +151,19 @@ async function isUp(port: number): Promise<boolean> {
   }
 }
 
-// Starts each example the run needs that isn't already running, the same way the
-// README does, and waits for it to serve its manifest.
-async function startExamples(ports: string[]): Promise<ChildProcess[]> {
+// Starts each example the run needs that isn't already running, including the sites
+// a requested example calls, the same way the README does, and waits for it to serve
+// its manifest.
+const started: ChildProcess[] = [];
+// Stop the examples this run started however it ends, including Ctrl-C.
+process.on("exit", () => { for (const child of started) child.kill(); });
+process.on("SIGINT", () => process.exit(130));
+
+async function startExamples(requested: string[]): Promise<void> {
+  const ports = [...requested];
+  for (const example of EXAMPLES) if (requested.includes(String(example.port))) ports.push(...example.peers);
   const venv = [".venv", "venv"].map((dir) => path.join(ROOT, dir, "bin", "python")).find((p) => existsSync(p));
   const python = venv || "python3";
-  const started: ChildProcess[] = [];
   for (const example of EXAMPLES.filter((e) => ports.includes(String(e.port)))) {
     const name = path.basename(example.hocon, ".hocon");
     if (await isUp(example.port)) {
@@ -181,7 +188,6 @@ async function startExamples(ports: string[]): Promise<ChildProcess[]> {
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
-  return started;
 }
 
 async function checkMap(browser: Browser): Promise<Result> {
@@ -399,7 +405,7 @@ mkdirSync(OUT_DIR, { recursive: true });
 console.log(`Testing ${PACKAGE} ${buildRuntime()}, as runtime-build pins it.`);
 const ports = sitePorts();
 const scenarios = (!ARGS.length || ARGS.includes("scenarios")) && !REAL_LLM;
-const examples = await startExamples(scenarios ? [...ports, "8191", "8192", "8193"] : ports);
+await startExamples(scenarios ? [...ports, "8191", "8192", "8193"] : ports);
 // HEADED=1 opens a visible browser and slows each step down enough to follow.
 const headed = Boolean(process.env.HEADED);
 const browser = await chromium.launch({ headless: !headed, slowMo: headed ? 250 : 0 });
@@ -412,7 +418,6 @@ const report = (result: Result) => {
 for (const port of ports) report(await checkSite(browser, port));
 if (scenarios) for (const result of await checkScenarios(browser)) report(result);
 await browser.close();
-for (const child of examples) child.kill();
 
 if (results[0].errors.length) console.log(`FAIL map: ${results[0].errors.join("; ")}`);
 const failed = results.filter((result) => result.errors.length).length;
