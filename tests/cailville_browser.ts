@@ -15,7 +15,7 @@
 //   npm run test:cailville -- 8091 8191 # just these ports
 //   npm run test:cailville -- scenarios # just the cancel, link, decline and no-key checks
 //   HEADED=1 npm run test:cailville -- 8091  # watch it in a visible browser
-//   TEST_REAL_LLM=1 npm run test:cailville -- 8191  # use $OPENAI_API_KEY, not the mock
+//   TEST_REAL_LLM=1 npm run test:cailville -- 8191  # use $OPENAI_API_KEY and gpt-4o, not the mock
 //
 // Node runs this TypeScript directly, by stripping the types, so there's no build
 // step. Screenshots go to .nsdeploy/cailville-browser-test/. Exits 1 if anything fails.
@@ -93,6 +93,9 @@ const OUT_DIR: string = path.join(ROOT, ".nsdeploy", "cailville-browser-test");
 const MAP_FILE: string = path.join(ROOT, "cailville", "cailville.html");
 const REAL_LLM = Boolean(process.env.TEST_REAL_LLM);
 const SITE_TIMEOUT_MS = REAL_LLM ? 600000 : 180000;
+// A real LLM run is on OpenAI for now, with gpt-4o to keep the cost down unless
+// TEST_MODEL picks another. Other providers can get their own default here.
+const MODEL = REAL_LLM ? process.env.TEST_MODEL || "gpt-4o" : process.env.TEST_MODEL;
 const AIRLINE = "http://127.0.0.1:8192";
 
 // The airline, the travel agency linked to it with --link the way the README does it,
@@ -268,7 +271,7 @@ async function runPage(browser: Browser, port: string, answers: Answers, label =
   const started = Date.now();
   try {
     const params = new URLSearchParams(search);
-    if (process.env.TEST_MODEL) params.set("model", process.env.TEST_MODEL);
+    if (MODEL) params.set("model", MODEL);
     await page.goto(`${base}/${params.size ? "?" + params : ""}`);
     await page.waitForSelector("#ns-input", { timeout: 30000 });
     await page.fill("#ns-input", query);

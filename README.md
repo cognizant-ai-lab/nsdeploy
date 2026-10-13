@@ -258,7 +258,7 @@ airline, on 8193:
 - decline the airline contact on the travel agency: the airline is never called, and the agent is told
 - pick the real router with no key: nothing reaches the router, and the run ends asking for a key
 
-`TEST_MODEL=<id>` picks the model for a real LLM run, which skips those checks.
+A real LLM run uses OpenAI's `gpt-4o` to keep the cost down, and `TEST_MODEL=<id>` picks another model. It skips those checks.
 Screenshots go to `.nsdeploy/cailville-browser-test/`.
 
 ### Book through Butterpink's private steward in nsFlow
