@@ -217,17 +217,25 @@ Stop the complete demo from another terminal:
 ### Test Cailville in a browser
 
 With Cailville running, `tests/cailville_browser.ts` opens the map and every site in
-headless Chromium. It also tests the link demo (the travel agency linked to the airline
-with `--link`) and the travel agent system, which it starts itself on 8191, 8192 and
-8120. On each site it sends the first sample query, approves the partner sites the
-agent asks to contact, and waits for the run to finish. Then it checks the site's
-execution trace. It runs on the mock LLM by default, so no key is needed.
+headless Chromium. It also tests the airline, the travel agency linked to it with
+`--link`, and the travel agent system, which it starts itself on 8192, 8191 and 8120.
+On each site it sends the first sample query, approves the partner sites the agent
+asks to contact, and waits for the run to finish. Then it checks the site's execution
+trace. It runs on the mock LLM by default, so no key is needed.
+
+It first builds the runtime from the TS package version `runtime-build/package.json`
+pins, and runs `npm ci` there if a different version is installed. GitHub Packages
+needs a token for that, for example `export NODE_AUTH_TOKEN=$(gh auth token)`. To test
+a new package release, run
+`npm install @cognizant-ai-lab/neuro-san-ts-package@<version>` in `runtime-build/`,
+which updates `package.json` and the lock, then run the test.
 
 ```bash
 npm install
 npx playwright install chromium
-npm run test:cailville              # Cailville and the examples
+npm run test:cailville              # everything
 npm run test:cailville -- 8091 8191 # just these ports
+npm run test:cailville -- scenarios # just the checks below for when the user says no
 HEADED=1 npm run test:cailville -- 8091  # watch it in a visible browser
 TEST_REAL_LLM=1 npm run test:cailville -- 8191  # use $OPENAI_API_KEY instead of the mock
 ```
@@ -241,8 +249,17 @@ A site fails if:
 - on the mock, any agent the front man can reach never ran (the mock calls every tool)
 - the travel agency never calls the airline
 
-`TEST_MODEL=<id>` picks the model for a real LLM run. Screenshots go to
-`.nsdeploy/cailville-browser-test/`.
+Then it checks what happens when the user doesn't go along with the agent. It uses
+`tests/fixtures/open_link_travel_agency.hocon`, a travel agency that doesn't define the
+airline, on 8193:
+
+- cancel the link prompt: the run finishes and the agent is told the airline isn't linked
+- enter the airline's URL in the link prompt: the airline gets called
+- decline the airline contact on the travel agency: the airline is never called, and the agent is told
+- pick the real router with no key: nothing reaches the router, and the run ends asking for a key
+
+`TEST_MODEL=<id>` picks the model for a real LLM run, which skips those checks.
+Screenshots go to `.nsdeploy/cailville-browser-test/`.
 
 ### Book through Butterpink's private steward in nsFlow
 
