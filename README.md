@@ -216,7 +216,7 @@ Stop the complete demo from another terminal:
 
 ### Test Cailville in a browser
 
-With Cailville running, `tests/cailville_browser.mjs` opens the map and every site in
+With Cailville running, `tests/cailville_browser.ts` opens the map and every site in
 headless Chromium. On each site it sends the first sample query, approves the partner
 sites the agent asks to contact, keeps the demo fallback when it offers to link a
 demo-mode agent, and waits for the answer. It runs on the mock LLM, so no key is needed.

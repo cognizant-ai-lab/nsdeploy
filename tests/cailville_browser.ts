@@ -10,37 +10,61 @@
 //   npm run test:cailville -- 8091 8105 # just these ports
 //   HEADED=1 npm run test:cailville -- 8091  # watch it in a visible browser
 //
-// Screenshots go to .nsdeploy/cailville-browser-test/. Exits 1 if any site shows a
-// page error, a failed request, or no answer.
+// Node runs this TypeScript directly, by stripping the types, so there's no build
+// step. Screenshots go to .nsdeploy/cailville-browser-test/. Exits 1 if any site
+// shows a page error, a failed request, or no answer.
 
 import { readFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const OUT_DIR = path.join(ROOT, ".nsdeploy", "cailville-browser-test");
-const MAP_FILE = path.join(ROOT, "cailville", "cailville.html");
+interface Community {
+  sites: { port: number }[];
+}
+
+interface Manifest {
+  networks: { name: string; sample_queries?: string[] }[];
+}
+
+interface Answer {
+  approvals: number;
+  declinedLinks: number;
+  answer: string | null;
+}
+
+interface SiteResult {
+  site: string;
+  seconds?: number;
+  partners?: string[];
+  approvals?: number;
+  declinedLinks?: number;
+  errors: string[];
+}
+
+const ROOT: string = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const OUT_DIR: string = path.join(ROOT, ".nsdeploy", "cailville-browser-test");
+const MAP_FILE: string = path.join(ROOT, "cailville", "cailville.html");
 const SITE_TIMEOUT_MS = 180000;
 // How long the chat has to stay unchanged, with nothing left to approve, to count
 // as answered.
 const SETTLED_SECONDS = 5;
 
 // The MCP client's optional stream GET, which the facade doesn't offer.
-function expected(error) {
+function expected(error: string): boolean {
   return /405 GET .*\/(ext-)?mcp/.test(error) || error.includes("status of 405");
 }
 
-function sitePorts() {
+function sitePorts(): string[] {
   const requested = process.argv.slice(2);
   if (requested.length) return requested;
-  const community = JSON.parse(readFileSync(path.join(ROOT, "cailville", "community.json"), "utf8"));
+  const community: Community = JSON.parse(readFileSync(path.join(ROOT, "cailville", "community.json"), "utf8"));
   return community.sites.map((site) => String(site.port));
 }
 
-async function checkMap(browser) {
+async function checkMap(browser: Browser): Promise<SiteResult> {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-  const errors = [];
+  const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(String(error)));
   await page.goto("file://" + MAP_FILE);
   await page.waitForTimeout(3000);
@@ -49,7 +73,7 @@ async function checkMap(browser) {
   return { site: "map", errors };
 }
 
-async function waitForAnswer(page, before) {
+async function waitForAnswer(page: Page, before: string): Promise<Answer> {
   const allow = page.getByRole("button", { name: "Always allow" });
   const keepFallback = page.locator(".ns-linker-form").getByRole("button", { name: "Cancel" });
   const counts = { approvals: 0, declinedLinks: 0 };
@@ -83,15 +107,15 @@ async function waitForAnswer(page, before) {
   return { ...counts, answer: null };
 }
 
-async function checkSite(browser, port) {
+async function checkSite(browser: Browser, port: string): Promise<SiteResult> {
   const base = `http://127.0.0.1:${port}`;
-  const manifest = await (await fetch(`${base}/agent-manifest.json`)).json();
+  const manifest: Manifest = await (await fetch(`${base}/agent-manifest.json`)).json();
   const network = manifest.networks[0];
   const query = (network.sample_queries || [])[0] || "What can you help me with?";
 
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-  const errors = [];
-  const partners = new Set();
+  const errors: string[] = [];
+  const partners = new Set<string>();
   page.on("pageerror", (error) => errors.push(String(error)));
   page.on("console", (message) => {
     // A visible browser also asks for /favicon.ico, which the sites don't have.
@@ -106,13 +130,13 @@ async function checkSite(browser, port) {
   });
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.port && url.port !== String(port) && url.pathname.endsWith("/agent-manifest.json")) {
+    if (url.port && url.port !== port && url.pathname.endsWith("/agent-manifest.json")) {
       partners.add(url.port);
     }
   });
 
   const started = Date.now();
-  let result = { approvals: 0, declinedLinks: 0, answer: null };
+  let result: Answer = { approvals: 0, declinedLinks: 0, answer: null };
   try {
     await page.goto(base + "/");
     await page.waitForSelector("#ns-input", { timeout: 30000 });
@@ -142,13 +166,13 @@ mkdirSync(OUT_DIR, { recursive: true });
 // HEADED=1 opens a visible browser and slows each step down enough to follow.
 const headed = Boolean(process.env.HEADED);
 const browser = await chromium.launch({ headless: !headed, slowMo: headed ? 250 : 0 });
-const results = [await checkMap(browser)];
+const results: SiteResult[] = [await checkMap(browser)];
 for (const port of sitePorts()) {
   const result = await checkSite(browser, port);
   results.push(result);
   const status = result.errors.length ? "FAIL" : "ok  ";
   console.log(`${status} ${result.site.padEnd(32)} ${String(result.seconds).padStart(4)}s ` +
-              `partners=${result.partners.length} approvals=${result.approvals} ` +
+              `partners=${result.partners?.length} approvals=${result.approvals} ` +
               `kept-demo-fallback=${result.declinedLinks}`);
   for (const error of result.errors) console.log(`     ${error.slice(0, 200)}`);
 }
