@@ -85,16 +85,16 @@ export class AgentNetwork {
   }
 
   // How this runtime activates a tool reference, composed from neuro-san's own
-  // predicates, plus nsdeploy's link slots.
+  // predicates, plus nsdeploy's link slots. A link slot this network also defines,
+  // like a demo-mode agent, runs that local agent until it is linked at deploy time.
   classifyTool(ref) {
     let kind;
     if (isMcpTool(ref)) kind = "mcp";
     else if (typeof ref !== "string") kind = "missing";
     else if (isExternalAgent(ref)) kind = "remote";
-    else if (this.linkSlots.has(ref)) kind = "link";
     else {
       const spec = this.getAgentSpec(ref);
-      if (!spec) kind = "missing";
+      if (!spec) kind = this.linkSlots.has(ref) ? "link" : "missing";
       else if (spec.class != null) kind = "coded";
       else if (spec.toolbox != null) kind = "toolbox";
       else kind = "agent";

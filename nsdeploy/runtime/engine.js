@@ -330,9 +330,9 @@ export class Engine {
 
   // The config neuro-san's loop runs for a network: every agent uses the active
   // router's model (neuro-san reads the key and router from OPENAI_API_KEY and
-  // OPENAI_BASE_URL), and link slots become partner URLs. A slot not linked yet
-  // becomes LINK_SLOT_PREFIX + its name, which resolvePeer turns into a request for
-  // the developer to link it.
+  // OPENAI_BASE_URL), and link slots with no local agent become partner URLs. A slot
+  // not linked yet becomes LINK_SLOT_PREFIX + its name, which resolvePeer turns into a
+  // request for the developer to link it.
   _runnableConfig(network) {
     const config = structuredClone(network.config);
     const override = this.modelOverride ? { model_name: this.modelOverride } : {};
@@ -355,7 +355,7 @@ export class Engine {
       if (context && typeof agent.instructions === "string") agent.instructions = `${agent.instructions}\n\n${context}`;
       if (!Array.isArray(agent.tools)) continue;
       agent.tools = agent.tools.map((ref) => {
-        if (typeof ref !== "string" || !network.linkSlots.has(ref)) return ref;
+        if (network.classifyTool(ref).kind !== "link") return ref;
         const target = network.getLink(ref) || this._storedLink(this._baseOf(network), network.name, ref);
         const url = target || LINK_SLOT_PREFIX + encodeURIComponent(ref);
         this.refOwners.set(url, { network, base: this._baseOf(network), manifest: this._manifestOf(network), linkSlot: ref });

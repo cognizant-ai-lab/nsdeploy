@@ -72,6 +72,18 @@ const urlToolNetwork = new AgentNetwork({tools: [{
 assert.equal(urlToolNetwork.classifyTool("http://127.0.0.1:8093/seabreeze_inn").kind, "remote");
 assert.equal(urlToolNetwork.classifyTool("https://tools.example/mcp").kind, "mcp");
 
+// A demo-mode agent the network defines stays local until it is linked. Only a slot
+// with no local agent asks the developer for a link.
+const linkSlotNetwork = new AgentNetwork({
+  tools: [
+    {name: "farm_front", instructions: "Front.", tools: ["crop_planning_specialist", "outside_partner"]},
+    {name: "crop_planning_specialist", instructions: "Demo crop planner."},
+  ],
+  link_slots: {crop_planning_specialist: {callers: ["farm_front"]}, outside_partner: {callers: ["farm_front"]}},
+}, "greenbank_farm");
+assert.equal(linkSlotNetwork.classifyTool("crop_planning_specialist").kind, "agent");
+assert.equal(linkSlotNetwork.classifyTool("outside_partner").kind, "link");
+
 const chain = [
   "http://127.0.0.1:8095::deneman_place",
   "http://127.0.0.1:8098::neighbor_exchange",
