@@ -224,7 +224,7 @@ asks to contact, and waits for the run to finish. Then it checks the site's exec
 trace. It runs on the mock LLM by default, so no key is needed.
 
 It first builds the runtime from the TS package version `runtime-build/package.json`
-pins, and runs `npm ci` there if a different version is installed. GitHub Packages
+pins, and runs `npm ci` there if `npm ls` says what's installed doesn't match. GitHub Packages
 needs a token for that, for example `export NODE_AUTH_TOKEN=$(gh auth token)`. To test
 a new package release, run
 `npm install @cognizant-ai-lab/neuro-san-ts-package@<version>` in `runtime-build/`,

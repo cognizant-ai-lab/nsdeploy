@@ -108,18 +108,24 @@ const EXAMPLES: Example[] = [
   { hocon: "tests/fixtures/open_link_travel_agency.hocon", port: 8193, args: [], peers: [], fresh: true },
 ];
 
-// Installs the package version runtime-build/package.json pins if a different one is
-// installed, then builds the runtime the sites serve from it.
+// Installs what runtime-build/package.json and its lock pin if npm ls says the
+// installed package doesn't match, then builds the runtime the sites serve from it.
+// Returns the installed version.
 function buildRuntime(): string {
-  const pinned: string = JSON.parse(readFileSync(path.join(RUNTIME_BUILD, "package.json"), "utf8")).dependencies[PACKAGE];
-  const installedFile = path.join(RUNTIME_BUILD, "node_modules", PACKAGE, "package.json");
-  const installed = existsSync(installedFile) ? JSON.parse(readFileSync(installedFile, "utf8")).version : "";
-  if (installed !== pinned) {
-    console.log(`Installing ${PACKAGE} ${pinned} (found ${installed || "none"}). GitHub Packages needs NODE_AUTH_TOKEN.`);
+  const installed = (): { ok: boolean; version: string } => {
+    try {
+      const out = execFileSync("npm", ["ls", PACKAGE, "--json"], { cwd: RUNTIME_BUILD, encoding: "utf8" });
+      return { ok: true, version: JSON.parse(out).dependencies?.[PACKAGE]?.version || "" };
+    } catch {
+      return { ok: false, version: "" };
+    }
+  };
+  if (!installed().ok) {
+    console.log(`Installing ${PACKAGE} with npm ci. GitHub Packages needs NODE_AUTH_TOKEN.`);
     execFileSync("npm", ["ci"], { cwd: RUNTIME_BUILD, stdio: "inherit" });
   }
   execFileSync("npm", ["run", "build"], { cwd: RUNTIME_BUILD, stdio: "ignore" });
-  return pinned;
+  return installed().version;
 }
 
 // The MCP client's optional stream GET, which the facade doesn't offer.
@@ -390,7 +396,7 @@ if (REAL_LLM && !process.env.OPENAI_API_KEY) {
   process.exit(2);
 }
 mkdirSync(OUT_DIR, { recursive: true });
-console.log(`Testing ${PACKAGE} ${buildRuntime()}, from runtime-build/package.json.`);
+console.log(`Testing ${PACKAGE} ${buildRuntime()}, as runtime-build pins it.`);
 const ports = sitePorts();
 const scenarios = (!ARGS.length || ARGS.includes("scenarios")) && !REAL_LLM;
 const examples = await startExamples(scenarios ? [...ports, "8191", "8192", "8193"] : ports);
