@@ -217,20 +217,32 @@ Stop the complete demo from another terminal:
 ### Test Cailville in a browser
 
 With Cailville running, `tests/cailville_browser.ts` opens the map and every site in
-headless Chromium. On each site it sends the first sample query, approves the partner
-sites the agent asks to contact, keeps the demo fallback when it offers to link a
-demo-mode agent, and waits for the answer. It runs on the mock LLM, so no key is needed.
+headless Chromium. It also tests the link demo (the travel agency linked to the airline
+with `--link`) and the travel agent system, which it starts itself on 8191, 8192 and
+8120. On each site it sends the first sample query, approves the partner sites the
+agent asks to contact, and waits for the run to finish. Then it checks the site's
+execution trace. It runs on the mock LLM by default, so no key is needed.
 
 ```bash
 npm install
 npx playwright install chromium
-npm run test:cailville              # every site in cailville/community.json
-npm run test:cailville -- 8091 8105 # just these ports
+npm run test:cailville              # Cailville and the examples
+npm run test:cailville -- 8091 8191 # just these ports
 HEADED=1 npm run test:cailville -- 8091  # watch it in a visible browser
+TEST_REAL_LLM=1 npm run test:cailville -- 8191  # use $OPENAI_API_KEY instead of the mock
 ```
 
-It exits 1 if any site shows a page error, a failed request, or no answer. Screenshots
-go to `.nsdeploy/cailville-browser-test/`.
+A site fails if:
+
+- the page shows an error or a request fails
+- the run doesn't finish
+- any step in the trace ends in an error
+- it asks to link an agent, since every agent on these sites is defined or linked
+- on the mock, any agent the front man can reach never ran (the mock calls every tool)
+- the travel agency never calls the airline
+
+`TEST_MODEL=<id>` picks the model for a real LLM run. Screenshots go to
+`.nsdeploy/cailville-browser-test/`.
 
 ### Book through Butterpink's private steward in nsFlow
 
