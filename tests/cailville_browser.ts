@@ -20,10 +20,10 @@
 // Node runs this TypeScript directly, by stripping the types, so there's no build
 // step. Screenshots go to .nsdeploy/cailville-browser-test/. Exits 1 if anything fails.
 
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, mkdirSync, rmSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { execFileSync, spawn, type ChildProcess } from "child_process";
+import { existsSync, readFileSync, mkdirSync, rmSync } from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { chromium, type Browser, type Page } from "playwright";
 
 interface Community {
