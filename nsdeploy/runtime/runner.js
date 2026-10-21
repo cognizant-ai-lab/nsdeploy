@@ -30,6 +30,23 @@ function hostOfUrl(url) {
   try { return new URL(url).host; } catch { return url; }
 }
 
+// Consent protects a site boundary, not every service call. Local MCP hosts are
+// deliberately exposed through same-origin /_mcp routes and are part of the page
+// the visitor already chose to use. /ext-mcp is the exception: it is a
+// same-origin transport proxy whose destination is an external MCP server.
+export function requiresThirdPartyApproval(ref, baseOrigin) {
+  const raw = typeof ref === "string" ? ref : ref?.url;
+  try {
+    const base = new URL(baseOrigin);
+    const target = new URL(raw, base);
+    const externalMcpProxy = /^\/ext-mcp(?:\/|$)/i.test(target.pathname);
+    return externalMcpProxy || target.origin !== base.origin;
+  } catch {
+    // Invalid or opaque destinations must never bypass the consent boundary.
+    return true;
+  }
+}
+
 export function remoteIsInChain(ref, baseOrigin, chain = []) {
   try {
     const parsed = parseExternalAgent(ref, baseOrigin);
@@ -121,25 +138,26 @@ export async function buildToolTable(ctx, spec, chain, parentSpan) {
     if (c.kind === "missing") continue;
 
     if (c.kind === "mcp") {
-      // Discovering MCP tools requires a tools/list call — that IS contact with the
-      // MCP origin. Gate it behind consent FIRST: nothing is sent to the server
-      // (no initialize, no tools/list, no IP/headers) until the user approves. If
-      // declined, the agent simply proceeds without these tools.
+      // Discovering third-party MCP tools requires a tools/list call. Gate that
+      // cross-site contact before anything is sent. Same-site services are already
+      // within the page's trust boundary and must not produce an approval prompt.
       const host = hostOfUrl(typeof ref === "string" ? ref : ref.url);
-      const decision = await ctx.requestConsent?.({
-        kind: "mcp", phase: "discover", peerLabel: "Destination service", peerOrigin: host,
-        requestText: "(discover available tools)",
-        est: { totalTokens: 0, costText: ctx.mock ? "$0.00 (mock)" : "metadata only" },
-      });
-      if (decision === "decline") {
-        ctx.trace.note("consent", { parent: parentSpan, origin: ctx.displayOrigin, peerOrigin: host, phase: "discover", decision: "declined" });
-        continue;
+      const requiresApproval = requiresThirdPartyApproval(ref, ctx.baseOrigin);
+      if (requiresApproval) {
+        const decision = await ctx.requestConsent?.({
+          kind: "mcp", phase: "discover", peerLabel: "Destination service", peerOrigin: host,
+          requestText: "(discover available tools)",
+          est: { totalTokens: 0, costText: ctx.mock ? "$0.00 (mock)" : "metadata only" },
+        });
+        if (decision === "decline") {
+          ctx.trace.note("consent", { parent: parentSpan, origin: ctx.displayOrigin, peerOrigin: host, phase: "discover", decision: "declined" });
+          continue;
+        }
       }
       const client = await ctx.resolveMcp(ref, parentSpan);
       for (const t of await client.listTools(parentSpan)) {
         const name = safeName(`mcp_${t.name}`);
-        // The origin is approved at discovery; the call itself won't re-prompt.
-        toolByName.set(name, { kind: "mcp", ref, client, mcpName: t.name });
+        toolByName.set(name, { kind: "mcp", ref, client, mcpName: t.name, requiresApproval });
         toolSchemas.push(schemaFor(name, { description: t.description, parameters: t.inputSchema }));
       }
     } else if (c.kind === "remote") {
@@ -223,20 +241,21 @@ export async function dispatchToolCall(ctx, entry, args, parentSpan, chain) {
   }
 
   if (entry.kind === "mcp") {
-    // Discovery (tools/list) was approved separately. Now confirm the ACTUAL call
-    // with the real payload the user is about to send. A per-origin "always"
-    // decision auto-allows and skips this prompt; otherwise the user sees exactly
-    // what is being sent — discovery consent never silently authorizes execution.
-    const host = hostOfUrl(entry.client.url);
-    const requestText = argsToText(args);
-    const decision = await ctx.requestConsent?.({
-      kind: "mcp", phase: "call", peerLabel: "Destination service", peerOrigin: host,
-      requestText,
-      est: { totalTokens: Math.round((requestText.length + 80) / 4), costText: ctx.mock ? "$0.00 (mock)" : null },
-    });
-    if (decision === "decline") {
-      ctx.trace.note("consent", { parent: parentSpan, origin: ctx.displayOrigin, peerOrigin: host, phase: "call", decision: "declined" });
-      return `The user declined to send this request to ${host}. Continue without it.`;
+    if (entry.requiresApproval ?? requiresThirdPartyApproval(entry.ref || entry.client.url, ctx.baseOrigin)) {
+      // Discovery was approved separately. Confirm the actual third-party call
+      // with the payload the user is about to send. Same-site MCP calls skip both
+      // prompts because they do not cross the site's trust boundary.
+      const host = hostOfUrl(entry.client.url);
+      const requestText = argsToText(args);
+      const decision = await ctx.requestConsent?.({
+        kind: "mcp", phase: "call", peerLabel: "Destination service", peerOrigin: host,
+        requestText,
+        est: { totalTokens: Math.round((requestText.length + 80) / 4), costText: ctx.mock ? "$0.00 (mock)" : null },
+      });
+      if (decision === "decline") {
+        ctx.trace.note("consent", { parent: parentSpan, origin: ctx.displayOrigin, peerOrigin: host, phase: "call", decision: "declined" });
+        return `The user declined to send this request to ${host}. Continue without it.`;
+      }
     }
     return entry.client.callTool(entry.mcpName, args, parentSpan);
   }
@@ -250,19 +269,21 @@ export async function dispatchToolCall(ctx, entry, args, parentSpan, chain) {
   if (entry.kind === "remote") {
     const requestText = argsToText(args);
     const host = hostOfUrl(entry.url);
-    // Coarse estimate: the peer has NOT been fetched yet (that happens only after
-    // approval), so consent genuinely precedes any contact with the partner origin.
-    const est = {
-      totalTokens: Math.round((requestText.length + 300) / 4) * 2,
-      costText: ctx.mock ? "$0.00 (mock)" : null,
-    };
-    const decision = await ctx.requestConsent?.({
-      kind: "network", peerLabel: entry.label || host, peerOrigin: host, requestText, est,
-    });
-   if (decision === "decline") {
-     ctx.trace.note("consent", { parent: parentSpan, origin: ctx.displayOrigin, peerOrigin: host, decision: "declined" });
-     return `The user declined to contact ${host}. Proceed without it and note that to the user.`;
-   }
+    if (requiresThirdPartyApproval(entry.url, ctx.baseOrigin)) {
+      // The third-party peer has not been fetched yet, so consent genuinely
+      // precedes contact. A network published by this same site stays local.
+      const est = {
+        totalTokens: Math.round((requestText.length + 300) / 4) * 2,
+        costText: ctx.mock ? "$0.00 (mock)" : null,
+      };
+      const decision = await ctx.requestConsent?.({
+        kind: "network", peerLabel: entry.label || host, peerOrigin: host, requestText, est,
+      });
+      if (decision === "decline") {
+        ctx.trace.note("consent", { parent: parentSpan, origin: ctx.displayOrigin, peerOrigin: host, decision: "declined" });
+        return `The user declined to contact ${host}. Proceed without it and note that to the user.`;
+      }
+    }
     const parsed = parseExternalAgent(entry.url, ctx.baseOrigin);
     const budgetReason = consumeRemoteBudget(ctx.composition, `${parsed.origin}::${parsed.agentName}`);
     if (budgetReason) {

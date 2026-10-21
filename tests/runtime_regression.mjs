@@ -6,7 +6,14 @@ import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
 import { LlmClient, isMockResponse } from "../nsdeploy/runtime/llm.js";
 import { McpClient, parseMaybeSse } from "../nsdeploy/runtime/mcp.js";
 import { normalizeModelName } from "../nsdeploy/runtime/model.js";
-import { consumeAgentBudget, consumeRemoteBudget, remoteIsInChain } from "../nsdeploy/runtime/runner.js";
+import {
+  buildToolTable,
+  consumeAgentBudget,
+  consumeRemoteBudget,
+  dispatchToolCall,
+  remoteIsInChain,
+  requiresThirdPartyApproval,
+} from "../nsdeploy/runtime/runner.js";
 
 const manifest = {
   llm_router: {
@@ -68,6 +75,75 @@ const urlToolNetwork = new AgentNetwork({tools: [{
 }]}, "greenbank_farm");
 assert.equal(urlToolNetwork.classifyTool("http://127.0.0.1:8093/seabreeze_inn").kind, "remote");
 assert.equal(urlToolNetwork.classifyTool("https://tools.example/mcp").kind, "mcp");
+
+// Consent follows the actual site boundary. A page's own MCP/service network is
+// local, while /ext-mcp remains gated because it proxies an external MCP server.
+assert.equal(requiresThirdPartyApproval("https://site.example/_mcp/0/mcp", "https://site.example"), false);
+assert.equal(requiresThirdPartyApproval("/mcp", "https://site.example"), false);
+assert.equal(requiresThirdPartyApproval("https://site.example/ext-mcp/0/mcp", "https://site.example"), true);
+assert.equal(requiresThirdPartyApproval("https://tools.example/mcp", "https://site.example"), true);
+assert.equal(requiresThirdPartyApproval("https://site.example/other_network", "https://site.example"), false);
+assert.equal(requiresThirdPartyApproval("https://agents.example/other_network", "https://site.example"), true);
+
+{
+  const localMcp = "https://site.example/_mcp/0/mcp";
+  const proxyMcp = "https://site.example/ext-mcp/0/mcp";
+  const remoteMcp = "https://tools.example/mcp";
+  const serviceNetwork = new AgentNetwork({tools: [{
+    name: "root", instructions: "Use services.", tools: [localMcp, proxyMcp, remoteMcp],
+  }]}, "services");
+  const approvals = [];
+  const calls = [];
+  const clients = new Map([
+    [localMcp, {url: localMcp, listTools: async () => [{name: "local_tool"}], callTool: async (name) => { calls.push(name); return "local"; }}],
+    [proxyMcp, {url: proxyMcp, listTools: async () => [{name: "proxy_tool"}], callTool: async (name) => { calls.push(name); return "proxy"; }}],
+    [remoteMcp, {url: remoteMcp, listTools: async () => [{name: "remote_tool"}], callTool: async (name) => { calls.push(name); return "remote"; }}],
+  ]);
+  const ctx = {
+    network: serviceNetwork,
+    baseOrigin: "https://site.example",
+    displayOrigin: "site.example",
+    mock: true,
+    trace: {note() {}},
+    requestConsent: async (info) => { approvals.push(info); return "allow"; },
+    resolveMcp: async (ref) => clients.get(ref),
+  };
+  const table = await buildToolTable(ctx, serviceNetwork.getAgentSpec("root"), [], "parent");
+  assert.deepEqual(approvals.map(({kind, phase, peerOrigin}) => [kind, phase, peerOrigin]), [
+    ["mcp", "discover", "site.example"],
+    ["mcp", "discover", "tools.example"],
+  ]);
+  assert.equal(table.toolByName.get("mcp_local_tool").requiresApproval, false);
+  assert.equal(table.toolByName.get("mcp_proxy_tool").requiresApproval, true);
+
+  await dispatchToolCall(ctx, table.toolByName.get("mcp_local_tool"), {request: "local query"}, "parent", []);
+  assert.equal(approvals.length, 2);
+  await dispatchToolCall(ctx, table.toolByName.get("mcp_proxy_tool"), {request: "proxy query"}, "parent", []);
+  await dispatchToolCall(ctx, table.toolByName.get("mcp_remote_tool"), {request: "remote query"}, "parent", []);
+  assert.deepEqual(approvals.slice(2).map(({kind, phase}) => [kind, phase]), [["mcp", "call"], ["mcp", "call"]]);
+  assert.deepEqual(calls, ["local_tool", "proxy_tool", "remote_tool"]);
+
+  const sameSiteResult = await dispatchToolCall({
+    ...ctx,
+    composition: null,
+    slyData: {},
+    frontMan: "root",
+    resolveRemote: async () => ({invoke: async () => "same-site network"}),
+  }, {kind: "remote", url: "https://site.example/other_network", label: "Other"}, {request: "same site"}, "parent", []);
+  assert.equal(sameSiteResult, "same-site network");
+  assert.equal(approvals.length, 4);
+
+  const thirdPartyResult = await dispatchToolCall({
+    ...ctx,
+    composition: null,
+    slyData: {},
+    frontMan: "root",
+    resolveRemote: async () => ({invoke: async () => "third-party network"}),
+  }, {kind: "remote", url: "https://agents.example/other_network", label: "Other"}, {request: "third party"}, "parent", []);
+  assert.equal(thirdPartyResult, "third-party network");
+  assert.equal(approvals.at(-1).kind, "network");
+  assert.equal(approvals.length, 5);
+}
 
 const chain = [
   "http://127.0.0.1:8095::deneman_place",
