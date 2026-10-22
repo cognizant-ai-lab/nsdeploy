@@ -32,11 +32,13 @@ const hooks = {
   // (initialize, tools/list), so declining means the server is never contacted and
   // the agent carries on without its tools.
   mcpConsent: null,
-  // async ({ url, tool, args }) => string | null. Runs before each MCP tool call. A
-  // string is returned to the agent as the tool's output instead of making the call
-  // (e.g. the user declined); null lets the call go ahead.
+  // async ({ url, tool, args, caller, callId }) => string | null. Runs before each MCP
+  // tool call. A string is returned to the agent as the tool's output instead of making
+  // the call (e.g. the user declined); null lets the call go ahead. `caller` is the
+  // agent making the call, as for toolCall, or null when that isn't known, and
+  // `callId` is the same for this call's mcpResult.
   mcpCall: null,
-  // ({ url, tool, result, error }) => void. After an MCP tool call returns or fails.
+  // ({ url, tool, result, error, callId }) => void. After an MCP tool call returns or fails.
   mcpResult: null,
   // async (agentUrl, { chain, request }) => { config, name } | { answer }. Turns a
   // partner network's URL into its published network, after the runtime's consent and
@@ -54,9 +56,11 @@ const hooks = {
   // (agentUrl) => function spec | null. What to advertise for a partner before it is
   // contacted, e.g. the contract nsdeploy published for the leaf it replaced.
   peerFunction: null,
-  // async ({ caller: { agent, network }, tool, run }) => result. Runs each tool call an
-  // agent makes, so the runtime decides how many of its sibling calls run at once.
-  // `run` makes the call.
+  // async ({ caller: { agent, network, origin }, tool, ref, run }) => result. Runs each
+  // tool call an agent makes, so the runtime decides how many of its sibling calls run
+  // at once and knows which agent made each one. `origin` is the calling agent's
+  // origin path, `ref` the name or URL its network lists the tool by, and `run` makes
+  // the call.
   toolCall: null,
 };
 
@@ -89,6 +93,7 @@ export function createSession(config, name) {
 // package's own method connects, filters the allowed tools and wraps each one's
 // func in McpToolErrorHandler, and the per-call hooks go around that.
 const getMcpTools = LangChainMcpAdapter.prototype.get_mcp_tools;
+let mcpCalls = 0;
 LangChainMcpAdapter.prototype.get_mcp_tools = async function (serverUrl, allowedTools = null, headers = null) {
   if (hooks.mcpConsent && !(await hooks.mcpConsent({ kind: "mcp", url: serverUrl }))) {
     this.client_allowed_tools = allowedTools;
@@ -99,14 +104,18 @@ LangChainMcpAdapter.prototype.get_mcp_tools = async function (serverUrl, allowed
     if (typeof tool.func !== "function") continue;
     const call = tool.func;
     tool.func = async (args, ...rest) => {
-      const instead = hooks.mcpCall ? await hooks.mcpCall({ url: serverUrl, tool: tool.name, args }) : null;
+      // nsdeployCaller is set on the tool by create_base_tool below, which built it.
+      const caller = typeof tool.nsdeployCaller === "function" ? tool.nsdeployCaller() : null;
+      // Tells this call from another one to the same tool at the same time.
+      const callId = ++mcpCalls;
+      const instead = hooks.mcpCall ? await hooks.mcpCall({ url: serverUrl, tool: tool.name, args, caller, callId }) : null;
       if (instead != null) return instead;
       try {
         const result = await call(args, ...rest);
-        hooks.mcpResult?.({ url: serverUrl, tool: tool.name, result });
+        hooks.mcpResult?.({ url: serverUrl, tool: tool.name, result, callId });
         return result;
       } catch (error) {
-        hooks.mcpResult?.({ url: serverUrl, tool: tool.name, error });
+        hooks.mcpResult?.({ url: serverUrl, tool: tool.name, error, callId });
         throw error;
       }
     };
@@ -124,11 +133,23 @@ if (NsdeployBaseToolFactory) {
   const createBaseTool = NsdeployBaseToolFactory.prototype.create_base_tool;
   NsdeployBaseToolFactory.prototype.create_base_tool = async function (name) {
     const created = await createBaseTool.call(this, name);
-    const caller = { agent: this.tool_caller.get_name(), network: this.tool_caller.get_inspector().get_network_name() };
+    const toolCaller = this.tool_caller;
+    // The agent the tools are built for, read when a call is made, since its origin
+    // comes from the run it is part of.
+    const callerOf = () => {
+      const origin = typeof toolCaller.get_origin === "function" ? toolCaller.get_origin() : null;
+      return {
+        agent: toolCaller.get_name(),
+        network: toolCaller.get_inspector().get_network_name(),
+        origin: Array.isArray(origin) ? origin.map((o) => ({ tool: o.tool, instantiation_index: o.instantiation_index })) : [],
+      };
+    };
+    const ref = typeof name === "string" ? name : name?.url;
     for (const tool of Array.isArray(created) ? created : created ? [created] : []) {
+      tool.nsdeployCaller = callerOf;
       const invoke = tool.invoke.bind(tool);
       tool.invoke = (input, config) => (hooks.toolCall
-        ? hooks.toolCall({ caller, tool: tool.name, run: () => invoke(input, config) })
+        ? hooks.toolCall({ caller: callerOf(), tool: tool.name, ref, run: () => invoke(input, config) })
         : invoke(input, config));
     }
     return created;
