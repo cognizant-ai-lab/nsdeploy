@@ -4,9 +4,10 @@
 // to finish. It then checks the site's execution trace, so a site only passes when its
 // agents actually ran. Then it checks MCP on its own: that an agent's MCP tool call
 // goes out and comes back, and that declining keeps anything from reaching an outside
-// MCP server, while the site's own still work. Last, it checks what happens when the
-// user cancels a link, links through the prompt, declines a contact, or has no key
-// for a real router.
+// MCP server, while the site's own still work. It checks a turn while it runs: that
+// the chat shows what the agents are doing, and that guidance the user sends steers
+// it. Last, it checks what happens when the user cancels a link, links through the
+// prompt, declines a contact, or has no key for a real router.
 //
 // It first builds the runtime from the TS package version runtime-build/package.json
 // pins, running npm ci there if a different version is installed. Start Cailville
@@ -17,6 +18,7 @@
 //   npm run test:cailville              # everything
 //   npm run test:cailville -- 8091 8191 # just these ports
 //   npm run test:cailville -- mcp       # just the MCP checks
+//   npm run test:cailville -- live      # just the running-turn checks
 //   npm run test:cailville -- scenarios # just the cancel, link, decline and no-key checks
 //   HEADED=1 npm run test:cailville -- 8091  # watch it in a visible browser
 //   TEST_REAL_LLM=1 npm run test:cailville -- 8191  # use $OPENAI_API_KEY and gpt-4o, not the mock
@@ -36,7 +38,7 @@ interface Community {
 
 interface Manifest {
   networks: { name: string; sample_queries?: string[] }[];
-  llm_router?: { byok_router?: string };
+  llm_router?: { base_url?: string; byok_router?: string };
 }
 
 interface NetworkConfig {
@@ -50,6 +52,9 @@ interface TraceEvent {
   origin?: string;
   peerOrigin?: string;
   url?: string;
+  tool?: string;
+  streamChunk?: string;
+  state?: string;
   network?: string;
   agent?: string;
   mock?: boolean;
@@ -73,6 +78,8 @@ interface Example {
 interface Answers {
   link?: string;
   consent: "always" | "decline";
+  // Guidance to send while the front man's first model call is still running.
+  steer?: string;
 }
 
 interface Run {
@@ -88,6 +95,15 @@ interface Run {
   // To an MCP server outside the site: on another origin, or through the site's
   // /ext-mcp proxy to one.
   outsideMcpRequests: number;
+  // Each text the chat's status line showed while the turn ran, and whether the line
+  // was still there once the answer was.
+  statusTexts: string[];
+  statusLeft: boolean;
+  // With answers.steer: whether it was sent during the model call, the steering
+  // messages the chat shows, and the router requests that carried it.
+  steered: boolean;
+  steeringMessages: number;
+  steeredRequests: number;
 }
 
 interface Result {
@@ -149,7 +165,7 @@ function expected(error: string): boolean {
 const ARGS = process.argv.slice(2);
 
 function sitePorts(): string[] {
-  const requested = ARGS.filter((arg) => arg !== "scenarios" && arg !== "mcp");
+  const requested = ARGS.filter((arg) => arg !== "scenarios" && arg !== "mcp" && arg !== "live");
   if (ARGS.length) return requested;
   const community: Community = JSON.parse(readFileSync(path.join(ROOT, "cailville", "community.json"), "utf8"));
   const examples = EXAMPLES.filter((example) => !example.fresh).map((example) => String(example.port));
@@ -169,7 +185,8 @@ async function isUp(port: number): Promise<boolean> {
 // its manifest.
 const started: ChildProcess[] = [];
 // Stop the examples this run started however it ends, including Ctrl-C.
-process.on("exit", () => { for (const child of started) child.kill(); });
+// SIGINT, as Ctrl-C would, so each site also stops the MCP hosts it started.
+process.on("exit", () => { for (const child of started) child.kill("SIGINT"); });
 process.on("SIGINT", () => process.exit(130));
 
 async function startExamples(requested: string[]): Promise<void> {
@@ -261,8 +278,36 @@ async function runPage(browser: Browser, port: string, answers: Answers, label =
   }
   const run: Run = {
     seconds: 0, events: [], errors: [], links: [], approvals: 0, declines: 0, finished: false, routerRequests: 0, mcpRequests: 0,
-    outsideMcpRequests: 0,
+    outsideMcpRequests: 0, statusTexts: [], statusLeft: false, steered: false, steeringMessages: 0, steeredRequests: 0,
   };
+  // Every text the status line shows, however briefly.
+  await page.addInitScript(() => {
+    const seen: string[] = [];
+    (window as any).__statusTexts = seen;
+    new MutationObserver(() => {
+      const text = document.querySelector(".ns-turn-status-text")?.textContent || "";
+      if (text && seen[seen.length - 1] !== text) seen.push(text);
+    }).observe(document, { subtree: true, childList: true, characterData: true });
+  });
+  // With answers.steer, the router holds the first model call until the guidance is
+  // sent, so it arrives while that call runs.
+  let held: () => void = () => {};
+  const firstCall = new Promise<void>((resolve) => { held = resolve; });
+  let release: () => void = () => {};
+  const steeringSent = new Promise<void>((resolve) => { release = resolve; });
+  if (answers.steer) {
+    const router = new URL(manifest.llm_router?.base_url || `${base}/v1`);
+    let calls = 0;
+    await page.route(`${router.origin}${router.pathname.replace(/\/$/, "")}/responses`, async (route) => {
+      if ((route.request().postData() || "").includes(answers.steer!)) run.steeredRequests += 1;
+      if (++calls === 1) {
+        held();
+        await steeringSent;
+      }
+      // The held call is cancelled by the steering, so continuing it can fail.
+      await route.continue().catch(() => {});
+    });
+  }
   page.on("pageerror", (error) => run.errors.push(String(error)));
   page.on("console", (message) => {
     // A visible browser also asks for /favicon.ico, which the sites don't have.
@@ -292,8 +337,19 @@ async function runPage(browser: Browser, port: string, answers: Answers, label =
     await page.waitForSelector("#ns-input", { timeout: 30000 });
     await page.fill("#ns-input", query);
     await page.click("#ns-send");
+    if (answers.steer) {
+      await Promise.race([firstCall, page.waitForTimeout(30000)]);
+      // While the turn runs, the same input and button send guidance to it.
+      await page.fill("#ns-input", answers.steer);
+      await page.click("#ns-send");
+      run.steered = true;
+      release();
+    }
     await answerPrompts(page, answers, run);
     run.events = await readTrace(page);
+    run.statusTexts = await page.evaluate(() => (window as any).__statusTexts || []);
+    run.statusLeft = (await page.locator(".ns-turn-status").count()) > 0;
+    run.steeringMessages = await page.locator('.ns-steering-message[data-input-kind="steering"]').count();
   } catch (error) {
     run.errors.push(String(error).split("\n")[0]);
   }
@@ -332,7 +388,8 @@ function basicProblems(run: Run): string[] {
   const problems = [...run.errors];
   if (!run.finished) problems.push(`the run didn't finish within ${SITE_TIMEOUT_MS / 1000}s`);
   for (const event of run.events) {
-    if (event.phase === "end" && event.status !== "ok") {
+    // A model call the user's steering cancelled ends "steered", which is no error.
+    if (event.phase === "end" && event.status !== "ok" && event.status !== "steered") {
       problems.push(`${event.kind} ${event.agent || event.network || ""} ended ${event.status}`);
     }
   }
@@ -386,6 +443,12 @@ async function checkMcp(browser: Browser): Promise<Result[]> {
   let problems = basicProblems(run);
   if (!calls(run).length) problems.push("no MCP tool call finished");
   if (!calls(run).some((event) => (event.responsePreview || "").trim())) problems.push("no MCP tool call returned anything");
+  // An MCP server can send notifications ahead of a tool's result (You.com sends a log
+  // line with each one), and those show as the tool's progress.
+  const outsideCalls = calls(run).filter((event) => !(event.url || "").startsWith(`http://127.0.0.1:${MCP_SITE}/_mcp/`));
+  if (outsideCalls.length && !run.events.some((event) => event.kind === "tool_progress")) {
+    problems.push("an outside MCP server's notifications didn't show as tool progress");
+  }
   add("call an MCP tool", run, problems);
 
   // Only an MCP server outside the site needs consent. The site's own, under /_mcp,
@@ -405,6 +468,37 @@ async function checkMcp(browser: Browser): Promise<Result[]> {
 // What should happen when the user doesn't go along with the agent. These run on the
 // mock only, after the sites, and the two link checks need the open link travel agency
 // fresh, in this order, since linking it saves the link on the site.
+// A running turn, on the travel agent system: the chat shows a status line while the
+// agents work and drops it for the answer, the trace has the answer's text as it
+// streamed, and guidance sent while the front man's first model call runs replaces
+// that call with one that includes it.
+async function checkLiveTurn(browser: Browser): Promise<Result[]> {
+  const steer = "Keep the whole trip under 2000 dollars.";
+  const run = await runPage(browser, MCP_SITE, { consent: "always", steer }, "live");
+  const summary = `${String(run.seconds).padStart(4)}s status=${run.statusTexts.length} steered=${run.steeredRequests}`;
+  const shown = basicProblems(run);
+  if (!run.statusTexts.length) shown.push("the status line never showed while the agents worked");
+  if (run.statusLeft) shown.push("the status line was still there after the answer");
+  if (!run.events.some((event) => event.kind === "model_call" && event.phase === "update" && event.streamChunk)) {
+    shown.push("no model call's text streamed into the trace");
+  }
+  if (!run.events.some((event) => event.kind === "tool" && event.phase === "start")) shown.push("no tool call showed in the trace");
+  const steering: string[] = [];
+  const notes = run.events.filter((event) => event.kind === "steering");
+  if (!run.steered) steering.push("the first model call never started, so nothing was steered");
+  if (run.steeringMessages !== 1) steering.push(`the chat shows ${run.steeringMessages} steering messages, not 1`);
+  if (!notes.some((event) => event.state === "received")) steering.push("the trace never got the steering");
+  if (!notes.some((event) => event.state === "applied")) steering.push("the steering was never applied");
+  if (!run.steeredRequests) steering.push("no model call after the steering included it");
+  if (!run.events.some((event) => event.kind === "model_call" && event.status === "steered")) {
+    steering.push("the running model call wasn't cancelled for the steering");
+  }
+  return [
+    { name: "show what's happening during a turn", summary, errors: shown },
+    { name: "steer a running turn", summary, errors: steering },
+  ];
+}
+
 async function checkScenarios(browser: Browser): Promise<Result[]> {
   const results: Result[] = [];
   const add = (name: string, run: Run, problems: string[]) =>
@@ -458,7 +552,8 @@ console.log(`Testing ${PACKAGE} ${buildRuntime()}, as runtime-build pins it.`);
 const ports = sitePorts();
 const scenarios = (!ARGS.length || ARGS.includes("scenarios")) && !REAL_LLM;
 const mcp = (!ARGS.length || ARGS.includes("mcp")) && !REAL_LLM;
-await startExamples([...ports, ...(mcp ? [MCP_SITE] : []), ...(scenarios ? ["8191", "8192", "8193"] : [])]);
+const live = (!ARGS.length || ARGS.includes("live")) && !REAL_LLM;
+await startExamples([...ports, ...(mcp || live ? [MCP_SITE] : []), ...(scenarios ? ["8191", "8192", "8193"] : [])]);
 // HEADED=1 opens a visible browser and slows each step down enough to follow.
 const headed = Boolean(process.env.HEADED);
 const browser = await chromium.launch({ headless: !headed, slowMo: headed ? 250 : 0 });
@@ -470,6 +565,7 @@ const report = (result: Result) => {
 };
 for (const port of ports) report(await checkSite(browser, port));
 if (mcp) for (const result of await checkMcp(browser)) report(result);
+if (live) for (const result of await checkLiveTurn(browser)) report(result);
 if (scenarios) for (const result of await checkScenarios(browser)) report(result);
 await browser.close();
 
