@@ -139,6 +139,21 @@ test("a streamed turn reports each agent and tool call, then the answer", async 
   });
 });
 
+test("model calls stream when the network's llm_config has fallbacks, as Cailville's do", async () => {
+  const llm_config = { model_name: "gpt-5.2", fallbacks: [{ class: "openai", model_name: "gpt-5.2" }, { model_name: "claude-sonnet" }] };
+  const networks = { main: { llm_config, tools: [agent("front")] } };
+  const streamed = [];
+  const reply = (_name, body) => {
+    streamed.push(body.stream === true);
+    return { text: "hello" };
+  };
+  await withFetch(siteFetch({ networks, reply }), async () => {
+    const events = await collect(new Engine({ originUrl: SITE }).streamTurn("Hi"));
+    assert.deepEqual(streamed, [true]);
+    assert.deepEqual(events.filter((event) => event.type === "agent.output.delta").map((event) => event.delta), ["hel", "lo"]);
+  });
+});
+
 test("steering cancels the front man's running model call and makes it again with the guidance", async () => {
   const networks = { main: { tools: [agent("front")] } };
   const calls = [];

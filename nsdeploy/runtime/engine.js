@@ -361,10 +361,12 @@ export class Engine {
     // providers) would otherwise be what neuro-san calls, and with one router and one
     // model there is nothing left to fall back to.
     // Streaming, so the trace and the turn's event stream get each answer's text as
-    // it arrives, as main's own loop does.
+    // it arrives, as main's own loop does. neuro-san builds the model from a fallback
+    // when there are fallbacks, so each one streams too.
     const llmConfig = (agentConfig) => {
       const out = { ...(agentConfig || {}), class: "openai", streaming: true, ...override };
       if (this.modelOverride) delete out.fallbacks;
+      if (Array.isArray(out.fallbacks)) out.fallbacks = out.fallbacks.map((fallback) => ({ ...fallback, streaming: true }));
       return out;
     };
     config.llm_config = llmConfig(config.llm_config);
