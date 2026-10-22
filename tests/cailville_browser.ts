@@ -2,8 +2,10 @@
 // the way a person would: opens the map, then for each site sends its first sample
 // query, approves each partner site the agent asks to contact, and waits for the run
 // to finish. It then checks the site's execution trace, so a site only passes when its
-// agents actually ran. Last, it checks what happens when the user cancels a link,
-// links through the prompt, declines a contact, or has no key for a real router.
+// agents actually ran. Then it checks MCP on its own: that an agent's MCP tool call
+// goes out and comes back, and that declining it keeps anything from reaching the MCP
+// server. Last, it checks what happens when the user cancels a link, links through
+// the prompt, declines a contact, or has no key for a real router.
 //
 // It first builds the runtime from the TS package version runtime-build/package.json
 // pins, running npm ci there if a different version is installed. Start Cailville
@@ -13,6 +15,7 @@
 //   npx playwright install chromium     # once
 //   npm run test:cailville              # everything
 //   npm run test:cailville -- 8091 8191 # just these ports
+//   npm run test:cailville -- mcp       # just the MCP checks
 //   npm run test:cailville -- scenarios # just the cancel, link, decline and no-key checks
 //   HEADED=1 npm run test:cailville -- 8091  # watch it in a visible browser
 //   TEST_REAL_LLM=1 npm run test:cailville -- 8191  # use $OPENAI_API_KEY and gpt-4o, not the mock
@@ -50,6 +53,7 @@ interface TraceEvent {
   mock?: boolean;
   preview?: string;
   error?: string;
+  responsePreview?: string;
 }
 
 interface Example {
@@ -78,6 +82,7 @@ interface Run {
   declines: number;
   finished: boolean;
   routerRequests: number;
+  mcpRequests: number;
 }
 
 interface Result {
@@ -139,7 +144,7 @@ function expected(error: string): boolean {
 const ARGS = process.argv.slice(2);
 
 function sitePorts(): string[] {
-  const requested = ARGS.filter((arg) => arg !== "scenarios");
+  const requested = ARGS.filter((arg) => arg !== "scenarios" && arg !== "mcp");
   if (ARGS.length) return requested;
   const community: Community = JSON.parse(readFileSync(path.join(ROOT, "cailville", "community.json"), "utf8"));
   const examples = EXAMPLES.filter((example) => !example.fresh).map((example) => String(example.port));
@@ -250,7 +255,7 @@ async function runPage(browser: Browser, port: string, answers: Answers, label =
     await page.addInitScript((value) => sessionStorage.setItem("nsweb-byok-key", value), process.env.OPENAI_API_KEY || "");
   }
   const run: Run = {
-    seconds: 0, events: [], errors: [], links: [], approvals: 0, declines: 0, finished: false, routerRequests: 0,
+    seconds: 0, events: [], errors: [], links: [], approvals: 0, declines: 0, finished: false, routerRequests: 0, mcpRequests: 0,
   };
   page.on("pageerror", (error) => run.errors.push(String(error)));
   page.on("console", (message) => {
@@ -260,7 +265,9 @@ async function runPage(browser: Browser, port: string, answers: Answers, label =
     }
   });
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname.includes("/byok/")) run.routerRequests += 1;
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.includes("/byok/")) run.routerRequests += 1;
+    if (pathname.endsWith("/mcp")) run.mcpRequests += 1;
   });
   page.on("response", (response) => {
     if (response.status() >= 400) {
@@ -353,6 +360,34 @@ async function checkSite(browser: Browser, port: string): Promise<Result> {
   };
 }
 
+// The travel agent system has both kinds of MCP tool: its own coded tools, hosted
+// as MCP servers, and You.com's MCP server, reached through the site's proxy.
+const MCP_SITE = "8120";
+
+// MCP on its own, with the mock LLM, which calls every tool. Allowing the calls has to
+// send them and get answers back. Declining has to keep the page from contacting any
+// MCP server, discovery included, while the run still finishes.
+async function checkMcp(browser: Browser): Promise<Result[]> {
+  const results: Result[] = [];
+  const add = (name: string, run: Run, problems: string[]) =>
+    results.push({ name, summary: `${String(run.seconds).padStart(4)}s mcp=${run.mcpRequests} requests`, errors: problems });
+  const calls = (run: Run) => ended(run, "mcp_call");
+
+  let run = await runPage(browser, MCP_SITE, { consent: "always" }, "mcp");
+  let problems = basicProblems(run);
+  if (!calls(run).length) problems.push("no MCP tool call finished");
+  if (!calls(run).some((event) => (event.responsePreview || "").trim())) problems.push("no MCP tool call returned anything");
+  add("call an MCP tool", run, problems);
+
+  run = await runPage(browser, MCP_SITE, { consent: "decline" }, "mcp-decline");
+  problems = basicProblems(run);
+  if (!run.declines) problems.push("never asked before contacting an MCP server");
+  if (run.mcpRequests) problems.push(`sent ${run.mcpRequests} requests to MCP servers after they were declined`);
+  if (run.events.some((event) => event.kind === "mcp_call")) problems.push("made an MCP tool call after it was declined");
+  add("decline an MCP call", run, problems);
+  return results;
+}
+
 // What should happen when the user doesn't go along with the agent. These run on the
 // mock only, after the sites, and the two link checks need the open link travel agency
 // fresh, in this order, since linking it saves the link on the site.
@@ -408,7 +443,8 @@ mkdirSync(OUT_DIR, { recursive: true });
 console.log(`Testing ${PACKAGE} ${buildRuntime()}, as runtime-build pins it.`);
 const ports = sitePorts();
 const scenarios = (!ARGS.length || ARGS.includes("scenarios")) && !REAL_LLM;
-await startExamples(scenarios ? [...ports, "8191", "8192", "8193"] : ports);
+const mcp = (!ARGS.length || ARGS.includes("mcp")) && !REAL_LLM;
+await startExamples([...ports, ...(mcp ? [MCP_SITE] : []), ...(scenarios ? ["8191", "8192", "8193"] : [])]);
 // HEADED=1 opens a visible browser and slows each step down enough to follow.
 const headed = Boolean(process.env.HEADED);
 const browser = await chromium.launch({ headless: !headed, slowMo: headed ? 250 : 0 });
@@ -419,6 +455,7 @@ const report = (result: Result) => {
   for (const error of result.errors) console.log(`     ${error.slice(0, 200)}`);
 };
 for (const port of ports) report(await checkSite(browser, port));
+if (mcp) for (const result of await checkMcp(browser)) report(result);
 if (scenarios) for (const result of await checkScenarios(browser)) report(result);
 await browser.close();
 
