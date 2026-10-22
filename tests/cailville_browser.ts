@@ -3,9 +3,10 @@
 // query, approves each partner site the agent asks to contact, and waits for the run
 // to finish. It then checks the site's execution trace, so a site only passes when its
 // agents actually ran. Then it checks MCP on its own: that an agent's MCP tool call
-// goes out and comes back, and that declining it keeps anything from reaching the MCP
-// server. Last, it checks what happens when the user cancels a link, links through
-// the prompt, declines a contact, or has no key for a real router.
+// goes out and comes back, and that declining keeps anything from reaching an outside
+// MCP server, while the site's own still work. Last, it checks what happens when the
+// user cancels a link, links through the prompt, declines a contact, or has no key
+// for a real router.
 //
 // It first builds the runtime from the TS package version runtime-build/package.json
 // pins, running npm ci there if a different version is installed. Start Cailville
@@ -48,6 +49,7 @@ interface TraceEvent {
   status?: string;
   origin?: string;
   peerOrigin?: string;
+  url?: string;
   network?: string;
   agent?: string;
   mock?: boolean;
@@ -83,6 +85,9 @@ interface Run {
   finished: boolean;
   routerRequests: number;
   mcpRequests: number;
+  // To an MCP server outside the site: on another origin, or through the site's
+  // /ext-mcp proxy to one.
+  outsideMcpRequests: number;
 }
 
 interface Result {
@@ -256,6 +261,7 @@ async function runPage(browser: Browser, port: string, answers: Answers, label =
   }
   const run: Run = {
     seconds: 0, events: [], errors: [], links: [], approvals: 0, declines: 0, finished: false, routerRequests: 0, mcpRequests: 0,
+    outsideMcpRequests: 0,
   };
   page.on("pageerror", (error) => run.errors.push(String(error)));
   page.on("console", (message) => {
@@ -265,9 +271,12 @@ async function runPage(browser: Browser, port: string, answers: Answers, label =
     }
   });
   page.on("request", (request) => {
-    const pathname = new URL(request.url()).pathname;
-    if (pathname.includes("/byok/")) run.routerRequests += 1;
-    if (pathname.endsWith("/mcp")) run.mcpRequests += 1;
+    const url = new URL(request.url());
+    if (url.pathname.includes("/byok/")) run.routerRequests += 1;
+    if (url.pathname.endsWith("/mcp")) {
+      run.mcpRequests += 1;
+      if (url.origin !== base || url.pathname.startsWith("/ext-mcp/")) run.outsideMcpRequests += 1;
+    }
   });
   page.on("response", (response) => {
     if (response.status() >= 400) {
@@ -379,11 +388,16 @@ async function checkMcp(browser: Browser): Promise<Result[]> {
   if (!calls(run).some((event) => (event.responsePreview || "").trim())) problems.push("no MCP tool call returned anything");
   add("call an MCP tool", run, problems);
 
+  // Only an MCP server outside the site needs consent. The site's own, under /_mcp,
+  // are part of the page the user chose.
   run = await runPage(browser, MCP_SITE, { consent: "decline" }, "mcp-decline");
   problems = basicProblems(run);
-  if (!run.declines) problems.push("never asked before contacting an MCP server");
-  if (run.mcpRequests) problems.push(`sent ${run.mcpRequests} requests to MCP servers after they were declined`);
-  if (run.events.some((event) => event.kind === "mcp_call")) problems.push("made an MCP tool call after it was declined");
+  const outside = (event: TraceEvent) =>
+    event.kind === "mcp_call" && !(event.url || "").startsWith(`http://127.0.0.1:${MCP_SITE}/_mcp/`);
+  if (!run.declines) problems.push("never asked before contacting an outside MCP server");
+  if (run.outsideMcpRequests) problems.push(`sent ${run.outsideMcpRequests} requests to outside MCP servers after they were declined`);
+  if (run.events.some(outside)) problems.push("made an outside MCP tool call after it was declined");
+  if (!calls(run).some((event) => !outside(event))) problems.push("the site's own MCP tools didn't run");
   add("decline an MCP call", run, problems);
   return results;
 }
