@@ -139,6 +139,8 @@ export class Engine {
     this.toolCaller = null; // the agent span whose model call last asked for tools
     this.networksByName = new Map(); // network name -> AgentNetwork, for a tool's spec
     this.toolBatches = new Map(); // "network::agent" -> the tool calls of its last model response
+    this.peerCallers = new Map(); // partner URL -> the agent spans that called it, in call order
+    this.mcpCalls = new Map(); // MCP call id -> { url, tool, response }, while the call runs
   }
 
   // Start a new chat.
@@ -441,7 +443,7 @@ export class Engine {
         }
         return true;
       },
-      mcpCall: async ({ url, tool, args }) => {
+      mcpCall: async ({ url, tool, args, caller, callId }) => {
         // Discovery consent never silently authorizes execution: a third-party call is
         // confirmed with the real payload, unless the origin is "always" allowed.
         // Same-site calls skip both prompts, as they don't cross the site's boundary.
@@ -458,17 +460,18 @@ export class Engine {
             return `The user declined to send this request to ${hostOf(url)}. Continue without it.`;
           }
         }
-        mcpSpans.set(`${url}::${tool}`, this.trace.start("mcp_call", {
+        mcpSpans.set(callId, this.trace.start("mcp_call", {
           parent: this.runSpan, origin: hostOf(this.top.base), peerOrigin: hostOf(url), url, tool, requestPayload: args,
         }));
-        this._startTool(`mcp::${url}::${tool}`, { tool, toolKind: "MCP", args });
+        this.mcpCalls.set(callId, { url, tool, response: false });
+        this._startTool(`mcp::${callId}`, { tool, toolKind: "MCP", args, parent: caller ? this._callerSpan(caller) : null });
         return null;
       },
-      mcpResult: ({ url, tool, result, error }) => {
-        const key = `${url}::${tool}`;
-        const span = mcpSpans.get(key);
-        mcpSpans.delete(key);
-        this._endTool(`mcp::${url}::${tool}`, error ? { error } : { result });
+      mcpResult: ({ result, error, callId }) => {
+        const span = mcpSpans.get(callId);
+        mcpSpans.delete(callId);
+        this.mcpCalls.delete(callId);
+        this._endTool(`mcp::${callId}`, error ? { error } : { result });
         if (!span) return;
         if (error) this.trace.fail(span, error);
         else this.trace.end(span, { responsePreview: String(result ?? "").slice(0, 300) });
@@ -476,7 +479,9 @@ export class Engine {
       resolvePeer: async (url, { chain, request }) => {
         const owner = this.refOwners.get(url);
         const label = owner?.linkSlot || owner?.network.linkLabels?.[url] || parseExternalAgent(url, owner?.base)?.agentName || url;
-        this._startTool(`peer::${url}`, { tool: label, toolKind: owner?.linkSlot ? "linked network" : "remote network" });
+        this._startTool(`peer::${url}`, {
+          tool: label, toolKind: owner?.linkSlot ? "linked network" : "remote network", parent: this.peerCallers.get(url)?.shift(),
+        });
         try {
           const resolved = await this._resolvePeer(url, chain, request, peerSpans);
           // An answer instead of a run (declined, skipped) is the call's whole result.
@@ -510,7 +515,7 @@ export class Engine {
         peerAnswers.set(url, result.text);
         return JSON.stringify(result);
       },
-      toolCall: ({ caller, tool, run }) => this._scheduleTool(caller, tool, run),
+      toolCall: ({ caller, tool, ref, run }) => this._scheduleTool(caller, tool, run, ref),
       peerFunction: (url) => {
         const owner = this.refOwners.get(url);
         const label = owner?.network.linkLabels?.[url] || owner?.linkSlot || parseExternalAgent(url, owner?.base)?.agentName || url;
@@ -665,7 +670,12 @@ export class Engine {
   // the model's order when one of them isn't safe to run alongside the others
   // (parallel_safe = false, or a REST tool that changes something). neuro-san's own
   // loop starts all of them at once, so this holds back the ones over the limit.
-  async _scheduleTool(caller, tool, run) {
+  async _scheduleTool(caller, tool, run, ref = "") {
+    // resolvePeer only gets the partner's URL, so it finds the agent that called it here.
+    if (/^https?:\/\//.test(ref) && !/\/mcp$/.test(new URL(ref).pathname)) {
+      if (!this.peerCallers.has(ref)) this.peerCallers.set(ref, []);
+      this.peerCallers.get(ref).push(this._callerSpan(caller));
+    }
     const batch = this.toolBatches.get(`${caller.network}::${caller.agent}`);
     if (!batch) return run();
     const names = await batch.ready;
@@ -700,14 +710,21 @@ export class Engine {
   // under that call's tool span, while the MCP client reads the result as usual.
   _watchMcpProgress(url, { tool }, response) {
     if (!/text\/event-stream/i.test(response.headers.get("content-type") || "") || !response.body) return;
+    // The MCP client sends its requests in the order the calls start, so this response
+    // is for the first running call to this server and tool that has none yet.
     const target = new URL(url);
     let key = null;
-    for (const candidate of this.toolSpans.keys()) {
-      if (!candidate.startsWith("mcp::") || !candidate.endsWith(`::${tool}`)) continue;
+    for (const [callId, call] of this.mcpCalls) {
+      if (call.response || call.tool !== tool) continue;
       try {
-        const known = new URL(candidate.slice(5, -(tool.length + 2)));
-        if (known.origin === target.origin && known.pathname === target.pathname) key = candidate;
-      } catch {}
+        const known = new URL(call.url);
+        if (known.origin !== target.origin || known.pathname !== target.pathname) continue;
+      } catch {
+        continue;
+      }
+      call.response = true;
+      key = `mcp::${callId}`;
+      break;
     }
     const parent = (key && this.toolSpans.get(key)) || this.runSpan;
     readSseEvents(response.clone(), (message) => {
@@ -848,6 +865,13 @@ export class Engine {
     return best?.caller || null;
   }
 
+  // The span of the agent making a tool call: the one its origin path names, which is
+  // how the streamed messages name it too.
+  _callerSpan(caller) {
+    const path = (caller.origin || []).map((o) => `${o.tool}#${o.instantiation_index ?? ""}`).join("/");
+    return this.agentSpans.get(path)?.span || this._openAgentSpan(caller) || this.toolCaller || this.runSpan;
+  }
+
   // The newest open agent span of this run for the caller.
   _openAgentSpan(caller) {
     let found = null;
@@ -910,6 +934,7 @@ export class Engine {
     this.agentSpans = new Map();
     this.toolSpans = new Map();
     this.toolCaller = null;
+    this.peerCallers = new Map();
     this.composition = {
       remoteCalls: 0,
       peerCalls: new Map(),

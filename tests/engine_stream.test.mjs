@@ -336,6 +336,52 @@ test("sibling tool calls run at most four at a time, and in order when one isn't
   });
 });
 
+test("each tool call shows under the agent that made it, when two agents call tools at once", async () => {
+  // A slow MCP tool, so both agents' calls are running at the same time.
+  const calls = [];
+  const plain = mcpServer("lookup", calls);
+  const slow = async (pathname, init) => {
+    if (!pathname.startsWith("/_mcp/")) return null;
+    if (init.method === "POST" && JSON.parse(init.body).method === "tools/call") await new Promise((resolve) => setTimeout(resolve, 30));
+    return plain(pathname, init);
+  };
+  const mcp = `${SITE}/_mcp/0/mcp`;
+  const networks = {
+    main: { tools: [agent("front", ["scout", "planner"]), agent("scout", [mcp], INQUIRY), agent("planner", [mcp], INQUIRY)] },
+    other_network: { tools: [agent("other_front")] },
+  };
+  const reply = (name, body) => {
+    if (toolOutputs(body).length) return { text: `${name} done` };
+    if (name === "front") return callAll(["scout", "planner"])(body);
+    if (name === "scout" || name === "planner") return { call: { name: "lookup", arguments: JSON.stringify({ inquiry: name }) } };
+    return { text: `${name} answer` };
+  };
+  const manifest = { allowed_peers: [SITE] };
+  await withFetch(siteFetch({ networks, manifest, reply, routes: { [SITE]: slow } }), async () => {
+    const events = await collect(new Engine({ originUrl: SITE }).streamTurn("Plan it"));
+    assert.deepEqual(calls, ["lookup", "lookup"]);
+    const mcpStarts = events.filter((event) => event.type === "tool.started" && event.tool.kind === "MCP");
+    assert.deepEqual(mcpStarts.map((event) => event.source?.agent).sort(), ["planner", "scout"]);
+  });
+
+  // The same for partner networks: each agent calls its own one, at the same time.
+  const peerNetworks = {
+    main: { tools: [agent("front", ["scout", "planner"]), agent("scout", [`${SITE}/inn`], INQUIRY), agent("planner", [`${SITE}/farm`], INQUIRY)] },
+    inn: { tools: [agent("inn_front")] },
+    farm: { tools: [agent("farm_front")] },
+  };
+  const peerReply = (name, body) => {
+    if (toolOutputs(body).length || name.endsWith("_front")) return { text: `${name} done` };
+    if (name === "front") return callAll(["scout", "planner"])(body);
+    return { call: { name: body.tools[0].name, arguments: JSON.stringify({ inquiry: name }) } };
+  };
+  await withFetch(siteFetch({ networks: peerNetworks, manifest, reply: peerReply }), async () => {
+    const events = await collect(new Engine({ originUrl: SITE }).streamTurn("Plan it"));
+    const peerStarts = events.filter((event) => event.type === "tool.started" && event.tool.kind === "remote network");
+    assert.deepEqual(peerStarts.map((event) => [event.source?.agent, event.tool.name]).sort(), [["planner", "farm"], ["scout", "inn"]]);
+  });
+});
+
 test("consent is asked only for calls that leave the site", async () => {
   const mcpCalls = [];
   const siteMcp = mcpServer("local_tool", mcpCalls);
