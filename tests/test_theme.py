@@ -72,17 +72,10 @@ class ThemeChatTests(unittest.TestCase):
 
 class ThemeLayoutTests(unittest.TestCase):
     def test_prompt_requests_composed_runtime_slots(self):
-        self.assertEqual(PROMPT_VERSION, "12")
+        self.assertEqual(PROMPT_VERSION, "9")
         self.assertIn('data-ns-layout="composed"', _SYSTEM_PROMPT)
         self.assertIn('data-ns-slot="chat"', _SYSTEM_PROMPT)
         self.assertIn('data-ns-slot="agents"', _SYSTEM_PROMPT)
-        self.assertNotIn('data-ns-slot="activity"', _SYSTEM_PROMPT)
-        self.assertIn(".ns-turn-status-spinner", _SYSTEM_PROMPT)
-        self.assertIn(".ns-turn-status-text", _SYSTEM_PROMPT)
-        self.assertIn("data-status-type", _SYSTEM_PROMPT)
-        self.assertIn("data-turn-active='true'", _SYSTEM_PROMPT)
-        self.assertIn(".ns-send-steering", _SYSTEM_PROMPT)
-        self.assertIn(".ns-steering-message", _SYSTEM_PROMPT)
         self.assertIn("<details><summary>", _SYSTEM_PROMPT)
         self.assertIn("CRUSE forms must remain reachable", _SYSTEM_PROMPT)
         self.assertIn("OPTIONAL starting point", _SYSTEM_PROMPT)
@@ -99,7 +92,6 @@ class ThemeLayoutTests(unittest.TestCase):
                     <summary>Agents working</summary>
                     <aside data-ns-slot="agents"></aside>
                   </details>
-                  <section class="timeline" data-ns-slot="activity"></section>
                 </div>
                 <div id="app">duplicate</div>
             """,
@@ -111,7 +103,6 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertIn('data-ns-slot="header"', spec.body)
         self.assertIn('data-ns-slot="chat"', spec.body)
         self.assertIn('data-ns-slot="agents"', spec.body)
-        self.assertIn('data-ns-slot="activity"', spec.body)
         self.assertIn("<details", spec.body)
         self.assertIn("<summary>Agents working</summary>", spec.body)
         self.assertNotIn("onclick", spec.body)
@@ -143,23 +134,6 @@ class ThemeLayoutTests(unittest.TestCase):
                 <div id="app" data-ns-layout="composed">
                   <div data-ns-slot="header"></div>
                   <main data-ns-slot="chat"></main>
-                </div>
-            """,
-            "style": "body { color: red; }",
-        })
-
-        self.assertEqual(spec.body, "")
-        self.assertEqual(spec.style, "")
-
-    def test_duplicate_optional_activity_slot_falls_back_to_default(self):
-        spec = ThemeSpec.coerce({
-            "body": """
-                <div id="app" data-ns-layout="composed">
-                  <div data-ns-slot="header"></div>
-                  <main data-ns-slot="chat"></main>
-                  <aside data-ns-slot="agents"></aside>
-                  <section data-ns-slot="activity"></section>
-                  <section data-ns-slot="activity"></section>
                 </div>
             """,
             "style": "body { color: red; }",

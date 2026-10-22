@@ -28,7 +28,7 @@ export class LlmClient {
   // messages: [{role, content, tool_calls?, tool_call_id?, name?}]
   // tools: [{type:'function', function:{name, description, parameters}}]
   // onContentDelta: (text) => void  — streamed natural-language tokens
-  async chat({ model, messages, tools, origin, parentSpan, onContentDelta, signal }) {
+  async chat({ model, messages, tools, origin, parentSpan, onContentDelta }) {
     model = normalizeModelName(model);
     // A real (non-mock) router with no API key: refuse rather than forward the
     // placeholder "demo" to a live provider (which returns a confusing 401). This
@@ -66,7 +66,6 @@ export class LlmClient {
           ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
         },
         body: JSON.stringify(body),
-        signal,
       });
       if (!resp.ok) {
         const txt = await resp.text().catch(() => "");
@@ -74,7 +73,7 @@ export class LlmClient {
       }
 
       const routeKind = resp.headers.get("X-Nsdeploy-LLM-Route") || "";
-      const result = await this._readSse(resp, onContentDelta, span, signal);
+      const result = await this._readSse(resp, onContentDelta, span);
       const respMock = isMockResponse(this.mock, routeKind, result.model);
       this.trace?.end(span, {
         finishReason: result.finishReason,
@@ -88,23 +87,13 @@ export class LlmClient {
       });
       return result;
     } catch (err) {
-      if (err?.name === "AbortError" && signal?.aborted) {
-        this.trace?.end(span, { status: "steered", interrupted: true });
-      } else {
-        this.trace?.fail(span, err);
-      }
+      this.trace?.fail(span, err);
       throw err;
     }
   }
 
-  async _readSse(resp, onContentDelta, span, signal) {
+  async _readSse(resp, onContentDelta, span) {
     const reader = resp.body.getReader();
-    const cancel = () => reader.cancel(signal?.reason).catch(() => {});
-    signal?.addEventListener("abort", cancel, { once: true });
-    if (signal?.aborted) {
-      await cancel();
-      signal.throwIfAborted();
-    }
     const dec = new TextDecoder();
     let buf = "";
     let content = "";
@@ -121,10 +110,8 @@ export class LlmClient {
       const delta = choice.delta || {};
       if (delta.content) {
         content += delta.content;
-        if (!signal?.aborted) {
-          onContentDelta?.(delta.content);
-          this.trace?.update(span, { streamChunk: delta.content });
-        }
+        onContentDelta?.(delta.content);
+        this.trace?.update(span, { streamChunk: delta.content });
       }
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
@@ -138,28 +125,23 @@ export class LlmClient {
       if (choice.finish_reason) finishReason = choice.finish_reason;
     };
 
-    try {
-      for (;;) {
-        const { value, done } = await reader.read();
-        signal?.throwIfAborted();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        let nl;
-        while ((nl = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, nl).trim();
-          buf = buf.slice(nl + 1);
-          if (!line || !line.startsWith("data:")) continue;
-          const payload = line.slice(5).trim();
-          if (payload === "[DONE]") continue;
-          try {
-            handleChunk(JSON.parse(payload));
-          } catch {
-            /* ignore malformed keep-alive lines */
-          }
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line || !line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "[DONE]") continue;
+        try {
+          handleChunk(JSON.parse(payload));
+        } catch {
+          /* ignore malformed keep-alive lines */
         }
       }
-    } finally {
-      signal?.removeEventListener("abort", cancel);
     }
 
     return { content, toolCalls: toolCalls.filter(Boolean), finishReason, usage, model };

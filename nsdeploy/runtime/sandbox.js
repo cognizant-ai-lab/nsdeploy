@@ -34,21 +34,9 @@ export class ToolSandbox {
     if (this.worker) return;
     this.worker = new Worker(this.workerUrl, { type: "module" });
     this.worker.onmessage = (e) => {
-      const { id, kind, ok, result, slyData, error, progress, message } = e.data;
+      const { id, ok, result, slyData, error } = e.data;
       const p = this.pending.get(id);
       if (!p) return;
-      if (kind === "progress") {
-        this.trace?.note("tool_progress", {
-          parent: p.span,
-          origin: p.origin,
-          tool: p.className,
-          toolKind: "coded (sandbox)",
-          progress,
-          message: message || "",
-        });
-        p.onProgress?.({ progress, message: message || "" });
-        return;
-      }
       this.pending.delete(id);
       if (ok) p.resolve({ result, slyData });
       else p.reject(new Error(error));
@@ -60,7 +48,7 @@ export class ToolSandbox {
   }
 
   // Runs a coded tool. `permittedSly` is the allow-filtered sly_data slice.
-  async invoke({ bundleUrl, integrity, className, args, permittedSly, origin, parentSpan, timeoutMs = 15000, onProgress }) {
+  async invoke({ bundleUrl, integrity, className, args, permittedSly, origin, parentSpan, timeoutMs = 15000 }) {
     this._ensure();
     const id = ++this.seq;
     const span = this.trace?.start("tool_call", {
@@ -73,7 +61,7 @@ export class ToolSandbox {
     try {
       const bundleCode = await this._bundleSource(bundleUrl, integrity);
       const result = await new Promise((resolve, reject) => {
-        this.pending.set(id, { resolve, reject, span, origin, className, onProgress });
+        this.pending.set(id, { resolve, reject });
         this.worker.postMessage({ id, bundleCode, cacheKey: bundleUrl, className, args, slyData: permittedSly });
         setTimeout(() => {
           if (this.pending.has(id)) {

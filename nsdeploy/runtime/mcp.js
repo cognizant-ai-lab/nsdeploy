@@ -10,11 +10,10 @@
 const PROTOCOL_VERSION = "2025-06-18";
 
 export class McpClient {
-  constructor({ url, trace, headers, onProgress } = {}) {
+  constructor({ url, trace, headers } = {}) {
     this.url = url;
     this.trace = trace;
     this.headers = headers || {};
-    this.onProgress = onProgress;
     this.sessionId = null;
     this.initialized = null; // a promise, once
     this.rpcId = 0;
@@ -40,24 +39,9 @@ export class McpClient {
       if (sid) this.sessionId = sid;
       if (notification) { this.trace?.end(span, { status: "ok", notification: true }); return null; }
 
-      if (!resp.ok) {
-        const text = await resp.text();
-        throw new Error(`MCP HTTP ${resp.status}: ${text.slice(0, 200)}`);
-      }
-      const json = await readJsonRpcResponse(resp, body.id, (notice) => {
-        const params = notice.params || {};
-        const message = params.message || params.data?.message || (typeof params.data === "string" ? params.data : "");
-        const progress = params.progress ?? params.data ?? params;
-        this.trace?.note("tool_progress", {
-          parent: span,
-          peerOrigin: hostOf(this.url),
-          toolKind: "MCP",
-          method: notice.method,
-          progress,
-          message,
-        });
-        this.onProgress?.({ method: notice.method, progress, message, params });
-      });
+      const text = await resp.text();
+      if (!resp.ok) throw new Error(`MCP HTTP ${resp.status}: ${text.slice(0, 200)}`);
+      const json = parseMaybeSse(text, body.id);
       if (json.error) throw new Error(`MCP error ${json.error.code}: ${json.error.message}`);
       this.trace?.end(span, { status: "ok" });
       return json.result;
@@ -95,70 +79,12 @@ export class McpClient {
   }
 }
 
-// Consume MCP SSE incrementally so notifications are observable while a long
-// tool is still running. Plain JSON responses retain the simple buffered path.
-export async function readJsonRpcResponse(resp, expectId, onNotification) {
-  const contentType = resp.headers?.get?.("content-type") || "";
-  if (!/text\/event-stream/i.test(contentType) || !resp.body?.getReader) {
-    const text = await resp.text();
-    return parseMaybeSse(text, expectId, onNotification);
-  }
-
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let fallback = null;
-
-  const accept = (payload) => {
-    if (!payload || payload === "[DONE]") return null;
-    let json;
-    try { json = JSON.parse(payload); } catch { return null; }
-    if (!("result" in json) && !("error" in json)) {
-      onNotification?.(json);
-      return null;
-    }
-    if (expectId == null || json.id === expectId) return json;
-    if (!fallback) fallback = json;
-    return null;
-  };
-
-  while (true) {
-    const { value, done } = await reader.read();
-    buffer += decoder.decode(value || new Uint8Array(), { stream: !done }).replace(/\r\n/g, "\n");
-    let boundary;
-    while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-      const block = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      const payload = block.split("\n")
-        .filter((line) => line.trimStart().startsWith("data:"))
-        .map((line) => line.slice(line.indexOf(":") + 1).trimStart())
-        .join("\n");
-      const response = accept(payload);
-      if (response) {
-        try { await reader.cancel(); } catch { /* response is already complete */ }
-        return response;
-      }
-    }
-    if (done) break;
-  }
-  if (buffer.trim()) {
-    const payload = buffer.split("\n")
-      .filter((line) => line.trimStart().startsWith("data:"))
-      .map((line) => line.slice(line.indexOf(":") + 1).trimStart())
-      .join("\n");
-    const response = accept(payload);
-    if (response) return response;
-  }
-  if (fallback) return fallback;
-  throw new Error("unparseable MCP response");
-}
-
 // MCP servers may answer JSON-RPC as plain JSON or as an SSE stream. The stream can
 // carry server notifications (e.g. `notifications/message` log lines — You.com emits
 // one before every tools/call result) ahead of the actual response, so pick the
 // event that is a JSON-RPC response (has `result` or `error`), preferring the one
 // whose id matches the request.
-export function parseMaybeSse(text, expectId, onNotification) {
+export function parseMaybeSse(text, expectId) {
   const trimmed = text.trim();
   if (trimmed.startsWith("{")) return JSON.parse(trimmed);
   let fallback = null;
@@ -169,10 +95,7 @@ export function parseMaybeSse(text, expectId, onNotification) {
     if (!payload || payload === "[DONE]") continue;
     let json;
     try { json = JSON.parse(payload); } catch { continue; }
-    if (!("result" in json) && !("error" in json)) {
-      onNotification?.(json);
-      continue;
-    }
+    if (!("result" in json) && !("error" in json)) continue; // a notification, not the response
     if (expectId == null || json.id === expectId) return json;
     if (!fallback) fallback = json;
   }

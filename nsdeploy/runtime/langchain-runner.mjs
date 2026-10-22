@@ -31,7 +31,6 @@ export async function runAgentLangChain(ctx, agentName, userText, parentSpan, ch
   const agentSpan = trace.start("agent", {
     parent: parentSpan, origin, agent: agentName, network: network.name,
     displayAs: spec.class ? "coded_tool" : "llm_agent", runner: "langchain",
-    invocation: ctx.invocation, isTopFrontMan,
   });
 
   try {
@@ -76,31 +75,18 @@ export async function runAgentLangChain(ctx, agentName, userText, parentSpan, ch
 
     let finalText = "";
     for (let step = 0; step < maxSteps; step++) {
-      if (isTopFrontMan) {
-        helpers.applyPendingSteering(ctx.turnControl, (text) => messages.push(new HumanMessage(text)));
-      }
       const span = trace.start("model_call", {
         parent: agentSpan, origin, model, mock: ctx.mock,
         routerHost: hostOf(ctx.routerBaseUrl), keySource, runner: "langchain",
       });
       let ai = null;
       try {
-        const attempt = await helpers.runInterruptibleModelCall(isTopFrontMan ? ctx.turnControl : null, async (signal) => {
-          let response = null;
-          const stream = await chat.stream(messages, { signal });
-          for await (const chunk of stream) {
-            response = response ? response.concat(chunk) : chunk;
-            const piece = textOf(chunk.content);
-            if (piece && !signal?.aborted) { if (isTopFrontMan) ctx.onAnswerDelta?.(piece); trace.update(span, { streamChunk: piece }); }
-          }
-          return response;
-        });
-        if (attempt.interrupted) {
-          trace.end(span, { status: "steered", interrupted: true });
-          step -= 1;
-          continue;
+        const stream = await chat.stream(messages);
+        for await (const chunk of stream) {
+          ai = ai ? ai.concat(chunk) : chunk;
+          const piece = textOf(chunk.content);
+          if (piece) { if (isTopFrontMan) ctx.onAnswerDelta?.(piece); trace.update(span, { streamChunk: piece }); }
         }
-        ai = attempt.value;
         const respModel = ai?.response_metadata?.model_name || ai?.response_metadata?.model || ai?.lc_kwargs?.response_metadata?.model_name;
         const respMock = ctx.mock || /neuro-san-mock/.test(respModel || "");
         trace.end(span, { usage: ai?.usage_metadata, toolCalls: (ai?.tool_calls || []).map((t) => t.name), mock: respMock, respModel });
@@ -109,27 +95,20 @@ export async function runAgentLangChain(ctx, agentName, userText, parentSpan, ch
         throw err;
       }
 
-      if (isTopFrontMan && ctx.turnControl?.pending.length) {
-        step -= 1;
-        continue;
-      }
-
       messages.push(ai);
       const toolCalls = ai?.tool_calls || [];
       if (toolCalls.length === 0) {
         finalText = textOf(ai?.content);
         break;
       }
-      const calls = toolCalls.map((tc) => ({
-        id: tc.id,
-        name: tc.name,
-        args: tc.args || {},
-        entry: toolByName.get(tc.name),
-      }));
-      const toolResults = await helpers.executeToolCalls(ctx, calls, agentSpan, chain);
-      for (const result of toolResults) {
-        messages.push(new ToolMessage({ content: result.content, tool_call_id: result.id, name: result.name }));
-        trace.note("tool_result", { parent: agentSpan, origin, tool: result.name, preview: result.content.slice(0, 200) });
+      for (const tc of toolCalls) {
+        const entry = toolByName.get(tc.name);
+        const result = entry
+          ? await helpers.dispatchToolCall(ctx, entry, tc.args || {}, agentSpan, chain)
+          : `Error: unknown tool '${tc.name}'`;
+        const content = typeof result === "string" ? result : JSON.stringify(result);
+        messages.push(new ToolMessage({ content, tool_call_id: tc.id, name: tc.name }));
+        trace.note("tool_result", { parent: agentSpan, origin, tool: tc.name, preview: content.slice(0, 200) });
       }
     }
 

@@ -281,7 +281,7 @@ def build_private_steward_hocon(
             "note": "Open web reachability. Set NSDEPLOY_STEWARD_DENY_ORIGINS for local policy.",
         },
     }
-    result = """{
+    return """{
   "llm_config": {"model_name": "gpt-4o"},
   "max_execution_seconds": %d,
   "metadata": %s,
@@ -321,10 +321,6 @@ def build_private_steward_hocon(
         ),
         _json.dumps(gateway_parameters, indent=8),
     )
-    if (plan.config.get("private_commerce") or {}).get("steward") == "butterpink_family":
-        from nsdeploy.commerce.steward import add_to_private_network
-        result = _json.dumps(add_to_private_network(_json.loads(result)), indent=2) + "\n"
-    return result
 
 
 def write_private_steward_manifest(
@@ -544,8 +540,7 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     bindings.update(plan.links)
     links_doc = {"version": 1, "networks": {plan.network_name: bindings}}
     links_path.write_text(json.dumps(links_doc, indent=2), encoding="utf-8")
-    index_html = _index_html(theme, _brand_display(plan, theme))
-    (out_dir / "index.html").write_text(index_html, encoding="utf-8")
+    (out_dir / "index.html").write_text(_index_html(theme, _brand_display(plan, theme)), encoding="utf-8")
     (out_dir / "theme.css").write_text(_theme_css(theme), encoding="utf-8")
     site_js = DEFAULT_SITE_JS
     if site_source_dir and (site_source_dir / "site.js").is_file():

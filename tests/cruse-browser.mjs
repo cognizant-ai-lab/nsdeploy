@@ -73,29 +73,6 @@ try {
   app.querySelector("#ns-send").click();
   await tick();
   check(turns.at(-1).text.includes("Friday") && !turns.at(-1).options.interaction, "Users can augment submitted form answers through plain chat");
-
-  let finishRunningTurn;
-  engine.runTurn = async (text, options) => {
-    turns.push({ text, options });
-    const run = engine.trace.start("run", { streamToken: options._streamToken, input: text });
-    options._turnControl?.attach(engine.trace, run);
-    await new Promise((resolve) => { finishRunningTurn = resolve; });
-    options._turnControl?.close();
-    engine.trace.end(run);
-    return { text: "Updated while running.", presentation: null, turnId: run };
-  };
-  app.querySelector("#ns-input").value = "Start a longer search";
-  app.querySelector("#ns-send").click();
-  await tick();
-  check(app.querySelector(".ns-inputbar").dataset.turnActive === "true" && app.querySelector("#ns-send").textContent === "Update", "The input stays available as an Update control during a running turn");
-  app.querySelector("#ns-input").value = "Only include Friday";
-  app.querySelector("#ns-send").click();
-  await tick();
-  check(app.querySelectorAll('.ns-steering-message[data-input-kind="steering"]').length === 1, "Intermediate user guidance appears as a themeable steering message");
-  finishRunningTurn();
-  await tick();
-  await tick();
-  check(app.querySelector(".ns-inputbar").dataset.turnActive === "false" && app.querySelector("#ns-send").textContent === "Send", "The input returns to its normal state after the final answer");
   app.querySelector("#ns-newchat").click();
   check(!app.querySelector(".ns-presentation") && !!app.querySelector('[data-welcome="true"]'), "New chat resets response surfaces and retains the welcome widget");
   // Leave a useful composed sample on screen for desktop/mobile visual review.

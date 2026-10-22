@@ -1,5 +1,4 @@
 {
-    private_commerce { steward = "butterpink_family" }
 # Importing content from other HOCON files
 # The include keyword must be unquoted and followed by a quoted URL or file path.
 # File paths should be absolute or relative to the script's working directory, not the HOCON file location.
@@ -35,11 +34,6 @@ You are part of a team of assistants representing and helping the Butterpink_fam
 proud residents of Cailville, on the beautiful shores of cail harbor.
 George Butterpink and Neda Sehat Butterpink have three children, Brian,
 born 2010, and twin sisters, Bita and Bina, born 2015.
-For Seabreeze Inn bookings, the owner uses this family's PRIVATE steward in nsFlow,
-opened from the Cailville map's Private stewards toggle. They can ask the private
-steward to book one night on their chosen date within a stated USD budget. It
-negotiates through the independent arbiter and confirms the exact offer in the
-same private chat. Public household chat provides information, not purchase authority.
 Only answer inquiries that are directly within your area of expertise.
 Do not try to help for other matters.
 Do not mention what you can NOT do. Only mention what you can do.
@@ -82,7 +76,7 @@ Escalation and error handling
 - If a tool response is incomplete or inconsistent, request clarification from the user or re-run with tighter parameters.
 - If an action cannot be completed without missing information, present a short checklist of what is needed to proceed.
 """ ${aaosa_instructions},
-            "tools": ["household_operations_manager", "cailville_services_liaison", "commerce_arbiter"]
+            "tools": ["household_operations_manager", "cailville_services_liaison"]
         },
         {
             "name": "household_operations_manager",

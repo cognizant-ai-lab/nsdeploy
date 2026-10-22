@@ -117,18 +117,7 @@ for (const runner of ["manual", "langchain"]) test(`${runner}: consolidate at ev
   try {
     const engine = new Engine({ originUrl: "https://top.test", byokKey: "fixture-key", modelOverride: "test-model" });
     if (runner === "langchain") await engine.enableLangChain();
-    const events = [];
-    let result = null;
-    for await (const event of engine.streamTurn("Are there any minivans available for me to borrow next week?")) {
-      events.push(event);
-      if (event.type === "turn.completed") result = event.result;
-    }
-    assert.ok(result);
-    assert.equal(events[0].type, "turn.started");
-    assert.equal(events.at(-1).type, "turn.completed");
-    assert.ok(events.some((event) => event.type === "agent.completed" && event.source?.agent === "peer_leaf"));
-    assert.ok(events.some((event) => event.type === "tool.completed"));
-    assert.ok(events.findIndex((event) => event.type === "tool.completed") < events.length - 1);
+    const result = await engine.runTurn("Are there any minivans available for me to borrow next week?");
     assert.equal(result.presentation.components.filter((c) => c.kind === "form").length, 1);
     assert.deepEqual(Object.keys(result.presentation.components[1].schema.properties), ["start_date", "seats"]);
     assert.equal(engine.trace.events.filter((e) => e.kind === "widget").length, 0);
@@ -142,111 +131,6 @@ for (const runner of ["manual", "langchain"]) test(`${runner}: consolidate at ev
     engine.resetHistory();
     assert.deepEqual(engine.history, []);
   } finally { globalThis.fetch = originalFetch; }
-});
-
-for (const runner of ["manual", "langchain"]) test(`${runner}: steer a running top-agent model call`, async () => {
-  const originalFetch = globalThis.fetch;
-  let signalFirstCall;
-  const firstCall = new Promise((resolve) => { signalFirstCall = resolve; });
-  const observations = [];
-  const steeringConfig = { tools: [spec("root")] };
-  globalThis.fetch = async (url, options = {}) => {
-    const href = String(url);
-    if (href.endsWith("/agent-manifest.json")) return json(manifest("test"));
-    if (href.endsWith("/network.json")) return json(steeringConfig);
-    if (href.endsWith("/links.json")) return json({});
-    assert.match(href, /model\.test\/v1\/chat\/completions$/);
-    const body = JSON.parse(options.body);
-    observations.push(body.messages);
-    const steered = body.messages.some((message) => message.role === "user" && message.content === "Make Friday the priority");
-    if (!steered) {
-      signalFirstCall();
-      return new Promise((_resolve, reject) => {
-        options.signal?.addEventListener("abort", () => {
-          reject(options.signal.reason || new DOMException("Aborted", "AbortError"));
-        }, { once: true });
-      });
-    }
-    const chunk = { id: "steered", object: "chat.completion.chunk", model: "test-model", choices: [{ index: 0, delta: { role: "assistant", content: "Friday is now the priority." }, finish_reason: "stop" }] };
-    return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, { headers: { "Content-Type": "text/event-stream" } });
-  };
-
-  try {
-    const engine = new Engine({ originUrl: "https://top.test", byokKey: "fixture-key", modelOverride: "test-model" });
-    if (runner === "langchain") await engine.enableLangChain();
-    const stream = engine.streamTurn("Find a day next week");
-    const events = [];
-    const collecting = (async () => {
-      for await (const event of stream) events.push(event);
-    })();
-    await firstCall;
-    assert.equal(stream.steer("Make Friday the priority"), true);
-    await collecting;
-
-    assert.equal(events.at(-1).result.text, "Friday is now the priority.");
-    assert.ok(events.some((event) => event.type === "turn.steering.received"));
-    assert.ok(events.some((event) => event.type === "turn.steering.applied"));
-    assert.ok(observations.at(-1).some((message) => message.role === "user" && message.content === "Make Friday the priority"));
-    assert.equal(engine.history.at(-2).content, "Make Friday the priority");
-    assert.equal(stream.steer("Too late"), false);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-for (const runner of ["manual", "langchain"]) test(`${runner}: queue steering behind active downstream work without replaying it`, async () => {
-  const originalFetch = globalThis.fetch;
-  let signalChildStarted;
-  let releaseChild;
-  const childStarted = new Promise((resolve) => { signalChildStarted = resolve; });
-  const childGate = new Promise((resolve) => { releaseChild = resolve; });
-  const observations = [];
-  const steeringConfig = { tools: [spec("root", ["child"]), spec("child")] };
-  const sse = (content, calls = []) => {
-    const chunk = { id: "queued-steering", object: "chat.completion.chunk", model: "test-model", choices: [{ index: 0, delta: { role: "assistant", content, ...(calls.length ? { tool_calls: calls } : {}) }, finish_reason: calls.length ? "tool_calls" : "stop" }] };
-    return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, { headers: { "Content-Type": "text/event-stream" } });
-  };
-  globalThis.fetch = async (url, options = {}) => {
-    const href = String(url);
-    if (href.endsWith("/agent-manifest.json")) return json(manifest("test"));
-    if (href.endsWith("/network.json")) return json(steeringConfig);
-    if (href.endsWith("/links.json")) return json({});
-    const body = JSON.parse(options.body);
-    const agent = body.messages[0].content.match(/AGENT=(\w+)/)[1];
-    observations.push({ agent, messages: body.messages });
-    if (agent === "child") {
-      signalChildStarted();
-      await childGate;
-      return sse("The child found Monday and Friday.");
-    }
-    const toolResults = body.messages.filter((message) => message.role === "tool");
-    if (!toolResults.length) {
-      return sse("", [{ index: 0, id: "call_child", type: "function", function: { name: "child", arguments: '{"request":"Find a day"}' } }]);
-    }
-    assert.ok(body.messages.some((message) => message.role === "user" && message.content === "Prefer Friday"));
-    return sse("Friday is the best match.");
-  };
-
-  try {
-    const engine = new Engine({ originUrl: "https://top.test", byokKey: "fixture-key", modelOverride: "test-model" });
-    if (runner === "langchain") await engine.enableLangChain();
-    const stream = engine.streamTurn("Find a day next week");
-    const events = [];
-    const collecting = (async () => {
-      for await (const event of stream) events.push(event);
-    })();
-    await childStarted;
-    assert.equal(stream.steer("Prefer Friday"), true);
-    releaseChild();
-    await collecting;
-
-    assert.equal(events.at(-1).result.text, "Friday is the best match.");
-    assert.equal(observations.filter(({ agent }) => agent === "child").length, 1);
-    assert.equal(observations.filter(({ agent }) => agent === "root").length, 2);
-    assert.ok(events.findIndex((event) => event.type === "turn.steering.received") < events.findIndex((event) => event.type === "tool.completed"));
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
 });
 
 test("CRUSE remains opt-out and invocation prompts distinguish user from parent", () => {

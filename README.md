@@ -47,39 +47,6 @@ instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
 `--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime),
 `--no-cruse` (skip generative-UI injection), and the theming flags below.
 
-## Shared subdomain gateway
-
-Port-based hosting remains the default for backward compatibility. When the hosting
-environment limits exposed ports, the optional gateway can publish any number of
-nsdeploy sites through one listener and select the site from the request hostname.
-The network name becomes a DNS-safe subdomain (`harbor_town_hall` becomes
-`harbor-town-hall`):
-
-```bash
-# Start the sites on loopback ports and advertise their public subdomain origins.
-python -m nsdeploy examples/link_demo_airline.hocon \
-  --port 9001 --site-url http://link-demo-airline.localhost:8080 &
-python -m nsdeploy examples/link_demo_travel_agency.hocon \
-  --port 9002 --site-url http://link-demo-travel-agency.localhost:8080 &
-
-# Expose both sites through one port.
-python -m nsdeploy gateway --base-domain localhost --port 8080 \
-  --route link_demo_airline=http://127.0.0.1:9001 \
-  --route link_demo_travel_agency=http://127.0.0.1:9002
-```
-
-Open <http://link-demo-airline.localhost:8080/> or
-<http://link-demo-travel-agency.localhost:8080/>. The backend site, facade, and MCP
-tool listeners remain loopback-only; only the gateway port needs to be exposed.
-Unknown hostnames are rejected, and startup fails if two network names normalize to
-the same subdomain.
-
-For Azure or another TLS-terminating ingress, point wildcard DNS such as
-`*.agents.example.com` at the ingress, map its public HTTPS listener to the gateway's
-single internal port, start the gateway with `--bind 0.0.0.0`, and give each site an
-external origin such as `--site-url https://link-demo-airline.agents.example.com`.
-The gateway itself speaks HTTP; TLS can terminate at the platform ingress.
-
 By default it runs on a deterministic **mock** LLM (no key needed). For real output,
 open **⚙ BYOK settings** in the page and enter your API key + model — calls route
 through the same-origin `/byok/v1` CORS proxy to your provider. A saved profile with
@@ -98,8 +65,8 @@ for compatibility and ignored.
 
 ## Cailville multi-site demo
 
-[`cailville/`](cailville) contains fourteen base household,
-business, broker, civic, and commerce-arbiter agent networks, their decentralized link sidecars, and
+[`cailville/`](cailville) contains thirteen independently deployed household,
+business, broker, and civic agent networks, their decentralized link sidecars, and
 an interactive town map. Start the complete demo from the repository root:
 
 ```bash
@@ -137,8 +104,7 @@ public links it discovers, so transport success does not guarantee that one turn
 will cover every requested business category.
 
 The launcher uses `.venv/bin/python` or `venv/bin/python` when available, starts the sites on ports
-8091-8103 plus the commerce arbiter on 8105 (and any added sites), waits for every site,
-and then opens `cailville/cailville.html`. Logs are
+8091-8103, waits for every site, and then opens `cailville/cailville.html`. Logs are
 written to `.nsdeploy/cailville-logs/`. Its runtime BYOK proxy defaults to OpenAI and
 theme generation defaults to `gpt-5.6`; override those with `NSDEPLOY_UPSTREAM`,
 `NSDEPLOY_THEME_MODEL`, or `NSDEPLOY_PYTHON`. Existing editable themes are preserved;
@@ -150,7 +116,7 @@ to the manifest directory, for example
 and portable with the bundle directory. To run those stewards in a standard
 Neuro-SAN server, set `AGENT_MANIFEST_FILE` to that manifest.
 `launch_all.sh` also starts the private Neuro-SAN studio from
-`/Users/754339/projects/cailville-private` (using its installed
+`/Users/m_754339/PycharmProjects/cailville-private` (using its installed
 `neuro-san-studio` package), points its `AGENT_MANIFEST_FILE` at this generated
 manifest, and opens nsFlow on port `4174`.
 It waits for both the Neuro-SAN HTTP server and nsFlow to be ready before opening
@@ -158,23 +124,6 @@ the demo, avoiding an initial concierge connection race.
 Override the private project or ports with `NSDEPLOY_PRIVATE_STUDIO_DIR`,
 `NSDEPLOY_PRIVATE_STUDIO_HTTP_PORT`, `NSDEPLOY_PRIVATE_STUDIO_GRPC_PORT`, and
 `NSDEPLOY_PRIVATE_STUDIO_NSFLOW_PORT`.
-
-The existing Cailville port mode is also the default. To expose every public site
-through one local gateway port instead, enable subdomain routing explicitly:
-
-```bash
-NSDEPLOY_ROUTING=subdomain \
-NSDEPLOY_BASE_DOMAIN=localhost \
-NSDEPLOY_GATEWAY_PORT=8080 \
-./cailville/launch_all.sh
-```
-
-This publishes URLs such as <http://harbor-guide.localhost:8080/> and rewrites the
-generated Cailville map, public-site directory, manifests, and runtime link sidecars
-to use those origins. The checked-in port-based link sidecars are not modified.
-For a cloud ingress, additionally set `NSDEPLOY_GATEWAY_BIND=0.0.0.0`,
-`NSDEPLOY_PUBLIC_SCHEME=https`, and `NSDEPLOY_PUBLIC_PORT=443`; the internal
-`NSDEPLOY_GATEWAY_PORT` can remain an unprivileged port such as `8080`.
 
 To run the agents with Docker Model Runner instead, explicitly select its upstream
 and enter one of the exact IDs returned by its `/models` endpoint in BYOK settings:
@@ -206,128 +155,6 @@ Stop the complete demo from another terminal:
 ./cailville/stop_all.sh
 ```
 
-### Book through Butterpink's private steward in nsFlow
-
-The Cailville map includes **Cailville Commerce Arbiter**, connected to **Seabreeze
-Inn** and **Butterpink Family**. Booking takes place in the existing private
-steward conversation in **nsFlow**, reached through the map's **Private stewards**
-toggle. There is no separate commerce page, form, pairing code or checkout.
-
-Ask Butterpink's private steward to book a night at the Inn for a stated USD maximum.
-It collects any missing date or budget, creates a fixed mandate at the public
-arbiter, and engages the Inn's coded seller adapter over HTTP. The Inn receives
-stay details and a scoped seller capability, never the raw private ceiling. The
-arbiter receives the sealed policy bid and computes the binding offer. The steward
-presents that offer in chat; a subsequent **Confirm booking** reply approves the
-exact offer and returns a simulated receipt in the same conversation.
-
-The implementation uses the actual SQLite arbiter from
-[babakatwork/agent-commerce-demo](https://github.com/babakatwork/agent-commerce-demo),
-pinned to commit `47fe668ff19c23cf1294685ef122d8ca9fad63e1`. Its engine is vendored
-unchanged with the Apache license and notice; see
-[`PROVENANCE.md`](nsdeploy/commerce/PROVENANCE.md). nsdeploy supplies the fixture
-catalogue, HTTP adapters, private coded tool and chat middleware. The negotiation
-and ledger are coded execution; the private LLM interprets the request and calls
-tools. Public sites retain their usual chat, discovery and MCP functionality.
-
-The fixture is **one night for two adults** with parking, Wi-Fi, one local activity,
-taxes and fees. It excludes meals and travel to Cailville. Catalogue price:
-**$525**. A **$500** ceiling produces **$477.50** under equal-weight Nash bargaining;
-**$450** produces **NO_AGREEMENT**. Other dates must be today or later. Other stay
-lengths or party sizes require a different catalogue fixture; the steward should
-explain that scope instead of silently changing the request. All amounts are
-integer USD cents. Offers expire 15 minutes after negotiation.
-
-#### Manual check before pushing
-
-1. Launch Cailville normally, with its existing private studio and model credentials:
-
-   ```bash
-   NSDEPLOY_THEME=0 ./cailville/launch_all.sh
-   ```
-
-   The launcher opens the map and starts nsFlow. `NSDEPLOY_THEME=0` preserves the
-   editable themes and skips paid theme generation. The private studio uses its
-   configured model credentials; booking adapters do not use or forward LLM keys.
-2. On [`cailville/cailville.html`](cailville/cailville.html), enable **Private
-   stewards**. Click the private steward badge beside **Butterpink Family**. It
-   opens nsFlow with `butterpink_family/butterpink_family_private_steward` selected.
-   The equivalent direct link is
-   [Butterpink private steward](http://127.0.0.1:4174/?network=butterpink_family%2Fbutterpink_family_private_steward).
-3. Start a new chat and ask:
-
-   ```text
-   Book a night at Seabreeze Inn for two adults on 2026-12-15 for no more than $500.
-   ```
-
-   Use a future date if this example date has passed. You can instead start with
-   “Book a night at the Inn for under $500”; the steward should ask for the date.
-   Expect an arbiter-issued **$477.50** offer, the correct dates and inclusions,
-   cancellation terms, and an invitation to confirm. Nothing is held or spent yet.
-4. Reply **Confirm booking** in that chat. Expect a **SIM-...** receipt, **$477.50**
-   paid in the simulation and the same dates. Ask “What is my booking status?”:
-   the same receipt should return. Repeating confirmation must not charge twice.
-5. In a new chat, repeat with **$450**. Expect no agreement and no booking. Try a
-   **$500** offer followed by **Cancel the offer**. Ask for status: it should be
-   cancelled with zero spent. Changing the budget or date on an active offer
-   requires cancelling it first. An offer older than 15 minutes cannot be approved.
-6. Verify other private-steward requests, public-site chat, map filters and links
-   still behave normally. The arbiter and Inn public pages explain the mechanism;
-   they have no commerce banner or checkout. `/commerce` returns 404.
-
-The private graph keeps its booking context between nsFlow turns through a single
-opaque SlyData handle. The private middleware reads the new human message, records
-the user's dollar ceiling, and only permits approval of an offer already presented
-in an earlier turn. A model-supplied approval flag or a request to settle during the
-initial negotiation cannot bypass this. Canonical offers, status and receipts are
-rendered from coded results, rather than model-invented prices or confirmations.
-For predictable confirmation use **Confirm booking**; ambiguous replies do not
-approve a purchase. Ordinary public MCP gateway calls remain available to this
-steward, and other generated stewards are unchanged.
-
-#### Verification and deployment state
-
-```bash
-python -m unittest discover -s tests -v
-npm test
-```
-
-The commerce tests execute real private Neuro-SAN graphs with a scripted test
-model and real local HTTP calls through the arbiter and Inn. They test natural
-booking requests, follow-up confirmation and status, missing details, no agreement,
-cancellation, premature or negated approval, a lowered budget, credential/session
-isolation, forged offers, expiry, inventory failure, retries and persistence. Existing BYOK, MCP, linking,
-resolver, theme, launcher and browser-runtime regressions remain in the full suites.
-The scripted model lives only in tests. Normal nsFlow uses the configured private LLM.
-The chat integration was also exercised in nsFlow 0.6.17 with Neuro-SAN 0.6.92,
-using a temporary scripted-model setting and the real private tool, arbiter and Inn.
-A live-model manual check still requires the private studio's model credentials.
-
-The launcher provisions an owner-only local credential file at
-`.nsdeploy/cailville/.commerce/steward.key`, shared by the arbiter and private studio.
-It also stores the ledger at `.nsdeploy/cailville/.commerce/commerce_arbiter.sqlite`.
-Both are outside public site directories. Runtime credentials and per-chat session
-capabilities are never model arguments, tool responses or seller messages. The
-arbiter API rejects browser-origin writes and unauthenticated private actions.
-Public seller callbacks require separate scoped engine capabilities.
-
-`NSDEPLOY_COMMERCE_KEY_FILE` overrides the shared credential file; set the same
-protected file for the arbiter and private runtime. `NSDEPLOY_COMMERCE_ARBITER_URL`
-sets the private runtime's arbiter origin (default `http://127.0.0.1:8105`). The tool
-honors `NSDEPLOY_STEWARD_DENY_ORIGINS`. Models cannot choose these settings. Existing
-subdomain routing works through the same internal backend; update the HOCON
-`commerce.seller_backend` and `commerce.arbiter_backend` if backend ports move.
-
-This is a trusted-host simulation: no real room reservation or money transfer,
-refund API, production identity provider, or distributed private-session store.
-Keep nsFlow and its SlyData private. The private runtime holds booking bindings in
-memory for 24 hours; restarting it requires a new chat. The arbiter ledger persists,
-but this example does not recover old chat bindings after a private-runtime restart.
-The audit is an application event log, not tamper-proof evidence. Raw ceilings and
-floors are withheld from the opposing party, although prices can reveal information
-by inference. The old standalone checkout has been retired; its historical ledger
-rows, if any, are preserved but its browser sessions no longer authorize actions.
-
 ### Add a public site to Cailville
 
 Use the Cailville workflow to design a site, infer a small set of useful public-network
@@ -345,7 +172,7 @@ modified `*.hocon` file directly inside `~/Downloads`:
 python -m nsdeploy cailville
 ```
 
-Additions are cumulative by default. Start this demo from the 14-site base map while
+Additions are cumulative by default. Start this demo from the original 13-site map while
 still adding the requested site with `--base-map`, or restore only the base map with
 `--reset-map`:
 
@@ -757,25 +584,6 @@ chatbot:
 - **Generative UI (CRUSE)** carries presentation proposals up the agent hierarchy.
   Each parent consolidates its children's suggestions; the final response can mix
   formatted text, reports, tables, charts, HTML and optional input widgets.
-- **Live activity streaming** exposes typed, per-turn agent/tool lifecycle events,
-  including coded-tool and MCP progress notifications, before the final answer is
-  ready. Sibling tool calls run concurrently (bounded, with deterministic result
-  ordering); tools can opt out with `parallel_safe = false`. The consumer UI reduces
-  these events to one transient `.ns-turn-status` line inside the conversation and
-  removes it when the final answer appears; the complete event log remains in Developer
-  view. Theme designers can style the line, spinner, and text independently.
-  Programmatic consumers can `for await` over `Engine.streamTurn(...)`; events include
-  `turn.*`, `agent.*`, and `tool.*`, with downstream text deltas marked
-  `visibility: "developer"` and the final result carried by `turn.completed`.
-- **Live steering** keeps the input enabled during a running turn. A user can add
-  guidance without starting a second turn; the top orchestrator interrupts an
-  in-flight model response or consumes the update after active tool/downstream work
-  finishes, then replans before producing its final answer. Already-started tools are
-  not cancelled or replayed, which avoids duplicating side effects. Programmatic
-  consumers call `stream.steer(text)` on the object returned by `Engine.streamTurn()`;
-  accepted input produces `turn.steering.received` and `turn.steering.applied` events.
-  Themes can style the active input state, update button, and steering message via
-  `.ns-steering-active`, `.ns-send-steering`, and `.ns-steering-message`.
 - **Resizable layout.** The chat and the right rail sit **side by side** with a
   **draggable splitter** between them (the rail width is remembered across reloads);
   each pane scrolls its own overflow and the app scrolls rather than crushing a pane

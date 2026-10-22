@@ -1,0 +1,3403 @@
+/* Reusable pieces: card, button, field, stat tile, status pill, table, dropzone. */
+
+/* ── card ───────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+/* A hairline accent seam along the top edge — the same trick the deployed sites'
+   chat card uses for its own top border — so a card reads as "of this product"
+   rather than a generic panel. Decorative only: it sits in the border-radius
+   corner and never affects the box's contrast-bearing surfaces. */
+.card--brand {
+  border-top: 0;
+  background:
+    linear-gradient(90deg, #2f5fe0, #4fd1e0 60%, transparent) top left / 100% 3px no-repeat,
+    var(--surface-1);
+}
+.card__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5) 0;
+}
+.card__head--bordered {
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+/* An icon badge sits taller than one line of title text, so its row aligns
+   to the top rather than the title's baseline. */
+.card__head--icon { align-items: flex-start; }
+.card__icon {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: none;
+  border-radius: var(--radius);
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+.card__icon svg { width: 1.15rem; height: 1.15rem; }
+.card__title { flex: 1; min-width: 0; }
+.card__body { padding: var(--space-4) var(--space-5) var(--space-5); }
+.card__foot {
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+/* A full-bleed button across a wide card looks wrong; right-align instead. */
+.card__foot--end { display: flex; justify-content: flex-end; }
+.muted { color: var(--text-muted); font-size: 0.83rem; }
+.accelerator-link {
+  margin: 0.35rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.accelerator-link a { font-weight: 650; }
+
+/* ── buttons ────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.95rem;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: background-color 0.13s ease, border-color 0.13s ease, color 0.13s ease;
+  white-space: nowrap;
+  /* For the ones that are anchors rather than buttons: a button that happens to
+     navigate should still look like a button, not like underlined link text. */
+  text-decoration: none;
+}
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.btn svg { width: 1rem; height: 1rem; flex: none; }
+
+.btn--primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  color: var(--accent-ink);
+  box-shadow: var(--shadow-brand);
+  transition: background-color 0.13s ease, border-color 0.13s ease, color 0.13s ease,
+    transform 0.15s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.15s ease;
+}
+.btn--primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--accent-hover), var(--accent-active));
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-brand-lg);
+}
+.btn--primary:active:not(:disabled) { transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .btn--primary:hover:not(:disabled) { transform: none; }
+}
+
+.btn--secondary {
+  background: var(--surface-1);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+.btn--secondary:hover:not(:disabled) { background: var(--surface-2); }
+
+.btn--ghost { background: none; color: var(--accent); padding-inline: 0.5rem; }
+.btn--ghost:hover:not(:disabled) { background: var(--accent-wash); }
+
+.btn--danger { background: none; color: var(--status-critical-ink); padding-inline: 0.5rem; }
+.btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-critical) 12%, transparent);
+}
+
+.btn--sm { padding: 0.3rem 0.55rem; font-size: 0.8rem; }
+.btn--block { width: 100%; }
+
+.btn--icon {
+  padding: 0.4rem;
+  border-radius: var(--radius-sm);
+  background: none;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+.btn--icon:hover { background: var(--surface-2); color: var(--text-primary); }
+
+/* ── fields ─────────────────────────────────────────────────────────────── */
+.field { display: grid; gap: var(--space-1); margin-bottom: var(--space-4); }
+.field:last-child { margin-bottom: 0; }
+.field__label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.field__req { color: var(--status-critical-ink); }
+.field__hint { color: var(--text-muted); font-size: 0.78rem; }
+/* A hint that is a caveat rather than guidance — the field is editable, but the
+   value will not survive. Follows .field__error's pattern of carrying the meaning
+   in a leading glyph as well as the hue, so it reads the same under a colour-vision
+   limit and on the light surface where status inks lose contrast. Not an error: it
+   describes what will happen, and nothing the operator typed is wrong. */
+.field__hint--warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin-top: 0.3rem;
+  color: var(--status-warning-ink);
+  font-weight: 600;
+  line-height: 1.45;
+}
+.field__hint--warn::before { content: "!"; flex: none; font-weight: 700; }
+
+/* A rejected field, reported beside the field rather than only in a corner toast.
+   Persistent until the operator acts on it — see setFieldError in views/deploy.js.
+   The leading glyph carries the meaning alongside the hue, so it survives both
+   colour-vision limits and the light surface's status-ink contrast. */
+.field__error {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  color: var(--status-critical-ink);
+  font-size: 0.79rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.field__error[hidden] { display: none; }
+.field__error::before { content: "✕"; flex: none; font-weight: 700; }
+.input[aria-invalid="true"] {
+  border-color: var(--status-critical);
+  background: color-mix(in srgb, var(--status-critical) 5%, var(--surface-1));
+}
+.input[aria-invalid="true"]:focus {
+  border-color: var(--status-critical);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-critical) 28%, transparent);
+}
+/* The file field is visually the dropzone, so mark that instead of the hidden input. */
+#d-file[aria-invalid="true"] + .dropzone__icon,
+.dropzone:has(#d-file[aria-invalid="true"]) { border-color: var(--status-critical); }
+
+.input,
+.select {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+.input:focus,
+.select:focus { border-color: var(--accent); box-shadow: var(--ring); outline: none; }
+.input::placeholder { color: var(--text-muted); }
+textarea.input { min-height: 4.5rem; resize: vertical; line-height: 1.4; }
+
+/* Custom chevron over a native select: the OS default arrow reads dated next
+   to the rest of the system, so it is suppressed and redrawn as one of the
+   app's own icons, themed and positioned to match every other affordance. */
+.selectwrap { position: relative; flex: 1; min-width: 0; display: flex; }
+.selectwrap .select {
+  appearance: none;
+  padding-right: 2.25rem;
+}
+.selectwrap__chevron {
+  position: absolute;
+  top: 50%;
+  right: 0.65rem;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.selectwrap__chevron svg { width: 0.9rem; height: 0.9rem; }
+
+.field-row {
+  display: grid;
+  gap: 0 var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+}
+/* Top-align rather than stretch: side-by-side fields have different heights when
+   only one carries a hint, and stretching drifts their inputs out of line. */
+.field-row > .field { align-self: start; }
+.field-inline { display: flex; gap: var(--space-2); align-items: center; }
+.field-inline > .select { flex: 1; min-width: 0; }
+
+.switch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.86rem;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.switch input { width: auto; margin: 0; accent-color: var(--accent); }
+
+details.advanced { margin-top: var(--space-4); }
+details.advanced > summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+details.advanced > summary::-webkit-details-marker { display: none; }
+details.advanced > summary::before {
+  content: "";
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+details.advanced[open] > summary::before { transform: rotate(45deg); }
+details.advanced > .advanced__body { padding-top: var(--space-4); }
+
+/* ── dropzone ───────────────────────────────────────────────────────────── */
+.dropzone {
+  position: relative;
+  display: grid;
+  place-items: center;
+  gap: var(--space-2);
+  padding: var(--space-5);
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.13s ease, background-color 0.13s ease, box-shadow 0.13s ease;
+}
+.dropzone:hover,
+.dropzone.is-over {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.dropzone.has-file { border-style: solid; border-color: var(--accent); }
+.dropzone input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+/* A tinted, rounded badge behind the glyph rather than a bare icon floating on the
+   dropzone's own fill — the same "icon sits in a coloured tile" language the app
+   already uses for card__icon/stat__icon, scaled up since this is the page's one
+   real affordance. */
+.dropzone__icon {
+  display: grid;
+  place-items: center;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 50%;
+  background: var(--accent-wash);
+  color: var(--accent);
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.18s ease;
+}
+.dropzone__icon svg { width: 1.5rem; height: 1.5rem; }
+.dropzone__main { font-weight: 600; font-size: 0.9rem; }
+.dropzone__meta { color: var(--text-muted); font-size: 0.8rem; }
+
+/* The launch screen's drop target is the main affordance on the page, so it is
+   given real area — a small dashed rectangle reads as a secondary control. */
+.dropzone--lg { padding: var(--space-7) var(--space-5); gap: var(--space-3); }
+.dropzone--lg .dropzone__icon { width: 4rem; height: 4rem; }
+.dropzone--lg .dropzone__icon svg { width: 2.1rem; height: 2.1rem; }
+.dropzone--lg .dropzone__main { font-size: 1.05rem; }
+.dropzone--lg .dropzone__meta { font-size: 0.82rem; }
+.dropzone--lg:hover .dropzone__icon,
+.dropzone--lg.is-over .dropzone__icon {
+  background: var(--accent);
+  color: var(--accent-ink);
+  transform: translateY(-3px);
+}
+.dropzone--lg.has-file .dropzone__icon { background: var(--accent); color: var(--accent-ink); }
+@media (prefers-reduced-motion: reduce) {
+  .dropzone--lg:hover .dropzone__icon, .dropzone--lg.is-over .dropzone__icon { transform: none; }
+}
+
+/* A file that cannot be uploaded (too large, wrong suffix) is rejected in the
+   browser, at the moment it is picked. The border carries the state and
+   .dropzone__meta carries the reason in words — hue alone is never the signal. */
+.dropzone.is-bad,
+.dropzone.is-bad:hover {
+  border-style: solid;
+  border-color: var(--status-critical);
+  background: color-mix(in srgb, var(--status-critical) 7%, var(--surface-2));
+}
+.dropzone.is-bad .dropzone__icon {
+  background: color-mix(in srgb, var(--status-critical) 16%, transparent);
+  color: var(--status-critical-ink);
+}
+.dropzone.is-bad .dropzone__meta { color: var(--status-critical-ink); font-weight: 600; }
+
+/* ── launch screen ──────────────────────────────────────────────────────────
+   Two fields and one button. Everything nsdeploy accepts beyond these is taken
+   from the service defaults, so there is nothing here to read past or get wrong
+   — see views/deploy.js for why.
+
+   Stacked in one narrow column on a phone; on a desktop the pitch moves beside
+   the form instead of above it. Stacked, the intro and the card together were
+   taller than a laptop window, so the operator had to scroll to reach Launch
+   while a third of the window sat empty either side. Side by side, the page's
+   height is just the card's and the whole flow — read, type, drop, press — is
+   visible at once. */
+.launch {
+  display: grid;
+  gap: var(--space-5);
+  max-width: 34rem;
+  margin: 0 auto;
+  padding-block: var(--space-5);
+}
+.launch__intro { text-align: center; }
+
+/* ── launch backdrop: the agent network ─────────────────────────────────────
+   Positioned out of flow so it cannot move the form by a pixel, and pinned
+   behind everything in the section. It bleeds past the content column on both
+   sides — a backdrop that stopped at the text would read as an illustration
+   sitting in a box rather than as the page's own atmosphere.
+
+   The contrast ceiling here is the whole design constraint: the intro text reads
+   against the page, so the art has to stay far enough down that a title crossing
+   a node is still a title. Hence low opacity on the strokes, a masked fade at the
+   edges, and no fill anywhere near the text's tone. */
+.launch { position: relative; }
+.launch__art {
+  /* Hidden until there is a two-column layout to decorate. Stacked narrow, the
+     screen is all content: the intro is centred, so the text-safe hole below is
+     in the wrong place and every arc crosses a line of the lede. A backdrop that
+     has to compete with the only column on the page is not a backdrop. */
+  display: none;
+  position: absolute;
+  z-index: 0;
+  /* inset: 0, with the bleed coming from scaling the artwork INSIDE this box.
+     Negative insets were tried and are wrong: an absolutely positioned box wider
+     than the viewport makes the whole page scroll sideways, which it did.
+     Clipping here lets the art be any size without the document noticing. */
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.launch__art .nart {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* Scaled past its box so the network runs off every edge rather than sitting
+     in the middle of the column like a framed picture. */
+  transform: scale(1.12);
+  transform-origin: 50% 50%;
+}
+/* A text-safe hole. The intro has no surface of its own — it reads straight
+   against the page — so the art is faded out underneath it rather than trusted
+   to be quiet enough. A headline crossing a node is the one thing that would
+   make this backdrop look accidental. In screen space, not SVG space: what has
+   to be protected is where the words are, not where the drawing is. */
+.launch__art {
+  -webkit-mask-image: radial-gradient(ellipse 38% 42% at 27% 52%,
+    transparent 0%, transparent 34%, #000 86%);
+  mask-image: radial-gradient(ellipse 38% 42% at 27% 52%,
+    transparent 0%, transparent 34%, #000 86%);
+}
+/* Content above the scenery. The intro is transparent, so it relies on the art
+   being quiet; the card is an opaque surface and masks it outright. */
+.launch__intro,
+.launch__card { position: relative; z-index: 1; }
+
+
+.nart__edge {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 26%, transparent);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+}
+/* One dash travelling the length of each edge: a request handed down the tree.
+   The dash pattern is long enough that only one segment is ever visible, so it
+   reads as a single pulse rather than as marching ants. */
+.nart__pulse {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-dasharray: 22 620;
+  stroke-dashoffset: 646;
+  opacity: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .nart__pulse {
+    animation: nart-pulse 7s linear infinite;
+    animation-delay: var(--pulse-delay, 0s);
+  }
+}
+@keyframes nart-pulse {
+  0% { stroke-dashoffset: 646; opacity: 0; }
+  8% { opacity: 0.42; }
+  70% { opacity: 0.42; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+
+.nart__node {
+  fill: color-mix(in srgb, var(--surface-1) 80%, transparent);
+  stroke: color-mix(in srgb, var(--accent) 28%, transparent);
+  stroke-width: 1.3;
+}
+.nart__node--front {
+  fill: color-mix(in srgb, var(--accent) 14%, var(--surface-1));
+  stroke: color-mix(in srgb, var(--accent) 42%, transparent);
+  stroke-width: 1.7;
+}
+.nart__halo {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 14%, transparent);
+  stroke-width: 1;
+}
+.nart__node--hub { stroke-width: 1.5; }
+/* A hosted tool is not an agent; a peer is a whole other deployment. Both say so
+   by silhouette — square, and hollow-dashed — rather than by needing a key. */
+.nart__node--tool {
+  fill: color-mix(in srgb, var(--surface-1) 84%, transparent);
+  stroke: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+.nart__node--peer {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 44%, transparent);
+  stroke-width: 2;
+  stroke-dasharray: 5 5;
+}
+.nart__glyph {
+  fill: color-mix(in srgb, var(--accent) 85%, var(--text-primary));
+  font-size: 15px;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  opacity: 0.6;
+}
+/* The one eyebrow label on the page — sets the frame ("this is a deployment
+   flow") before the headline states the task, the way a product marketing page
+   would, without pretending to be a second heading level. */
+.launch__kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: var(--space-2);
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.launch__kicker svg { width: 0.85rem; height: 0.85rem; }
+.launch__title {
+  margin: 0;
+  font-size: clamp(1.35rem, 1.1rem + 1.2vw, 1.85rem);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.launch__lede {
+  margin: var(--space-2) auto 0;
+  max-width: 28rem;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.launch__card { box-shadow: var(--shadow-lg); }
+.launch__body { display: grid; gap: var(--space-5); }
+/* The grid gap owns the space between the two steps. .field also carries its own
+   margin-bottom for the stacked forms elsewhere, and :last-child does not clear
+   it here because the live-region error slot is the last child — so the two were
+   stacking into a gap and a half, and roughly a space-4 of dead height above
+   Launch that the operator had to scroll past. */
+.launch__body .field { margin-bottom: 0; }
+
+/* The numbered steps are the whole instruction set: 1 who you are, 2 your file. */
+.launch__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+.launch__num {
+  display: grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  flex: none;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  box-shadow: 0 3px 8px -2px color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent-ink);
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.launch__orgrow { display: flex; align-items: center; gap: var(--space-2); }
+.launch__orgrow .input { flex: 1; color: var(--text-primary); cursor: default; }
+.launch__orgrow .btn { flex: none; white-space: nowrap; }
+.launch__foot { display: grid; gap: var(--space-2); }
+.launch__note {
+  margin: 0;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+/* Wide enough for two columns: pitch left, form right. The intro keeps a reading
+   measure of its own rather than stretching to the column — a lede set across
+   30rem is hard to scan — and both columns are centred vertically so a short
+   intro sits against the middle of the card, not its top edge.
+
+   A container query, not a viewport one: what decides whether two columns fit is
+   the space left after the sidebar, and the sidebar is 15rem wide or 3.75rem
+   depending on whether the operator has collapsed it. A viewport breakpoint got
+   this wrong in both directions — cramming two columns into 43rem of content at
+   a 1000px window (which scrolled *worse* than one column), and refusing them on
+   a narrower window where the rail had freed the room. The container is declared
+   on #view-deploy in layout.css. */
+@container launchview (min-width: 43rem) {
+  /* Wide enough for the pitch to sit beside the form, which is also the only
+     shape the backdrop is composed for. */
+  .launch__art { display: block; }
+
+  .launch {
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr);
+    align-items: center;
+    /* The gutter scales with the container: 43rem of room is worth spending on
+       the two columns, 76rem is not, and one fixed gap cannot serve both. */
+    gap: clamp(var(--space-5), 4cqi, var(--space-7));
+    /* Fills the content column instead of leaving half of it empty. */
+    max-width: none;
+  }
+  .launch__intro { text-align: left; }
+  .launch__title { font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.35rem); }
+  .launch__lede {
+    margin-inline: 0;
+    max-width: 26rem;
+    font-size: 1rem;
+  }
+}
+
+/* Short windows (a 768px-tall laptop, a projector, a browser with several
+   toolbars) are where the scroll actually bit. The page cannot get shorter than
+   its content, so the content gives up the padding it can spare: the drop target
+   keeps its area but loses the generous inset, and the view's own top and bottom
+   breathing room is halved. */
+@media (max-height: 56rem) {
+  .launch { padding-block: var(--space-3); gap: var(--space-6); }
+  .launch__lede { font-size: 0.95rem; }
+  .launch__body { gap: var(--space-4); }
+  .dropzone--lg { padding: var(--space-5) var(--space-5); gap: var(--space-2); }
+  .dropzone--lg .dropzone__icon { width: 3.25rem; height: 3.25rem; }
+  .dropzone--lg .dropzone__icon svg { width: 1.7rem; height: 1.7rem; }
+  body[data-view="deploy"] .content { padding-block: var(--space-4); }
+}
+
+/* Scaled-up input and button for the same reason the dropzone is: on a two-field
+   page these are the page, not controls on it. */
+.input--lg { padding: 0.7rem 0.8rem; font-size: 1rem; }
+.btn--xl { padding: 0.8rem 1.1rem; font-size: 1rem; font-weight: 650; }
+.btn--xl svg { width: 1.15rem; height: 1.15rem; }
+
+/* ── stat tiles (KPI row) ───────────────────────────────────────────────── */
+/* Counts, so: label + value only. No delta and no sparkline — there is no
+   historical series behind these numbers, and inventing one would misstate data. */
+.stats {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+}
+.stat {
+  position: relative;
+  padding: var(--space-4);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.16s ease, border-color 0.16s ease;
+}
+.stat:hover { box-shadow: var(--shadow); border-color: var(--border-strong); }
+.stat__icon {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+.stat__icon svg { width: 1.05rem; height: 1.05rem; }
+.stat--good .stat__icon { background: color-mix(in srgb, var(--status-good) 16%, transparent); color: var(--status-good-ink); }
+.stat__label {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.stat__value {
+  margin-top: var(--space-1);
+  font-size: 1.75rem;
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  /* Proportional figures on purpose: tabular-nums makes a display-size number
+     look loose. Tabular is reserved for the table columns below. */
+}
+.stat__value--good { color: var(--status-good-ink); }
+.stat__foot { margin-top: var(--space-1); color: var(--text-muted); font-size: 0.76rem; }
+
+/* ── status pill ────────────────────────────────────────────────────────── */
+/* Icon + text label always. The status palette's `good` and `critical` sit at
+   ΔE 4.1 under deuteranopia, so hue cannot carry this distinction; the glyph
+   shape and the word do, and `warning` is sub-3:1 on the light surface. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.12rem 0.5rem 0.12rem 0.35rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+.pill__glyph { font-size: 0.8em; line-height: 1; }
+.pill--ready { color: var(--status-good-ink); }
+.pill--building,
+.pill--queued { color: var(--status-warning-ink); }
+.pill--failed { color: var(--status-critical-ink); }
+.pill--stopped { color: var(--status-inert); }
+
+.spin { display: inline-block; animation: spin 1.1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── table ──────────────────────────────────────────────────────────────── */
+.table-scroll { overflow-x: auto; }
+
+/* Six icon actions per row must stay on one line. Each .act is 1.9rem with 0.3rem
+   gaps — 12.9rem of content, plus ~1.5rem of cell padding, so the actions column has
+   to be at least 14.4rem wide.
+   It is 22% of the table, so the table needs a 66rem floor for that to hold. The
+   previous 56rem was computed before the Organization column was added and gave the
+   column only 12.3rem — 2rem short, which is exactly why the last button (Remove)
+   dropped to a second line.
+   Below the floor .table-scroll scrolls horizontally, which is the behaviour the wrap
+   was avoiding: the row stays on one line and the table admits it is too wide.
+   Scoped to the network list; the directory has four actions and needs no floor. */
+#net-body .table { min-width: 66rem; }
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.87rem;
+}
+/* Each organization in the directory renders its own table. Fixed layout with a
+   shared colgroup keeps their columns on the same grid — auto layout sizes each
+   table to its own content and the headers drift out of alignment between groups. */
+.table--fixed { table-layout: fixed; }
+.table--fixed td { overflow-wrap: anywhere; }
+.table th,
+.table td {
+  text-align: left;
+  /* Tighter vertically than horizontally: rows read as rows, and a screen fits
+     more of them without the grid feeling cramped. */
+  padding: 0.55rem var(--space-3);
+  border-bottom: 1px solid var(--border);
+  /* Middle, not top. Every cell here is one or two short lines, and top-aligning
+     them left the status pills and the action buttons sitting at different
+     heights within the same row. */
+  vertical-align: middle;
+}
+.table thead th {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-block: 0.45rem;
+  /* The header is a label, not a row: a hairline in the muted ink reads as part
+     of the chrome, where the heavier rule competed with the data. */
+  border-bottom: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+/* The card clips its own corners, so the header must not round them again. */
+.table tbody tr:last-child td { border-bottom: 0; }
+.table tbody tr { transition: background-color 0.1s ease; }
+.table tbody tr:hover { background: var(--surface-2); }
+/* Keyboard parity: tabbing to a control inside a row highlights the row too, so
+   it is clear which network an action belongs to. */
+.table tbody tr:focus-within { background: var(--surface-2); }
+.table .num { font-variant-numeric: tabular-nums; text-align: right; }
+
+/* ── row actions ───────────────────────────────────────────────────────────
+   Icon-only buttons. Each carries title + aria-label (see iconAction in
+   views/directory.js); the glyph is never the only thing naming the action.
+
+   Deliberately always visible rather than revealed on row hover: that pattern
+   looks tidier but hides the affordances, and a hidden control is unreachable by
+   touch and easy to miss entirely. */
+.act {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  /* A resting border and surface, not a bare transparent square. An icon button
+     with no chrome until you hover it is invisible as a control — you cannot tell
+     there is anything there to click. */
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+/* Sized here as well as on the element, so the glyph cannot collapse if the
+   attributes are ever dropped. */
+.act svg { width: 1.05rem; height: 1.05rem; display: block; }
+/* The no-glyph fallback (see iconAction): a short word rather than an empty box. */
+.act__text { font-size: 0.68rem; font-weight: 650; letter-spacing: 0.01em; }
+.act:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+/* A visible ring rather than the hover tint alone: with five same-sized targets in
+   a row, keyboard position has to be unambiguous. */
+.act:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  color: var(--text-primary);
+}
+/* Intent shows on hover, not at rest — five tinted glyphs per row would compete
+   with the data for attention. */
+.act--accent:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-wash); }
+.act--danger:hover { color: var(--status-critical-ink); border-color: var(--status-critical-ink); }
+/* Unavailable, not absent: still legible and still hoverable, so its title can
+   explain what to do. `not-allowed` rather than `pointer-events: none`, which
+   would suppress the tooltip that carries the explanation. */
+.act:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: none;
+  border-style: dashed;
+}
+.act:disabled:hover { background: none; border-color: var(--border); color: var(--text-secondary); }
+
+/* Status, draft and any other markers on one line, wrapping together rather than
+   each stacking into its own row. */
+.cell-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+.table__actions { text-align: right; white-space: nowrap; }
+/* NEVER WRAPS. It used to, deliberately — back when a third action joined
+   Stop/Restart/Remove and wrapping was preferable to silently overflowing a
+   fixed-width column. With six actions that choice stopped paying: the row did not
+   overflow, it just quietly put Remove on a line of its own, which reads as a broken
+   table rather than as a column that needs more room.
+   The table has a min-width floor (see #net-body .table) sized so the column always
+   fits, and .table-scroll scrolls when the window is narrower than that. One line
+   always, and an honest horizontal scrollbar when there is not room for it. */
+.table__actions-row {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  align-items: center;
+  /* Uniform squares with their own borders now, so they need a real gap between
+     them or the group reads as one segmented control. */
+  gap: 0.3rem;
+}
+
+.cell-title { font-weight: 600; }
+.cell-sub {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── org group ────────────────────────────────────────────────────────────
+   Each organization is a card: its heading and its table read as one object, and
+   the boundary between two organizations is unmistakable. Previously the tables
+   floated on the page background and a group's heading looked as though it
+   belonged to the rows above it. */
+.org-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  overflow: hidden;
+}
+.org-group + .org-group { margin-top: var(--space-4); }
+.org-group__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+/* The table already draws its own header rule; a second one directly above it
+   reads as a double line. */
+.org-group__head + .table-scroll .table thead th { border-top: 0; }
+.org-group > .muted { padding: var(--space-4); margin: 0; }
+.org-group__name { font-weight: 650; font-size: 0.95rem; }
+.org-group__meta { color: var(--text-muted); font-size: 0.8rem; }
+.org-group__count {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── url + endpoints ────────────────────────────────────────────────────── */
+.urlcell { display: grid; gap: var(--space-1); }
+.urlcell__row { display: flex; align-items: center; gap: var(--space-2); }
+/* No wrapping: the URL is shortened in JS (shortUrl in views/networks.js) so it
+   fits on one line, and `break-all` would undo that by letting the shortened form
+   wrap anyway on a narrow column. */
+.urlcell__link {
+  font-weight: 600;
+  white-space: nowrap;
+  /* Backstop only. shortUrl() already fits the column, so this should never
+     trigger — but if a theme changes the font or the column narrows, clipping is
+     better than a URL spilling across the actions. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.urlcell, .urlcell__row { min-width: 0; }
+.endpoints { display: grid; gap: 0.1rem; color: var(--text-muted); font-size: 0.74rem; }
+.endpoints code { word-break: break-all; }
+
+/* ── notes (warning / error blocks) ─────────────────────────────────────── */
+.note {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  border: 1px solid;
+}
+.note__glyph { display: grid; place-items: center; flex: none; font-weight: 700; }
+.note__glyph svg { width: 1.1rem; height: 1.1rem; }
+.note--warn {
+  color: var(--status-warning-ink);
+  border-color: color-mix(in srgb, var(--status-warning) 45%, transparent);
+  background: color-mix(in srgb, var(--status-warning) 10%, transparent);
+}
+.note--err {
+  color: var(--status-critical-ink);
+  border-color: color-mix(in srgb, var(--status-critical) 40%, transparent);
+  background: color-mix(in srgb, var(--status-critical) 8%, transparent);
+}
+/* The one signature moment in this app: a deployment going live is the
+   payoff of the whole flow, so its confirmation gets a deliberate entrance
+   rather than popping in instantly like every other state change. */
+.note--ok {
+  color: var(--status-good-ink);
+  border-color: color-mix(in srgb, var(--status-good) 40%, transparent);
+  background: color-mix(in srgb, var(--status-good) 9%, transparent);
+  box-shadow: var(--shadow-sm);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .note--ok { animation: note-ok-in 0.42s cubic-bezier(0.22, 1, 0.36, 1); }
+  .note--ok .note__glyph svg { animation: note-ok-glyph 0.5s 0.1s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+}
+@keyframes note-ok-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes note-ok-glyph {
+  from { transform: scale(0.4); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+.note ul { margin: 0; padding-left: 1.1rem; }
+.note li + li { margin-top: 0.2rem; }
+
+/* ── progress / log ─────────────────────────────────────────────────────── */
+.progress__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+/* The result stacks a success note, network facts, endpoints and a caveats note;
+   a grid gap keeps them from butting together. */
+#d-result {
+  display: grid;
+  gap: var(--space-3);
+}
+#d-result:empty { display: none; }
+.log {
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  max-height: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.log:empty { display: none; }
+
+/* A vertical rail-and-badge stepper rather than a row of dots: the badge
+   carries the step's actual state (number → spinner → check) so status is
+   never color alone, and the connecting rail gives the sequence a shape. */
+.steps { display: flex; flex-direction: column; margin-bottom: var(--space-3); }
+.step {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  font-size: 0.83rem;
+  color: var(--text-muted);
+}
+.step__rail { display: flex; flex-direction: column; align-items: center; flex: none; }
+.step__badge {
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  background: var(--surface-1);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+.step__badge svg { width: 0.85rem; height: 0.85rem; }
+.step__line {
+  width: 1.5px;
+  flex: 1;
+  min-height: 1.35rem;
+  margin-block: 0.15rem;
+  background: var(--border);
+  transition: background-color 0.18s ease;
+}
+.step:last-child .step__line { display: none; }
+.step__label { padding-top: 0.28rem; }
+
+.step[data-state="active"] { color: var(--text-primary); font-weight: 600; }
+.step[data-state="active"] .step__badge {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .step[data-state="active"] .step__badge { animation: step-pulse 1.7s ease-in-out infinite; }
+}
+@keyframes step-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--accent-wash); }
+  50% { box-shadow: 0 0 0 6px var(--accent-wash); }
+}
+.step[data-state="done"] { color: var(--text-secondary); }
+.step[data-state="done"] .step__badge {
+  border-color: var(--status-good-ink);
+  background: var(--status-good-ink);
+  color: #fff;
+}
+.step[data-state="done"] .step__line { background: var(--status-good-ink); }
+
+/* ── how-it-works list (deploy view's default right column) ─────────────── */
+/* Reuses .step__line for the connecting rail — the same "connected sequence"
+   shape as the build stepper, just branded rather than state-driven. */
+.howsteps { display: flex; flex-direction: column; list-style: none; margin: 0; padding: 0; }
+.howstep { display: flex; align-items: flex-start; gap: var(--space-3); }
+.howstep__rail { display: flex; flex-direction: column; align-items: center; flex: none; }
+.howstep:last-child .step__line { display: none; }
+.howstep__icon {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+.howstep__icon svg { width: 1.05rem; height: 1.05rem; }
+.howstep__body { padding-top: 0.3rem; padding-bottom: var(--space-3); }
+.howstep:last-child .howstep__body { padding-bottom: 0; }
+.howstep__body strong { display: block; font-size: 0.88rem; font-weight: 650; }
+.howstep__body p { margin-top: 0.15rem; }
+
+/* ── network map ────────────────────────────────────────────────────────── */
+/* Organization is deliberately NOT a colour channel: a spatial graph is an
+   all-pairs form, where the categorical palette only clears the colour-vision
+   separation floors for three slots. Org identity lives in each pin's text and in
+   the filter; pins share one hue and status rides on glyph + ring. */
+
+/* The map fills whatever height the shell has left rather than a computed one:
+   a calc() against the chrome height silently goes wrong every time a row above is
+   resized or removed. */
+.mapshell {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--surface-1);
+  border-top: 2px solid transparent;
+  border-image: linear-gradient(90deg, #2f5fe0, #4fd1e0 55%, transparent) 1;
+}
+
+/* Hover detail callout, anchored to the pin it describes and flipped above or below
+   it depending on which side has room (see positionDetail in views/map.js). `left`,
+   `top`, `max-height` and `--caret-x` are all set inline from measured geometry; only
+   appearance lives here.
+
+   pointer-events must stay none. The callout overlaps the pin's surroundings, so if
+   it accepted the pointer the cursor would cross onto it, the pin would receive
+   mouseleave, the callout would hide, and the pin would be hovered again — flicker.
+
+   Still no idle panel: it exists only while a pin is hovered or focused. */
+.mapdetail {
+  position: absolute;
+  z-index: 4;
+  width: min(19rem, calc(100% - 2 * var(--space-4)));
+  overflow: hidden;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-1) 94%, transparent);
+  backdrop-filter: blur(3px);
+  box-shadow: var(--shadow-sm);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-align: left;
+  pointer-events: none;
+}
+.mapdetail[hidden] { display: none; }
+.mapdetail > * { margin: 0; }
+.mapdetail > * + * { margin-top: 0.3rem; }
+
+/* The tail: a rotated square showing two of its borders, so the callout's outline
+   continues around the point. `--caret-x` is the pin's centre measured relative to
+   the box, so the tail keeps pointing at the pin even when the box has been clamped
+   away from centre at the edge of the stage. */
+.mapdetail::after {
+  content: '';
+  position: absolute;
+  left: var(--caret-x, 50%);
+  width: 0.5rem;
+  height: 0.5rem;
+  transform: translateX(-50%) rotate(45deg);
+  background: color-mix(in srgb, var(--surface-1) 94%, transparent);
+  border: 1px solid var(--border);
+}
+.mapdetail--below::after { top: -0.29rem; border-width: 1px 0 0 1px; }
+.mapdetail--above::after { bottom: -0.29rem; border-width: 0 1px 1px 0; }
+.mapdetail__name {
+  font-weight: 600;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  color: var(--text-primary);
+  /* A name with no spaces in it can still exceed the column. */
+  overflow-wrap: anywhere;
+}
+/* What the network does, as a handful of two-or-three-word points (see
+   capabilityBullets in util/format.js).
+
+   One column, not two. Two columns halve the height, but in a callout only 19rem
+   wide they wrap the longer points across lines and impose a left-to-right
+   reading order on what is a list — both of which cost more than the height
+   saves. Five short lines is not tall.
+
+   The marker is a small accent dot rather than a disc glyph: at this size a
+   bullet character is visually heavier than the two words beside it. */
+.mapdetail__points {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  font-size: 0.73rem;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+.mapdetail__points li {
+  position: relative;
+  padding-left: 0.65rem;
+}
+.mapdetail__points li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.45em;
+  width: 0.25rem;
+  height: 0.25rem;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.mapdetail__org { font-size: 0.7rem; color: var(--text-muted); }
+.mapdetail__desc {
+  font-size: 0.72rem;
+  line-height: 1.4;
+  /* Clamped rather than scrolled: the panel takes no pointer events, so a scrollbar
+     here would be unreachable.
+
+     Deliberately generous. This panel is the only place in the console that renders a
+     network's description, so a tight clamp would make it unreadable everywhere —
+     14 lines in this column covers roughly 600 characters, past the longest
+     description nsdeploy currently produces. `max-height` on the panel is the real
+     limit on a short stage. */
+  display: -webkit-box;
+  -webkit-line-clamp: 14;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.mapdetail__facts { font-size: 0.7rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.mapdetail__rel {
+  padding-top: 0.3rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.72rem;
+}
+.mapdetail__why {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.68rem;
+  font-style: italic;
+  opacity: 0.85;
+}
+.mapdetail__url code { font-size: 0.68rem; }
+
+/* ── the stage: artwork, edges, pins ───────────────────────────────────── */
+.mapstage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--map-land);
+}
+/* The scene is everything that belongs to the ground — artwork, edges and pins —
+   transformed as one so they stay registered with each other while zooming.
+   transform-origin is the top-left because util/zoom.js does its arithmetic against
+   that corner: a scene point p renders at p * k + t, which is one multiply instead of
+   a centre-relative offset. The scene is exactly the size of the stage, so at scale 1
+   it fits the frame and there is nothing to pan. */
+.mapscene {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+/* will-change ONLY WHILE DRAGGING, and that is the fix for a real defect rather than a
+   micro-optimisation. Declared permanently, it promotes the scene to its own
+   compositing layer, which the browser rasterises once at the layer's base size and
+   then scales on the GPU — so at 6x the reader was looking at a six-times-magnified
+   bitmap of the city and its markers. That is the "distorted at maximum zoom" anyone
+   would report, and no amount of vector artwork underneath can help once the raster
+   has been taken.
+
+   Without the hint, the scene is re-rasterised at the current scale and stays crisp at
+   every zoom level. Panning is the one case that genuinely benefits from the promotion
+   — it transforms every frame — so it is applied for the duration of the drag and
+   dropped again at the end, which is also when the geometry is re-settled. */
+.mapstage.is-grabbing .mapscene { will-change: transform; }
+.mapart__holder { position: absolute; inset: 0; }
+.mapart { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* Only while the reader is actually dragging, so a fitted map keeps the ordinary
+   cursor and nothing suggests a gesture that would do nothing. */
+.mapstage.is-zoomed { cursor: grab; }
+.mapstage.is-grabbing { cursor: grabbing; }
+/* A drag across the city must not select the water label or a pin's name. */
+.mapstage.is-grabbing, .mapstage.is-grabbing * { user-select: none; }
+
+/* Each fill below used to be one flat --map-* token; the terrain now sits under a
+   single north-west light (see the <defs> gradients in mapArt.js), so every one of
+   these resolves to a gradient built FROM the same tokens via the classed <stop>
+   rules further down — an external stylesheet always wins over an SVG presentation
+   attribute, so `fill` has to be re-declared here even though the gradient id is
+   already on the element, or the light would silently be discarded back to flat. */
+.mapart__land { fill: url(#mg-land); }
+.mapart__sea { fill: url(#mg-sea); }
+.mapart__deep { fill: var(--map-sea-deep); }
+.mapart__shore { fill: var(--map-shore); }
+.mapart__park { fill: url(#mg-park); }
+.mapart__grain { fill: #fff; opacity: 1; mix-blend-mode: overlay; pointer-events: none; }
+.mapart__sun { fill: url(#mg-sun); pointer-events: none; }
+.mapart__glint {
+  fill: none;
+  stroke: var(--map-wave);
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: 0.55;
+}
+/* The gradient stops themselves: a touch lighter than the token at the near/lit
+   edge, the token itself further down, and (sea only) the existing deep tone at the
+   far stop — so the map keeps exactly its documented light/dark palette, just lit. */
+.mg-stop-land-hi { stop-color: color-mix(in srgb, var(--map-land) 100%, white 30%); }
+.mg-stop-land { stop-color: var(--map-land); }
+.mg-stop-sea-hi { stop-color: color-mix(in srgb, var(--map-sea) 100%, white 22%); }
+.mg-stop-sea { stop-color: var(--map-sea); }
+.mg-stop-sea-deep { stop-color: var(--map-sea-deep); }
+.mg-stop-park-hi { stop-color: color-mix(in srgb, var(--map-park) 100%, white 32%); }
+.mg-stop-park { stop-color: var(--map-park); }
+/* The sun itself: the same accent whisper the rest of the console washes its hero
+   surfaces with, so the map's one light source reads as the product's, not a
+   different illustration bolted on beside it. */
+.mg-stop-sun-hi { stop-color: color-mix(in srgb, var(--accent) 16%, transparent); }
+.mg-stop-sun-lo { stop-color: transparent; }
+/* ── the street plan ────────────────────────────────────────────────────────
+   Flat, read from above. Arterials cased, minor streets hairlines, footprints
+   barely above the ground tone — see the header of components/mapArt.js. */
+.mapart__avenue-edge {
+  fill: none;
+  stroke: var(--map-arterial-edge);
+  stroke-width: 19;
+  stroke-linecap: round;
+}
+.mapart__avenue {
+  fill: none;
+  stroke: var(--map-arterial);
+  stroke-width: 14;
+  stroke-linecap: round;
+}
+.mapart__street {
+  fill: none;
+  stroke: var(--map-street);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  opacity: 0.9;
+}
+/* Footprints carry the city's texture, so they must not carry its contrast:
+   a shade off the ground, no stroke, no shadow. */
+.mapart__foot { fill: var(--map-footprint); opacity: 0.85; }
+.mapart__tree { fill: var(--map-tree); opacity: 0.8; }
+.mapart__tree--street { opacity: 0.65; }
+
+.mapart__pier { fill: none; stroke: var(--map-pier); stroke-width: 7; stroke-linecap: round; }
+.mapart__wave {
+  fill: none;
+  stroke: var(--map-wave);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-dasharray: 3 9;
+}
+/* The open water was the one part of the scene with no life in it at all — a shape,
+   not weather. A slow dash drift reads as light chop rather than a marching-ants
+   selection because it is this gentle and this small a distance per pass. */
+@media (prefers-reduced-motion: no-preference) {
+  .mapart__wave { animation: mapwave-drift 7s linear infinite; }
+  .mapart__wave:nth-of-type(2n) { animation-duration: 9s; animation-direction: reverse; }
+}
+@keyframes mapwave-drift { to { stroke-dashoffset: -24; } }
+.mapart__water {
+  fill: var(--map-water-label);
+  font: italic 600 26px/1 var(--font-sans);
+  letter-spacing: 0.04em;
+  opacity: 0.9;
+}
+
+/* At event scale the networks need the whole canvas more than they need a coast.
+   The artwork is layered over land, so removing the water reveals usable city space. */
+.mapstage[data-layout="full-land"] .mapart__sea,
+.mapstage[data-layout="full-land"] .mapart__deep,
+.mapstage[data-layout="full-land"] .mapart__shore,
+.mapstage[data-layout="full-land"] .mapart__glint,
+.mapstage[data-layout="full-land"] .mapart__pier,
+.mapstage[data-layout="full-land"] .mapart__wave,
+.mapstage[data-layout="full-land"] .mapart__water {
+  display: none;
+}
+
+.mapedges { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+/* The edges live inside the zoomed scene, so their strokes would thicken with it and
+   a zoomed map would be drawn in ribbons. non-scaling-stroke keeps every line at its
+   authored width whatever the scale, which is also what keeps a hairline suggested
+   edge distinguishable from a configured one. */
+.mapedge { vector-effect: non-scaling-stroke; }
+.mapedge {
+  fill: none;
+  stroke: var(--map-edge);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  opacity: 0.8;
+  transition: opacity 0.14s ease, stroke 0.14s ease;
+}
+.mapedge--inert { stroke-dasharray: 5 5; opacity: 0.4; }
+#map-arrow path { fill: var(--map-edge); }
+
+/* A real link between two live networks: a dash travelling from caller to callee.
+   Direction is the point — the arrowhead states it, this shows it. Only applied to
+   resolved edges between live nodes (see edgePath in views/map.js), so a suggestion
+   never animates and nothing appears to flow between stopped networks.
+
+   Motion only: the edge is fully legible without it, and it is dropped entirely
+   under prefers-reduced-motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .mapedge--flow {
+    stroke-dasharray: 5 9;
+    animation: map-flow 1.5s linear infinite;
+  }
+  /* While tracing, the traced edge flows faster and the rest are near-invisible
+     anyway, so only the active one is worth animating. */
+  .mapstage.is-tracing .mapedge--flow { animation-play-state: paused; }
+  .mapstage.is-tracing .mapedge--flow.is-active {
+    animation-play-state: running;
+    animation-duration: 1s;
+  }
+}
+@keyframes map-flow { to { stroke-dashoffset: -14; } }
+
+/* An inferred relation, not a configured link. Finely dotted, thinner and dimmer than
+   a real edge, with its own arrowhead — a marker inherits nothing from the path that
+   references it, so the head needs dimming separately or a suggestion ends up with a
+   full-strength arrow. Listed after --inert so a suggestion between two stopped
+   networks still reads as a suggestion. */
+.mapedge--suggested { stroke-width: 1.3; stroke-dasharray: 2 6; opacity: 0.42; }
+#map-arrow-suggested path { fill: var(--map-edge); opacity: 0.5; }
+
+/* On a crowded map, suggestions are hidden at rest and revealed by tracing a pin.
+   /relations offers up to RELATIONS_MAX_PER_NETWORK per network, so 60 networks can
+   mean 240 dashed lines — drawn all at once that is a spiderweb across the whole
+   map, and it buries the real links it is meant to sit behind. Suggestions are
+   advisory and inherently per-pin, so hover is the right moment for them.
+   Real (resolved) edges are never hidden. */
+.mapstage[data-density="tight"] .mapedge--suggested { display: none; }
+.mapstage[data-density="tight"].is-tracing .mapedge--suggested.is-active { display: block; }
+
+/* While tracing, everything unrelated recedes rather than disappearing — the shape
+   of the whole map stays readable behind the highlighted relationship. */
+.mapstage.is-tracing .mapedge { opacity: 0.07; }
+.mapstage.is-tracing .mapedge.is-active {
+  opacity: 1;
+  stroke: var(--map-edge-active);
+  stroke-width: 2.6;
+}
+/* Highlighted, but still visibly a suggestion. */
+.mapstage.is-tracing .mapedge--suggested.is-active { opacity: 0.8; stroke-width: 1.9; }
+
+.mappins { position: absolute; inset: 0; }
+
+/* Atmosphere over the terrain: a soft vignette that settles the artwork's edges and
+   lifts the pins off it. Scenery, never a data encoding — and pointer-transparent so
+   it cannot swallow a pin's hover. */
+.mapstage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 20rem at 50% -6%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 70%),
+    radial-gradient(120% 90% at 50% 40%, transparent 55%, rgb(0 0 0 / 0.10) 100%);
+}
+/* Above the vignette. Deliberately not listing .mapdetail here — it already sits at
+   z-index 4 so the hover callout stays above the pins, and repeating it lower down
+   the file would quietly demote it. */
+.mapedges, .mappins { z-index: 2; }
+
+.mapempty {
+  position: absolute;
+  inset: auto 0 50% 0;
+  z-index: 3;
+  text-align: center;
+  color: var(--text-secondary);
+}
+.mapempty__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.mapempty__hint { margin: var(--space-1) 0 0; font-size: 0.85rem; }
+
+/* ── markers ───────────────────────────────────────────────────────────────
+   A marker rests as an icon-only teardrop whose point is the network's actual
+   spot on the plan. Its name chip appears only while the marker is hovered or
+   keyboard-focused, leaving the city readable when many networks share the map.
+
+   Why the split. Everything a marker used to say inline — organization, status
+   word, agent and tool counts — now lives in the hover callout, which is the
+   surface that has room for it. That leaves the resting marker with only the trade
+   icon, while the name remains one deliberate interaction away.
+
+   The ICON carries the trade; the hue behind it is decoration (see
+   industryMarker in util/format.js). Deployment status stays on its own badge,
+   with its own glyph, exactly as before — nothing here competes with it. */
+.mappin {
+  position: absolute;
+  /* The counter-scale against the scene's zoom (see util/zoom.js). The ground grows
+     and the markers do not, so zooming in turns into real separation between pins
+     instead of a magnified version of the same crowding.
+
+     One transform on the whole marker rather than a counter-scale on each of the
+     chip, drop, emoji and badge: those are sized in rem across half a dozen rules and
+     scaling them individually would drift apart. The origin is the bottom edge, which
+     is where the teardrop's point and the balloon's tail are, so a marker shrinks
+     towards its own spot on the map and grows up out of the ground on arrival. */
+  transform: var(--anchor, translate(-50%, calc(-100% - 13px))) scale(calc(var(--unzoom, 1) * var(--pin-scale, 1)));
+  transform-origin: bottom center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.14s ease, transform 0.14s ease, filter 0.14s ease;
+}
+
+/* The trade hues. Not a categorical data palette and never used as one: a guess
+   about an industry, rendered as a tint behind an icon that says the same thing
+   in a form nobody has to decode. */
+.mappin { --pin-hue: #64748b; }
+.mappin[data-hue="green"]  { --pin-hue: #2f9e44; }
+.mappin[data-hue="amber"]  { --pin-hue: #e8590c; }
+.mappin[data-hue="rose"]   { --pin-hue: #d6336c; }
+.mappin[data-hue="sky"]    { --pin-hue: #1c7ed6; }
+.mappin[data-hue="teal"]   { --pin-hue: #0c8599; }
+.mappin[data-hue="violet"] { --pin-hue: #7048e8; }
+.mappin[data-hue="slate"]  { --pin-hue: #495057; }
+
+.mappin__chip {
+  /* Shown by default. This was `none` while names were hover-only, and the density
+     rules further down re-enabled it for tight and compact — so a *small* map, which
+     has no density override at all, was the one place that lost its labels entirely.
+     Exactly backwards: roomy is where there is the most space for them. */
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 13rem;
+  padding: 0.28rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-1) 94%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-primary);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+.mappin__chipicon { font-size: 0.8rem; line-height: 1; flex: none; }
+.mappin__name {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* THE LINE THAT MAKES THE ELLIPSIS WORK. This is a flex item inside .mappin__chip,
+     and a flex item's default `min-width: auto` refuses to shrink below its content —
+     so the three properties above were inert and a long name simply pushed the chip
+     past its max-width instead of being trimmed. min-width: 0 lets it shrink, at
+     which point overflow + text-overflow finally have something to do.
+     flex: 1 so it takes the room the chip has, rather than only its content width. */
+  min-width: 0;
+  flex: 1;
+}
+
+/* The teardrop: a circle with one corner squared off and the whole thing turned 45°,
+   which puts the point at the bottom. The icon inside is counter-rotated so it stays
+   upright.
+
+   The rotation costs real room — a rotated square's axis-aligned bounding box is its
+   side times the square root of two, so a 25.6px marker occupies 36.2px — and that is
+   paid for deliberately rather than by accident. markerFootprint() measures the
+   rotated box and the separation pass works from that number, so a hundred of these
+   still cannot overlap; on a narrow window they shrink instead (--pin-scale). A disc
+   avoided the cost but stopped reading as a map pin, which is the point of a map. */
+.mappin__drop {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  flex: none;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: var(--pin-hue);
+  /* Status is the ring rather than a separate badge. The legend already reads this way
+     (legend-ring--ready and friends), and a badge had to sit *outside* the teardrop,
+     adding ~6px to every marker's footprint to repeat what the ring already says — on
+     a map that only shows ready networks, always the same glyph. */
+  border: 2.5px solid var(--status-inert);
+  box-shadow: 0 4px 10px -2px rgb(0 0 0 / 0.45);
+}
+.mappin--ready .mappin__drop { border-color: var(--status-good); }
+.mappin--pending .mappin__drop { border-color: var(--status-warning); }
+.mappin--inert .mappin__drop { border-color: var(--status-inert); }
+
+.mappin__trade {
+  transform: rotate(45deg);
+  font-size: 1.35rem;
+  line-height: 1;
+  /* The emoji sits on a saturated fill; a hair of shadow keeps its edges from
+     dissolving into the hue behind it. */
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.35));
+}
+
+.mappin:hover,
+.mappin:focus-visible {
+  /* Lifted from the point, so the marker grows out of its own spot. */
+  transform-origin: 50% 100%;
+  /* The 1.07 lift multiplies the zoom counter-scale rather than replacing it —
+     written flat it cancelled --unzoom, so hovering a pin on a zoomed map blew it up
+     to the full unzoomed size. */
+  transform: var(--anchor, translate(-50%, calc(-100% - 13px)))
+             scale(calc(var(--unzoom, 1) * var(--pin-scale, 1) * 1.07));
+  z-index: 5;
+}
+.mappin:hover .mappin__chip,
+.mappin:focus-visible .mappin__chip {
+  display: inline-flex;
+  border-color: var(--accent);
+  box-shadow: var(--shadow);
+}
+/* Flipped below its spot when there is no room above: the chip goes under the
+   teardrop and the drop's point turns upward. */
+.mappin--under { flex-direction: column-reverse; }
+.mappin--under .mappin__drop { border-radius: 50% 0 50% 50%; }
+
+/* THE ORIGIN HAS TO FOLLOW THE FLIP, and getting this wrong made hover flicker.
+   A flipped marker hangs *below* its spot, so the fixed point is its top edge, not its
+   bottom. Scaled from the bottom instead, the hover lift dragged the teardrop upwards
+   by 7% of the marker's height — which with the name chip shown is enough to move it
+   out from under the cursor. That fired mouseout, which hid the chip, which shrank the
+   marker back under the cursor, which fired mouseover: a loop, running every frame,
+   on exactly the pins near the top of the stage and no others. */
+.mappin--under,
+.mappin--under:hover,
+.mappin--under:focus-visible { transform-origin: 50% 0; }
+
+/* Hovering a pin does NOT dim the other networks. It used to fade every pin to 26%
+   and restore only the hovered one and its link partners, which reads as the map
+   emptying itself — and `related` is built purely from *drawn* edges, so with
+   inferred relations hidden (SHOW_SUGGESTED_EDGES in views/map.js) a network with no
+   configured links dimmed all sixty pins and then highlighted nothing at all.
+   Emphasis is additive instead: the hovered pin is ringed and raised below, and its
+   own edges brighten, while every other network stays exactly as legible as it was.
+   `.is-related` is still applied by trace() as a hook, it just no longer governs
+   opacity. */
+.mapstage.is-tracing .mappin.is-origin { z-index: 6; }
+.mapstage.is-tracing .mappin.is-origin .mappin__chip {
+  border-color: var(--accent);
+  box-shadow: var(--ring), var(--shadow);
+}
+.mapstage.is-tracing .mappin.is-origin .mappin__drop {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent),
+              0 3px 8px -2px rgb(0 0 0 / 0.45);
+}
+/* Nothing to open, so do not promise a link. */
+.mappin[aria-disabled="true"] { cursor: default; }
+.mappin[aria-disabled="true"] .mappin__chip { border-style: dashed; }
+.mappin[aria-disabled="true"] .mappin__drop { filter: saturate(0.45); }
+.mappin--inert { opacity: 0.85; }
+
+/* The pin this tab was opened for, straight after a launch. A halo plus a lifted
+   z-index, for a few seconds only (FOCUS_HALO_MS in views/map.js): it means "this
+   is the one you just made", which stops being true, and a permanent decoration on
+   one pin would read as a status the others lack. */
+/* Above search hits and the reader's own organization — this is the one pin they were
+   sent here to find. Not above a *hovered* marker, though: the tight-density rule
+   further down pins it at 8 and hover sits at 9, which is the right order. Whatever
+   the reader is actively pointing at should win over anything the map is advertising
+   at them. */
+.mappin.is-new { z-index: 10; }
+.mappin.is-new .mappin__chip {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-1));
+}
+/* The ring too, not only the halo around it — the halo is a shadow and disappears
+   against a busy patch of city, while the ring is on the marker itself. */
+.mappin.is-new .mappin__drop { border-color: var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  /* Markers arrive rather than blinking into place; --enter-delay staggers them.
+     `backwards` so one is invisible during its delay instead of flashing first. */
+  .mappin {
+    animation: pin-enter 0.42s cubic-bezier(0.22, 1, 0.36, 1) var(--enter-delay, 0s) backwards;
+  }
+  /* A pin that was already on screen before this render does not arrive again. The
+     view replaces all pin markup on every poll, so without this the whole map
+     replayed its entrance on a timer — which read as the page constantly reloading
+     rather than as anything arriving. views/map.js decides which are new. */
+  .mappin--settled { animation: none; }
+  /* The halo rings the teardrop, not the marker: .mappin is now a transparent
+     column holding a chip and a drop, so a shadow on it would draw a rectangle
+     around both. On the drop it is a circle around the actual spot. */
+  .mappin.is-new .mappin__drop { animation: pin-halo 1.9s ease-out infinite; }
+}
+/* Both frames carry the zoom counter-scale as well as the arrival scale, or a pin
+   landing on a zoomed map would animate to full size and then snap back. */
+@keyframes pin-enter {
+  from {
+    opacity: 0;
+    transform: var(--anchor, translate(-50%, calc(-100% - 13px)))
+               scale(calc(var(--unzoom, 1) * var(--pin-scale, 1) * 0.82));
+  }
+  to {
+    opacity: 1;
+    transform: var(--anchor, translate(-50%, calc(-100% - 13px)))
+               scale(calc(var(--unzoom, 1) * var(--pin-scale, 1)));
+  }
+}
+/* Two rings rather than one, and a brighter start. The single soft ring was legible on
+   a map of a dozen pins and disappeared into a hundred — the reader is scanning a city
+   for one marker, and a 14px fade was not enough to pull the eye. The second ring
+   trails the first, so the pulse reads as something actively signalling rather than a
+   shadow that happens to breathe. */
+@keyframes pin-halo {
+  0% {
+    box-shadow: 0 3px 8px -2px rgb(0 0 0 / 0.45),
+                0 0 0 0 color-mix(in srgb, var(--accent) 85%, transparent),
+                0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  60% {
+    box-shadow: 0 3px 8px -2px rgb(0 0 0 / 0.45),
+                0 0 0 16px color-mix(in srgb, var(--accent) 0%, transparent),
+                0 0 0 9px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  100% {
+    box-shadow: 0 3px 8px -2px rgb(0 0 0 / 0.45),
+                0 0 0 26px color-mix(in srgb, var(--accent) 0%, transparent),
+                0 0 0 26px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+
+/* ── marker density ───────────────────────────────────────────────────────── */
+.mapstage[data-density="compact"] .mappin__chip { max-width: 9rem; }
+/* Capped at tight density too, now that every marker is centred on its coordinate
+   rather than anchored to the frame at the edges (see placement() in views/map.js).
+   A centred 13rem chip on a pin at x=92 would hang a few pixels past the stage and be
+   clipped by its overflow; 9rem keeps the whole name inside at every slot. */
+.mapstage[data-density="tight"] .mappin__chip { max-width: 9rem; }
+.mapstage[data-density="compact"] .mappin__name { font-size: 0.62rem; }
+
+.mapstage[data-density="tight"] .mappin__drop { width: 1.6rem; height: 1.6rem; }
+
+/* Names are hidden at tight density and come back as the map thins out — either
+   because there are fewer networks or because the reader has zoomed in. setDensity()
+   in views/map.js divides the count by the zoom squared, so the tier tracks how
+   crowded the map *appears* rather than how many rows the API returned.
+
+   Smaller and lighter when they do appear: the chip's padding, border and backdrop
+   blur are most of its width, and the emoji inside only repeats the marker beneath it.
+   At compact the label is a caption on the map rather than a card sitting on it. */
+/* NAMES STAY VISIBLE AT EVERY DENSITY, as a caption rather than a pill.
+   Stripped of the chip's padding, border, backdrop blur and shadow — and of the emoji,
+   which only repeats the marker beneath it — a name costs roughly a third of the room
+   and reads as part of the map instead of a card sitting on top of it.
+   It is still wider than the 44px marker spacing, so long names truncate and
+   neighbours can graze at a hundred pins. That is the accepted trade for having the
+   name there at all; the full name is one hover away, where the pill returns. */
+.mapstage[data-density="tight"] .mappin__chip,
+.mapstage[data-density="compact"] .mappin__chip {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.mapstage[data-density="tight"] .mappin__chip { max-width: 5.4rem; }
+.mapstage[data-density="tight"] .mappin__chipicon,
+.mapstage[data-density="compact"] .mappin__chipicon { display: none; }
+/* An outline rather than a plate: the caption has to stay legible over parkland,
+   water and roofs without putting an opaque box between the reader and the city. */
+.mapstage[data-density="tight"] .mappin__name {
+  font-size: 0.55rem;
+  font-weight: 650;
+  color: var(--text-primary);
+  text-shadow:
+     0 0  2px var(--surface-1),  0 0 3px var(--surface-1),
+     1px 0 1px var(--surface-1), -1px 0 1px var(--surface-1),
+     0 1px 1px var(--surface-1),  0 -1px 1px var(--surface-1);
+}
+.mapstage[data-density="compact"] .mappin__name {
+  color: var(--text-primary);
+  text-shadow:
+     0 0  2px var(--surface-1),  0 0 3px var(--surface-1),
+     1px 0 1px var(--surface-1), -1px 0 1px var(--surface-1),
+     0 1px 1px var(--surface-1),  0 -1px 1px var(--surface-1);
+}
+/* Hovering, focusing or tracing restores the full pill and the untruncated name —
+   the label is a hint, the chip is the answer. */
+/* Hovering, focusing or tracing turns the caption back into the full pill with the
+   untruncated name — the caption is a hint, the pill is the answer. */
+.mapstage[data-density="tight"] .mappin:hover .mappin__chip,
+.mapstage[data-density="tight"] .mappin:focus-visible .mappin__chip,
+.mapstage[data-density="tight"] .mappin.is-origin .mappin__chip,
+.mapstage[data-density="tight"] .mappin.is-new .mappin__chip,
+.mapstage[data-density="compact"] .mappin:hover .mappin__chip,
+.mapstage[data-density="compact"] .mappin:focus-visible .mappin__chip {
+  max-width: 13rem;
+  padding: 0.28rem 0.6rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-1) 94%, transparent);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.mapstage[data-density="tight"] .mappin:hover .mappin__chipicon,
+.mapstage[data-density="tight"] .mappin:focus-visible .mappin__chipicon,
+.mapstage[data-density="tight"] .mappin.is-origin .mappin__chipicon,
+.mapstage[data-density="tight"] .mappin.is-new .mappin__chipicon,
+.mapstage[data-density="compact"] .mappin:hover .mappin__chipicon,
+.mapstage[data-density="compact"] .mappin:focus-visible .mappin__chipicon { display: inline; }
+.mapstage[data-density="tight"] .mappin:hover .mappin__name,
+.mapstage[data-density="tight"] .mappin:focus-visible .mappin__name,
+.mapstage[data-density="tight"] .mappin.is-origin .mappin__name,
+.mapstage[data-density="tight"] .mappin.is-new .mappin__name,
+.mapstage[data-density="compact"] .mappin:hover .mappin__name,
+.mapstage[data-density="compact"] .mappin:focus-visible .mappin__name {
+  font-size: 0.66rem;
+  text-shadow: none;
+}
+.mapstage[data-density="tight"] .mappin:hover,
+.mapstage[data-density="tight"] .mappin:focus-visible,
+.mapstage[data-density="tight"] .mappin.is-origin { z-index: 8; }
+
+/* ── legend + counters, floating over the map ──────────────────────────── */
+/* Overlaid rather than in a footer row: each row of chrome is height the map does
+   not get. They sit on a translucent plate so they stay legible over terrain. */
+.maplegend {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+.maplegend > span { display: inline-flex; align-items: center; gap: 0.3rem; }
+.legend-ring { width: 0.65rem; height: 0.65rem; border-radius: 50%; border: 1.5px solid currentColor; }
+.legend-ring--ready { color: var(--status-good-ink); }
+.legend-ring--pending { color: var(--status-warning-ink); }
+.legend-ring--inert { color: var(--status-inert); }
+.legend-edge { width: 1.2rem; height: 0; border-top: 1.8px solid var(--map-edge); }
+.legend-edge--suggested { border-top-width: 1.3px; border-top-style: dotted; opacity: 0.6; }
+
+.maplegend--float,
+.mapmeta {
+  position: absolute;
+  /* A full-height layout ends flush with the bottom of the window, so these two
+     overlays are the first thing lost if anything shaves a few pixels off the
+     visible area (browser UI that `vh` still counts, a zoom-rounding remainder,
+     a horizontal scrollbar). space-4 rather than space-3 buys a strip of
+     sacrificial padding underneath them: a small height loss then costs empty
+     space instead of the legend text. */
+  bottom: var(--space-4);
+  z-index: 2;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-sm);
+  pointer-events: none;
+}
+.maplegend--float { left: var(--space-3); }
+
+/* Actions that sit side by side under a result panel; wraps rather than
+   overflowing when the pane is narrow. */
+.btnrow { display: flex; flex-wrap: wrap; gap: var(--space-2, 0.5rem); }
+
+/* A network that is deployed and testable but not yet on the map. */
+.pill--draft {
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  border: 1px dashed var(--border);
+}
+
+/* ── full-screen control ───────────────────────────────────────────────────
+   Unlike the legend and counters this is interactive, so it keeps its pointer
+   events and sits above the pins. */
+.mapfs {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
+}
+.mapfs:hover { background: var(--surface-2); color: var(--text-primary); box-shadow: var(--shadow); }
+.mapfs svg { width: 1.05rem; height: 1.05rem; }
+.mapfs[hidden] { display: none; }
+
+/* ── find a network ─────────────────────────────────────────────────────────
+   Top-left, opposite the zoom and full-screen cluster, so the two groups of chrome
+   do not crowd one corner. Outside the scene: it must not pan or scale. */
+/* One bar across the top of the stage. Centred rather than tucked in a corner because
+   at a hundred networks finding yours is the primary action, and left-aligned it
+   collided with the scope button that now lives inside it. Width is capped so it never
+   spans a wide monitor edge to edge — the map is still the subject. */
+.mapfind {
+  position: absolute;
+  top: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: min(46rem, calc(100% - 2 * var(--space-3) - 5.6rem));
+}
+.mapfind__box {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.34rem 0.4rem 0.34rem 0.7rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-1) 92%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-sm);
+}
+.mapfind__box:focus-within { border-color: var(--accent); box-shadow: var(--shadow); }
+.mapfind__icon { display: grid; place-items: center; flex: none; color: var(--text-secondary); }
+.mapfind__icon svg { width: 0.95rem; height: 0.95rem; }
+.mapfind__input { flex: 1; min-width: 0; font-size: 0.82rem; }
+
+/* Clear. Sits inside the box so it reads as part of the field rather than a third
+   button competing with Go. */
+.mapfind__clear {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.mapfind__clear:hover { background: var(--surface-2); color: var(--text-primary); }
+.mapfind__clear svg { width: 0.8rem; height: 0.8rem; }
+.mapfind__clear[hidden] { display: none; }
+
+/* Go. The only emphasised control on the stage, because committing the query is now
+   an explicit act rather than something that happens as you type. */
+.mapfind__go {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+.mapfind__go:hover { background: var(--surface-2); color: var(--text-primary); }
+.mapfind__go svg { width: 1rem; height: 1rem; }
+/* While the box holds a query that has not been run, Go is where the reader has to
+   look next — so it says so instead of sitting quietly. */
+.mapfind.is-dirty .mapfind__go {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink, #fff);
+}
+.mapfind__count {
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  text-shadow: 0 1px 2px var(--surface-1);
+}
+/* Nothing matched is worth saying in a different colour: an empty-looking map and a
+   map with no matches are otherwise indistinguishable. */
+.mapfind__count--none { color: var(--status-inert); }
+
+/* Dimmed, not hidden — a lone pin on empty ground loses the context that makes it a
+   map rather than a list. The miss keeps its hit area so it is still hoverable. */
+.mapstage.is-searching .mappin--miss { opacity: 0.17; filter: saturate(0.3); }
+.mapstage.is-searching .mappin--hit { z-index: 7; }
+
+/* NO NAMES WHILE SEARCHING, at any density. An earlier version showed the name on
+   every match, reasoning that finding a pin is pointless if the reader then has to
+   hover to identify it. That holds for two or three matches and fails completely at
+   thirty: the chips collide into a wall of text over the city, so the search obscures
+   the thing it was supposed to help read.
+   The ring and the undimmed colour already say *which* pins matched. The name stays
+   one hover or keyboard-focus away, just as it does on the idle map. */
+/* A miss loses its caption; a hit keeps it. Hiding every name while searching made the
+   map harder to read than not searching at all — the reader is looking for a name, so
+   the matches are precisely the ones whose names should stay. */
+.mapstage.is-searching .mappin--miss .mappin__chip { display: none; }
+.mapstage.is-searching .mappin:hover .mappin__chip,
+.mapstage.is-searching .mappin:focus-visible .mappin__chip { display: inline-flex; }
+/* And it is never dimmed as a non-match. */
+.mapstage.is-searching .mappin.is-new { opacity: 1; filter: none; }
+/* Above the other matches, so a hovered name is never read through a neighbour's. */
+.mapstage.is-searching .mappin:hover,
+.mapstage.is-searching .mappin:focus-visible { z-index: 9; }
+
+.mapstage.is-searching .mappin--hit .mappin__drop {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent),
+              0 4px 10px -2px rgb(0 0 0 / 0.45);
+}
+/* Edges to dimmed pins recede with them, so a search thins the thicket too. */
+.mapstage.is-searching .mapedge { opacity: 0.08; }
+
+/* ── your own organization's pins ───────────────────────────────────────────
+   The networks a reader came to find. A steady ring says "yours" at a glance without
+   needing a hover, and the slow pulse draws the eye across a crowded map — which is
+   the one thing scanning a hundred markers by name cannot do.
+
+   Only applied when an organization is remembered (views/map.js), or every pin would
+   carry the cue and it would say nothing. */
+.mappin--mine .mappin__drop {
+  border-color: color-mix(in srgb, var(--accent) 85%, white);
+}
+@media (prefers-reduced-motion: no-preference) {
+  /* 2.4s and a soft ring: deliberately slower and gentler than the is-new halo, which
+     means "this just arrived" and should still win attention when both are present.
+     Several of these pulse at once when a team has many networks, so anything faster
+     reads as an alarm rather than a label. */
+  .mappin--mine .mappin__drop { animation: pin-mine 2.4s ease-in-out infinite; }
+  /* While searching, the search cue owns the emphasis; two competing pulses on one
+     pin is noise. */
+  .mapstage.is-searching .mappin--mine .mappin__drop { animation: none; }
+}
+@keyframes pin-mine {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent),
+                         0 4px 10px -2px rgb(0 0 0 / 0.45); }
+  50%      { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 0%, transparent),
+                         0 4px 10px -2px rgb(0 0 0 / 0.45); }
+}
+
+/* ── zoom control ───────────────────────────────────────────────────────────
+   Stacked under the full-screen button in the same corner, sharing its surface
+   treatment so the stage has one cluster of chrome rather than two. Outside the
+   scene, so it neither scales nor pans with the map. */
+.mapzoom {
+  position: absolute;
+  top: calc(var(--space-3) + 2.6rem);
+  right: var(--space-3);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.mapzoom__btn {
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+.mapzoom__btn + .mapzoom__btn { border-top: 1px solid var(--border); }
+.mapzoom__btn:hover:not(:disabled) { background: var(--surface-2); color: var(--text-primary); }
+/* Dimmed rather than hidden at the ends of the range: a control that disappears
+   moves the ones below it, and the reader loses the button they were aiming at. */
+.mapzoom__btn:disabled { opacity: 0.35; cursor: default; }
+.mapzoom__btn svg { width: 1.05rem; height: 1.05rem; }
+/* The reset only means something once there is something to reset. */
+.mapzoom__btn--reset { display: none; }
+.mapstage.is-zoomed .mapzoom__btn--reset { display: grid; }
+/* Shown only while magnified, for the same reason: at 100% it states the obvious
+   and takes height from the map to do it. */
+.mapzoom__level {
+  display: none;
+  padding: 0.2rem 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.62rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--text-secondary);
+}
+.mapstage.is-zoomed .mapzoom__level { display: block; }
+/* One icon, two states: show the arrows that describe what the click will do. */
+.mapfs .mapfs__exit { display: none; }
+.mapshell.is-fullscreen .mapfs .mapfs__enter { display: none; }
+.mapshell.is-fullscreen .mapfs .mapfs__exit { display: block; }
+
+/* ── organization scope ────────────────────────────────────────────────── */
+/* The one control the map has beyond full screen: whether it is scoped to the
+   remembered organization. Hidden entirely until an organization is remembered
+   (see util/org.js), so a first-time visitor sees the unchanged "always shows
+   everything" map rather than a control with nothing to explain it. */
+/* A compact search-scope toggle inside the field. It says All/Mine rather than an
+   arbitrary organization name, so it reads as a filter and cannot be mistaken for a
+   selected network. The full name remains in its title and accessible label. */
+.mapscope {
+  flex: none;
+  white-space: nowrap;
+  padding: 0.27rem 0.48rem;
+  border-radius: var(--radius-sm);
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+.mapscope:hover { background: var(--surface-2); color: var(--text-primary); }
+.mapscope.is-active {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-1));
+  color: var(--accent);
+}
+.mapscope[hidden] { display: none; }
+
+/* Full screen strips the app chrome, so the shell has to supply its own surface —
+   the backdrop is black by default and the stage's own background would leave the
+   rounded corners and border of the normal layout showing against it. */
+.mapshell:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface-0, var(--surface-1));
+}
+.mapshell:fullscreen .mapstage { border-radius: 0; }
+.mapmeta {
+  right: var(--space-3);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 52rem) {
+  .mapstage { min-height: 26rem; }
+  .maplegend--float { display: none; }
+  /* A short stage leaves little room above or below a pin, so keep the callout
+     compact enough to fit on one side of it. */
+  .mapdetail__desc { -webkit-line-clamp: 4; }
+}
+
+/* ── toast ──────────────────────────────────────────────────────────────── */
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.86rem;
+  animation: toast-in 0.18s ease-out;
+}
+.toast__glyph { font-weight: 700; flex: none; }
+.toast__body { flex: 1; min-width: 0; word-break: break-word; }
+.toast--ok .toast__glyph { color: var(--status-good-ink); }
+.toast--err .toast__glyph { color: var(--status-critical-ink); }
+.toast--err { border-color: color-mix(in srgb, var(--status-critical) 45%, var(--border-strong)); }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(0.5rem); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ── empty state ────────────────────────────────────────────────────────── */
+.empty {
+  display: grid;
+  place-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--text-muted);
+}
+.empty__icon {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+.empty__title { font-weight: 600; color: var(--text-secondary); font-size: 0.9rem; }
+.empty__hint { font-size: 0.82rem; max-width: 26rem; }
+
+.skeleton {
+  height: 0.8rem;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--surface-2), var(--surface-sunken), var(--surface-2));
+  background-size: 200% 100%;
+  animation: shimmer 1.3s ease-in-out infinite;
+}
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+.chip {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+}
+
+/* ── modal ──────────────────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  /* An explicit row, not the implicit `auto` one. An auto row grows to the dialog's
+     max-content height, and `place-items: center` then centres the dialog inside
+     *that* rather than inside the viewport — on a 720p window it pushed a tall
+     dialog's bottom ~300px below the fold, where a position:fixed overlay has no
+     way to scroll to it. It also left `max-height: 100%` below resolving against
+     that content-derived height instead of the viewport, so the clamp that was
+     supposed to prevent this never engaged. minmax(0, 1fr) pins the row to the
+     overlay's own content box: centring is relative to the viewport again, and the
+     percentage becomes definite. */
+  grid-template-rows: minmax(0, 1fr);
+  place-items: center;
+  padding: var(--space-5);
+  background: rgb(0 0 0 / 0.5);
+  backdrop-filter: blur(2px);
+}
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 30rem;
+  max-height: min(38rem, 100%);
+  background: var(--surface-1);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+.modal:focus-visible { outline: none; }
+.modal--lg { max-width: 56rem; max-height: min(44rem, 100%); }
+.modal__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+.modal__head h2 { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.modal__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-5);
+}
+/* Groups fields within one modal body (see settingsModal.js's Credentials /
+   Deploy defaults split) without a second heading level or a border — just
+   more air above than a field gets from another field. */
+.modal__subhead {
+  margin: var(--space-5) 0 var(--space-2);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.modal__subhead:first-child { margin-top: 0; }
+/* A form's action row inside a modal body — right-aligned, same rhythm as
+   .card__foot--end, without borrowing its border/background (the modal body
+   is already the card-equivalent surface). */
+.modal__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .modal-overlay { animation: modal-fade 0.15s ease-out; }
+  .modal { animation: modal-in 0.18s cubic-bezier(0.22, 1, 0.36, 1); }
+}
+@keyframes modal-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@media (max-width: 30rem) {
+  .modal-overlay { padding: 0; }
+  .modal { max-width: none; max-height: none; height: 100%; border-radius: 0; }
+  .modal--lg { max-width: none; max-height: none; }
+}
+
+/* ── stale-console bar ──────────────────────────────────────────────────────
+   Above everything, because it explains why everything else may be misbehaving.
+   Not a toast: this condition does not pass on its own and a dismissible message
+   would be re-shown on every poll or lost on the first one. */
+.updatebar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: 0.5rem var(--space-4);
+  background: var(--status-warning);
+  color: #0b0b0b;
+  font-size: 0.84rem;
+  font-weight: 600;
+  text-align: center;
+}
+.updatebar[hidden] { display: none; }
+.updatebar .btn {
+  background: #0b0b0b;
+  color: #fff;
+  font-weight: 650;
+}
+.updatebar .btn:hover { background: #2a2a2a; }
+
+/* ── launch dialog ──────────────────────────────────────────────────────────
+   The wait between pressing Launch and the site answering. There is nothing to do
+   and nothing to decide, so there is almost nothing to read: the loader, three
+   words, one short line of what is happening, and a clock. It closes itself on
+   success, which is why the success panel has no buttons — only the failure panel
+   has a control, because only failure needs a decision. */
+.launchbody { display: grid; justify-items: center; gap: var(--space-4); }
+
+/* The live activity line. A fixed min-height stops the dialog from jumping each
+   time the build log produces a shorter message. */
+.lnow {
+  margin: 0;
+  min-height: 2.3em;
+  max-width: 22rem;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.lnow--err {
+  min-height: 0;
+  max-width: none;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.lclock {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+/* "Replaced the existing X" — shown when an upload took over a network that was
+   already deployed. Accent-tinted rather than warning-coloured: the URL and the map
+   pin are preserved on purpose, so this is an update that succeeded, not a problem
+   to act on. Sits last in the dialog so it never displaces the build status. */
+.lreplaced {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin: var(--space-3) 0 0;
+  max-width: 26rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  text-align: left;
+}
+.lreplaced svg { flex: none; margin-top: 0.15rem; color: var(--accent-ink); }
+.lbig {
+  margin: 0;
+  text-align: center;
+  font-size: 1.15rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.lactions { display: grid; gap: var(--space-2); width: 100%; margin-top: var(--space-1); }
+.lactions .btn { text-decoration: none; }
+
+/* The outcome mark. Big enough to read as the answer at a glance, since on success
+   it is on screen for barely a second before the map opens. */
+.ltick {
+  display: grid;
+  place-items: center;
+  width: 4rem;
+  height: 4rem;
+  border-radius: 50%;
+  background: var(--status-good-ink);
+  color: #fff;
+}
+.ltick--err {
+  background: color-mix(in srgb, var(--status-critical) 16%, var(--surface-2));
+  color: var(--status-critical-ink);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ltick { animation: tick-in 0.4s cubic-bezier(0.22, 1, 0.36, 1); }
+}
+@keyframes tick-in {
+  from { opacity: 0; transform: scale(0.5); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Three pips, one word each, mirroring the only three states the API reports —
+   so there are no invented sub-steps and no fabricated percentages. */
+.pips {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pip {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+  min-width: 5.2rem;
+}
+/* The connector runs from each pip's dot to the next one's. */
+.pip:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 0.55rem;
+  left: calc(50% + 0.7rem);
+  width: calc(100% - 1.4rem);
+  height: 2px;
+  border-radius: 1px;
+  background: var(--border);
+}
+.pip[data-state="done"]::after { background: var(--status-good-ink); }
+.pip__dot {
+  display: grid;
+  place-items: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  background: var(--surface-1);
+  color: #fff;
+}
+.pip__dot svg { width: 0.62rem; height: 0.62rem; }
+.pip__label { font-size: 0.76rem; font-weight: 600; color: var(--text-muted); }
+.pip[data-state="done"] .pip__dot {
+  border-color: var(--status-good-ink);
+  background: var(--status-good-ink);
+}
+.pip[data-state="done"] .pip__label { color: var(--text-secondary); }
+.pip[data-state="active"] .pip__dot { border-color: var(--accent); background: var(--accent); }
+.pip[data-state="active"] .pip__label { color: var(--text-primary); }
+@media (prefers-reduced-motion: no-preference) {
+  /* Only the stage in progress pulses, so the eye lands on where things are. */
+  .pip[data-state="active"] .pip__dot { animation: pip-pulse 1.5s ease-in-out infinite; }
+}
+@keyframes pip-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
+  70% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+
+/* ── the assembling-network loader ──────────────────────────────────────────
+   An agent network building itself, which is what the wait actually is: the
+   front-man appears, sub-agents connect, tools attach. Once the build reports a
+   summary the node counts come from it, so the shape converges on the network
+   that was really deployed instead of looping over a decorative lattice. */
+.assembler {
+  position: relative;
+  width: 12rem;
+  height: 9rem;
+  margin: 0 auto;
+}
+.assembler__svg { width: 100%; height: 100%; overflow: visible; }
+.assembler__link {
+  stroke: var(--accent);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  opacity: 0.45;
+}
+.assembler__node { fill: var(--accent); }
+.assembler__node--front { fill: var(--accent); }
+.assembler__node--agent { fill: var(--accent); opacity: 0.8; }
+.assembler__node--tool { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.2; }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Nodes arrive, links draw themselves between them, and the whole thing breathes
+     so a slow build does not look frozen. The dash trick animates a line's length:
+     pathLength is normalised to 1 so one dash of 1 covers it exactly. */
+  .assembler__node {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: asm-pop 0.5s cubic-bezier(0.22, 1, 0.36, 1) var(--delay, 0s) backwards,
+               asm-breathe 2.6s ease-in-out calc(var(--delay, 0s) + 0.5s) infinite;
+  }
+  .assembler__link {
+    /* pathLength="1" is set on the element itself (an SVG attribute, not CSS), so
+       one dash of length 1 spans the whole line whatever its real geometry. */
+    stroke-dasharray: 1;
+    animation: asm-draw 0.55s ease-out var(--delay, 0s) backwards;
+  }
+  /* Settled: stop breathing and let it sit as the finished network. */
+  .assembler--settled .assembler__node { animation: asm-pop 0.4s cubic-bezier(0.22, 1, 0.36, 1) var(--delay, 0s) backwards; }
+  .assembler--settled .assembler__link { opacity: 0.65; }
+}
+@keyframes asm-pop {
+  from { opacity: 0; transform: scale(0.3); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes asm-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.11); }
+}
+@keyframes asm-draw {
+  from { stroke-dashoffset: 1; opacity: 0; }
+  to { stroke-dashoffset: 0; opacity: 0.45; }
+}
+
+/* ── agent graph (one network's own call graph, shown in the modal) ───────
+   Distinct from the Map view's cross-deployment pins: this is what is *inside*
+   one HOCON. Node kind rides on the icon glyph and the label, never color alone;
+   the accent tiers (wash/soft/solid) mark the front-man and orchestrators as the
+   same brand family at different weight, not a borrowed status hue. */
+.agentgraph {
+  position: relative;
+  min-height: max(24rem, calc(var(--ag-rows, 3) * 6.5rem));
+}
+.agentgraph__edges { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.agentedge {
+  fill: none;
+  stroke: var(--map-edge);
+  stroke-width: 1.6;
+  opacity: 0.8;
+  transition: opacity 0.14s ease, stroke 0.14s ease;
+}
+#ag-arrow path { fill: var(--map-edge); }
+.agentgraph.is-tracing .agentedge { opacity: 0.12; }
+.agentgraph.is-tracing .agentedge.is-active {
+  opacity: 1;
+  stroke: var(--map-edge-active);
+  stroke-width: 2.2;
+}
+
+.agentgraph__nodes { position: absolute; inset: 0; }
+.agentnode {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  gap: 0.3rem;
+  width: 4.75rem;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  transition: opacity 0.14s ease;
+}
+.agentgraph.is-tracing .agentnode { opacity: 0.28; }
+.agentgraph.is-tracing .agentnode.is-related { opacity: 1; }
+
+.agentnode__glyph {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+}
+.agentnode:hover .agentnode__glyph { transform: scale(1.08); box-shadow: var(--shadow); }
+.agentnode:focus-visible .agentnode__glyph {
+  transform: scale(1.08);
+  box-shadow: var(--shadow);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.agentnode--root .agentnode__glyph { background: var(--accent-wash); border-color: var(--accent); color: var(--accent); }
+.agentnode--orchestrator .agentnode__glyph { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.agentnode--external .agentnode__glyph { border-style: dashed; }
+
+.agentnode__label {
+  max-width: 100%;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-align: center;
+  color: var(--text-secondary);
+  /* No text-transform: capitalize. It was here to lift `traveler intake agent`
+     out of all-lowercase, but the label is now cased properly before it gets
+     here (displayName in util/format.js) — and capitalize fought that, turning
+     "Budgeting and Tradeoffs" back into "Budgeting And Tradeoffs". */
+  overflow-wrap: anywhere;
+  line-height: 1.2;
+}
+.agentnode--root .agentnode__label { color: var(--text-primary); font-weight: 700; }
+
+.agentgraph__legend {
+  position: absolute;
+  bottom: var(--space-2);
+  left: var(--space-2);
+  z-index: 2;
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: 0.3rem 0.6rem;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+  border: 1px solid var(--border);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.agentgraph__legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
+.agentgraph__legend svg { width: 0.85rem; height: 0.85rem; }
+
+/* ── design editor ─────────────────────────────────────────────────────────
+   Controls on the left, a preview of the deployed site on the right. Two
+   columns rather than a wizard because the whole value is seeing the effect
+   while choosing the cause; stacking them would put the result off-screen
+   exactly when it matters.
+
+   The preview is an iframe of someone else's site, so nothing in here styles
+   its insides (see components/sitePreview.js) — only the frame it sits in. */
+.design {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+.design__controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  /* Clearance for the sticky action row, which otherwise covers whatever the
+     column ends on (the contrast line, as it happens — the one thing in here
+     that is a warning). */
+  padding-bottom: var(--space-6);
+}
+.design__group { display: flex; flex-direction: column; gap: var(--space-2); }
+.design__grouphead {
+  margin: 0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.design__group--layout {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.design__group--layout .btn { align-self: flex-start; }
+
+.design__fields { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.design__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+.design__field--narrow { flex: 0 0 4.5rem; }
+.design__label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.design__value { color: var(--text-muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.design__hint { font-size: 0.68rem; color: var(--text-muted); line-height: 1.3; }
+.design__swatch .design__hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A smaller input than the form default: this panel holds a dozen of them and
+   the page-sized rhythm would push the preview below the fold. */
+.input--sm { padding: 0.32rem 0.45rem; font-size: 0.82rem; }
+select.input--sm { padding-right: 0.2rem; }
+textarea.input--sm { min-height: 3rem; }
+
+/* One swatch per token. The native colour input is the picker — a hand-rolled
+   one would be a worse picker on every platform — and the text field beside it
+   is how rgb()/hsl()/keyword values stay reachable, since the native control
+   speaks only hex. */
+.design__swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+  gap: var(--space-2) var(--space-3);
+}
+.design__swatch { display: flex; gap: var(--space-2); align-items: center; min-width: 0; }
+.design__swatch input[type="color"] {
+  flex: none;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+}
+.design__swatch input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+.design__swatch input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 3px; }
+.design__swatchmeta { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1; }
+.design__hex { font-family: var(--font-mono); font-size: 0.72rem; }
+
+/* Contrast verdict for the pairs WCAG AA governs. Stated as a line of text
+   rather than a colour cue, for the same reason the status pills carry words:
+   a warning about unreadable colour cannot itself depend on reading colour. */
+.design__contrast {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+.design__contrast--warn { color: var(--status-critical-ink); font-weight: 600; }
+.design__contrast--warn::before { content: "✕ "; font-weight: 700; }
+
+.design__notice {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 0.73rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+/* ── peer node graph (components/peerGraphModal.js) ──────────────────────────
+   Absolutely-positioned nodes over an SVG edge layer, the same arrangement
+   views/map.js uses: the edges are measured in pixels, so the layer is sized to
+   the box rather than scaled, and a ResizeObserver redraws it. */
+.pgraph {
+  position: relative;
+  height: 17rem;
+  margin: var(--space-4) 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.pgraph__svg { position: absolute; inset: 0; width: 100%; height: 100%; color: var(--text-muted); }
+.pgraph__edge {
+  fill: none;
+  stroke: var(--border-strong, var(--border));
+  stroke-width: 1.6;
+  transition: opacity 0.14s ease, stroke 0.14s ease;
+}
+/* Hovering one node pushes the others back so a single connection can be followed
+   across a crowded box. */
+.pgraph.is-tracing .pgraph__edge { opacity: 0.22; }
+.pgraph.is-tracing .pgraph__edge.is-active {
+  opacity: 1;
+  stroke: var(--accent);
+  stroke-width: 2.2;
+}
+.pgraph__node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: grid;
+  gap: 0.05rem;
+  width: 8.25rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-sm);
+  text-align: center;
+  transition: opacity 0.14s ease, border-color 0.14s ease;
+}
+.pgraph.is-tracing .pgraph__node { opacity: 0.45; }
+.pgraph.is-tracing .pgraph__node.is-active,
+.pgraph.is-tracing .pgraph__node--self { opacity: 1; }
+.pgraph__node.is-active { border-color: var(--accent); }
+/* A peer run elsewhere cannot be opened or traced from here. */
+.pgraph__node--ext { border-style: dashed; }
+.pgraph__node--self {
+  width: 9.5rem;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  z-index: 1;
+}
+.pgraph__dir {
+  font-size: 0.62rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+.pgraph__name { font-size: 0.78rem; font-weight: 600; overflow-wrap: anywhere; }
+.wire__dir { color: var(--text-muted); font-weight: 700; }
+
+/* ── peer URL index (components/peerGraphModal.js) ───────────────────────────
+   calls | this network | called by. Three columns rather than a node-link graph:
+   the thing being read is a full URL, which as an edge label is unreadable at any
+   node spacing but is fine as a line of monospace under a name. */
+.wire {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+.wire__col { min-width: 0; }
+.wire__title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 var(--space-2);
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-secondary);
+}
+.wire__count {
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+.wire__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.wire__peer {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+/* A peer run elsewhere is a real connection but cannot be opened or traced from
+   here, so it is dimmed rather than hidden. */
+.wire__peer--ext { border-style: dashed; }
+.wire__peerhead { display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem; }
+.wire__peername { font-weight: 600; font-size: 0.85rem; overflow-wrap: anywhere; }
+.wire__tag,
+.wire__slot {
+  padding: 0.05rem 0.35rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.66rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.wire__tag { color: var(--text-muted); background: var(--surface-1); }
+.wire__slot {
+  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  font-family: var(--font-mono);
+  text-transform: none;
+}
+.wire__url {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.wire__via { font-size: 0.7rem; color: var(--text-muted); }
+.wire__empty {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+/* The subject, between the two columns. Sticky so it stays beside whichever peer
+   is being read when one column is much longer than the other. */
+.wire__hub {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding-top: 1.7rem;
+}
+.wire__self {
+  max-width: 9rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-weight: 650;
+  font-size: 0.8rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.wire__arrow { color: var(--text-muted); }
+/* Inbound points the other way; one icon rotated rather than a second asset. */
+.wire__arrow--in { transform: scaleX(-1); }
+
+@media (max-width: 46rem) {
+  /* One column on a narrow dialog: three would leave no width for a URL, which is
+     the only reason this screen exists. The hub stops being a divider and becomes
+     a heading, so the reading order stays calls -> self -> called by. */
+  .wire { grid-template-columns: 1fr; }
+  .wire__hub { position: static; flex-direction: row; padding-top: 0; }
+  .wire__arrow { display: none; }
+}
+
+/* ── the connect flow (views/networks.js) ────────────────────────────────────
+   Two steps: Connect on one of your own networks, then tick what it should call.
+   The bar states which network is the source, because the column of checkboxes
+   that appears is otherwise ambiguous about what it is connecting. */
+.connbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.connbar__text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+
+.selcell {
+  text-align: center;
+  /* This is the narrow checkbox column. Normal table padding leaves less than the
+     width of SOURCE, so the table's overflow-wrap:anywhere rule split it in two. */
+  padding-inline: 0.35rem !important;
+}
+.selcell__box { width: auto; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.selcell__box:disabled { cursor: not-allowed; opacity: 0.45; }
+/* "source" and "linked" stand in for a checkbox where one would be meaningless.
+   A word rather than a greyed box, because a disabled control invites a second
+   click to find out why. */
+.selcell__tag {
+  display: inline-block;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  font-size: 0.66rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+.selcell__tag--done { color: var(--status-good-ink); }
+
+/* The whole row tints rather than just the box: the selection has to be readable
+   while scanning the Connections column two cells away, which is how somebody
+   decides what to tick in the first place. */
+.table tbody tr.is-selected { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+/* Keeps the tint visible under the row's own hover, which would otherwise win and
+   make a selected row look unselected exactly while being pointed at. */
+.table tbody tr.is-selected:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.table tbody tr.is-source { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* "yours" on the organization whose name this browser remembers (util/org.js) —
+   the one whose rows have working controls. */
+/* Solid accent, not a tint. `--accent-ink` is the colour for text ON accent — it
+   is #ffffff in the light theme (see .btn--primary, which pairs them) — so the
+   earlier 16% tint rendered white-on-near-white and the badge was all but
+   invisible. On the solid fill the pairing is the designed one and contrast holds
+   in both themes. Uppercase and letter-spaced so it reads as a label on the
+   group rather than a word in the heading. */
+.org-group__mine {
+  padding: 0.14rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-ink);
+  background: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ── connection counts (views/networks.js) ───────────────────────────────────
+   How many networks call this one, and how many it calls. Inbound is styled as the
+   prominent one because it is the number people scan for — it only moves when
+   somebody deliberately binds a slot to this network. */
+.conns { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+.conns__in,
+.conns__out,
+.conns__top {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* Solid accent, not a tint — the same pairing as .org-group__mine above and for the
+   same reason: `--accent-ink` is #ffffff in the light theme, so on a 14% tint the
+   "used by N" pill rendered white-on-near-white and was effectively invisible (and
+   near-black on dark). The solid fill restores the designed pairing, and it also
+   delivers the prominence this pill is supposed to have against the muted
+   .conns__out beside it. */
+.conns__in {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+.conns__out { color: var(--text-secondary); background: var(--surface-2); }
+/* ── find-your-network bar (views/networks.js) ───────────────────────────────
+   Search, filters, sort and page size for a list that reaches 80-100 rows at an
+   event. Sits between the card head and the table body, and is rendered once —
+   the body under it is replaced on a 5s poll, and a search input living in there
+   would lose focus and the caret mid-keystroke.
+
+   Wraps rather than scrolls: on a narrow window the controls stack, where a
+   horizontally scrolling toolbar hides the ones on the right with nothing to
+   suggest they exist. */
+.listbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-1);
+}
+.listbar__search {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1 1 16rem;
+  min-width: 12rem;
+  padding: 0 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-0, var(--surface-1));
+  color: var(--text-muted);
+}
+.listbar__search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+/* The field carries no border of its own: the wrapper above draws it, so the
+   glyph sits inside the same box rather than beside a second one. */
+.input--bare {
+  border: none;
+  background: none;
+  box-shadow: none;
+  padding-left: 0;
+  padding-right: 0;
+  flex: 1;
+  min-width: 0;
+}
+.input--bare:focus { outline: none; box-shadow: none; }
+.listbar__field { display: flex; flex-direction: column; gap: 0.15rem; }
+.listbar__label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.input--sm { padding: 0.3rem 0.5rem; font-size: 0.8rem; }
+
+/* ── pager (views/networks.js) ───────────────────────────────────────────────
+   The count sits on the left and reads "1-25 of 83": after a filter, how many
+   matched is the thing a reader checks first, and a row of bare page numbers does
+   not answer it. */
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.7rem 0.1rem 0.1rem;
+}
+.pager__count { font-size: 0.8rem; color: var(--text-secondary); }
+.pager__nav { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem; }
+.pager__gap { color: var(--text-muted); padding: 0 0.15rem; }
+/* The current page is a filled button, not merely bolder: at a glance among eight
+   near-identical ghost buttons, weight alone is not enough to locate yourself. */
+.pager .is-current {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+.pager .is-current:hover { background: var(--accent); color: var(--accent-ink); }
+
+/* Filters excluding everything is a different state from having no networks at
+   all, and says so — otherwise a reader reaches for the upload button when what
+   they need is to clear a filter. */
+.emptyish { padding: 1.6rem 1rem; text-align: center; }
+.emptyish__title { font-weight: 600; margin-bottom: 0.2rem; }
+
+/* ── most-connected star (views/networks.js) ─────────────────────────────────
+   One gold star on the busiest network, and nothing on the rest. This replaced a
+   three-place medal set: the question the list answers is which network is most
+   used, and silver and bronze spent width and attention without answering it.
+
+   Fill set from here rather than an SVG gradient: a gradient needs an id, and two
+   stars on one screen — a tie — would collide on it. The shape carries the meaning
+   on its own, so it survives a colour-vision limit, greyscale printing and a dark
+   theme; the gold is decoration on top of that, not the signal.
+
+   The darker rim matters: without it the star washes out against the light surface
+   the table sits on. */
+.topstar {
+  flex: none;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-right: 0.4rem;
+  vertical-align: -0.17rem;
+}
+.topstar__shape {
+  fill: #e8c252;
+  stroke: #c49a2e;
+  stroke-width: 1.1;
+  stroke-linejoin: round;
+}
+
+/* ── network picker (components/linkPromptModal.js) ──────────────────────────
+   A tick-list of deployed networks, each with its own slot-name field. Scrolls on
+   its own rather than letting the dialog grow: the prompt preview underneath is the
+   thing being produced, and it must stay visible while the selection changes. */
+.picker__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.picker {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  max-height: 15rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.picker__row {
+  display: grid;
+  /* name | description | slot. The slot column is fixed so the fields line up into
+     a column that can be read down, which is how a duplicate name gets spotted. */
+  grid-template-columns: minmax(8rem, 1fr) minmax(0, 1.6fr) 13rem;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+.picker__row + .picker__row { border-top: 1px solid var(--border); }
+.picker__row.is-on { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.picker__pick { gap: 0.45rem; min-width: 0; }
+.picker__name { font-weight: 600; overflow-wrap: anywhere; }
+.picker__meta { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.picker__meta .cell-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker__slot { display: flex; align-items: center; gap: 0.4rem; }
+.picker__slot .input { font-family: var(--font-mono); font-size: 0.74rem; }
+.picker__empty { padding: var(--space-4); text-align: center; }
+/* One column on a narrow dialog: three columns at this width would leave the slot
+   field too narrow to read a name in, which is the one thing it exists for. */
+@media (max-width: 46rem) {
+  .picker__row { grid-template-columns: 1fr; gap: var(--space-2); }
+}
+
+/* An action row that stays reachable while the body scrolls. Applied to every
+   dialog's trailing action row, not just the two tall ones it was written for: any
+   body long enough to scroll hides its own Save/Apply button at the bottom, and
+   that button is usually the reason the dialog is open. Scoped to a direct last
+   child of .modal__body — that is the action row, and .modal__body is the element
+   that actually scrolls, which is what `sticky` needs to resolve against. */
+.modal__body > .modal__foot:last-child {
+  position: sticky;
+  bottom: calc(var(--space-5) * -1);
+  margin-bottom: calc(var(--space-5) * -1);
+  padding: var(--space-3) 0;
+  background: linear-gradient(to bottom, transparent, var(--surface-1) 35%);
+}
+
+.design__preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  /* Same clearance as the controls column: this one ends in the Rebuild button,
+     which the sticky action row would otherwise sit on top of. */
+  padding-bottom: var(--space-6);
+}
+.design__previewhead {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.design__previewhead svg { width: 0.85rem; height: 0.85rem; }
+.design__previewhead small {
+  margin-left: auto;
+  font-size: 0.65rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.design__frame {
+  width: 100%;
+  height: 21rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  display: block;
+}
+
+/* Narrow: the preview goes first, so the thing being judged is visible before
+   the controls that change it. */
+@media (max-width: 860px) {
+  .design { grid-template-columns: 1fr; }
+  .design__frame { height: 17rem; }
+}
+
+/* ── agent-network description ─────────────────────────────────────────────
+   The one screen a reader who did not build the network sees (see
+   components/agentDescriptionModal.js). Typeset as a short document rather than
+   a property sheet: a measure that invites reading, the description at body
+   size, and the metadata demoted beneath it — because the question being
+   answered is "what is this for", not "what are its fields". */
+.netdesc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  /* Room for the sticky action row to pass over the last caveat. */
+  padding-bottom: var(--space-5);
+}
+
+.netdesc__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.netdesc__meta > span:not(:last-child)::after {
+  content: "·";
+  margin-left: var(--space-2);
+  color: var(--border-strong);
+}
+
+/* The lead paragraph is the point of the screen, so it gets the one thing a
+   modal usually withholds: a comfortable measure and a size above the chrome. */
+.netdesc__lead {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+.netdesc__lead--empty { color: var(--text-muted); font-size: 0.88rem; }
+
+.netdesc__section { display: flex; flex-direction: column; gap: var(--space-2); }
+.netdesc__head {
+  margin: 0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Sample queries read as things someone would type, so they are set as quoted
+   questions rather than as a bulleted list of values. */
+.netdesc__queries { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-2); }
+.netdesc__queries li {
+  position: relative;
+  padding: var(--space-2) var(--space-3) var(--space-2) 2rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 0.86rem;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+.netdesc__queries li::before {
+  content: "“";
+  position: absolute;
+  left: 0.7rem;
+  top: 0.35rem;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+.netdesc__facts { margin: 0; display: grid; gap: var(--space-3); }
+.netdesc__fact {
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+}
+.netdesc__fact dt { font-size: 0.78rem; font-weight: 650; color: var(--text-secondary); }
+.netdesc__fact dd { margin: 0; display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.netdesc__hint { font-size: 0.7rem; color: var(--text-muted); line-height: 1.35; }
+
+.netdesc__chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.netdesc__chips code {
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-size: 0.72rem;
+}
+.netdesc__link {
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-sm);
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-size: 0.72rem;
+  text-decoration: none;
+}
+.netdesc__link:hover { text-decoration: underline; }
+
+/* A caveat is prose, not a chip row: "3 demo-mode agents" is a build fact,
+   while "these invent realistic answers" is what decides whether to trust an
+   answer from here. Bordered on the leading edge so it reads as an aside
+   without borrowing the alarm of an error. */
+.netdesc__caveat {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--status-warning);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--surface-2);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.netdesc__caveat + .netdesc__caveat { margin-top: var(--space-2); }
+.netdesc__caveat strong { color: var(--text-primary); }
+.netdesc__caveat .netdesc__chips { display: inline-flex; vertical-align: middle; }
+
+.netdesc__offline { margin-right: auto; font-size: 0.78rem; color: var(--text-muted); }
+
+@media (max-width: 34rem) {
+  .netdesc__fact { grid-template-columns: 1fr; gap: 0.15rem; }
+}
+
+/* ── agent roster accordion ────────────────────────────────────────────────
+   Every agent's authored purpose, from the resolved HOCON. Native <details>:
+   the browser gives keyboard operation, the correct ARIA semantics and in-page
+   find for free — including inside collapsed sections, which a JS accordion
+   would hide from Ctrl+F. */
+.netdesc__agents {
+  display: grid;
+  gap: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--border);
+  gap: 1px;
+}
+.netdesc__agent { background: var(--surface-1); }
+.netdesc__agent > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.5rem var(--space-3);
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.82rem;
+}
+.netdesc__agent > summary::-webkit-details-marker { display: none; }
+/* The disclosure triangle is drawn here so it can carry the open state without
+   depending on the UA's own marker, which differs per browser and cannot be
+   positioned reliably. */
+.netdesc__agent > summary::before {
+  content: "";
+  flex: none;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  transform: rotate(-45deg);
+  transition: transform 0.14s ease;
+}
+.netdesc__agent[open] > summary::before { transform: rotate(45deg); }
+.netdesc__agent > summary:hover { background: var(--surface-2); }
+.netdesc__agent > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.netdesc__agentname {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.netdesc__agentmeta { margin-left: auto; font-size: 0.7rem; color: var(--text-muted); flex: none; }
+
+/* What the agent is in the network's shape. Worded as a role ("answers first")
+   rather than as a graph term ("root"), since the reader is asking about the
+   network's behaviour and not about its topology. */
+.netdesc__kind {
+  flex: none;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  font-size: 0.64rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  text-transform: lowercase;
+}
+.netdesc__kind--root { border-color: var(--accent); color: var(--accent); }
+
+.netdesc__agentbody {
+  padding: 0 var(--space-3) var(--space-3) 1.5rem;
+  display: grid;
+  gap: var(--space-2);
+}
+.netdesc__agentbody p { margin: 0; font-size: 0.82rem; line-height: 1.55; max-width: 64ch; }
+.netdesc__calls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem;
+  font-size: 0.72rem !important;
+  color: var(--text-muted);
+}
+
