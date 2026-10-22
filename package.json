@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/runtime_regression.mjs && node --test tests/cruse.test.mjs",
+    "test": "node tests/runtime_regression.mjs && node --test tests/cruse.test.mjs tests/engine_stream.test.mjs",
     "test:cailville": "node tests/cailville_browser.ts"
   },
   "devDependencies": {

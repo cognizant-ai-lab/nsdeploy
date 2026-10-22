@@ -33,11 +33,25 @@ const minifyPackage = {
   },
 };
 
+// WORKAROUND / PORT BACK: the package doesn't export BaseToolFactory, which builds
+// every tool an agent can call, and neuro-san-session.mjs wraps what it builds. So
+// this adds the export to the package's module as it is bundled (the package on
+// disk is never edited). A package without the class exports null instead, and the
+// session then leaves its tools as they are. Port back: export it from the package.
+const exposeBaseToolFactory = {
+  name: "expose-base-tool-factory",
+  transform(code, id) {
+    if (!/neuro-san-ts-package[\\/]dist[\\/]neuro-san\.mjs$/.test(id)) return null;
+    const found = /^class BaseToolFactory \{/m.test(code);
+    return `${code}\nexport ${found ? "{ BaseToolFactory as NsdeployBaseToolFactory }" : "const NsdeployBaseToolFactory = null"};\n`;
+  },
+};
+
 export default defineConfig({
   root,
   publicDir: false,
   logLevel: "info",
-  plugins: [minifyPackage],
+  plugins: [exposeBaseToolFactory, minifyPackage],
   build: {
     outDir: generated,
     emptyOutDir: true,

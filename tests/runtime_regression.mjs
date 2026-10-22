@@ -3,8 +3,13 @@ import assert from "node:assert/strict";
 import { assertRouterKey, isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopRouter } from "../nsdeploy/runtime/engine.js";
 import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
 import { isMockResponse, normalizeModelName } from "../nsdeploy/runtime/model.js";
-import { consumeAgentBudget, consumeRemoteBudget, remoteIsInChain } from "../nsdeploy/runtime/composition.js";
+import {
+  consumeAgentBudget, consumeRemoteBudget, remoteIsInChain, requiresThirdPartyApproval,
+} from "../nsdeploy/runtime/composition.js";
 import { AgentNetwork, loadNeuroSan, initNetwork } from "../nsdeploy/runtime/agent-network.js";
+import { createTurnEventStream } from "../nsdeploy/runtime/execution-stream.js";
+import { TraceBus } from "../nsdeploy/runtime/trace.js";
+import { createTurnStatusController, statusTextForEvent } from "../nsdeploy/runtime/turn-status.js";
 
 // remoteIsInChain parses references with neuro-san's ExternalAgentParsing, from the
 // bundled package.
@@ -54,6 +59,55 @@ assert.deepEqual(
 );
 assert.throws(() => selectPeerRouter(null), /caller has no active LLM router/i);
 
+// The consumer projection is one replaceable status line, not a growing event
+// list. It hides on turn completion or as soon as a final answer is shown.
+{
+  const shown = [];
+  let hidden = 0;
+  const status = createTurnStatusController({
+    show: (text, event) => shown.push([text, event.type]),
+    hide: () => { hidden += 1; },
+  });
+  status.handle({ type: "turn.started" });
+  status.handle({ type: "turn.steering.received" });
+  assert.deepEqual(shown.at(-1), ["Update received; adjusting the plan…", "turn.steering.received"]);
+  status.handle({ type: "tool.started", tool: { name: "inventory_search", kind: "MCP" } });
+  status.handle({ type: "tool.progress", tool: { name: "inventory_search" }, message: "Halfway through the inventory check" });
+  assert.equal(status.visible, true);
+  assert.deepEqual(shown.at(-1), ["Halfway through the inventory check", "tool.progress"]);
+  assert.equal(statusTextForEvent({ type: "tool.completed", tool: { name: "inventory_search" } }), "Inventory Search finished; reviewing the result…");
+  status.handle({ type: "turn.completed" });
+  assert.equal(status.visible, false);
+  assert.equal(hidden, 1);
+  status.handle({ type: "turn.started" });
+  status.finalAnswerStarted();
+  assert.equal(hidden, 2);
+}
+
+// Concurrent stream consumers only receive the trace subtree for their own turn.
+{
+  const trace = new TraceBus();
+  const fakeTurn = (token, input, delay) => createTurnEventStream(trace, async () => {
+    const span = trace.start("run", { streamToken: token, input });
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    trace.end(span);
+    return { turnId: span, text: input };
+  }, token);
+  const collect = async (stream) => {
+    const events = [];
+    for await (const event of stream) events.push(event);
+    return events;
+  };
+  const [first, second] = await Promise.all([
+    collect(fakeTurn("stream-a", "alpha", 15)),
+    collect(fakeTurn("stream-b", "beta", 2)),
+  ]);
+  assert.deepEqual(first.filter((event) => event.type === "turn.started").map((event) => event.input), ["alpha"]);
+  assert.deepEqual(second.filter((event) => event.type === "turn.started").map((event) => event.input), ["beta"]);
+  assert.equal(first.at(-1).result.text, "alpha");
+  assert.equal(second.at(-1).result.text, "beta");
+}
+
 const topManifest = { allowed_peers: ["http://127.0.0.1:8092"] };
 const peerManifest = { allowed_peers: ["http://127.0.0.1:8097"] };
 assert.equal(manifestAllowsPeer("http://127.0.0.1:8092/network", topManifest), true);
@@ -83,6 +137,15 @@ const linkSlotNetwork = new AgentNetwork({
 }, "greenbank_farm");
 assert.equal(linkSlotNetwork.classifyTool("crop_planning_specialist").kind, "agent");
 assert.equal(linkSlotNetwork.classifyTool("outside_partner").kind, "link");
+
+// Consent follows the actual site boundary. A page's own MCP/service network is
+// local, while /ext-mcp remains gated because it proxies an external MCP server.
+assert.equal(requiresThirdPartyApproval("https://site.example/_mcp/0/mcp", "https://site.example"), false);
+assert.equal(requiresThirdPartyApproval("/mcp", "https://site.example"), false);
+assert.equal(requiresThirdPartyApproval("https://site.example/ext-mcp/0/mcp", "https://site.example"), true);
+assert.equal(requiresThirdPartyApproval("https://tools.example/mcp", "https://site.example"), true);
+assert.equal(requiresThirdPartyApproval("https://site.example/other_network", "https://site.example"), false);
+assert.equal(requiresThirdPartyApproval("https://agents.example/other_network", "https://site.example"), true);
 
 const chain = [
   "http://127.0.0.1:8095::deneman_place",

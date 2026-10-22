@@ -65,7 +65,6 @@ const peerConfig = { cruse: { version: 1 }, tools: [spec("peer_root", ["peer_lea
 const manifest = (name) => ({ networks: [{ name, hocon: "/network.json" }], allowed_peers: ["https://peer.test"], llm_router: { base_url: "https://model.test/v1", byok_router: "https://model.test/v1", mock: false } });
 const json = (v) => new Response(JSON.stringify(v), { headers: { "Content-Type": "application/json" } });
 
-// Exercise the real loops, model-client serialization, fetched peer Session, and
 test("CRUSE remains opt-out and invocation prompts distinguish user from parent", () => {
   const ctx = { isTop: false, frontMan: "root", network: { config: {}, getAgentSpec: () => ({ instructions: "Simple assistant" }) } };
   assert.equal(agentPresentationContext(ctx, "root"), "");
