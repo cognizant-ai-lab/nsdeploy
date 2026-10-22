@@ -344,12 +344,11 @@ test("consent is asked only for calls that leave the site", async () => {
     main: { tools: [agent("front", [`${SITE}/_mcp/0/mcp`, `${SITE}/ext-mcp/0/mcp`, `${TOOLS}/mcp`, `${SITE}/other_network`, `${PEER}/peer_network`])] },
     other_network: { tools: [agent("other_front")] },
   };
+  // The front man calls every tool at once, so their consent questions come together.
   const reply = (name, body) => {
     if (name !== "front") return { text: `${name} answer` };
-    const called = new Set((body.input || []).filter((item) => item.type === "function_call").map((item) => item.name));
-    const next = (body.tools || []).find((tool) => !called.has(tool.name));
-    if (!next) return { text: "front done" };
-    return { call: { name: next.name, arguments: JSON.stringify({ inquiry: "q" }) } };
+    if (toolOutputs(body).length) return { text: "front done" };
+    return { calls: (body.tools || []).map((tool) => ({ name: tool.name, arguments: JSON.stringify({ inquiry: "q" }) })) };
   };
   const routes = {
     // The site's own MCP host and its proxy to an outside one share the site's origin.
@@ -365,10 +364,21 @@ test("consent is asked only for calls that leave the site", async () => {
   await withFetch(siteFetch({ networks, manifest, reply, routes }), async () => {
     const engine = new Engine({ originUrl: SITE });
     const approvals = [];
-    engine.onConsent = async (info) => { approvals.push([info.kind, info.phase ?? "", info.peerOrigin]); return "allow"; };
+    let open = 0;
+    let mostOpen = 0;
+    engine.onConsent = async (info) => {
+      approvals.push([info.kind, info.phase ?? "", info.peerOrigin]);
+      open += 1;
+      mostOpen = Math.max(mostOpen, open);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      open -= 1;
+      return "allow";
+    };
     const events = await collect(engine.streamTurn("Use every service"));
 
     assert.equal(events.at(-1).result.text, "front done");
+    // Tools discovered and called at the same time still ask one question at a time.
+    assert.equal(mostOpen, 1);
     assert.deepEqual(mcpCalls.sort(), ["local_tool", "proxy_tool", "remote_tool"]);
     assert.deepEqual(approvals.sort(), [
       ["mcp", "call", "site.test"],
