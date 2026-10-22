@@ -4,13 +4,16 @@ import { isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopR
 import { AgentNetwork } from "../nsdeploy/runtime/kernel.js";
 import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
 import { LlmClient, isMockResponse } from "../nsdeploy/runtime/llm.js";
-import { McpClient, parseMaybeSse } from "../nsdeploy/runtime/mcp.js";
+import { McpClient, parseMaybeSse, readJsonRpcResponse } from "../nsdeploy/runtime/mcp.js";
 import { normalizeModelName } from "../nsdeploy/runtime/model.js";
+import { createTurnEventStream } from "../nsdeploy/runtime/execution-stream.js";
+import { TraceBus } from "../nsdeploy/runtime/trace.js";
 import {
   buildToolTable,
   consumeAgentBudget,
   consumeRemoteBudget,
   dispatchToolCall,
+  executeToolCalls,
   remoteIsInChain,
   requiresThirdPartyApproval,
 } from "../nsdeploy/runtime/runner.js";
@@ -57,6 +60,30 @@ assert.deepEqual(
   { baseUrl: "http://127.0.0.1:8095/v1", mock: true },
 );
 assert.throws(() => selectPeerRouter(null), /caller has no active LLM router/i);
+
+// Concurrent stream consumers only receive the trace subtree for their own turn.
+{
+  const trace = new TraceBus();
+  const fakeTurn = (token, input, delay) => createTurnEventStream(trace, async () => {
+    const span = trace.start("run", { streamToken: token, input });
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    trace.end(span);
+    return { turnId: span, text: input };
+  }, token);
+  const collect = async (stream) => {
+    const events = [];
+    for await (const event of stream) events.push(event);
+    return events;
+  };
+  const [first, second] = await Promise.all([
+    collect(fakeTurn("stream-a", "alpha", 15)),
+    collect(fakeTurn("stream-b", "beta", 2)),
+  ]);
+  assert.deepEqual(first.filter((event) => event.type === "turn.started").map((event) => event.input), ["alpha"]);
+  assert.deepEqual(second.filter((event) => event.type === "turn.started").map((event) => event.input), ["beta"]);
+  assert.equal(first.at(-1).result.text, "alpha");
+  assert.equal(second.at(-1).result.text, "beta");
+}
 
 const topManifest = { allowed_peers: ["http://127.0.0.1:8092"] };
 const peerManifest = { allowed_peers: ["http://127.0.0.1:8097"] };
@@ -158,6 +185,49 @@ assert.throws(
   (error) => error.code === "COMPOSITION_CYCLE",
 );
 
+// Sibling calls overlap, complete independently, and still return in the order
+// the model requested. A failure is isolated; explicit unsafe calls serialize.
+{
+  let seq = 0;
+  let active = 0;
+  let maxActive = 0;
+  const completed = [];
+  const trace = {
+    start: () => `tool-${++seq}`,
+    end: (id, fields) => completed.push([id, fields.status || "ok"]),
+  };
+  const client = {
+    url: "https://site.example/mcp",
+    callTool: async (name) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, name === "slow" ? 30 : 5));
+      active -= 1;
+      if (name === "broken") throw new Error("boom");
+      return `${name}-result`;
+    },
+  };
+  const ctx = { trace, displayOrigin: "site.example", baseOrigin: "https://site.example", slyData: {} };
+  const calls = ["slow", "fast", "broken"].map((name) => ({
+    id: `call-${name}`, name, args: {},
+    entry: { kind: "mcp", client, mcpName: name, requiresApproval: false },
+  }));
+  const results = await executeToolCalls(ctx, calls, "agent", []);
+  assert.equal(maxActive, 3);
+  assert.deepEqual(results.map((result) => result.name), ["slow", "fast", "broken"]);
+  assert.deepEqual(results.slice(0, 2).map((result) => result.content), ["slow-result", "fast-result"]);
+  assert.match(results[2].content, /boom/);
+  assert.ok(completed.some(([, status]) => status === "error"));
+
+  active = 0;
+  maxActive = 0;
+  await executeToolCalls(ctx, calls.slice(0, 2).map((call, index) => ({
+    ...call,
+    entry: { ...call.entry, parallelSafe: index !== 0 },
+  })), "agent", []);
+  assert.equal(maxActive, 1);
+}
+
 const budget = {
   remoteCalls: 0, peerCalls: new Map(), maxRemoteCalls: 2,
   maxCallsPerPeer: 1, deadline: 200,
@@ -190,6 +260,29 @@ assert.throws(
   () => parseMaybeSse('event: message\ndata: {"jsonrpc":"2.0","method":"notifications/message","params":{}}', 1),
   /unparseable/,
 );
+{
+  let notify;
+  const notificationSeen = new Promise((resolve) => { notify = resolve; });
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":0.5,"message":"Halfway"}}\n\n'));
+      setTimeout(() => {
+        controller.enqueue(new TextEncoder().encode('data: {"jsonrpc":"2.0","id":7,"result":{"ok":true}}\n\n'));
+        controller.close();
+      }, 20);
+    },
+  });
+  const response = new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+  let completedResponse = false;
+  const pending = readJsonRpcResponse(response, 7, (notice) => notify(notice)).then((value) => {
+    completedResponse = true;
+    return value;
+  });
+  const notice = await notificationSeen;
+  assert.equal(notice.params.message, "Halfway");
+  assert.equal(completedResponse, false);
+  assert.equal((await pending).result.ok, true);
+}
 {
   const realFetch = globalThis.fetch;
   const methods = [];

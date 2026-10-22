@@ -757,6 +757,15 @@ chatbot:
 - **Generative UI (CRUSE)** carries presentation proposals up the agent hierarchy.
   Each parent consolidates its children's suggestions; the final response can mix
   formatted text, reports, tables, charts, HTML and optional input widgets.
+- **Live activity streaming** exposes typed, per-turn agent/tool lifecycle events,
+  including coded-tool and MCP progress notifications, before the final answer is
+  ready. Sibling tool calls run concurrently (bounded, with deterministic result
+  ordering); tools can opt out with `parallel_safe = false`. Generated themes receive
+  a dedicated `data-ns-slot="activity"` mount plus stable `.ns-activity*` state classes,
+  while older themes automatically show the same surface inside the agents rail.
+  Programmatic consumers can `for await` over `Engine.streamTurn(...)`; events include
+  `turn.*`, `agent.*`, and `tool.*`, with downstream text deltas marked
+  `visibility: "developer"` and the final result carried by `turn.completed`.
 - **Resizable layout.** The chat and the right rail sit **side by side** with a
   **draggable splitter** between them (the rail width is remembered across reloads);
   each pane scrolls its own overflow and the app scrolls rather than crushing a pane

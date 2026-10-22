@@ -35,6 +35,7 @@ const BASE_CSS = PRESENTATION_CSS + `
 .ns-composed-app [data-ns-slot="chat"]>.ns-chat{width:100%;height:100%;min-height:480px}
 .ns-composed-app [data-ns-slot="agents"]>.ns-agents,
 .ns-composed-app [data-ns-slot="agents"]>.ns-dev{box-sizing:border-box;width:100%;height:100%;min-height:0}
+.ns-composed-app [data-ns-slot="activity"]>.ns-activity{box-sizing:border-box;width:100%;height:100%;min-height:0}
 .ns-header{grid-column:1/-1;display:flex;align-items:center;gap:12px;border-bottom:2px solid var(--ns-accent,var(--ns-primary,#2563eb));background:var(--ns-header-bg,transparent);color:var(--ns-header-fg,inherit);padding:var(--ns-header-pad,0 0 8px)}
 .ns-header .ns-logo{height:32px}
 .ns-title{font-weight:700;font-size:18px}
@@ -60,6 +61,22 @@ const BASE_CSS = PRESENTATION_CSS + `
 .ns-anode.active .ns-adot{background:var(--ns-primary,#2563eb);animation:ns-pulse 1s ease-in-out infinite}
 .ns-anode.done .ns-adot{background:#16a34a}
 @keyframes ns-pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.ns-activity{display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0}
+.ns-activity-head{margin:2px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ns-muted,#888)}
+.ns-activity-list{display:flex;flex-direction:column;gap:6px;min-width:0;overflow:auto}
+.ns-activity-empty{font-size:12px;color:var(--ns-muted,#888);padding:4px 0}
+.ns-activity-item{display:grid;grid-template-columns:18px minmax(0,1fr);gap:7px;padding:8px;border:1px solid var(--ns-border,#e2e2e2);border-radius:9px;background:var(--ns-activity-bg,#fff);transition:border-color .15s,opacity .15s}
+.ns-activity-item.active{border-color:var(--ns-primary,#2563eb)}
+.ns-activity-item.done{opacity:.8}
+.ns-activity-item.error{border-color:var(--ns-error,#dc2626);background:var(--ns-error-bg,#fef2f2)}
+.ns-activity-icon{line-height:1.2;text-align:center}
+.ns-activity-copy{min-width:0}
+.ns-activity-name{font-size:12px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ns-activity-detail{font-size:11px;color:var(--ns-muted,#777);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ns-activity-progress{display:none;height:3px;margin-top:5px;border-radius:999px;background:var(--ns-border,#e2e2e2);overflow:hidden}
+.ns-activity-progress.visible{display:block}
+.ns-activity-progress>span{display:block;width:var(--ns-progress,0%);height:100%;background:var(--ns-primary,#2563eb);transition:width .2s}
+:is(.ns-app,.ns-composed-app)[data-dev="true"] .ns-activity{display:none}
 .ns-modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:50}
 .ns-modal[hidden]{display:none}
 .ns-modal-card{background:#fff;border-radius:12px;max-width:560px;width:92%;max-height:80vh;overflow:auto;padding:18px;box-shadow:0 12px 40px rgba(0,0,0,.25)}
@@ -157,6 +174,7 @@ const BASE_CSS = PRESENTATION_CSS + `
 .ns-row.k-run{border-left-color:#7c3aed}
 .ns-row.k-agent{border-left-color:#2563eb}
 .ns-row.k-model_call{border-left-color:#0891b2}
+.ns-row.k-tool,
 .ns-row.k-tool_call{border-left-color:#16a34a}
 .ns-row.k-rest_call{border-left-color:#ca8a04}
 .ns-row.k-remote_fetch{border-left-color:#db2777}
@@ -244,11 +262,17 @@ export function mountApp(root, { engine, trace, manifest }) {
         <button id="ns-newchat" title="Clear conversation history" style="background:transparent;color:var(--ns-muted,#888);border:1px solid var(--ns-border,#ccc)">New chat</button>
       </div>
     </div>`;
-  const agentsHtml = `
+  const activityHtml = `
+    <section class="ns-activity" id="ns-activity" aria-live="polite">
+      <h3 class="ns-activity-head">Live activity</h3>
+      <div class="ns-activity-list" id="ns-activity-list"><div class="ns-activity-empty">Activity will appear here while agents work.</div></div>
+    </section>`;
+  const agentsHtml = (includeActivity = true) => `
     <aside class="ns-agents">
       <h3>Agents working for you</h3>
       <div class="ns-status" id="ns-status"><span class="ns-spin"></span><span id="ns-status-text">Ready when you are.</span></div>
       <div id="ns-anodes"></div>
+      ${includeActivity ? activityHtml : ""}
     </aside>`;
   const devHtml = `
     <aside class="ns-dev">
@@ -266,6 +290,7 @@ export function mountApp(root, { engine, trace, manifest }) {
 
   const chatSlot = root.querySelector('[data-ns-slot="chat"]');
   const agentsSlot = root.querySelector('[data-ns-slot="agents"]');
+  const activitySlot = root.querySelector('[data-ns-slot="activity"]');
   const composed = Boolean(chatSlot && agentsSlot);
   let app;
   if (composed) {
@@ -280,7 +305,8 @@ export function mountApp(root, { engine, trace, manifest }) {
     root.dataset.dev = "false";
     headerSlot.innerHTML = headerHtml;
     chatSlot.innerHTML = chatHtml;
-    agentsSlot.innerHTML = agentsHtml + devHtml;
+    agentsSlot.innerHTML = agentsHtml(!activitySlot) + devHtml;
+    if (activitySlot) activitySlot.innerHTML = activityHtml;
     root.insertAdjacentHTML("beforeend", modalHtml);
     app = root;
   } else {
@@ -290,7 +316,7 @@ export function mountApp(root, { engine, trace, manifest }) {
         ${headerHtml}
         <main class="ns-main">${chatHtml}</main>
         <div class="ns-split" id="ns-split" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize the panels"></div>
-        ${agentsHtml}
+        ${agentsHtml()}
         ${modalHtml}
         ${devHtml}
       </div>`;
@@ -304,6 +330,81 @@ export function mountApp(root, { engine, trace, manifest }) {
   const sendBtn = root.querySelector("#ns-send");
   const countEl = root.querySelector("#ns-count");
   const breadcrumb = root.querySelector("#ns-breadcrumb");
+  const activityList = root.querySelector("#ns-activity-list");
+
+  // Typed stream events drive a compact consumer-facing activity surface. Every
+  // element and state has a stable class/data attribute so a generated theme can
+  // place, restyle, collapse, or hide it without changing runtime behavior.
+  const activityCards = new Map();
+  const activityKey = (event) => {
+    if (event.tool?.callId) return `tool:${event.tool.callId}`;
+    if (event.source?.invocationId) return `agent:${event.source.invocationId}`;
+    return event.id;
+  };
+  const setProgress = (card, progress) => {
+    const bar = card.querySelector(".ns-activity-progress");
+    let value = typeof progress === "number" ? progress : Number(progress?.progress);
+    const total = Number(progress?.total);
+    if (Number.isFinite(total) && total > 0) value = (value / total) * 100;
+    else if (Number.isFinite(value) && value >= 0 && value <= 1) value *= 100;
+    if (!Number.isFinite(value)) return;
+    bar.classList.add("visible");
+    bar.style.setProperty("--ns-progress", `${Math.max(0, Math.min(100, value))}%`);
+  };
+  const renderExecutionEvent = (event) => {
+    if (!activityList || event.visibility === "developer" || event.type === "agent.output.delta") return;
+    if (event.type === "turn.started") {
+      activityList.innerHTML = "";
+      activityCards.clear();
+      return;
+    }
+    if (event.type === "turn.completed") {
+      activityCards.forEach((card) => {
+        if (card.dataset.status === "active") {
+          card.dataset.status = "done";
+          card.classList.replace("active", "done");
+        }
+      });
+      return;
+    }
+    if (event.type === "turn.failed") return;
+
+    const key = activityKey(event);
+    let card = activityCards.get(key);
+    const isTool = event.type.startsWith("tool.");
+    const label = isTool ? (event.tool?.name || "Tool") : (event.source?.agent || "Agent");
+    if (!card) {
+      card = document.createElement("div");
+      card.className = "ns-activity-item active";
+      card.dataset.eventType = isTool ? "tool" : "agent";
+      card.dataset.status = "active";
+      card.innerHTML = `<span class="ns-activity-icon" aria-hidden="true">${isTool ? "⚙" : "◉"}</span>` +
+        `<div class="ns-activity-copy"><div class="ns-activity-name"></div><div class="ns-activity-detail"></div>` +
+        `<div class="ns-activity-progress"><span></span></div></div>`;
+      card.querySelector(".ns-activity-name").textContent = label;
+      activityList.prepend(card);
+      activityCards.set(key, card);
+      while (activityList.children.length > 40) activityList.lastElementChild?.remove();
+    }
+    const detail = card.querySelector(".ns-activity-detail");
+    if (event.type.endsWith("started")) detail.textContent = isTool ? "Running…" : "Working…";
+    if (event.type === "tool.progress") {
+      detail.textContent = event.message || "Progress update";
+      setProgress(card, event.progress);
+    }
+    if (event.type.endsWith("completed")) {
+      card.classList.remove("active", "error");
+      card.classList.add("done");
+      card.dataset.status = "done";
+      detail.textContent = event.resultPreview || "Complete";
+    }
+    if (event.type.endsWith("failed")) {
+      card.classList.remove("active", "done");
+      card.classList.add("error");
+      card.dataset.status = "error";
+      detail.textContent = event.error || "Failed";
+    }
+  };
 
   renderNodes(nodesEl, net, new Set());
 
@@ -390,7 +491,12 @@ export function mountApp(root, { engine, trace, manifest }) {
     currentBot = null;
     botBuffer = "";
     try {
-      const result = await engine.runTurn(text, { interaction, slyData: { backend_token: "demo-customer-token-123" } });
+      let result = null;
+      for await (const event of engine.streamTurn(text, { interaction, slyData: { backend_token: "demo-customer-token-123" } })) {
+        renderExecutionEvent(event);
+        if (event.type === "turn.completed") result = event.result;
+      }
+      if (!result) throw new Error("The agent turn ended without a result.");
       const clean = visibleText(result.text);
       // Always show the cleaned text — never the raw answer or retained streamed text
       // (which could be an AAOSA envelope / cruse-ui JSON). Empty is fine: widgets carry the turn.

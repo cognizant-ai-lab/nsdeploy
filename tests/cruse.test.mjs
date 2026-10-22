@@ -117,7 +117,18 @@ for (const runner of ["manual", "langchain"]) test(`${runner}: consolidate at ev
   try {
     const engine = new Engine({ originUrl: "https://top.test", byokKey: "fixture-key", modelOverride: "test-model" });
     if (runner === "langchain") await engine.enableLangChain();
-    const result = await engine.runTurn("Are there any minivans available for me to borrow next week?");
+    const events = [];
+    let result = null;
+    for await (const event of engine.streamTurn("Are there any minivans available for me to borrow next week?")) {
+      events.push(event);
+      if (event.type === "turn.completed") result = event.result;
+    }
+    assert.ok(result);
+    assert.equal(events[0].type, "turn.started");
+    assert.equal(events.at(-1).type, "turn.completed");
+    assert.ok(events.some((event) => event.type === "agent.completed" && event.source?.agent === "peer_leaf"));
+    assert.ok(events.some((event) => event.type === "tool.completed"));
+    assert.ok(events.findIndex((event) => event.type === "tool.completed") < events.length - 1);
     assert.equal(result.presentation.components.filter((c) => c.kind === "form").length, 1);
     assert.deepEqual(Object.keys(result.presentation.components[1].schema.properties), ["start_date", "seats"]);
     assert.equal(engine.trace.events.filter((e) => e.kind === "widget").length, 0);

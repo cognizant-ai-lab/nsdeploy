@@ -13,6 +13,7 @@ import { runAgent } from "./runner.js";
 import { McpClient } from "./mcp.js";
 import { normalizeModelName } from "./model.js";
 import { interactionMessage } from "./cruse.js";
+import { createTurnEventStream } from "./execution-stream.js";
 
 function normOrigin(url) {
   try { return new URL(url).origin; } catch { return String(url || ""); }
@@ -101,9 +102,11 @@ export class Engine {
     this.agentRunner = null; // set by enableLangChain(); neuro-san-web owns the loop
     this.history = []; // top-level conversation turns ([{role,content}]) across runs
     this.consent = new Map(); // peerOrigin -> "always" (remembered approvals)
+    this.consentTail = Promise.resolve(); // serialize modal decisions for parallel tools
     this.onConsent = null; // UI hook: async (info) => "allow"|"always"|"decline"
     this.onLinkRequired = null; // UI hook: async ({reference,...}) => peer URL|null
     this.runtimeAllowedPeers = new Set(); // user-entered, validated link origins
+    this.streamSequence = 0;
   }
 
   // Clear the multi-turn conversation history (start a new chat).
@@ -114,11 +117,16 @@ export class Engine {
   // Ask the user to approve contacting another hosted network. Remembers
   // "always" per origin; defaults to allow when no UI hook is attached (headless).
   async requestConsent(info) {
-    if (this.consent.get(info.peerOrigin) === "always") return "allow";
-    if (typeof this.onConsent !== "function") return "allow";
-    const decision = await this.onConsent(info);
-    if (decision === "always") { this.consent.set(info.peerOrigin, "always"); return "allow"; }
-    return decision || "allow";
+    const decide = async () => {
+      if (this.consent.get(info.peerOrigin) === "always") return "allow";
+      if (typeof this.onConsent !== "function") return "allow";
+      const decision = await this.onConsent(info);
+      if (decision === "always") { this.consent.set(info.peerOrigin, "always"); return "allow"; }
+      return decision || "allow";
+    };
+    const pending = this.consentTail.then(decide, decide);
+    this.consentTail = pending.then(() => undefined, () => undefined);
+    return pending;
   }
 
   // Load the prebuilt LangChain.js AgentRunner bundle and use it as the loop.
@@ -406,9 +414,20 @@ export class Engine {
     return (await this.runTurn(userText, { slyData })).text;
   }
 
-  async runTurn(userText, { slyData, interaction } = {}) {
+  // Public incremental API. Consumers receive typed lifecycle events while the
+  // existing runTurn() API remains a single final-result Promise.
+  streamTurn(userText, options = {}) {
+    const streamToken = `turn-stream-${++this.streamSequence}`;
+    return createTurnEventStream(
+      this.trace,
+      () => this.runTurn(userText, { ...options, _streamToken: streamToken }),
+      streamToken,
+    );
+  }
+
+  async runTurn(userText, { slyData, interaction, _streamToken } = {}) {
     if (!this.top) await this.loadTop();
-    const runSpan = this.trace.start("run", { origin: hostOf(this.top.base), input: userText });
+    const runSpan = this.trace.start("run", { origin: hostOf(this.top.base), input: userText, streamToken: _streamToken });
     try {
       const ctx = this._makeCtx({
         network: this.top.network,

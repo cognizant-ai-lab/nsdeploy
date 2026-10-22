@@ -26,7 +26,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-PROMPT_VERSION = "9"
+PROMPT_VERSION = "10"
 CACHE_DIR = Path.home() / ".cache" / "nsdeploy" / "themes"
 DEFAULT_THEME_MODEL = "gpt-5.6"
 
@@ -171,7 +171,10 @@ def _valid_composed_layout(body: str) -> bool:
     """A composed theme is usable only when every runtime surface has one target."""
     if 'data-ns-layout="composed"' not in body:
         return True
-    return all(body.count(f'data-ns-slot="{slot}"') == 1 for slot in ("header", "chat", "agents"))
+    required = all(body.count(f'data-ns-slot="{slot}"') == 1 for slot in ("header", "chat", "agents"))
+    # Activity is a new optional placement target so previously generated themes
+    # remain valid. New prompt-generated themes include it exactly once.
+    return required and body.count('data-ns-slot="activity"') <= 1
 
 
 # A validated color: #hex, rgb()/hsl(), or a bare CSS keyword. Nothing else.
@@ -324,7 +327,10 @@ _SYSTEM_PROMPT = (
     "a COMPLETE CSS stylesheet for the page — backgrounds/gradients, layout (grid/flex), "
     "the hero, typography, decorative effects, responsiveness. BOLDLY restyle the "
     "assistant itself so it reads as part of your design: .ns-header, .ns-title, .ns-chat, "
-    ".ns-msgs, .ns-msg, .ns-msg.user, .ns-inputbar, .ns-agents, .ns-graph, .ns-log, "
+    ".ns-msgs, .ns-msg, .ns-msg.user, .ns-inputbar, .ns-agents, .ns-activity, "
+    ".ns-activity-head, .ns-activity-list, .ns-activity-empty, .ns-activity-item, "
+    ".ns-activity-icon, .ns-activity-copy, .ns-activity-name, .ns-activity-detail, "
+    ".ns-activity-progress, .ns-graph, .ns-log, "
     ".ns-widget, .ns-w-btn, .ns-presentation, .ns-rich. CRUSE responses may contain "
     "formatted reports, comparison tables, charts, visual HTML or optional forms; allow "
     "these varied response surfaces to read clearly in the assistant area. "
@@ -333,28 +339,32 @@ _SYSTEM_PROMPT = (
     "component: do not set display, position, grid placement, width, height, min-height, "
     "or overflow on .ns-* classes. Control placement and sizing with your own wrappers and "
     "the [data-ns-slot] elements instead. Never apply pill-like styling to the whole "
-    ".ns-dev, .ns-agents, .ns-graph, or .ns-log container. The assistant supplies its own "
+    ".ns-dev, .ns-agents, .ns-activity, .ns-graph, or .ns-log container. The assistant supplies its own "
     "compact brand bar and Developer toggle, so do not add a duplicate logo/name nav bar. "
     "Lead with domain atmosphere and let .ns-header blend into it. CSS ONLY — "
     "gradients/shapes/shadows/emoji; NO @import, NO "
     "url() except data: or https: images.\n"
     "===BODY===\n"
-    "the HTML body contents. Include exactly one composed runtime root with these THREE "
+    "the HTML body contents. Include exactly one composed runtime root with these FOUR "
     "empty mount slots, each exactly once:\n"
     "<div id=\"app\" data-ns-layout=\"composed\">\n"
     "  <div data-ns-slot=\"header\"></div>\n"
     "  <main data-ns-slot=\"chat\"></main>\n"
     "  <aside data-ns-slot=\"agents\"></aside>\n"
+    "  <section data-ns-slot=\"activity\"></section>\n"
     "</div>\n"
     "This is a placement contract, NOT a required shape: add your own wrappers inside "
-    "#app, nest and position the three slots anywhere, and choose the relationship that "
+    "#app, nest and position the four slots anywhere, and choose the relationship that "
     "best fits the domain. The chat is the primary work surface and must remain comfortably "
     "usable (roughly 360px minimum width and 480px minimum height). The agents slot may be "
     "an inline rail, a panel below the chat, a floating overlay, or a native CSS-styled "
-    "<details><summary>Agents working</summary>...slot...</details> pull-out. On narrow "
+    "<details><summary>Agents working</summary>...slot...</details> pull-out. The activity "
+    "slot may be a compact timeline, status drawer, strip, or hidden "
+    "behind progressive disclosure; it receives live agent/tool/progress cards. Style its "
+    ".ns-activity-item.active/.done/.error states and .ns-activity-progress indicator. On narrow "
     "screens, stack the surfaces or collapse the agents slot so the page never scrolls "
     "sideways. Do not force overflow:hidden on html, body, #app, the chat slot, or the "
-    "agents slot; page scrolling and CRUSE forms must remain reachable. Keep every slot "
+    "agents/activity slots; page scrolling and CRUSE forms must remain reachable. Keep every slot "
     "EMPTY and do not build chat messages, inputs, agent cards, settings, or developer "
     "tools yourself — the runtime inserts them. Use your own class names for wrappers; "
     "names beginning with ns- belong to the runtime. Plain presentational HTML only: "
@@ -375,7 +385,7 @@ _SYSTEM_PROMPT = (
     "comfortable to read.\n"
     "Rules: self-contained (no external fonts/scripts/images); the body MUST contain "
     "exactly one #app with data-ns-layout=\"composed\" and exactly one empty header, chat, "
-    "and agents slot inside it."
+    "agents, and activity slot inside it."
 )
 
 

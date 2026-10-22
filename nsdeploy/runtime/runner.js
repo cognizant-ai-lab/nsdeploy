@@ -210,6 +210,86 @@ function mergeToolSlyData(ctx, spec, slyData) {
   }
 }
 
+function entryAllowsParallel(entry) {
+  if (!entry) return true;
+  if (entry.parallelSafe === false || entry.spec?.parallel_safe === false || entry.spec?.execution?.parallel_safe === false) return false;
+  if (entry.kind === "toolbox") {
+    return String(entry.spec?.args?.method || "GET").toUpperCase() === "GET";
+  }
+  return true;
+}
+
+function toolKind(entry) {
+  if (!entry) return "unknown";
+  return {
+    agent: "agent",
+    coded: "coded (sandbox)",
+    toolbox: "REST (backend)",
+    mcp: "MCP",
+    link: "linked network",
+    remote: "remote network",
+  }[entry.kind] || entry.kind;
+}
+
+function changed(a, b) {
+  if (Object.is(a, b)) return false;
+  try { return JSON.stringify(a) !== JSON.stringify(b); } catch { return true; }
+}
+
+// Execute sibling tool calls concurrently while preserving their model-visible
+// result order. Each sibling receives a private sly_data snapshot; writes are
+// merged back in call order so a faster tool cannot create nondeterministic state.
+// A tool can opt out with parallel_safe=false. Non-GET REST calls are serialized.
+export async function executeToolCalls(ctx, calls, parentSpan, chain, { maxConcurrency = 4 } = {}) {
+  if (!calls.length) return [];
+  if (!ctx.slyData) ctx.slyData = {};
+  const initialSly = { ...(ctx.slyData || {}) };
+  const concurrency = calls.every((call) => entryAllowsParallel(call.entry))
+    ? Math.max(1, Math.min(maxConcurrency, calls.length))
+    : 1;
+  const results = new Array(calls.length);
+  let next = 0;
+
+  const worker = async () => {
+    while (true) {
+      const index = next++;
+      if (index >= calls.length) return;
+      const call = calls[index];
+      const callCtx = { ...ctx, slyData: { ...initialSly } };
+      const span = ctx.trace.start("tool", {
+        parent: parentSpan,
+        origin: ctx.displayOrigin,
+        tool: call.name,
+        callId: call.id,
+        toolKind: toolKind(call.entry),
+        args: call.args,
+      });
+      try {
+        const raw = call.entry
+          ? await dispatchToolCall(callCtx, call.entry, call.args, span, chain)
+          : `Error: unknown tool '${call.name}'`;
+        const encoded = typeof raw === "string" ? raw : JSON.stringify(raw);
+        const content = encoded ?? String(raw ?? "");
+        ctx.trace.end(span, { resultPreview: content.slice(0, 240) });
+        results[index] = { ...call, content, slyData: callCtx.slyData };
+      } catch (error) {
+        const message = String(error?.message || error);
+        const content = `Error from tool '${call.name}': ${message}`;
+        ctx.trace.end(span, { status: "error", error: message, resultPreview: content.slice(0, 240) });
+        results[index] = { ...call, content, error, slyData: callCtx.slyData };
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  for (const result of results) {
+    for (const [key, value] of Object.entries(result.slyData || {})) {
+      if (changed(initialSly[key], value)) ctx.slyData[key] = value;
+    }
+  }
+  return results;
+}
+
 export async function dispatchToolCall(ctx, entry, args, parentSpan, chain) {
   const { trace } = ctx;
 
@@ -335,14 +415,15 @@ export async function runAgent(ctx, agentName, userText, parentSpan, chain) {
     const spec = ctx.network.getAgentSpec(name);
     return name === agentName && spec && context ? { ...spec, instructions: `${spec.instructions || ""}\n\n${context}` } : spec;
   };
-  const local = { ...ctx, network };
+  const local = { ...ctx, network, invocation: source.invocation };
   const raw = ctx.externalRunner
     ? await ctx.externalRunner(local, agentName, userText, parentSpan, chain, {
-      buildToolTable, dispatchToolCall, schemaFor, argsToText,
+      buildToolTable, dispatchToolCall, executeToolCalls, schemaFor, argsToText,
     })
     : await runAgentManual(local, agentName, userText, parentSpan, chain);
   const result = parseAgentResponse(raw, source);
   ctx.trace.note("presentation_proposal", { parent: parentSpan, ...source, presentation: result.presentation, issues: result.presentationIssues });
+  ctx.trace.note("agent_result", { parent: parentSpan, ...source, text: result.text, presentation: result.presentation });
   return result;
 }
 
@@ -356,6 +437,7 @@ export async function runAgentManual(ctx, agentName, userText, parentSpan, chain
   const agentSpan = trace.start("agent", {
     parent: parentSpan, origin, agent: agentName, network: network.name,
     displayAs: spec.class ? "coded_tool" : "llm_agent", runner: "manual",
+    invocation: ctx.invocation, isTopFrontMan,
   });
 
   try {
@@ -380,14 +462,16 @@ export async function runAgentManual(ctx, agentName, userText, parentSpan, chain
         break;
       }
       messages.push({ role: "assistant", content: res.content || null, tool_calls: res.toolCalls });
-      for (const tc of res.toolCalls) {
+      const calls = res.toolCalls.map((tc) => {
         let args = {};
         try { args = tc.function.arguments ? JSON.parse(tc.function.arguments) : {}; }
         catch { args = { request: tc.function.arguments }; }
-        const entry = toolByName.get(tc.function.name);
-        const resultText = entry ? await dispatchToolCall(ctx, entry, args, agentSpan, chain) : `Error: unknown tool '${tc.function.name}'`;
-        messages.push({ role: "tool", tool_call_id: tc.id, name: tc.function.name, content: typeof resultText === "string" ? resultText : JSON.stringify(resultText) });
-        trace.note("tool_result", { parent: agentSpan, origin, tool: tc.function.name, preview: String(resultText).slice(0, 200), type: ChatMessageType.AGENT_TOOL_RESULT });
+        return { id: tc.id, name: tc.function.name, args, entry: toolByName.get(tc.function.name) };
+      });
+      const toolResults = await executeToolCalls(ctx, calls, agentSpan, chain);
+      for (const result of toolResults) {
+        messages.push({ role: "tool", tool_call_id: result.id, name: result.name, content: result.content });
+        trace.note("tool_result", { parent: agentSpan, origin, tool: result.name, preview: result.content.slice(0, 200), type: ChatMessageType.AGENT_TOOL_RESULT });
       }
     }
 

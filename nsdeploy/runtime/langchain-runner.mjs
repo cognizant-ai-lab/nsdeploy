@@ -31,6 +31,7 @@ export async function runAgentLangChain(ctx, agentName, userText, parentSpan, ch
   const agentSpan = trace.start("agent", {
     parent: parentSpan, origin, agent: agentName, network: network.name,
     displayAs: spec.class ? "coded_tool" : "llm_agent", runner: "langchain",
+    invocation: ctx.invocation, isTopFrontMan,
   });
 
   try {
@@ -101,14 +102,16 @@ export async function runAgentLangChain(ctx, agentName, userText, parentSpan, ch
         finalText = textOf(ai?.content);
         break;
       }
-      for (const tc of toolCalls) {
-        const entry = toolByName.get(tc.name);
-        const result = entry
-          ? await helpers.dispatchToolCall(ctx, entry, tc.args || {}, agentSpan, chain)
-          : `Error: unknown tool '${tc.name}'`;
-        const content = typeof result === "string" ? result : JSON.stringify(result);
-        messages.push(new ToolMessage({ content, tool_call_id: tc.id, name: tc.name }));
-        trace.note("tool_result", { parent: agentSpan, origin, tool: tc.name, preview: content.slice(0, 200) });
+      const calls = toolCalls.map((tc) => ({
+        id: tc.id,
+        name: tc.name,
+        args: tc.args || {},
+        entry: toolByName.get(tc.name),
+      }));
+      const toolResults = await helpers.executeToolCalls(ctx, calls, agentSpan, chain);
+      for (const result of toolResults) {
+        messages.push(new ToolMessage({ content: result.content, tool_call_id: result.id, name: result.name }));
+        trace.note("tool_result", { parent: agentSpan, origin, tool: result.name, preview: result.content.slice(0, 200) });
       }
     }
 

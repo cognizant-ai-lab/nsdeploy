@@ -58,6 +58,11 @@ for (const timer of ["setTimeout", "setInterval"]) {
 
 const cache = new Map();
 
+function progressValue(value) {
+  if (value == null || ["string", "number", "boolean"].includes(typeof value)) return value;
+  try { return JSON.parse(JSON.stringify(value)); } catch { return String(value); }
+}
+
 self.onmessage = async (e) => {
   const { id, bundleCode, cacheKey, className, args, slyData } = e.data;
   try {
@@ -87,9 +92,22 @@ self.onmessage = async (e) => {
     if (!ToolClass) throw new Error(`coded tool class '${className}' not found`);
     const tool = new ToolClass();
     const sly = { ...(slyData || {}) };
+    const callArgs = { ...(args || {}) };
+    // Match neuro-san's progress_reporter convention while keeping a small set
+    // of ergonomic JS aliases. Reports are lifecycle data, not final tool output.
+    const report = (progress, message = "") => {
+      self.postMessage({ id, kind: "progress", progress: progressValue(progress), message: String(message || "") });
+    };
+    if (!("progress_reporter" in callArgs)) {
+      callArgs.progress_reporter = {
+        report,
+        async reportProgress(progress, message = "") { report(progress, message); },
+        async async_report_progress(progress, message = "") { report(progress, message); },
+      };
+    }
     let result;
-    if (typeof tool.asyncInvoke === "function") result = await tool.asyncInvoke(args || {}, sly);
-    else if (typeof tool.invoke === "function") result = await tool.invoke(args || {}, sly);
+    if (typeof tool.asyncInvoke === "function") result = await tool.asyncInvoke(callArgs, sly);
+    else if (typeof tool.invoke === "function") result = await tool.invoke(callArgs, sly);
     else throw new Error(`coded tool '${className}' implements neither asyncInvoke nor invoke`);
     self.postMessage({ id, ok: true, result, slyData: sly });
   } catch (err) {
