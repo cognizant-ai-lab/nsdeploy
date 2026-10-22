@@ -13,6 +13,10 @@ where spec.json is:
 DdgsSearch). Its `invoke(args, sly_data)` (or `async_invoke`) is exposed as one MCP
 tool whose input schema is built from the tool's JSON-Schema `parameters`. sly_data
 is intentionally empty here — these public tools get no host secrets.
+
+An async tool also gets neuro-san's "progress_reporter" in its args. Each report goes
+to the caller as an MCP log notification in the call's response stream, where the
+browser runtime shows it while the tool runs.
 """
 from __future__ import annotations
 
@@ -27,19 +31,41 @@ _JSON_TO_PY = {"string": "str", "integer": "int", "number": "float",
                "boolean": "bool", "array": "list", "object": "dict"}
 
 
-def _make_tool_function(coded: Any, parameters: Dict[str, Any]):
+class McpProgressReporter:
+    """neuro-san's AgentProgressReporter for a hosted tool: each report is an MCP log
+    notification tied to the tool call, so it reaches the caller before the result.
+    """
+
+    def __init__(self, context: Any, tool_name: str):
+        self.context = context
+        self.tool_name = tool_name
+
+    async def async_report_progress(self, structure: Dict[str, Any], content: str = ""):
+        data: Any = dict(structure or {})
+        if content and "message" not in data:
+            data["message"] = content
+        await self.context.session.send_log_message(
+            level="info", data=data, logger=self.tool_name, related_request_id=self.context.request_id)
+
+
+def _make_tool_function(coded: Any, parameters: Dict[str, Any], tool_name: str = "tool"):
     """Build an async function whose signature mirrors the tool's JSON-Schema params,
     so FastMCP advertises a correct inputSchema, and which forwards to the coded tool.
+    FastMCP fills its Context parameter, which the tool's progress reports go through.
     """
+    from mcp.server.fastmcp import Context
+
     try:
         from neuro_san.interfaces.coded_tool import CodedTool
         use_async = type(coded).async_invoke is not CodedTool.async_invoke
     except Exception:
         use_async = hasattr(coded, "async_invoke") and not hasattr(coded, "invoke")
 
-    async def _run(args: Dict[str, Any]) -> str:
+    async def _run(args: Dict[str, Any], context: Any = None) -> str:
         args = {k: v for k, v in args.items() if v is not None}
         if use_async:
+            if context is not None:
+                args["progress_reporter"] = McpProgressReporter(context, tool_name)
             result = await coded.async_invoke(args, {})
         else:
             result = coded.invoke(args, {})
@@ -52,10 +78,12 @@ def _make_tool_function(coded: Any, parameters: Dict[str, Any]):
         ann = _JSON_TO_PY.get((pdef or {}).get("type"), "str")
         sig_parts.append(f"{pname}: {ann}" if pname in required else f"{pname}: {ann} = None")
         collect_parts.append(f"{pname!r}: {pname}")
+    # Annotated with Context, FastMCP fills it in and leaves it out of the inputSchema.
+    sig_parts.append("mcp_context: Context = None")
     sig = ", ".join(sig_parts)
     collect = "{" + ", ".join(collect_parts) + "}"
-    src = f"async def _toolfn({sig}):\n    return await _run({collect})\n"
-    namespace: Dict[str, Any] = {"_run": _run}
+    src = f"async def _toolfn({sig}):\n    return await _run({collect}, mcp_context)\n"
+    namespace: Dict[str, Any] = {"_run": _run, "Context": Context}
     exec(src, namespace)  # noqa: S102 - controlled codegen from a schema we resolved
     return namespace["_toolfn"]
 
@@ -78,7 +106,7 @@ def main() -> int:
     coded = tool_class()
 
     mcp = FastMCP(spec["name"], port=int(spec["port"]))
-    fn = _make_tool_function(coded, spec.get("parameters") or {})
+    fn = _make_tool_function(coded, spec.get("parameters") or {}, spec["name"])
     fn.__name__ = spec["name"]
     fn.__doc__ = spec.get("description") or spec["name"]
     mcp.tool(name=spec["name"], description=spec.get("description") or spec["name"])(fn)

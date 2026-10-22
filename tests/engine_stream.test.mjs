@@ -24,10 +24,36 @@ const json = (value, status = 200) => new Response(JSON.stringify(value), { stat
 let answers = 0;
 function responsesAnswer(body, item) {
   const n = ++answers;
-  const output = [item.call
-    ? { type: "function_call", id: `fc_${n}`, call_id: `call_${n}`, status: "completed", ...item.call }
-    : { type: "message", id: `msg_${n}`, role: "assistant", status: "completed", content: [{ type: "output_text", text: item.text, annotations: [] }] }];
-  return json({ id: `resp_${n}`, object: "response", created_at: 0, status: "completed", model: body.model, output, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } });
+  const calls = item.calls || (item.call ? [item.call] : []);
+  const outputs = calls.length
+    ? calls.map((call, i) => ({ type: "function_call", id: `fc_${n}_${i}`, call_id: `call_${n}_${i}`, status: "completed", ...call }))
+    : [{ type: "message", id: `msg_${n}`, role: "assistant", status: "completed", content: [{ type: "output_text", text: item.text, annotations: [] }] }];
+  const result = { id: `resp_${n}`, object: "response", created_at: 0, status: "completed", model: body.model, output: outputs, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } };
+  if (!body.stream) return json(result);
+  // Streamed, as the response.* events OpenAI sends, with the text in two pieces.
+  const events = [];
+  const event = (type, fields) => events.push(`event: ${type}\ndata: ${JSON.stringify({ type, sequence_number: events.length, ...fields })}\n\n`);
+  event("response.created", { response: { ...result, status: "in_progress", output: [] } });
+  outputs.forEach((output, index) => {
+    if (output.type === "function_call") {
+      event("response.output_item.added", { output_index: index, item: { ...output, status: "in_progress", arguments: "" } });
+      event("response.function_call_arguments.delta", { item_id: output.id, output_index: index, delta: output.arguments });
+      event("response.function_call_arguments.done", { item_id: output.id, output_index: index, arguments: output.arguments });
+    } else {
+      const part = { type: "output_text", text: "", annotations: [] };
+      const half = Math.ceil(item.text.length / 2);
+      event("response.output_item.added", { output_index: index, item: { ...output, status: "in_progress", content: [] } });
+      event("response.content_part.added", { item_id: output.id, output_index: index, content_index: 0, part });
+      for (const delta of [item.text.slice(0, half), item.text.slice(half)]) {
+        event("response.output_text.delta", { item_id: output.id, output_index: index, content_index: 0, delta });
+      }
+      event("response.output_text.done", { item_id: output.id, output_index: index, content_index: 0, text: item.text });
+      event("response.content_part.done", { item_id: output.id, output_index: index, content_index: 0, part: { ...part, text: item.text } });
+    }
+    event("response.output_item.done", { output_index: index, item: output });
+  });
+  event("response.completed", { response: result });
+  return new Response(events.join(""), { headers: { "Content-Type": "text/event-stream" } });
 }
 
 const agentOf = (body) => (JSON.stringify((body.input || []).filter((item) => item.role === "system")).match(/AGENT=(\w+)/) || [])[1];
@@ -87,7 +113,17 @@ test("a streamed turn reports each agent and tool call, then the answer", async 
   await withFetch(siteFetch({ networks, reply }), async () => {
     const engine = new Engine({ originUrl: SITE });
     const events = await collect(engine.streamTurn("What is the answer?"));
-    const kinds = events.map((event) => [event.type, event.source?.agent ?? event.tool?.name ?? ""]);
+    // The answer's text arrives as it streams: the front man's for the user, and a
+    // downstream agent's for developers only.
+    const deltas = events.filter((event) => event.type === "agent.output.delta");
+    assert.deepEqual(deltas.map((event) => [event.source?.agent, event.visibility, event.delta]), [
+      ["helper", "developer", "the helpe"],
+      ["helper", "developer", "r says 42"],
+      ["front", "user", "front h"],
+      ["front", "user", "eard 42"],
+    ]);
+    const kinds = events.filter((event) => event.type !== "agent.output.delta")
+      .map((event) => [event.type, event.source?.agent ?? event.tool?.name ?? ""]);
     assert.deepEqual(kinds, [
       ["turn.started", ""],
       ["agent.started", "front"],
@@ -188,6 +224,102 @@ function mcpServer(tool, calls) {
     return new Response(null, { status: 202 });
   };
 }
+
+test("an MCP server's progress and log notifications show while its tool runs", async () => {
+  const calls = [];
+  const plain = mcpServer("inventory_search", calls);
+  // tools/call answers as an event stream, with two notifications ahead of the result.
+  const streaming = async (pathname, init) => {
+    const message = init.method === "POST" ? JSON.parse(init.body) : null;
+    if (message?.method !== "tools/call") return plain(pathname, init);
+    calls.push(message.params.name);
+    const events = [
+      { jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: 1, progress: 0.5, message: "Halfway through the inventory" } },
+      { jsonrpc: "2.0", method: "notifications/message", params: { level: "info", data: "Search successful" } },
+      { jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: "3 minivans" }] } },
+    ];
+    return new Response(events.map((event) => `event: message\ndata: ${JSON.stringify(event)}\n\n`).join(""),
+      { headers: { "Content-Type": "text/event-stream" } });
+  };
+  const networks = { main: { tools: [agent("front", [`${SITE}/_mcp/0/mcp`])] } };
+  const reply = (_name, body) => toolOutputs(body).length
+    ? { text: "There are 3 minivans." }
+    : { call: { name: "inventory_search", arguments: JSON.stringify({ inquiry: "minivans" }) } };
+  // A site lists its own origin in allowed_peers, as nsdeploy publishes it.
+  const manifest = { allowed_peers: [SITE] };
+  const routes = { [SITE]: (pathname, init) => (pathname.startsWith("/_mcp/") ? streaming(pathname, init) : null) };
+  await withFetch(siteFetch({ networks, manifest, reply, routes }), async () => {
+    const engine = new Engine({ originUrl: SITE });
+    const events = await collect(engine.streamTurn("Any minivans?"));
+
+    assert.deepEqual(calls, ["inventory_search"]);
+    assert.equal(events.at(-1).result.text, "There are 3 minivans.");
+    const progress = events.filter((event) => event.type === "tool.progress");
+    assert.deepEqual(progress.map((event) => [event.tool.name, event.tool.kind, event.message]), [
+      ["inventory_search", "MCP", "Halfway through the inventory"],
+      ["inventory_search", "MCP", "Search successful"],
+    ]);
+    // Both come between the tool's start and its end.
+    const at = (type) => events.findIndex((event) => event.type === type);
+    assert.ok(at("tool.started") < events.indexOf(progress[0]) && events.indexOf(progress[1]) < at("tool.completed"));
+  });
+});
+
+// Several tool calls in one model response, as `reply` answers: all of `names` at once.
+const callAll = (names) => (body) => (toolOutputs(body).length
+  ? { text: `got ${toolOutputs(body).map((item) => item.output).join(", ")}` }
+  : { calls: names.map((name) => ({ name, arguments: JSON.stringify({ inquiry: name }) })) });
+
+test("sibling tool calls run at most four at a time, and in order when one isn't parallel safe", async () => {
+  // Six MCP tools that each take a while, called all at once.
+  const tools = ["t1", "t2", "t3", "t4", "t5", "t6"];
+  let active = 0;
+  let most = 0;
+  const started = [];
+  const slowMcp = async (pathname, init) => {
+    if (!pathname.startsWith("/_mcp/")) return null;
+    if (init.method !== "POST") return new Response("", { status: 405 });
+    const message = JSON.parse(init.body);
+    const answer = (result) => json({ jsonrpc: "2.0", id: message.id, result });
+    if (message.method === "initialize") return answer({ protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "slow", version: "1" } });
+    if (message.method === "tools/list") return answer({ tools: tools.map((name) => ({ name, description: name, inputSchema: INQUIRY })) });
+    if (message.method !== "tools/call") return new Response(null, { status: 202 });
+    started.push(message.params.name);
+    active += 1;
+    most = Math.max(most, active);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    active -= 1;
+    return answer({ content: [{ type: "text", text: `${message.params.name} done` }] });
+  };
+  const manifest = { allowed_peers: [SITE] };
+  const mcpNetworks = { main: { tools: [agent("front", [`${SITE}/_mcp/0/mcp`])] } };
+  const front = callAll(tools);
+  await withFetch(siteFetch({ networks: mcpNetworks, manifest, reply: (_name, body) => front(body), routes: { [SITE]: slowMcp } }), async () => {
+    const events = await collect(new Engine({ originUrl: SITE }).streamTurn("Run all six"));
+    assert.equal(most, 4);
+    assert.deepEqual(started.sort(), tools);
+    // The model gets the results in the order it asked for them.
+    assert.equal(events.at(-1).result.text, `got ${tools.map((name) => `${name} done`).join(", ")}`);
+  });
+
+  // An agent that isn't safe to run alongside others: the batch runs one at a time.
+  const order = [];
+  const networks = {
+    main: { tools: [agent("front", ["first", "careful", "last"]), agent("first", [], INQUIRY), { ...agent("careful", [], INQUIRY), parallel_safe: false }, agent("last", [], INQUIRY)] },
+  };
+  const serial = callAll(["first", "careful", "last"]);
+  const reply = async (name, body) => {
+    if (name === "front") return serial(body);
+    order.push(`start ${name}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    order.push(`end ${name}`);
+    return { text: `${name} done` };
+  };
+  await withFetch(siteFetch({ networks, reply }), async () => {
+    await collect(new Engine({ originUrl: SITE }).streamTurn("Run them in order"));
+    assert.deepEqual(order, ["start first", "end first", "start careful", "end careful", "start last", "end last"]);
+  });
+});
 
 test("consent is asked only for calls that leave the site", async () => {
   const mcpCalls = [];

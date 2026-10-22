@@ -137,6 +137,8 @@ export class Engine {
     this.agentSpans = new Map(); // origin path -> this run's open agent span
     this.toolSpans = new Map(); // origin path, MCP call or partner URL -> this run's open tool span
     this.toolCaller = null; // the agent span whose model call last asked for tools
+    this.networksByName = new Map(); // network name -> AgentNetwork, for a tool's spec
+    this.toolBatches = new Map(); // "network::agent" -> the tool calls of its last model response
   }
 
   // Start a new chat.
@@ -351,14 +353,17 @@ export class Engine {
   // not linked yet becomes LINK_SLOT_PREFIX + its name, which resolvePeer turns into a
   // request for the developer to link it.
   _runnableConfig(network) {
+    this.networksByName.set(network.name, network);
     const config = structuredClone(network.config);
     const override = this.modelOverride ? { model_name: this.modelOverride } : {};
     // Every model call goes to the one router the user configured. When they chose a
     // model, that model is the whole llm_config: the fallbacks it lists (often other
     // providers) would otherwise be what neuro-san calls, and with one router and one
     // model there is nothing left to fall back to.
+    // Streaming, so the trace and the turn's event stream get each answer's text as
+    // it arrives, as main's own loop does.
     const llmConfig = (agentConfig) => {
-      const out = { ...(agentConfig || {}), class: "openai", ...override };
+      const out = { ...(agentConfig || {}), class: "openai", streaming: true, ...override };
       if (this.modelOverride) delete out.fallbacks;
       return out;
     };
@@ -503,6 +508,7 @@ export class Engine {
         peerAnswers.set(url, result.text);
         return JSON.stringify(result);
       },
+      toolCall: ({ caller, tool, run }) => this._scheduleTool(caller, tool, run),
       peerFunction: (url) => {
         const owner = this.refOwners.get(url);
         const label = owner?.network.linkLabels?.[url] || owner?.linkSlot || parseExternalAgent(url, owner?.base)?.agentName || url;
@@ -599,6 +605,12 @@ export class Engine {
     globalThis.fetch = async (input, init) => {
       const url = String(input?.url ?? input);
       const router = this.top?.llm?.baseUrl;
+      const mcpCall = mcpToolCall(url, init);
+      if (mcpCall) {
+        const response = await originalFetch(input, init);
+        this._watchMcpProgress(url, mcpCall, response);
+        return response;
+      }
       // Chat completions, or the Responses API that neuro-san uses for OpenAI models.
       const base = router ? router.replace(/\/$/, "") : "";
       if (!router || !(url.startsWith(base + "/chat/completions") || url.startsWith(base + "/responses"))) {
@@ -610,22 +622,101 @@ export class Engine {
       const caller = body ? this._modelCaller(body) : null;
       const agentSpan = caller ? this._openAgentSpan(caller) : null;
       if (agentSpan) this.toolCaller = agentSpan;
+      const batch = caller ? this._newToolBatch(caller) : null;
+      // An unreadable response asks for no tools, so nothing waits on it.
+      const settle = (read) => batch?.resolve(read ? functionCallNames(read.text) : []);
       // Only the top front man is steered. Work already handed to tools and other
       // agents finishes as it is, so nothing runs twice.
       if (caller?.isTopFrontMan && this.turnControl && body) {
-        return this._steerableModelCall(originalFetch, input, init, body, agentSpan);
+        return this._steerableModelCall(originalFetch, input, init, body, agentSpan, settle);
       }
       const span = this._startModelCall(body, agentSpan);
+      let response;
       try {
-        const response = await originalFetch(input, init);
-        await this._readModelResponse(response.clone(), span);
-        this._endModelCall(span, response, body);
-        return response;
+        response = await originalFetch(input, init);
       } catch (err) {
+        settle(null);
         this.trace.fail(span, err);
         throw err;
       }
+      // neuro-san reads the response as it streams; a copy of it fills in the span.
+      this._readModelResponse(response.clone(), span, init?.signal).then(
+        (read) => { settle(read); this._endModelCall(span, response, body, read.model); },
+        (err) => { settle(null); this.trace.fail(span, err); },
+      );
+      return response;
     };
+  }
+
+  // A new batch for the caller's next model response: the tool calls it asks for,
+  // once it is read.
+  _newToolBatch(caller) {
+    let resolve;
+    const batch = { names: null, ready: new Promise((done) => { resolve = done; }), active: 0, waiting: [], taken: [] };
+    batch.resolve = (names) => { batch.names = batch.names || names; resolve(batch.names); };
+    this.toolBatches.set(`${caller.network}::${caller.agent}`, batch);
+    return batch;
+  }
+
+  // Runs one of an agent's tool calls, as main's executeToolCalls does: sibling calls
+  // from one model response run at the same time, up to MAX_PARALLEL_TOOLS, and in
+  // the model's order when one of them isn't safe to run alongside the others
+  // (parallel_safe = false, or a REST tool that changes something). neuro-san's own
+  // loop starts all of them at once, so this holds back the ones over the limit.
+  async _scheduleTool(caller, tool, run) {
+    const batch = this.toolBatches.get(`${caller.network}::${caller.agent}`);
+    if (!batch) return run();
+    const names = await batch.ready;
+    if (batch.limit == null) {
+      const network = this.networksByName.get(caller.network);
+      const safe = names.every((name) => toolAllowsParallel(network?.getAgentSpec(name)));
+      batch.limit = safe ? Math.max(1, Math.min(MAX_PARALLEL_TOOLS, names.length)) : 1;
+    }
+    // Its place in the model's list, so the ones held back go in that order.
+    let index = names.findIndex((name, i) => name === tool && !batch.taken[i]);
+    if (index < 0) index = names.length + batch.taken.length;
+    batch.taken[index] = true;
+    if (batch.active >= batch.limit) {
+      await new Promise((start) => {
+        batch.waiting.push({ index, start });
+        batch.waiting.sort((a, b) => a.index - b.index);
+      });
+    } else {
+      batch.active += 1;
+    }
+    try {
+      return await run();
+    } finally {
+      const next = batch.waiting.shift();
+      if (next) next.start();
+      else batch.active -= 1;
+    }
+  }
+
+  // An MCP server can send notifications (progress, log messages) in a tool call's
+  // response stream before its result. Each one goes on the trace as tool_progress,
+  // under that call's tool span, while the MCP client reads the result as usual.
+  _watchMcpProgress(url, { tool }, response) {
+    if (!/text\/event-stream/i.test(response.headers.get("content-type") || "") || !response.body) return;
+    const target = new URL(url);
+    let key = null;
+    for (const candidate of this.toolSpans.keys()) {
+      if (!candidate.startsWith("mcp::") || !candidate.endsWith(`::${tool}`)) continue;
+      try {
+        const known = new URL(candidate.slice(5, -(tool.length + 2)));
+        if (known.origin === target.origin && known.pathname === target.pathname) key = candidate;
+      } catch {}
+    }
+    const parent = (key && this.toolSpans.get(key)) || this.runSpan;
+    readSseEvents(response.clone(), (message) => {
+      if (!message || "result" in message || "error" in message || !message.method) return;
+      const params = message.params || {};
+      this.trace.note("tool_progress", {
+        parent, peerOrigin: hostOf(url), tool, toolKind: "MCP", method: message.method,
+        progress: params.progress ?? params.data ?? params,
+        message: params.message || params.data?.message || (typeof params.data === "string" ? params.data : ""),
+      });
+    }).catch(() => {});
   }
 
   _startModelCall(body, agentSpan) {
@@ -682,10 +773,27 @@ export class Engine {
   // the place it went in, in every later call of this turn, so neuro-san's own
   // history and the user's guidance stay in order. neuro-san gets the response once
   // the call is settled, so it never sees a cancelled one.
-  async _steerableModelCall(originalFetch, input, init, body, agentSpan) {
+  async _steerableModelCall(originalFetch, input, init, body, agentSpan, settle) {
+    try {
+      const { response, read } = await this._steeredModelCall(originalFetch, input, init, body, agentSpan);
+      settle(read);
+      return response;
+    } catch (err) {
+      settle(null);
+      throw err;
+    }
+  }
+
+  async _steeredModelCall(originalFetch, input, init, body, agentSpan) {
     const control = this.turnControl;
     const items = Array.isArray(body.input) ? body.input : Array.isArray(body.messages) ? body.messages : null;
-    if (!items) return originalFetch(input, init);
+    if (!items) {
+      const span = this._startModelCall(body, agentSpan);
+      const response = await originalFetch(input, init);
+      const read = await this._readModelResponse(response.clone(), span);
+      this._endModelCall(span, response, body, read.model);
+      return { response, read };
+    }
     const responses = Array.isArray(body.input);
     for (;;) {
       const sent = steeredItems(items, this.steeringAt, responses);
@@ -719,7 +827,7 @@ export class Engine {
       const headers = new Headers(response.headers);
       headers.delete("content-encoding");
       headers.delete("content-length");
-      return new Response(read?.text ?? "", { status: response.status, statusText: response.statusText, headers });
+      return { response: new Response(read?.text ?? "", { status: response.status, statusText: response.statusText, headers }), read };
     }
   }
 
@@ -951,6 +1059,86 @@ function streamedText(line) {
     return String(event.choices?.[0]?.delta?.content || "");
   } catch {
     return "";
+  }
+}
+
+// How many of an agent's sibling tool calls run at once, as in main.
+const MAX_PARALLEL_TOOLS = 4;
+
+// Whether a tool can run alongside its siblings: not when its spec says
+// parallel_safe = false, and for a REST (toolbox) tool only when it only reads (GET).
+function toolAllowsParallel(spec) {
+  if (!spec) return true;
+  if (spec.parallel_safe === false || spec.execution?.parallel_safe === false) return false;
+  if (spec.toolbox != null) return String(spec.args?.method || "GET").toUpperCase() === "GET";
+  return true;
+}
+
+// The tools a model response calls, in the model's order: from the Responses API or
+// chat completions, whole or streamed.
+function functionCallNames(text) {
+  const names = [];
+  const fromResponse = (response) => {
+    for (const item of response?.output || []) if (item?.type === "function_call" && item.name) names.push(item.name);
+  };
+  const trimmed = String(text || "").trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      const body = JSON.parse(trimmed);
+      fromResponse(body);
+      for (const call of body.choices?.[0]?.message?.tool_calls || []) if (call?.function?.name) names.push(call.function.name);
+    } catch {}
+    return names;
+  }
+  const streamed = [];
+  for (const line of trimmed.split("\n")) {
+    if (!line.startsWith("data:")) continue;
+    let event;
+    try { event = JSON.parse(line.slice(5).trim()); } catch { continue; }
+    if (event.type === "response.completed") {
+      names.length = 0;
+      fromResponse(event.response);
+      return names;
+    }
+    if (event.type === "response.output_item.done" && event.item?.type === "function_call") names.push(event.item.name);
+    for (const call of event.choices?.[0]?.delta?.tool_calls || []) {
+      if (call?.function?.name) streamed[call.index ?? streamed.length] = call.function.name;
+    }
+  }
+  return names.length ? names : streamed.filter(Boolean);
+}
+
+// The MCP tool a request calls, when it is an MCP tools/call.
+function mcpToolCall(url, init) {
+  if (init?.method !== "POST" || typeof init.body !== "string") return null;
+  try {
+    if (!new URL(url).pathname.endsWith("/mcp")) return null;
+    const message = JSON.parse(init.body);
+    return message?.method === "tools/call" && message.params?.name ? { tool: String(message.params.name) } : null;
+  } catch {
+    return null;
+  }
+}
+
+// Calls onEvent with each JSON event of a server-sent event stream, as it arrives.
+async function readSseEvents(response, onEvent) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done }).replace(/\r\n/g, "\n");
+    let boundary;
+    while ((boundary = buffer.indexOf("\n\n")) >= 0 || (done && buffer.trim())) {
+      const block = boundary >= 0 ? buffer.slice(0, boundary) : buffer;
+      buffer = boundary >= 0 ? buffer.slice(boundary + 2) : "";
+      const payload = block.split("\n")
+        .filter((line) => line.trimStart().startsWith("data:"))
+        .map((line) => line.slice(line.indexOf(":") + 1).trimStart())
+        .join("\n");
+      try { if (payload) onEvent(JSON.parse(payload)); } catch {}
+    }
+    if (done) return;
   }
 }
 

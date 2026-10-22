@@ -19,6 +19,8 @@ import {
   ChatMessageType,
   AsyncDirectAgentSession,
   environ,
+  // Added to the package's exports by vite.config.mjs; null when the package has none.
+  NsdeployBaseToolFactory,
 } from "@cognizant-ai-lab/neuro-san-ts-package";
 // Imported for its side effect too: it makes the package's ExternalAgentParsing work.
 import { parseExternalAgent } from "./external-agent-parsing.mjs";
@@ -52,6 +54,10 @@ const hooks = {
   // (agentUrl) => function spec | null. What to advertise for a partner before it is
   // contacted, e.g. the contract nsdeploy published for the leaf it replaced.
   peerFunction: null,
+  // async ({ caller: { agent, network }, tool, run }) => result. Runs each tool call an
+  // agent makes, so the runtime decides how many of its sibling calls run at once.
+  // `run` makes the call.
+  toolCall: null,
 };
 
 export function setHooks(values) {
@@ -107,6 +113,27 @@ LangChainMcpAdapter.prototype.get_mcp_tools = async function (serverUrl, allowed
   }
   return mcpTools;
 };
+
+// --- tool calls ----------------------------------------------------------------------
+
+// BaseToolFactory.create_base_tool, with each tool it builds going through the
+// runtime's toolCall hook. neuro-san's ToolNode starts all of a model response's
+// tool calls at once and calls each tool's invoke, so the hook can hold some back.
+// WORKAROUND / PORT BACK: vite.config.mjs exposes the class; see there.
+if (NsdeployBaseToolFactory) {
+  const createBaseTool = NsdeployBaseToolFactory.prototype.create_base_tool;
+  NsdeployBaseToolFactory.prototype.create_base_tool = async function (name) {
+    const created = await createBaseTool.call(this, name);
+    const caller = { agent: this.tool_caller.get_name(), network: this.tool_caller.get_inspector().get_network_name() };
+    for (const tool of Array.isArray(created) ? created : created ? [created] : []) {
+      const invoke = tool.invoke.bind(tool);
+      tool.invoke = (input, config) => (hooks.toolCall
+        ? hooks.toolCall({ caller, tool: tool.name, run: () => invoke(input, config) })
+        : invoke(input, config));
+    }
+    return created;
+  };
+}
 
 // --- partner networks --------------------------------------------------------------
 
