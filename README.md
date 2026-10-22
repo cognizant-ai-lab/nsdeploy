@@ -813,6 +813,22 @@ chatbot:
 - **Generative UI (CRUSE)** carries presentation proposals up the agent hierarchy.
   Each parent consolidates its children's suggestions; the final response can mix
   formatted text, reports, tables, charts, HTML and optional input widgets.
+- **Live activity streaming** exposes typed, per-turn agent/tool lifecycle events
+  before the final answer is ready. The consumer UI reduces
+  these events to one transient `.ns-turn-status` line inside the conversation and
+  removes it when the final answer appears; the complete event log remains in Developer
+  view. Theme designers can style the line, spinner, and text independently.
+  Programmatic consumers can `for await` over `Engine.streamTurn(...)`; events include
+  `turn.*`, `agent.*`, and `tool.*`, and the final result is carried by `turn.completed`.
+- **Live steering** keeps the input enabled during a running turn. A user can add
+  guidance without starting a second turn; the top orchestrator interrupts an
+  in-flight model response or consumes the update after active tool/downstream work
+  finishes, then replans before producing its final answer. Already-started tools are
+  not cancelled or replayed, which avoids duplicating side effects. Programmatic
+  consumers call `stream.steer(text)` on the object returned by `Engine.streamTurn()`;
+  accepted input produces `turn.steering.received` and `turn.steering.applied` events.
+  Themes can style the active input state, update button, and steering message via
+  `.ns-steering-active`, `.ns-send-steering`, and `.ns-steering-message`.
 - **Resizable layout.** The chat and the right rail sit **side by side** with a
   **draggable splitter** between them (the rail width is remembered across reloads);
   each pane scrolls its own overflow and the app scrolls rather than crushing a pane

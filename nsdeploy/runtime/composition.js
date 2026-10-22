@@ -38,6 +38,23 @@ export function peerRequestText(request) {
     .join("; ");
 }
 
+// Consent protects a site boundary, not every service call. Local MCP hosts are
+// deliberately exposed through same-origin /_mcp routes and are part of the page
+// the visitor already chose to use. /ext-mcp is the exception: it is a
+// same-origin transport proxy whose destination is an external MCP server.
+export function requiresThirdPartyApproval(ref, baseOrigin) {
+  const raw = typeof ref === "string" ? ref : ref?.url;
+  try {
+    const base = new URL(baseOrigin);
+    const target = new URL(raw, base);
+    const externalMcpProxy = /^\/ext-mcp(?:\/|$)/i.test(target.pathname);
+    return externalMcpProxy || target.origin !== base.origin;
+  } catch {
+    // Invalid or opaque destinations must never bypass the consent boundary.
+    return true;
+  }
+}
+
 export function remoteIsInChain(ref, baseOrigin, chain = []) {
   try {
     const parsed = parseExternalAgent(ref, baseOrigin);

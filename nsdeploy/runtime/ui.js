@@ -20,6 +20,7 @@ import {
 import { normalizeModelName } from "./model.js";
 import { normalizePresentation } from "./cruse.js";
 import { PRESENTATION_CSS, renderMarkdown, renderRichComponent } from "./cruse-render.js";
+import { createTurnStatusController } from "./turn-status.js";
 
 const BASE_CSS = PRESENTATION_CSS + `
 /* Legacy themes get two resizable panes side by side. Composed themes provide
@@ -35,6 +36,7 @@ const BASE_CSS = PRESENTATION_CSS + `
 .ns-composed-app [data-ns-slot="chat"]>.ns-chat{width:100%;height:100%;min-height:480px}
 .ns-composed-app [data-ns-slot="agents"]>.ns-agents,
 .ns-composed-app [data-ns-slot="agents"]>.ns-dev{box-sizing:border-box;width:100%;height:100%;min-height:0}
+.ns-composed-app [data-ns-slot="activity"][hidden]{display:none!important}
 .ns-header{grid-column:1/-1;display:flex;align-items:center;gap:12px;border-bottom:2px solid var(--ns-accent,var(--ns-primary,#2563eb));background:var(--ns-header-bg,transparent);color:var(--ns-header-fg,inherit);padding:var(--ns-header-pad,0 0 8px)}
 .ns-header .ns-logo{height:32px}
 .ns-title{font-weight:700;font-size:18px}
@@ -46,6 +48,7 @@ const BASE_CSS = PRESENTATION_CSS + `
 :is(.ns-app,.ns-composed-app)[data-dev="true"] .ns-agents{display:none}
 .ns-agents h3{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ns-muted,#888)}
 .ns-status{font-size:13px;color:var(--ns-fg,#333);display:flex;align-items:center;gap:8px;min-height:20px}
+.ns-status[hidden]{display:none!important}
 .ns-status .ns-spin{width:12px;height:12px;border:2px solid var(--ns-primary,#2563eb);border-top-color:transparent;border-radius:50%;animation:ns-spin .8s linear infinite;display:none}
 .ns-status.busy .ns-spin{display:inline-block}
 @keyframes ns-spin{to{transform:rotate(360deg)}}
@@ -127,10 +130,17 @@ const BASE_CSS = PRESENTATION_CSS + `
 .ns-msg{max-width:85%;padding:8px 12px;border-radius:var(--ns-radius,12px);white-space:pre-wrap;line-height:1.4}
 .ns-msg.user{align-self:flex-end;background:var(--ns-user-bg,var(--ns-primary,#2563eb));color:var(--ns-user-fg,#fff)}
 .ns-msg.bot{align-self:flex-start;background:var(--ns-msgbg,#f1f3f5)}
+.ns-turn-status{display:flex;align-items:center;gap:8px;max-width:min(85%,680px);min-width:0;white-space:normal;color:var(--ns-muted,#666)}
+.ns-turn-status-spinner{width:12px;height:12px;flex:0 0 12px;border:2px solid var(--ns-primary,#2563eb);border-top-color:transparent;border-radius:50%;animation:ns-spin .8s linear infinite}
+.ns-turn-status-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
 .ns-inputbar{display:flex;flex-wrap:wrap;gap:8px;padding:10px;border-top:1px solid var(--ns-border,#e2e2e2)}
 .ns-inputbar input{flex:1 1 220px;min-width:0;padding:8px 10px;border:1px solid var(--ns-border,#ccc);border-radius:8px;font-size:14px}
 .ns-inputbar button{padding:8px 16px;background:var(--ns-primary,#2563eb);color:#fff;border:0;border-radius:8px;cursor:pointer;font-weight:600}
 .ns-inputbar button:disabled{opacity:.5;cursor:default}
+.ns-inputbar[data-turn-active="true"]{border-top-color:color-mix(in srgb,var(--ns-primary,#2563eb) 45%,var(--ns-border,#e2e2e2))}
+.ns-inputbar[data-turn-active="true"] .ns-input{box-shadow:0 0 0 2px color-mix(in srgb,var(--ns-primary,#2563eb) 12%,transparent)}
+.ns-send.ns-send-steering{background:var(--ns-accent,var(--ns-primary,#2563eb))}
+.ns-msg.user.ns-steering-message{outline:1px solid color-mix(in srgb,currentColor 35%,transparent);outline-offset:-3px}
 .ns-right{display:flex;flex-direction:column;gap:12px;min-height:0}
 .ns-graph{border:1px solid var(--ns-border,#e2e2e2);border-radius:10px;padding:10px;font-size:13px}
 .ns-graph h3,.ns-log h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ns-muted,#888)}
@@ -157,6 +167,7 @@ const BASE_CSS = PRESENTATION_CSS + `
 .ns-row.k-run{border-left-color:#7c3aed}
 .ns-row.k-agent{border-left-color:#2563eb}
 .ns-row.k-model_call{border-left-color:#0891b2}
+.ns-row.k-tool,
 .ns-row.k-tool_call{border-left-color:#16a34a}
 .ns-row.k-rest_call{border-left-color:#ca8a04}
 .ns-row.k-remote_fetch{border-left-color:#db2777}
@@ -237,16 +248,16 @@ export function mountApp(root, { engine, trace, manifest }) {
           <div id="ns-profile-hint" class="ns-hint"></div>
         </div>
       </details>
-      <div class="ns-inputbar">
-        <input id="ns-input" placeholder="Type a request…" />
-        <button id="ns-send">Send</button>
+      <div class="ns-inputbar" data-turn-active="false">
+        <input id="ns-input" class="ns-input" placeholder="Type a request…" />
+        <button id="ns-send" class="ns-send">Send</button>
         <button id="ns-newchat" title="Clear conversation history" style="background:transparent;color:var(--ns-muted,#888);border:1px solid var(--ns-border,#ccc)">New chat</button>
       </div>
     </div>`;
   const agentsHtml = `
     <aside class="ns-agents">
       <h3>Agents working for you</h3>
-      <div class="ns-status" id="ns-status"><span class="ns-spin"></span><span id="ns-status-text">Ready when you are.</span></div>
+      <div class="ns-status" id="ns-status" hidden><span class="ns-spin"></span><span id="ns-status-text">Ready when you are.</span></div>
       <div id="ns-anodes"></div>
     </aside>`;
   const devHtml = `
@@ -265,6 +276,7 @@ export function mountApp(root, { engine, trace, manifest }) {
 
   const chatSlot = root.querySelector('[data-ns-slot="chat"]');
   const agentsSlot = root.querySelector('[data-ns-slot="agents"]');
+  const activitySlot = root.querySelector('[data-ns-slot="activity"]');
   const composed = Boolean(chatSlot && agentsSlot);
   let app;
   if (composed) {
@@ -280,6 +292,12 @@ export function mountApp(root, { engine, trace, manifest }) {
     headerSlot.innerHTML = headerHtml;
     chatSlot.innerHTML = chatHtml;
     agentsSlot.innerHTML = agentsHtml + devHtml;
+    if (activitySlot) {
+      // Theme prompt v10 briefly exposed a separate activity rail. Keep those
+      // themes valid, but retire the empty rail now that status lives in chat.
+      activitySlot.innerHTML = "";
+      activitySlot.hidden = true;
+    }
     root.insertAdjacentHTML("beforeend", modalHtml);
     app = root;
   } else {
@@ -301,6 +319,8 @@ export function mountApp(root, { engine, trace, manifest }) {
   const nodesEl = root.querySelector("#ns-nodes");
   const input = root.querySelector("#ns-input");
   const sendBtn = root.querySelector("#ns-send");
+  const inputBar = root.querySelector(".ns-inputbar");
+  const newChatBtn = root.querySelector("#ns-newchat");
   const countEl = root.querySelector("#ns-count");
   const breadcrumb = root.querySelector("#ns-breadcrumb");
 
@@ -368,28 +388,69 @@ export function mountApp(root, { engine, trace, manifest }) {
     rows.parentElement.scrollTop = rows.parentElement.scrollHeight;
   });
 
-  // --- streaming answer + generative UI (CRUSE widgets) ----------------------
+  // --- transient turn status + generative UI (CRUSE widgets) -----------------
   let currentBot = null;
-  let botBuffer = "";
+  let turnStatus = null;
+  const turnStatusController = createTurnStatusController({
+    show(text, event) {
+      if (!turnStatus) {
+        turnStatus = document.createElement("div");
+        turnStatus.className = "ns-msg bot ns-turn-status";
+        turnStatus.setAttribute("role", "status");
+        turnStatus.setAttribute("aria-live", "polite");
+        turnStatus.setAttribute("aria-atomic", "true");
+        const spinner = document.createElement("span");
+        spinner.className = "ns-turn-status-spinner";
+        spinner.setAttribute("aria-hidden", "true");
+        const copy = document.createElement("span");
+        copy.className = "ns-turn-status-text";
+        turnStatus.append(spinner, copy);
+        msgs.appendChild(turnStatus);
+      }
+      turnStatus.dataset.statusType = event.type;
+      turnStatus.querySelector(".ns-turn-status-text").textContent = text;
+      msgs.scrollTop = msgs.scrollHeight;
+    },
+    hide() {
+      turnStatus?.remove();
+      turnStatus = null;
+    },
+  });
   let validateConfiguredModel = async () => true;
-  engine.onAnswerDelta = (t) => {
-    botBuffer += t;
-    if (!currentBot) currentBot = addBubble(msgs, "bot", "");
-    currentBot.textContent = visibleText(botBuffer); // hide the cruse-ui block while streaming
-    msgs.scrollTop = msgs.scrollHeight;
-  };
+  // Keep the chat to one transient line while the turn is running. The final
+  // cleaned answer replaces it atomically when turn.completed arrives.
+  engine.onAnswerDelta = undefined;
+
+  let activeTurnStream = null;
+  const idlePlaceholder = input.getAttribute("placeholder") || "Type a request…";
+  function setTurnInputState(active) {
+    inputBar.dataset.turnActive = String(active);
+    inputBar.classList.toggle("ns-steering-active", active);
+    sendBtn.classList.toggle("ns-send-steering", active);
+    sendBtn.textContent = active ? "Update" : "Send";
+    sendBtn.title = active ? "Add guidance to the running turn" : "Send a new request";
+    input.placeholder = active ? "Add guidance while the agents work…" : idlePlaceholder;
+    newChatBtn.disabled = active;
+  }
 
   async function runUserTurn(text, interaction) {
     text = (text || "").trim();
-    if (!text || sendBtn.disabled) return false;
+    if (!text || activeTurnStream) return false;
     if (!await validateConfiguredModel()) return false;
     input.value = "";
-    sendBtn.disabled = true;
     addBubble(msgs, "user", text);
     currentBot = null;
-    botBuffer = "";
+    const stream = engine.streamTurn(text, { interaction, slyData: { backend_token: "demo-customer-token-123" } });
+    activeTurnStream = stream;
+    setTurnInputState(true);
     try {
-      const result = await engine.runTurn(text, { interaction, slyData: { backend_token: "demo-customer-token-123" } });
+      let result = null;
+      for await (const event of stream) {
+        if (event.visibility !== "developer" && event.type !== "agent.output.delta") turnStatusController.handle(event);
+        if (event.type === "turn.completed") result = event.result;
+      }
+      if (!result) throw new Error("The agent turn ended without a result.");
+      turnStatusController.finalAnswerStarted();
       const clean = visibleText(result.text);
       // Always show the cleaned text — never the raw answer or retained streamed text
       // (which could be an AAOSA envelope / cruse-ui JSON). Empty is fine: widgets carry the turn.
@@ -399,21 +460,36 @@ export function mountApp(root, { engine, trace, manifest }) {
       renderPresentation(msgs, result.presentation, runUserTurn, result.turnId);
       requestAnimationFrame(() => { msgs.scrollTop = msgs.scrollHeight; });
     } catch (err) {
+      turnStatusController.clear();
       addBubble(msgs, "bot", "⚠️ " + err.message);
     } finally {
-      sendBtn.disabled = false;
+      turnStatusController.clear();
+      if (activeTurnStream === stream) activeTurnStream = null;
+      setTurnInputState(false);
       currentBot = null;
-      botBuffer = "";
     }
     return true;
   }
-  const send = () => runUserTurn(input.value);
+  const send = () => {
+    const text = (input.value || "").trim();
+    if (!text) return false;
+    if (activeTurnStream) {
+      if (!activeTurnStream.steer?.(text)) return false;
+      input.value = "";
+      const bubble = addBubble(msgs, "user", text);
+      bubble.classList.add("ns-steering-message");
+      bubble.dataset.inputKind = "steering";
+      msgs.scrollTop = msgs.scrollHeight;
+      return true;
+    }
+    return runUserTurn(text);
+  };
 
   sendBtn.addEventListener("click", send);
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") send();
   });
-  root.querySelector("#ns-newchat").addEventListener("click", () => {
+  newChatBtn.addEventListener("click", () => {
     engine.resetHistory();
     currentBot = null;
     [...msgs.children].forEach((el) => { if (el !== msgs.firstElementChild && el.dataset.welcome !== "true") el.remove(); });
