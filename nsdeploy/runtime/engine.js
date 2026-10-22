@@ -452,7 +452,7 @@ export class Engine {
           }
         }
         mcpSpans.set(`${url}::${tool}`, this.trace.start("mcp_call", {
-          parent: this.runSpan, origin: hostOf(this.top.base), peerOrigin: hostOf(url), tool, requestPayload: args,
+          parent: this.runSpan, origin: hostOf(this.top.base), peerOrigin: hostOf(url), url, tool, requestPayload: args,
         }));
         this._startTool(`mcp::${url}::${tool}`, { tool, toolKind: "MCP", args });
         return null;
