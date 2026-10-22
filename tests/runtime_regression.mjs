@@ -8,6 +8,7 @@ import { McpClient, parseMaybeSse, readJsonRpcResponse } from "../nsdeploy/runti
 import { normalizeModelName } from "../nsdeploy/runtime/model.js";
 import { createTurnEventStream } from "../nsdeploy/runtime/execution-stream.js";
 import { TraceBus } from "../nsdeploy/runtime/trace.js";
+import { createTurnStatusController, statusTextForEvent } from "../nsdeploy/runtime/turn-status.js";
 import {
   buildToolTable,
   consumeAgentBudget,
@@ -60,6 +61,29 @@ assert.deepEqual(
   { baseUrl: "http://127.0.0.1:8095/v1", mock: true },
 );
 assert.throws(() => selectPeerRouter(null), /caller has no active LLM router/i);
+
+// The consumer projection is one replaceable status line, not a growing event
+// list. It hides on turn completion or as soon as a final answer is shown.
+{
+  const shown = [];
+  let hidden = 0;
+  const status = createTurnStatusController({
+    show: (text, event) => shown.push([text, event.type]),
+    hide: () => { hidden += 1; },
+  });
+  status.handle({ type: "turn.started" });
+  status.handle({ type: "tool.started", tool: { name: "inventory_search", kind: "MCP" } });
+  status.handle({ type: "tool.progress", tool: { name: "inventory_search" }, message: "Halfway through the inventory check" });
+  assert.equal(status.visible, true);
+  assert.deepEqual(shown.at(-1), ["Halfway through the inventory check", "tool.progress"]);
+  assert.equal(statusTextForEvent({ type: "tool.completed", tool: { name: "inventory_search" } }), "Inventory Search finished; reviewing the result…");
+  status.handle({ type: "turn.completed" });
+  assert.equal(status.visible, false);
+  assert.equal(hidden, 1);
+  status.handle({ type: "turn.started" });
+  status.finalAnswerStarted();
+  assert.equal(hidden, 2);
+}
 
 // Concurrent stream consumers only receive the trace subtree for their own turn.
 {

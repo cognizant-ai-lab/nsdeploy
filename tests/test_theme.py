@@ -72,12 +72,14 @@ class ThemeChatTests(unittest.TestCase):
 
 class ThemeLayoutTests(unittest.TestCase):
     def test_prompt_requests_composed_runtime_slots(self):
-        self.assertEqual(PROMPT_VERSION, "10")
+        self.assertEqual(PROMPT_VERSION, "11")
         self.assertIn('data-ns-layout="composed"', _SYSTEM_PROMPT)
         self.assertIn('data-ns-slot="chat"', _SYSTEM_PROMPT)
         self.assertIn('data-ns-slot="agents"', _SYSTEM_PROMPT)
-        self.assertIn('data-ns-slot="activity"', _SYSTEM_PROMPT)
-        self.assertIn(".ns-activity-progress", _SYSTEM_PROMPT)
+        self.assertNotIn('data-ns-slot="activity"', _SYSTEM_PROMPT)
+        self.assertIn(".ns-turn-status-spinner", _SYSTEM_PROMPT)
+        self.assertIn(".ns-turn-status-text", _SYSTEM_PROMPT)
+        self.assertIn("data-status-type", _SYSTEM_PROMPT)
         self.assertIn("<details><summary>", _SYSTEM_PROMPT)
         self.assertIn("CRUSE forms must remain reachable", _SYSTEM_PROMPT)
         self.assertIn("OPTIONAL starting point", _SYSTEM_PROMPT)

@@ -760,9 +760,10 @@ chatbot:
 - **Live activity streaming** exposes typed, per-turn agent/tool lifecycle events,
   including coded-tool and MCP progress notifications, before the final answer is
   ready. Sibling tool calls run concurrently (bounded, with deterministic result
-  ordering); tools can opt out with `parallel_safe = false`. Generated themes receive
-  a dedicated `data-ns-slot="activity"` mount plus stable `.ns-activity*` state classes,
-  while older themes automatically show the same surface inside the agents rail.
+  ordering); tools can opt out with `parallel_safe = false`. The consumer UI reduces
+  these events to one transient `.ns-turn-status` line inside the conversation and
+  removes it when the final answer appears; the complete event log remains in Developer
+  view. Theme designers can style the line, spinner, and text independently.
   Programmatic consumers can `for await` over `Engine.streamTurn(...)`; events include
   `turn.*`, `agent.*`, and `tool.*`, with downstream text deltas marked
   `visibility: "developer"` and the final result carried by `turn.completed`.
