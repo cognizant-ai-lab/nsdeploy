@@ -76,24 +76,42 @@ export async function runAgentLangChain(ctx, agentName, userText, parentSpan, ch
 
     let finalText = "";
     for (let step = 0; step < maxSteps; step++) {
+      if (isTopFrontMan) {
+        helpers.applyPendingSteering(ctx.turnControl, (text) => messages.push(new HumanMessage(text)));
+      }
       const span = trace.start("model_call", {
         parent: agentSpan, origin, model, mock: ctx.mock,
         routerHost: hostOf(ctx.routerBaseUrl), keySource, runner: "langchain",
       });
       let ai = null;
       try {
-        const stream = await chat.stream(messages);
-        for await (const chunk of stream) {
-          ai = ai ? ai.concat(chunk) : chunk;
-          const piece = textOf(chunk.content);
-          if (piece) { if (isTopFrontMan) ctx.onAnswerDelta?.(piece); trace.update(span, { streamChunk: piece }); }
+        const attempt = await helpers.runInterruptibleModelCall(isTopFrontMan ? ctx.turnControl : null, async (signal) => {
+          let response = null;
+          const stream = await chat.stream(messages, { signal });
+          for await (const chunk of stream) {
+            response = response ? response.concat(chunk) : chunk;
+            const piece = textOf(chunk.content);
+            if (piece && !signal?.aborted) { if (isTopFrontMan) ctx.onAnswerDelta?.(piece); trace.update(span, { streamChunk: piece }); }
+          }
+          return response;
+        });
+        if (attempt.interrupted) {
+          trace.end(span, { status: "steered", interrupted: true });
+          step -= 1;
+          continue;
         }
+        ai = attempt.value;
         const respModel = ai?.response_metadata?.model_name || ai?.response_metadata?.model || ai?.lc_kwargs?.response_metadata?.model_name;
         const respMock = ctx.mock || /neuro-san-mock/.test(respModel || "");
         trace.end(span, { usage: ai?.usage_metadata, toolCalls: (ai?.tool_calls || []).map((t) => t.name), mock: respMock, respModel });
       } catch (err) {
         trace.fail(span, err);
         throw err;
+      }
+
+      if (isTopFrontMan && ctx.turnControl?.pending.length) {
+        step -= 1;
+        continue;
       }
 
       messages.push(ai);

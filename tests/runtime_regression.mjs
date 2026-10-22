@@ -72,6 +72,8 @@ assert.throws(() => selectPeerRouter(null), /caller has no active LLM router/i);
     hide: () => { hidden += 1; },
   });
   status.handle({ type: "turn.started" });
+  status.handle({ type: "turn.steering.received" });
+  assert.deepEqual(shown.at(-1), ["Update received; adjusting the plan…", "turn.steering.received"]);
   status.handle({ type: "tool.started", tool: { name: "inventory_search", kind: "MCP" } });
   status.handle({ type: "tool.progress", tool: { name: "inventory_search" }, message: "Halfway through the inventory check" });
   assert.equal(status.visible, true);
@@ -343,6 +345,27 @@ assert.throws(
     const mock = new LlmClient({ baseUrl: "http://127.0.0.1:8091/v1", apiKey: "demo", mock: true });
     await assert.rejects(mock.chat({ model: "m", messages: [] }), /fetch reached/);
     assert.equal(fetched, 1);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// Steering aborts an SSE response that has already started, so a provider stream
+// cannot linger in the background while the replacement model call begins.
+{
+  const realFetch = globalThis.fetch;
+  let cancelled = false;
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    cancel() { cancelled = true; },
+  }), { headers: { "Content-Type": "text/event-stream" } });
+  try {
+    const abort = new AbortController();
+    const client = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "key", mock: false });
+    const pending = client.chat({ model: "m", messages: [], signal: abort.signal });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abort.abort(new DOMException("Steered", "AbortError"));
+    await assert.rejects(pending, (error) => error.name === "AbortError");
+    assert.equal(cancelled, true);
   } finally {
     globalThis.fetch = realFetch;
   }

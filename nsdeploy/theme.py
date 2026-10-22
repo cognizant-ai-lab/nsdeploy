@@ -26,7 +26,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-PROMPT_VERSION = "11"
+PROMPT_VERSION = "12"
 CACHE_DIR = Path.home() / ".cache" / "nsdeploy" / "themes"
 DEFAULT_THEME_MODEL = "gpt-5.6"
 
@@ -327,7 +327,8 @@ _SYSTEM_PROMPT = (
     "a COMPLETE CSS stylesheet for the page — backgrounds/gradients, layout (grid/flex), "
     "the hero, typography, decorative effects, responsiveness. BOLDLY restyle the "
     "assistant itself so it reads as part of your design: .ns-header, .ns-title, .ns-chat, "
-    ".ns-msgs, .ns-msg, .ns-msg.user, .ns-inputbar, .ns-agents, .ns-turn-status, "
+    ".ns-msgs, .ns-msg, .ns-msg.user, .ns-msg.user.ns-steering-message, .ns-inputbar, "
+    ".ns-inputbar[data-turn-active='true'], .ns-input, .ns-send, .ns-send-steering, .ns-agents, .ns-turn-status, "
     ".ns-turn-status-spinner, .ns-turn-status-text, .ns-graph, .ns-log, "
     ".ns-widget, .ns-w-btn, .ns-presentation, .ns-rich. CRUSE responses may contain "
     "formatted reports, comparison tables, charts, visual HTML or optional forms; allow "
@@ -360,7 +361,12 @@ _SYSTEM_PROMPT = (
     "it when the final answer appears. Style that line, its .ns-turn-status-spinner, and its "
     ".ns-turn-status-text as part of the conversation rather than as a separate activity log. "
     "The line's data-status-type attribute identifies turn.started, agent.*, and tool.* updates "
-    "if their visual treatments should differ. On narrow "
+    "if their visual treatments should differ, including turn.steering.* when the user adds guidance. "
+    "While a turn runs, the chat input remains available for steering: .ns-inputbar gets "
+    "data-turn-active='true' and .ns-steering-active, the send button gets .ns-send-steering, "
+    "and accepted guidance appears as .ns-msg.user.ns-steering-message with "
+    "data-input-kind='steering'. Style these states so adding an update feels available but does "
+    "not compete with the main conversation. On narrow "
     "screens, stack the surfaces or collapse the agents slot so the page never scrolls "
     "sideways. Do not force overflow:hidden on html, body, #app, the chat slot, or the "
     "agents slot; page scrolling and CRUSE forms must remain reachable. Keep every slot "

@@ -25,6 +25,8 @@ export function statusTextForEvent(event) {
   const tool = humanize(event.tool?.name, "A service");
   switch (event.type) {
     case "turn.started": return "Planning your request…";
+    case "turn.steering.received": return "Update received; adjusting the plan…";
+    case "turn.steering.applied": return "Applying your latest guidance…";
     case "agent.started": return `${agent} is working…`;
     case "agent.completed": return `${agent} finished; bringing the answer together…`;
     case "agent.failed": return `${agent} could not complete; continuing with available results…`;

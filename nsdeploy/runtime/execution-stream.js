@@ -161,6 +161,12 @@ export function createTurnEventStream(trace, runTurn, streamToken) {
       }));
     } else if (ev.phase === "end" && ev.status === "error" && ev.kind === "agent") {
       queue.push(base("agent.failed", ev, { source, error: ev.error, visibility: "user" }));
+    } else if (ev.phase === "note" && ev.kind === "steering") {
+      queue.push(base(ev.state === "applied" ? "turn.steering.applied" : "turn.steering.received", ev, {
+        input: ev.input || "",
+        count: ev.count || 1,
+        visibility: "user",
+      }));
     }
   };
 

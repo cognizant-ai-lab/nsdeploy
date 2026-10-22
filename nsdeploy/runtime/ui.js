@@ -137,6 +137,10 @@ const BASE_CSS = PRESENTATION_CSS + `
 .ns-inputbar input{flex:1 1 220px;min-width:0;padding:8px 10px;border:1px solid var(--ns-border,#ccc);border-radius:8px;font-size:14px}
 .ns-inputbar button{padding:8px 16px;background:var(--ns-primary,#2563eb);color:#fff;border:0;border-radius:8px;cursor:pointer;font-weight:600}
 .ns-inputbar button:disabled{opacity:.5;cursor:default}
+.ns-inputbar[data-turn-active="true"]{border-top-color:color-mix(in srgb,var(--ns-primary,#2563eb) 45%,var(--ns-border,#e2e2e2))}
+.ns-inputbar[data-turn-active="true"] .ns-input{box-shadow:0 0 0 2px color-mix(in srgb,var(--ns-primary,#2563eb) 12%,transparent)}
+.ns-send.ns-send-steering{background:var(--ns-accent,var(--ns-primary,#2563eb))}
+.ns-msg.user.ns-steering-message{outline:1px solid color-mix(in srgb,currentColor 35%,transparent);outline-offset:-3px}
 .ns-right{display:flex;flex-direction:column;gap:12px;min-height:0}
 .ns-graph{border:1px solid var(--ns-border,#e2e2e2);border-radius:10px;padding:10px;font-size:13px}
 .ns-graph h3,.ns-log h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ns-muted,#888)}
@@ -245,9 +249,9 @@ export function mountApp(root, { engine, trace, manifest }) {
           <div id="ns-profile-hint" class="ns-hint"></div>
         </div>
       </details>
-      <div class="ns-inputbar">
-        <input id="ns-input" placeholder="Type a request…" />
-        <button id="ns-send">Send</button>
+      <div class="ns-inputbar" data-turn-active="false">
+        <input id="ns-input" class="ns-input" placeholder="Type a request…" />
+        <button id="ns-send" class="ns-send">Send</button>
         <button id="ns-newchat" title="Clear conversation history" style="background:transparent;color:var(--ns-muted,#888);border:1px solid var(--ns-border,#ccc)">New chat</button>
       </div>
     </div>`;
@@ -316,6 +320,8 @@ export function mountApp(root, { engine, trace, manifest }) {
   const nodesEl = root.querySelector("#ns-nodes");
   const input = root.querySelector("#ns-input");
   const sendBtn = root.querySelector("#ns-send");
+  const inputBar = root.querySelector(".ns-inputbar");
+  const newChatBtn = root.querySelector("#ns-newchat");
   const countEl = root.querySelector("#ns-count");
   const breadcrumb = root.querySelector("#ns-breadcrumb");
 
@@ -416,17 +422,31 @@ export function mountApp(root, { engine, trace, manifest }) {
   // cleaned answer replaces it atomically when turn.completed arrives.
   engine.onAnswerDelta = undefined;
 
+  let activeTurnStream = null;
+  const idlePlaceholder = input.getAttribute("placeholder") || "Type a request…";
+  function setTurnInputState(active) {
+    inputBar.dataset.turnActive = String(active);
+    inputBar.classList.toggle("ns-steering-active", active);
+    sendBtn.classList.toggle("ns-send-steering", active);
+    sendBtn.textContent = active ? "Update" : "Send";
+    sendBtn.title = active ? "Add guidance to the running turn" : "Send a new request";
+    input.placeholder = active ? "Add guidance while the agents work…" : idlePlaceholder;
+    newChatBtn.disabled = active;
+  }
+
   async function runUserTurn(text, interaction) {
     text = (text || "").trim();
-    if (!text || sendBtn.disabled) return false;
+    if (!text || activeTurnStream) return false;
     if (!await validateConfiguredModel()) return false;
     input.value = "";
-    sendBtn.disabled = true;
     addBubble(msgs, "user", text);
     currentBot = null;
+    const stream = engine.streamTurn(text, { interaction, slyData: { backend_token: "demo-customer-token-123" } });
+    activeTurnStream = stream;
+    setTurnInputState(true);
     try {
       let result = null;
-      for await (const event of engine.streamTurn(text, { interaction, slyData: { backend_token: "demo-customer-token-123" } })) {
+      for await (const event of stream) {
         if (event.visibility !== "developer" && event.type !== "agent.output.delta") turnStatusController.handle(event);
         if (event.type === "turn.completed") result = event.result;
       }
@@ -445,18 +465,32 @@ export function mountApp(root, { engine, trace, manifest }) {
       addBubble(msgs, "bot", "⚠️ " + err.message);
     } finally {
       turnStatusController.clear();
-      sendBtn.disabled = false;
+      if (activeTurnStream === stream) activeTurnStream = null;
+      setTurnInputState(false);
       currentBot = null;
     }
     return true;
   }
-  const send = () => runUserTurn(input.value);
+  const send = () => {
+    const text = (input.value || "").trim();
+    if (!text) return false;
+    if (activeTurnStream) {
+      if (!activeTurnStream.steer?.(text)) return false;
+      input.value = "";
+      const bubble = addBubble(msgs, "user", text);
+      bubble.classList.add("ns-steering-message");
+      bubble.dataset.inputKind = "steering";
+      msgs.scrollTop = msgs.scrollHeight;
+      return true;
+    }
+    return runUserTurn(text);
+  };
 
   sendBtn.addEventListener("click", send);
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") send();
   });
-  root.querySelector("#ns-newchat").addEventListener("click", () => {
+  newChatBtn.addEventListener("click", () => {
     engine.resetHistory();
     currentBot = null;
     [...msgs.children].forEach((el) => { if (el !== msgs.firstElementChild && el.dataset.welcome !== "true") el.remove(); });

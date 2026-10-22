@@ -10,6 +10,7 @@
 
 import { ChatMessageType, filterSlyData, allowedDownstreamSly, parseExternalAgent } from "./kernel.js";
 import { parseAgentResponse, agentPresentationContext } from "./cruse.js";
+import { applyPendingSteering, runInterruptibleModelCall } from "./turn-control.js";
 
 let invocationSequence = 0;
 
@@ -419,6 +420,7 @@ export async function runAgent(ctx, agentName, userText, parentSpan, chain) {
   const raw = ctx.externalRunner
     ? await ctx.externalRunner(local, agentName, userText, parentSpan, chain, {
       buildToolTable, dispatchToolCall, executeToolCalls, schemaFor, argsToText,
+      applyPendingSteering, runInterruptibleModelCall,
     })
     : await runAgentManual(local, agentName, userText, parentSpan, chain);
   const result = parseAgentResponse(raw, source);
@@ -455,8 +457,21 @@ export async function runAgentManual(ctx, agentName, userText, parentSpan, chain
 
     let finalText = "";
     for (let step = 0; step < maxSteps; step++) {
+      if (isTopFrontMan) {
+        applyPendingSteering(ctx.turnControl, (text) => messages.push({ role: "user", content: text }));
+      }
       const onContentDelta = isTopFrontMan ? (t) => ctx.onAnswerDelta?.(t) : undefined;
-      const res = await llm.chat({ model, messages, tools: toolSchemas, origin, parentSpan: agentSpan, onContentDelta });
+      const attempt = await runInterruptibleModelCall(isTopFrontMan ? ctx.turnControl : null, (signal) =>
+        llm.chat({ model, messages, tools: toolSchemas, origin, parentSpan: agentSpan, onContentDelta, signal }));
+      if (attempt.interrupted) {
+        step -= 1; // steering retries the same model step; it is not an agent step
+        continue;
+      }
+      const res = attempt.value;
+      if (isTopFrontMan && ctx.turnControl?.pending.length) {
+        step -= 1;
+        continue;
+      }
       if (res.toolCalls.length === 0) {
         finalText = res.content;
         break;
