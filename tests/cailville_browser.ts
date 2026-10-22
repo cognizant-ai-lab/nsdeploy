@@ -296,7 +296,8 @@ async function runPage(browser: Browser, port: string, answers: Answers, label =
   let release: () => void = () => {};
   const steeringSent = new Promise<void>((resolve) => { release = resolve; });
   if (answers.steer) {
-    const router = new URL(manifest.llm_router?.base_url || `${base}/v1`);
+    // With a real key the page uses the site's BYOK router instead of the mock.
+    const router = new URL((REAL_LLM ? manifest.llm_router?.byok_router : manifest.llm_router?.base_url) || `${base}/v1`, base);
     let calls = 0;
     await page.route(`${router.origin}${router.pathname.replace(/\/$/, "")}/responses`, async (route) => {
       if ((route.request().postData() || "").includes(answers.steer!)) run.steeredRequests += 1;
@@ -482,7 +483,10 @@ async function checkLiveTurn(browser: Browser): Promise<Result[]> {
   if (!run.events.some((event) => event.kind === "model_call" && event.phase === "update" && event.streamChunk)) {
     shown.push("no model call's text streamed into the trace");
   }
-  if (!run.events.some((event) => event.kind === "tool" && event.phase === "start")) shown.push("no tool call showed in the trace");
+  // The mock calls every tool; a real model may answer without one.
+  if (!REAL_LLM && !run.events.some((event) => event.kind === "tool" && event.phase === "start")) {
+    shown.push("no tool call showed in the trace");
+  }
   const steering: string[] = [];
   const notes = run.events.filter((event) => event.kind === "steering");
   if (!run.steered) steering.push("the first model call never started, so nothing was steered");
@@ -552,7 +556,8 @@ console.log(`Testing ${PACKAGE} ${buildRuntime()}, as runtime-build pins it.`);
 const ports = sitePorts();
 const scenarios = (!ARGS.length || ARGS.includes("scenarios")) && !REAL_LLM;
 const mcp = (!ARGS.length || ARGS.includes("mcp")) && !REAL_LLM;
-const live = (!ARGS.length || ARGS.includes("live")) && !REAL_LLM;
+// The running-turn checks also run on a real model, since steering has to work there.
+const live = !ARGS.length || ARGS.includes("live");
 await startExamples([...ports, ...(mcp || live ? [MCP_SITE] : []), ...(scenarios ? ["8191", "8192", "8193"] : [])]);
 // HEADED=1 opens a visible browser and slows each step down enough to follow.
 const headed = Boolean(process.env.HEADED);

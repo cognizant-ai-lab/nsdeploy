@@ -271,7 +271,7 @@ And it checks a turn while it runs, on the same site:
 - show what's happening: the chat's status line shows what the agents are doing and is gone once the answer is, and the answer's text streams into the trace
 - steer a running turn: guidance sent while the front man's first model call runs shows as a steering message, cancels that call, and goes into the calls after it
 
-A real LLM run uses OpenAI's `gpt-4o` to keep the cost down, and `TEST_MODEL=<id>` picks another model. It skips those checks.
+A real LLM run uses OpenAI's `gpt-4o` to keep the cost down, and `TEST_MODEL=<id>` picks another model. It skips the MCP checks and the checks for when the user says no, which rely on the mock's answers, but runs the checks on a running turn, since steering has to work on a real model too.
 Screenshots go to `.nsdeploy/cailville-browser-test/`.
 
 ### Book through Butterpink's private steward in nsFlow
