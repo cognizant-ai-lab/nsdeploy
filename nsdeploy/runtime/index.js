@@ -38,10 +38,11 @@ export async function boot(rootSelector = "#app", opts = {}) {
   try { storedKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
   const savedProfile = getSelectedByokProfile();
   const savedRouter = resolveByokRouter(savedProfile?.router || "");
+  const siteBase = (opts.originUrl || location.origin).replace(/\/$/, "");
   const engine = new Engine({
-    originUrl: location.origin,
+    originUrl: siteBase,
     trace,
-    sandboxWorkerUrl: "/runtime/sandbox-worker.js",
+    sandboxWorkerUrl: opts.sandboxWorkerUrl || "/runtime/sandbox-worker.js",
     byokKey: opts.byokKey || storedKey || savedProfile?.key || "demo",
     routerOverride: opts.router || params.get("router") || savedRouter || "",
     modelOverride: opts.model || params.get("model") || savedProfile?.model || "",
@@ -49,10 +50,11 @@ export async function boot(rootSelector = "#app", opts = {}) {
   // Select the agent loop: ?runner=langchain drives the LLM via LangChain.js
   // (neuro-san-web owns the loop). 'langgraph' kept as an alias for older links.
   const runnerChoice = opts.runner || params.get("runner") || (savedProfile?.runner ? "langchain" : "");
-  if (runnerChoice === "langchain" || runnerChoice === "langgraph") {
+  const { manifest } = await engine.loadTop();
+  if (manifest?.deployment?.mode !== "static"
+      && (runnerChoice === "langchain" || runnerChoice === "langgraph")) {
     await engine.enableLangChain();
   }
-  const { manifest } = await engine.loadTop();
   mountApp(root, { engine, trace, manifest });
   // expose for debugging / e2e tests
   if (typeof window !== "undefined") window.__nsweb = { engine, trace };

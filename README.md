@@ -96,6 +96,29 @@ scrubbed from its environment. Deploy-time theming is the only step that reads
 `OPENAI_API_KEY`, and it finishes before the server starts. `--facade-key` is accepted
 for compatibility and ignored.
 
+## Self-contained static bundle
+
+Use `--static-bundle` to produce a webroot that can be copied to a conventional
+static host without installing Python or nsDeploy there:
+
+```bash
+python -m nsdeploy examples/link_demo_travel_agency.hocon \
+  --static-bundle --out ./dist/travel
+```
+
+The output includes the browser runtime, a browser-native deterministic mock,
+relative page assets, browser-local unresolved links, and optional `_headers` /
+`.htaccess` hosting configuration. Python coded tools are intentionally omitted.
+External MCP servers are contacted directly and therefore must permit browser CORS.
+Real BYOK calls go directly to the OpenAI-compatible router selected in settings;
+that router must likewise permit browser CORS. The public MCP facade is marked
+unavailable because accepting inbound MCP calls requires an application server.
+
+When `--site-url` is omitted, the static bundle is origin-neutral and can be moved
+between hosts. Supplying `--site-url` publishes a canonical URL for link discovery.
+See the generated `STATIC_HOSTING.md` for the two response headers needed when the
+site will be loaded as a peer from another domain and for the sandbox-worker CSP.
+
 ## Cailville multi-site demo
 
 [`cailville/`](cailville) contains fourteen base household,

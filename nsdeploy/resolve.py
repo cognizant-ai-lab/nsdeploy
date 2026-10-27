@@ -361,7 +361,8 @@ def _resolve_class(class_path: str, source: StudioSource) -> Optional[tuple[str,
 
 
 def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
-               network_name: str, missing_includes: List[str], source: StudioSource) -> DeploymentPlan:
+               network_name: str, missing_includes: List[str], source: StudioSource,
+               include_python_tools: bool = True) -> DeploymentPlan:
     """Classify the resolved config into a DeploymentPlan."""
     config = copy.deepcopy(config)
     all_missing_includes = list(missing_includes)
@@ -406,7 +407,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
         """Classify a non-agent tool entry (toolbox/class) as hostable or missing."""
         if name in seen_hostable or name in referenced_missing or name in referenced_omitted:
             return
-        if name in BROWSER_OMITTED_TOOLS:
+        if name in BROWSER_OMITTED_TOOLS or not include_python_tools:
             referenced_omitted.add(name)
             return
         class_path = None
@@ -485,7 +486,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
     return plan
 
 
-def format_report(plan: DeploymentPlan) -> str:
+def format_report(plan: DeploymentPlan, static_bundle: bool = False) -> str:
     """Human-readable dependency + grounding report."""
     out: List[str] = []
     out.append(f"Network:   {plan.network_name}")
@@ -525,16 +526,24 @@ def format_report(plan: DeploymentPlan) -> str:
             out.append(f"   • {ref}: {status}{owner}")
     if plan.omitted_tools:
         out.append("")
-        out.append(f"ℹ️  Omitted browser-native adapters ({len(plan.omitted_tools)}):")
-        out.append("    these server-side Neuro-SAN adapters are not hosted as MCP tools because")
-        out.append("    the browser runtime calls peer agents directly.")
+        if static_bundle:
+            out.append(f"ℹ️  Omitted Python/server tools ({len(plan.omitted_tools)}):")
+            out.append("    static bundles do not install or execute Python tools.")
+        else:
+            out.append(f"ℹ️  Omitted browser-native adapters ({len(plan.omitted_tools)}):")
+            out.append("    these server-side Neuro-SAN adapters are not hosted as MCP tools because")
+            out.append("    the browser runtime calls peer agents directly.")
         for name in plan.omitted_tools:
             out.append(f"   • {name}")
     if plan.external_mcps:
         out.append("")
-        out.append(f"🔌 External MCP servers — PROXIED & callable ({len(plan.external_mcps)}): reached")
-        out.append("    via a same-origin proxy (so browser CORS is a non-issue); the call still")
-        out.append("    requires the remote server to be reachable + the user to consent at run time.")
+        if static_bundle:
+            out.append(f"🔌 External MCP servers — DIRECT & callable with CORS ({len(plan.external_mcps)}):")
+            out.append("    the remote server must allow browser CORS; each call still requires consent.")
+        else:
+            out.append(f"🔌 External MCP servers — PROXIED & callable ({len(plan.external_mcps)}): reached")
+            out.append("    via a same-origin proxy (so browser CORS is a non-issue); the call still")
+            out.append("    requires the remote server to be reachable + the user to consent at run time.")
         for url in plan.external_mcps:
             out.append(f"   • {url}")
     if plan.external_networks:

@@ -245,6 +245,7 @@ export class Engine {
 
   async _persistLink(base, networkName, reference, target) {
     try { localStorage.setItem(this._linkKey(base, networkName, reference), target); } catch {}
+    if (this.top?.manifest?.deployment?.mode === "static") return;
     try {
       await fetch(resolveUrl(base, "/_nsdeploy/links"), {
         method: "POST",
@@ -347,7 +348,9 @@ export class Engine {
       resolveLink: (ref, parentSpan) => self.resolveLink(ref, network, base, parentSpan),
       requestConsent: (info) => self.requestConsent(info),
       // LangChain.js AgentRunner intrinsic (neuro-san-web owns the loop)
-      externalRunner: self.agentRunner,
+      // The bundled LangChain runner expects an HTTP OpenAI-compatible endpoint.
+      // Static bundles use the dependency-free manual loop for browser://mock.
+      externalRunner: llm.baseUrl === "browser://mock" ? null : self.agentRunner,
       routerBaseUrl: llm.baseUrl,
       mock: llm.mock,
       apiKey: self.byokKey,

@@ -10,6 +10,38 @@ export function isMockResponse(configuredMock, routeKind, model) {
   return !!configuredMock || routeKind === "mock" || /neuro-san-mock/.test(model || "");
 }
 
+export function browserMockCompletion(messages = [], tools = []) {
+  const called = new Set(messages.filter((m) => m?.role === "tool" && m.name).map((m) => m.name));
+  const available = (tools || []).map((tool) => tool?.function).filter((fn) => fn?.name);
+  const next = available.find((fn) => !called.has(fn.name));
+  const lastUser = [...messages].reverse().find((m) => m?.role === "user");
+  const request = typeof lastUser?.content === "string" ? lastUser.content : JSON.stringify(lastUser?.content || "");
+  if (next) {
+    const args = {};
+    const schema = next.parameters || {};
+    for (const name of schema.required || []) args[name] = request;
+    for (const name of ["request", "inquiry", "search_terms", "query", "input"]) {
+      if (schema.properties?.[name] || (schema.required || []).includes(name)) args[name] ??= request;
+    }
+    return {
+      content: "",
+      toolCalls: [{
+        id: `call_${next.name}`,
+        type: "function",
+        function: { name: next.name, arguments: JSON.stringify(args) },
+      }],
+      finishReason: "tool_calls",
+      usage: null,
+      model: "neuro-san-mock-browser",
+    };
+  }
+  const results = messages.filter((m) => m?.role === "tool").map((m) => String(m.content || ""));
+  const content = results.length
+    ? `(mock summary) Based on the tools I consulted: ${results.join(" ").slice(0, 1200)}`
+    : "(mock) I have no grounded tool output to summarize for this request.";
+  return { content, toolCalls: [], finishReason: "stop", usage: null, model: "neuro-san-mock-browser" };
+}
+
 //
 // In production this is @langchain/openai's ChatOpenAI pointed at a router base
 // URL. Here it is a direct fetch to any OpenAI-compatible endpoint (LiteLLM,
@@ -59,6 +91,25 @@ export class LlmClient {
     }
 
     try {
+      if (this.baseUrl === "browser://mock") {
+        signal?.throwIfAborted?.();
+        const result = browserMockCompletion(messages, tools);
+        if (result.content) {
+          onContentDelta?.(result.content);
+          this.trace?.update(span, { streamChunk: result.content });
+        }
+        this.trace?.end(span, {
+          finishReason: result.finishReason,
+          contentChars: result.content.length,
+          toolCalls: result.toolCalls.map((t) => t.function.name),
+          usage: null,
+          mock: true,
+          verifiedReal: false,
+          respModel: result.model,
+          routeKind: "browser-mock",
+        });
+        return result;
+      }
       const resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
