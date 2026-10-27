@@ -871,8 +871,8 @@ What comes from neuro-san: the config filter chain, `AgentNetwork`, the network
 validators, `sly_data` redaction, external agent and MCP reference parsing, and the
 whole loop, including sub-agents, MCP tools (`LangChainMcpAdapter`) and partner networks
 (`ExternalActivation`). What stays nsdeploy's own, in
-[`engine.js`](nsdeploy/runtime/engine.js) and
-[`composition.js`](nsdeploy/runtime/composition.js): router selection and the BYOK
+[`engine.js`](nsdeploy/runtime/ts-package/engine.js) and
+[`composition.js`](nsdeploy/runtime/ts-package/composition.js): router selection and the BYOK
 guarantee, consent before contacting a partner or an MCP server, per-query composition
 limits, link slots, the trace the UI draws, and CRUSE widget extraction. neuro-san's loop
 calls into those through hooks in
