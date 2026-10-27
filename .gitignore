@@ -16,3 +16,7 @@ node_modules/
 
 # IDE files
 .idea/
+
+# secrets
+.env
+.env.*
