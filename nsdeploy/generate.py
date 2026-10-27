@@ -280,7 +280,8 @@ def build_private_steward_hocon(
         for name, url in sorted((known_public_sites or {}).items())
         if name and str(url).strip()
     }
-    public_sites[plan.network_name] = site_base.rstrip("/")
+    if site_base:
+        public_sites[plan.network_name] = f"{site_base.rstrip('/')}/{plan.network_name}"
     public_sites.update({name: url.rstrip("/") for name, url in sorted(plan.links.items())})
     public_site_lines = "\n".join(f"- {name}: {url}" for name, url in public_sites.items())
     gateway_parameters = {
@@ -304,7 +305,11 @@ def build_private_steward_hocon(
         "steward_kind": "private",
         "public_network": plan.network_name,
         "public_site": site_base.rstrip("/"),
-        "public_mcp_endpoint": f"{site_base.rstrip('/')}/mcp",
+        "public_execution": {
+            "mode": "fetch-and-run",
+            "manifest": f"{site_base.rstrip('/')}/agent-manifest.json" if site_base else "agent-manifest.json",
+            "mcp_fallback": f"{site_base.rstrip('/')}/mcp" if site_base else None,
+        },
         "public_sites": public_sites,
         "private_web_policy": {
             "mode": "open",
@@ -329,10 +334,10 @@ def build_private_steward_hocon(
     {
       "name": "public_agent_mcp_gateway",
       "function": {
-        "description": "Call any trusted public nsDeploy agent site over its MCP facade. The site URL is checked against the local deny policy.",
+        "description": "Fetch and run any trusted public nsDeploy agent network locally. The site URL is checked against the local deny policy; MCP is a legacy fallback.",
         "parameters": %s
       },
-      "class": "nsdeploy.steward.PublicAgentMcpGateway"
+      "class": "nsdeploy.steward.PublicAgentNetworkGateway"
     }
   ]
 }
@@ -341,7 +346,7 @@ def build_private_steward_hocon(
         _json.dumps(metadata, indent=2),
         _json.dumps(
             "You are the private steward for the operator of the public network. "
-            "You may reach any public agent site by URL through public_agent_mcp_gateway. "
+            "You may fetch and run any public agent network by URL through public_agent_mcp_gateway. "
             "For known sites, use the exact URL in this directory:\n"
             + public_site_lines
             + "\nNever invent example domains or hostnames. If the needed site is not in the directory, "
@@ -425,6 +430,7 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
         "networks": [
             {
                 "name": plan.network_name,
+                "front_man": plan.front_man,
                 "hocon": (f"./{plan.network_name}.network.json" if static_bundle
                           else f"/{plan.network_name}.network.json"),
                 "description": description,
@@ -591,16 +597,12 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     (well_known / "nsdeploy-agent.json").write_text(json.dumps(agent_mcp, indent=2), encoding="utf-8")
     steward_path = out_dir / f"{plan.network_name}_private_steward.hocon"
     legacy_steward_path = out_dir / "private-steward.hocon"
-    if static_bundle:
-        steward_path.unlink(missing_ok=True)
-        legacy_steward_path.unlink(missing_ok=True)
-    else:
-        if legacy_steward_path.is_file() and not steward_path.is_file():
-            legacy_steward_path.replace(steward_path)
-        elif legacy_steward_path.is_file():
-            legacy_steward_path.unlink()
-        steward_path.write_text(
-            build_private_steward_hocon(plan, site_base, private_steward_sites), encoding="utf-8")
+    if legacy_steward_path.is_file() and not steward_path.is_file():
+        legacy_steward_path.replace(steward_path)
+    elif legacy_steward_path.is_file():
+        legacy_steward_path.unlink()
+    steward_path.write_text(
+        build_private_steward_hocon(plan, site_base, private_steward_sites), encoding="utf-8")
     write_private_steward_manifest(out_dir.parent)
 
     # Preserve valid runtime-created bindings across regeneration. Each site owns
@@ -671,6 +673,8 @@ def _write_static_hosting_files(out_dir: Path) -> None:
         "Real BYOK calls go directly from the browser to the router selected in settings, "
         "so that router must allow browser CORS. External MCP servers are also contacted "
         "directly and must allow browser CORS. Python tools and the public MCP facade are "
-        "not included. Unresolved links are stored in this browser's local storage.\n",
+        "not included. The generated private steward can fetch and run the published "
+        "network JSON from its private Neuro-SAN host; its LLM router does not need browser "
+        "CORS. Unresolved links are stored in this browser's local storage.\n",
         encoding="utf-8",
     )

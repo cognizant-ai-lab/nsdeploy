@@ -275,9 +275,8 @@ def main() -> int:
             print(f"   static bundle: omitted Python tools: {omitted}")
         if plan.external_mcps:
             print("   static bundle: external MCP servers will be called directly and must allow CORS")
-        print("   static bundle: public MCP facade unavailable; mock execution runs in the browser")
-    else:
-        print(f"   private steward manifest → {out_dir.parent / 'manifest.hocon'}")
+        print("   static bundle: public MCP facade unavailable; private stewards use fetch-and-run")
+    print(f"   private steward manifest → {out_dir.parent / 'manifest.hocon'}")
 
     if cailville_draft is not None:
         try:

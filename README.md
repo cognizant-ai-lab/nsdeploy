@@ -113,6 +113,9 @@ External MCP servers are contacted directly and therefore must permit browser CO
 Real BYOK calls go directly to the OpenAI-compatible router selected in settings;
 that router must likewise permit browser CORS. The public MCP facade is marked
 unavailable because accepting inbound MCP calls requires an application server.
+The generated private steward remains usable: it downloads the public network JSON
+and runs it in the private Neuro-SAN environment, so the static host needs no MCP
+facade or other server-side process.
 
 When `--site-url` is omitted, the static bundle is origin-neutral and can be moved
 between hosts. Supplying `--site-url` publishes a canonical URL for link discovery.
@@ -129,19 +132,20 @@ an interactive town map. Start the complete demo from the repository root:
 ./cailville/launch_all.sh
 ```
 
-For real public-facade execution, the private steward supplies the caller profile.
-Use the same OpenAI key already used by the private Neuro-SAN server, or set the
-steward-specific variables explicitly:
+For real private-steward execution, use the same OpenAI key already used by the
+private Neuro-SAN server, or set the steward-specific variables explicitly:
 
 ```bash
 export NSDEPLOY_STEWARD_BYOK_API_KEY="your-key"
 export NSDEPLOY_STEWARD_BYOK_MODEL="gpt-4o"
+export NSDEPLOY_STEWARD_LLM_UPSTREAM="https://api.openai.com/v1"
 ./cailville/launch_all.sh
 ```
 
-The launcher does not install that key in any public facade. It is attached to each
-MCP request by the private steward and propagated only while that request traverses
-linked public sites.
+The launcher does not install that key in any public site. The private steward uses
+it locally while running downloaded, code-free public network definitions; the key
+is never sent to the sites that publish those definitions. MCP facades remain a
+compatibility fallback for older sites.
 
 To verify the complete path, select
 `deneman_place/deneman_place_private_steward` in nsFlow and submit:
@@ -151,13 +155,13 @@ Plan an 80-person wedding in Cailville. Find venue, catering, lodging,
 transportation, neighbor assistance, and any required permits.
 ```
 
-Approve the steward's proposed contacts when prompted. A successful run creates MCP
-sessions in the contacted sites' logs, records `200 OK` responses from the configured
-LLM upstream, and completes without `tool_error: true`, authentication errors, or a
-steward timeout. The public logs must not contain the BYOK authorization header or
-key value. The sites contacted are chosen by the agent from its directory and the
-public links it discovers, so transport success does not guarantee that one turn
-will cover every requested business category.
+Approve the steward's proposed contacts when prompted. A successful run fetches the
+contacted sites' manifests and network JSON, records `200 OK` responses from the
+private steward's configured LLM upstream, and completes without `tool_error: true`,
+authentication errors, or a steward timeout. Public-site logs must not contain the
+BYOK authorization header or key value. The sites contacted are chosen by the agent
+from its directory and the public links it discovers, so transport success does not
+guarantee that one turn will cover every requested business category.
 
 The launcher uses `.venv/bin/python` or `venv/bin/python` when available, starts the sites on ports
 8091-8103 plus the commerce arbiter on 8105 (and any added sites), waits for every site,
@@ -429,7 +433,7 @@ additions from the private-steward manifest.
    sandbox-worker CSP), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
    local-MCP proxy at `/_mcp/<i>/mcp`, an external-MCP proxy at
    `/ext-mcp/<i>/mcp`, plus the private local MCP server subprocesses. Every site
-   also publishes a server-side MCP facade at `/mcp` for private stewards.
+   also publishes a server-side MCP facade at `/mcp` for legacy private stewards.
    The facade propagates a per-request visited-site trace and bounded public-call
    budget, preventing cyclic public-site links from expanding indefinitely.
    With the no-key mock upstream, each public agent takes one deterministic tool
@@ -440,10 +444,13 @@ additions from the private-steward manifest.
 
 Every generated public site includes `<network>_private_steward.hocon`. It is a standard
 Neuro-SAN network for the site's operator, backed by the reusable
-`nsdeploy.steward.PublicAgentMcpGateway` coded tool. The gateway accepts any public
-nsDeploy site URL, discovers `/.well-known/nsdeploy-agent.json`, and invokes the
-site's `invoke_network` MCP tool. Install nsdeploy in the same Python environment as
-the standard Neuro-SAN server, or add this repository to that server's `PYTHONPATH`.
+`nsdeploy.steward.PublicAgentNetworkGateway` coded tool. The gateway accepts any
+public nsDeploy network URL, downloads `agent-manifest.json` and the selected
+`<network>.network.json`, validates that they contain data-only agents, and runs the
+network inside the private environment. It falls back to the site's `invoke_network`
+MCP tool for older deployments that cannot be loaded this way. Install nsdeploy in
+the same Python environment as the standard Neuro-SAN server, or add this repository
+to that server's `PYTHONPATH`.
 When a network has linked public sites, the generated steward includes their exact
 URLs in its private directory and is instructed not to invent hostnames. Unknown
 public sites remain reachable by supplying their URL explicitly.
@@ -453,8 +460,9 @@ an even longer workflow. Each public-site call is bounded to 720 seconds by
 `launch_all.sh`; override that with `NSDEPLOY_STEWARD_SITE_TIMEOUT_SECONDS` when a
 trusted public network needs more time. The public facade bounds nested site calls
 to 480 seconds by default; override that with `NSDEPLOY_FACADE_SITE_TIMEOUT_SECONDS`.
-Those bounds are also applied to the MCP clients' long-lived SSE reads, replacing
-the library default of 300 seconds so an active request is not dropped mid-run.
+Those bounds are also applied to compatibility MCP clients' long-lived SSE reads,
+replacing the library default of 300 seconds so an active request is not dropped
+mid-run.
 
 Public sites are open-web reachable by default, like ordinary HTML links. The
 generated manifest declares `peer_policy.mode = "open"`; it does not turn published
@@ -464,15 +472,15 @@ links into an authorization allow-list. A private steward can deny origins with:
 export NSDEPLOY_STEWARD_DENY_ORIGINS="https://untrusted.example,http://127.0.0.1:9999"
 ```
 
-The server-side facade uses the site's configured `--facade-upstream`, but all real
-LLM execution is caller BYOK. A private steward sends its
-`NSDEPLOY_STEWARD_BYOK_API_KEY` (falling back to `OPENAI_API_KEY`) and
-`NSDEPLOY_STEWARD_BYOK_MODEL` as sensitive MCP transport headers. Every public
-facade uses those credentials and propagates them only when invoking another public
-facade; they are never included in tool arguments, prompts, results, or local and
-third-party MCP calls. A real facade request without caller credentials is rejected,
-and the facade subprocess is started with provider credentials scrubbed from its
-environment (`scrubbed_env` in `nsdeploy/launcher.py`).
+The private steward uses `NSDEPLOY_STEWARD_BYOK_API_KEY` (falling back to
+`OPENAI_API_KEY`), `NSDEPLOY_STEWARD_BYOK_MODEL`, and optionally
+`NSDEPLOY_STEWARD_LLM_UPSTREAM` for its local execution. Those credentials are never
+included in public manifest/network requests, tool arguments, prompts, results, or
+local and third-party MCP calls. In legacy facade mode they are sent as sensitive
+MCP transport headers and propagated only between public facades. A real facade
+request without caller credentials is rejected, and the facade subprocess is
+started with provider credentials scrubbed from its environment (`scrubbed_env` in
+`nsdeploy/launcher.py`).
 Set the facade upstream explicitly to `mock://nsdeploy` only for a deterministic
 keyless demo. The browser `/byok/v1` path remains unchanged.
 

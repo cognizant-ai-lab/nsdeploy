@@ -216,10 +216,12 @@ class LinkerTests(unittest.TestCase):
             "https://harbor.example",
             {"town_hall": "https://town-hall.example"},
         )
-        self.assertIn('"class": "nsdeploy.steward.PublicAgentMcpGateway"', hocon)
+        self.assertIn('"class": "nsdeploy.steward.PublicAgentNetworkGateway"', hocon)
+        self.assertIn('"mode": "fetch-and-run"', hocon)
         self.assertIn('"max_execution_seconds": 3600', hocon)
         self.assertIn('"mode": "open"', hocon)
         self.assertIn("https://harbor.example/mcp", hocon)
+        self.assertIn("https://harbor.example/harbor_services", hocon)
         self.assertIn("http://127.0.0.1:8091/harbor_guide", hocon)
         self.assertIn("https://town-hall.example", hocon)
         self.assertIn("Never invent example domains or hostnames", hocon)
@@ -271,13 +273,22 @@ class LinkerTests(unittest.TestCase):
         self.assertEqual(config["tools"][0]["tools"], [direct_mcp])
         self.assertEqual(config["deployment"]["omitted_python_tools"], ["search"])
         self.assertEqual(manifest["llm_router"]["base_url"], "browser://mock")
+        self.assertEqual(manifest["networks"][0]["front_man"], "front")
         self.assertFalse(manifest["agent_mcp"]["available"])
         self.assertEqual(manifest["linking"]["link_updates"]["mode"], "browser-local")
         self.assertTrue((out / "runtime" / "index.js").is_file())
         self.assertTrue((out / "_headers").is_file())
         self.assertTrue((out / ".htaccess").is_file())
         self.assertTrue((out / "STATIC_HOSTING.md").is_file())
-        self.assertFalse((out / "portable_private_steward.hocon").exists())
+        self.assertTrue((out / "portable_private_steward.hocon").is_file())
+        self.assertIn(
+            '"class": "nsdeploy.steward.PublicAgentNetworkGateway"',
+            (out / "portable_private_steward.hocon").read_text(),
+        )
+        self.assertIn(
+            "private steward can fetch and run",
+            (out / "STATIC_HOSTING.md").read_text(),
+        )
         index = (out / "index.html").read_text()
         self.assertIn('from "./runtime/index.js"', index)
         self.assertIn('href="./theme.css"', index)
