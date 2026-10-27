@@ -39,8 +39,9 @@ export async function boot(rootSelector = "#app", opts = {}) {
   try { storedKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
   const savedProfile = getSelectedByokProfile();
   const savedRouter = resolveByokRouter(savedProfile?.router || "");
+  const siteBase = (opts.originUrl || location.origin).replace(/\/$/, "");
   const engine = new Engine({
-    originUrl: location.origin,
+    originUrl: siteBase,
     trace,
     byokKey: opts.byokKey || storedKey || savedProfile?.key || "demo",
     routerOverride: opts.router || params.get("router") || savedRouter || "",

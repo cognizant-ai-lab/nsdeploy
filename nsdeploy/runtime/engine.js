@@ -25,7 +25,7 @@ import {
   argsToText, consumeRemoteBudget, estimateRemoteCost, peerRequestText, remoteIsInChain, requiresThirdPartyApproval,
 } from "./composition.js";
 import { agentPresentationContext, interactionMessage, parseAgentResponse } from "./cruse.js";
-import { isMockResponse, normalizeModelName } from "./model.js";
+import { BROWSER_MOCK_ROUTER, browserMockResponse, isMockResponse, normalizeModelName } from "./model.js";
 import { createTurnEventStream } from "./execution-stream.js";
 import { applyPendingSteering, runInterruptibleModelCall, TurnControl } from "./turn-control.js";
 
@@ -273,6 +273,7 @@ export class Engine {
 
   async _persistLink(base, networkName, reference, target) {
     try { localStorage.setItem(this._linkKey(base, networkName, reference), target); } catch {}
+    if (this.top?.manifest?.deployment?.mode === "static") return;
     try {
       await fetch(resolveUrl(base, "/_nsdeploy/links"), {
         method: "POST",
@@ -632,15 +633,17 @@ export class Engine {
       const batch = caller ? this._newToolBatch(caller) : null;
       // An unreadable response asks for no tools, so nothing waits on it.
       const settle = (read) => batch?.resolve(read ? functionCallNames(read.text) : []);
+      // A static bundle's mock answers here, with no server to send the call to.
+      const send = router === BROWSER_MOCK_ROUTER ? async () => browserMockResponse(url, body || {}) : originalFetch;
       // Only the top front man is steered. Work already handed to tools and other
       // agents finishes as it is, so nothing runs twice.
       if (caller?.isTopFrontMan && this.turnControl && body) {
-        return this._steerableModelCall(originalFetch, input, init, body, agentSpan, settle);
+        return this._steerableModelCall(send, input, init, body, agentSpan, settle);
       }
       const span = this._startModelCall(body, agentSpan);
       let response;
       try {
-        response = await originalFetch(input, init);
+        response = await send(input, init);
       } catch (err) {
         settle(null);
         this.trace.fail(span, err);

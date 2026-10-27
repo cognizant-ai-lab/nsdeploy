@@ -142,12 +142,18 @@ def describe_peer(site_url: str) -> List[NetworkDescription]:
             url=target.rstrip("/"),
             imports=pending_by_network.get(network, {}),
             site=(linking.get("site") or base).rstrip("/"),
-            links_endpoint=linking.get("links_endpoint", "/_nsdeploy/links"),
+            links_endpoint=("" if (linking.get("link_updates") or {}).get("mode") == "browser-local"
+                            else linking.get("links_endpoint", "/_nsdeploy/links")),
         ))
     return descriptions
 
 
 def update_peer_link(source: NetworkDescription, reference: str, target: str) -> None:
+    if not source.links_endpoint:
+        raise OSError(
+            f"peer site {source.site or source.network} is static; its links are "
+            "browser-local and cannot be updated remotely"
+        )
     endpoint = urljoin(source.site.rstrip("/") + "/", source.links_endpoint.lstrip("/"))
     body = json.dumps({
         "network": source.network,

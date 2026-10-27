@@ -1,8 +1,9 @@
-"""Private Neuro-SAN coded tool for reaching public nsDeploy agent sites.
+"""Private Neuro-SAN coded tool for running public nsDeploy agent networks.
 
 This is intentionally a deny-list gateway.  A steward is an operator-owned
 network, so its policy belongs to the operator's server environment rather than
-to the public site's published links.
+to the public site's published links. Published networks are fetched as data and
+run locally; the public MCP facade remains a compatibility fallback.
 """
 from __future__ import annotations
 
@@ -15,7 +16,8 @@ from typing import Any, Dict
 
 from neuro_san.interfaces.coded_tool import CodedTool
 
-from nsdeploy.byok import byok_headers
+from nsdeploy.byok import ByokCredentials, authorization_for_key, byok_headers
+from nsdeploy.facade import NetworkRunner
 
 
 PUBLIC_SITE_REQUEST_TIMEOUT_SECONDS = float(
@@ -35,8 +37,8 @@ def _mcp_http_timeout(seconds: float):
     return httpx.Timeout(seconds, connect=short, pool=short)
 
 
-class PublicAgentMcpGateway(CodedTool):
-    """Discover and invoke a public nsDeploy site's streamable HTTP MCP facade."""
+class PublicAgentNetworkGateway(CodedTool):
+    """Fetch a public nsDeploy network and run it inside the private environment."""
 
     async def async_invoke(self, args: Dict[str, Any], sly_data: Dict[str, Any]) -> str:
         site_url = str(args.get("site_url", "")).strip()
@@ -53,12 +55,6 @@ class PublicAgentMcpGateway(CodedTool):
         }
         if _origin(site_url).rstrip("/") in denied:
             return "Denied by the steward's NSDEPLOY_STEWARD_DENY_ORIGINS policy."
-        endpoint = await asyncio.to_thread(self._endpoint_for, site_url)
-        parsed = urllib.parse.urlparse(endpoint)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            return "Error: site_url must resolve to an http(s) public agent site."
-        if _origin(endpoint).rstrip("/") in denied:
-            return "Denied by the steward's NSDEPLOY_STEWARD_DENY_ORIGINS policy."
         api_key = (
             os.environ.get("NSDEPLOY_STEWARD_BYOK_API_KEY", "").strip()
             or os.environ.get("OPENAI_API_KEY", "").strip()
@@ -70,7 +66,40 @@ class PublicAgentMcpGateway(CodedTool):
                 "Error: caller BYOK credentials are required. Set "
                 "NSDEPLOY_STEWARD_BYOK_API_KEY (or OPENAI_API_KEY) on the private Neuro-SAN server."
             )
+        upstream = (
+            os.environ.get("NSDEPLOY_STEWARD_LLM_UPSTREAM", "").strip()
+            or os.environ.get("OPENAI_BASE_URL", "").strip()
+            or "https://api.openai.com/v1"
+        ).rstrip("/")
+        credentials = ByokCredentials(authorization_for_key(api_key), model)
 
+        try:
+            async with asyncio.timeout(PUBLIC_SITE_REQUEST_TIMEOUT_SECONDS):
+                runner, published = await NetworkRunner.from_public_site(
+                    site_url, upstream, credentials=credentials, denied_origins=denied,
+                )
+                return await runner.run(request, published.front_man)
+        except TimeoutError:
+            return (
+                f"Public agent site timed out after {PUBLIC_SITE_REQUEST_TIMEOUT_SECONDS:g} seconds; "
+                "do not retry it in this turn."
+            )
+        except Exception as fetch_exc:
+            # Older nsDeploy sites may publish only the MCP facade contract. Keep
+            # them reachable while fetch-and-run becomes the default.
+            fallback = await self._invoke_mcp(site_url, request, caller_headers, denied)
+            if not fallback.startswith("Public agent site call failed:"):
+                return fallback
+            return f"Public agent network load failed: {fetch_exc}. MCP fallback: {fallback}"
+
+    async def _invoke_mcp(self, site_url: str, request: str,
+                          caller_headers: Dict[str, str], denied: set[str]) -> str:
+        endpoint = await asyncio.to_thread(self._endpoint_for, site_url)
+        parsed = urllib.parse.urlparse(endpoint)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return "Public agent site call failed: invalid MCP endpoint."
+        if _origin(endpoint).rstrip("/") in denied:
+            return "Denied by the steward's NSDEPLOY_STEWARD_DENY_ORIGINS policy."
         try:
             from mcp import ClientSession
             from mcp.client.streamable_http import streamable_http_client
@@ -123,3 +152,7 @@ class PublicAgentMcpGateway(CodedTool):
         except Exception:
             pass
         return root + "/mcp"
+
+
+class PublicAgentMcpGateway(PublicAgentNetworkGateway):
+    """Backward-compatible class name for previously generated private stewards."""

@@ -819,6 +819,7 @@ export function mountApp(root, { engine, trace, manifest }) {
   // Compare settings against the route the manifest explicitly declares as mock.
   const mockUrl = manifest?.llm_router?.base_url || "";
   const byokRouter = engine.byokRouter || "";
+  const staticMode = manifest?.deployment?.mode === "static";
 
   routerEl.value = engine.routerOverride || mockUrl;
   modelEl.value = engine.modelOverride || "";
@@ -901,7 +902,9 @@ export function mountApp(root, { engine, trace, manifest }) {
       hintEl.textContent = `Mock router (no key needed). To use a real LLM, enter a key — it will route via ${byokRouter || "the proxy"}.`;
     } else {
       hintEl.className = "ns-hint";
-      hintEl.textContent = "Real LLM router. Your key is sent only here (a CORS pass-through to your provider).";
+      hintEl.textContent = staticMode
+        ? "Real LLM router. Your key is sent directly from this browser to that router; it must allow browser CORS."
+        : "Real LLM router. Your key is sent only here (a CORS pass-through to your provider).";
     }
   };
   const fetchAvailableModels = async (router, key) => {

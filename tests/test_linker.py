@@ -92,6 +92,18 @@ class LinkerTests(unittest.TestCase):
         self.assertEqual(plan.external_mcps, [remote])
         self.assertEqual(plan.external_networks, [])
 
+    def test_static_plan_skips_python_tool_resolution(self):
+        config = {"tools": [
+            {"name": "front", "instructions": "Help.", "tools": ["private_search"]},
+            {"name": "private_search", "class": "missing.Search"},
+        ]}
+        plan = build_plan(
+            config, {}, "portable", [], self.source, include_python_tools=False,
+        )
+        self.assertEqual(plan.hostable_tools, [])
+        self.assertEqual(plan.missing_tools, [])
+        self.assertEqual(plan.omitted_tools, ["private_search"])
+
     def test_unlinked_demo_leaf_remains_as_local_fallback(self):
         config = {
             "tools": [
@@ -204,10 +216,12 @@ class LinkerTests(unittest.TestCase):
             "https://harbor.example",
             {"town_hall": "https://town-hall.example"},
         )
-        self.assertIn('"class": "nsdeploy.steward.PublicAgentMcpGateway"', hocon)
+        self.assertIn('"class": "nsdeploy.steward.PublicAgentNetworkGateway"', hocon)
+        self.assertIn('"mode": "fetch-and-run"', hocon)
         self.assertIn('"max_execution_seconds": 3600', hocon)
         self.assertIn('"mode": "open"', hocon)
         self.assertIn("https://harbor.example/mcp", hocon)
+        self.assertIn("https://harbor.example/harbor_services", hocon)
         self.assertIn("http://127.0.0.1:8091/harbor_guide", hocon)
         self.assertIn("https://town-hall.example", hocon)
         self.assertIn("Never invent example domains or hostnames", hocon)
@@ -228,6 +242,56 @@ class LinkerTests(unittest.TestCase):
         contents = manifest.read_text()
         self.assertIn('"site/harbor_services_private_steward.hocon": true', contents)
         self.assertNotIn(str(manifest.parent.resolve()), contents)
+
+    def test_static_bundle_is_self_contained_and_omits_server_features(self):
+        python_tool = HostableTool(
+            "search", "x.Search", "coded_tools.x", "Search", "Search", {},
+        )
+        direct_mcp = "https://tools.example/mcp"
+        plan = DeploymentPlan(
+            network_name="portable",
+            config={"tools": [{
+                "name": "front", "instructions": "Help.",
+                "tools": ["search", direct_mcp],
+            }]},
+            front_man="front",
+            hostable_tools=[python_tool],
+            external_mcps=[direct_mcp],
+        )
+        out = self.root / "portable"
+        runtime = self.root / "runtime-source"
+        runtime.mkdir()
+        (runtime / "index.js").write_text("export const boot = () => {};\n")
+        (runtime / "sandbox-worker.js").write_text("// worker\n")
+
+        manifest = generate_site(
+            plan, out, "browser://mock", "https://api.example/v1", "",
+            cruse=False, static_bundle=True, runtime_dir=runtime,
+        )
+
+        config = json.loads((out / "portable.network.json").read_text())
+        self.assertEqual(config["tools"][0]["tools"], [direct_mcp])
+        self.assertEqual(config["deployment"]["omitted_python_tools"], ["search"])
+        self.assertEqual(manifest["llm_router"]["base_url"], "browser://mock")
+        self.assertEqual(manifest["networks"][0]["front_man"], "front")
+        self.assertFalse(manifest["agent_mcp"]["available"])
+        self.assertEqual(manifest["linking"]["link_updates"]["mode"], "browser-local")
+        self.assertTrue((out / "runtime" / "index.js").is_file())
+        self.assertTrue((out / "_headers").is_file())
+        self.assertTrue((out / ".htaccess").is_file())
+        self.assertTrue((out / "STATIC_HOSTING.md").is_file())
+        self.assertTrue((out / "portable_private_steward.hocon").is_file())
+        self.assertIn(
+            '"class": "nsdeploy.steward.PublicAgentNetworkGateway"',
+            (out / "portable_private_steward.hocon").read_text(),
+        )
+        self.assertIn(
+            "private steward can fetch and run",
+            (out / "STATIC_HOSTING.md").read_text(),
+        )
+        index = (out / "index.html").read_text()
+        self.assertIn('from "./runtime/index.js"', index)
+        self.assertIn('href="./theme.css"', index)
 
     def test_private_steward_manifest_collects_multiple_bundles(self):
         root = self.root / "cailville"
