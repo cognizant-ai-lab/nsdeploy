@@ -306,6 +306,12 @@ On each site it sends the first sample query, approves the partner sites the age
 asks to contact, and waits for the run to finish. Then it checks the site's execution
 trace. It runs on the mock LLM by default, so no key is needed.
 
+It tests the runtime on the neuro-san TS package, which Cailville runs by default, and
+every check passes there. With the original runtime
+(`NSDEPLOY_TS_PACKAGE=0 ./cailville/launch_all.sh`), 12 of the Cailville sites fail,
+because they stop at the original runtime's per-query limit of 24 agent invocations
+before every agent has run.
+
 It first builds the runtime from the TS package version `runtime-build/package.json`
 pins, and runs `npm ci` there if `npm ls` says what's installed doesn't match. GitHub Packages
 needs a token for that, for example `export NODE_AUTH_TOKEN=$(gh auth token)`. To test
