@@ -1,0 +1,25 @@
+**/__pycache__
+**/*.pyc
+# Excluded to keep it out of the image, and because `az acr build` dies packing the
+# source tar when it cannot read it: "[WinError 5] Access is denied: '.\.pytest_cache'".
+# pytest leaves directories here that the CLI has no rights to open, and the failure
+# looked like a successful deploy — the build never queued, the previous image rolled
+# out instead, and the version on the VM did not change.
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.git
+.nsdeploy
+cailville
+docs
+tests
+nsdeploy_service/tests
+nsdeploy_service/nsdeploy_service.egg-info
+*.egg-info
+# .env is deliberately NOT excluded. This image is private and has no other
+# credential channel, so the file has to ship; envfile.py reads either the root copy
+# or nsdeploy_service/.env. The cost is that the key lives in an image layer and
+# stays recoverable from layer history even if a later layer removes it — so if this
+# image ever reaches a shared registry, rotate the key and move to container env
+# vars or NSDEPLOY_SERVICE_ENV_FILE on a mounted volume.
+.DS_Store
