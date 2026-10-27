@@ -2,8 +2,8 @@
 // without a provider key or network requests; leaves a rich example for visual QA.
 import { mountApp, renderPresentation } from "../nsdeploy/runtime/ui.js";
 import { renderMarkdown, renderSafeHtml } from "../nsdeploy/runtime/cruse-render.js";
-import { Engine } from "../nsdeploy/runtime/engine.js";
-import { AgentNetwork, initNetwork, loadNeuroSan } from "../nsdeploy/runtime/agent-network.js";
+import { Engine } from "../nsdeploy/runtime/ts-package/engine.js";
+import { AgentNetwork, initNetwork, loadNeuroSan } from "../nsdeploy/runtime/ts-package/agent-network.js";
 
 const status = document.querySelector("#status");
 const passed = [];

@@ -2,13 +2,12 @@
 //
 // A business's index.html imports `boot` and points it at its origin. boot loads
 // the origin's published network, compiles it, mounts the themeable UI, and is
-// ready to run, entirely in the browser, with no agent server. The agents run on
-// neuro-san's own loop (see engine.js).
+// ready to run — entirely in the browser, with no agent server.
 
 export { Engine } from "./engine.js";
 export { TraceBus } from "./trace.js";
 export { mountApp } from "./ui.js";
-export { AgentNetwork, validateNetwork, ChatMessageType } from "./agent-network.js";
+export { AgentNetwork, validateNetwork, ChatMessageType } from "./kernel.js";
 export { parseHocon } from "./hocon.js";
 
 import { Engine } from "./engine.js";
@@ -39,14 +38,23 @@ export async function boot(rootSelector = "#app", opts = {}) {
   try { storedKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
   const savedProfile = getSelectedByokProfile();
   const savedRouter = resolveByokRouter(savedProfile?.router || "");
+  const siteBase = (opts.originUrl || location.origin).replace(/\/$/, "");
   const engine = new Engine({
-    originUrl: location.origin,
+    originUrl: siteBase,
     trace,
+    sandboxWorkerUrl: opts.sandboxWorkerUrl || "/runtime/sandbox-worker.js",
     byokKey: opts.byokKey || storedKey || savedProfile?.key || "demo",
     routerOverride: opts.router || params.get("router") || savedRouter || "",
     modelOverride: opts.model || params.get("model") || savedProfile?.model || "",
   });
+  // Select the agent loop: ?runner=langchain drives the LLM via LangChain.js
+  // (neuro-san-web owns the loop). 'langgraph' kept as an alias for older links.
+  const runnerChoice = opts.runner || params.get("runner") || (savedProfile?.runner ? "langchain" : "");
   const { manifest } = await engine.loadTop();
+  if (manifest?.deployment?.mode !== "static"
+      && (runnerChoice === "langchain" || runnerChoice === "langgraph")) {
+    await engine.enableLangChain();
+  }
   mountApp(root, { engine, trace, manifest });
   // expose for debugging / e2e tests
   if (typeof window !== "undefined") window.__nsweb = { engine, trace };

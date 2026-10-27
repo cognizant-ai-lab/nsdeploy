@@ -4,9 +4,10 @@ DeploymentPlan: rewrite the resolved network so every hostable tool becomes an M
 URL (while public agent-network URLs are preserved), then emit the network JSON, an
 agent-manifest.json, and a themed index.html.
 
-The output directory is fully static; the browser runtime loads it with no
-neuro-san dependency. (The HOCON's `class`/`toolbox` assumptions about a local
-neuro-san server are removed here: tools are reached purely over MCP.)
+The normal output directory contains site data consumed by nsDeploy's launcher.
+Static-bundle mode also copies the browser runtime and emits hosting-header files,
+so the directory can be published without Python. (The HOCON's `class`/`toolbox`
+assumptions about a local neuro-san server are removed in that mode.)
 """
 from __future__ import annotations
 
@@ -26,6 +27,8 @@ from nsdeploy.theme import ThemeSpec
 
 
 DEFAULT_PRIVATE_STEWARD_MAX_EXECUTION_SECONDS = 3600
+DEFAULT_RUNTIME_DIR = Path(__file__).resolve().parent / "runtime"
+WORKER_CSP = "default-src 'none'; script-src blob:; connect-src 'none'; worker-src 'none'"
 
 # Every agent proposes a presentation to its parent; only the final root
 # composition is rendered. Keep this protocol aligned with runtime/cruse.js.
@@ -105,18 +108,23 @@ def _seed_default_model(config: Dict[str, Any]) -> None:
 
 
 def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.0.1",
-                   cruse: bool = True) -> Dict[str, Any]:
+                   cruse: bool = True, static_bundle: bool = False) -> Dict[str, Any]:
     """Produce the deployed network config: agents only, with tool references mapped
     to local MCP URLs (hostable tools) or same-origin MCP-proxy URLs (external MCP
     servers), with public agent-network URLs preserved and missing refs dropped."""
-    hostable_url = {
+    hostable_url = {} if static_bundle else {
         t.name: f"{site_base.rstrip('/')}/_mcp/{i}/mcp"
         for i, t in enumerate(plan.hostable_tools)
     }
     # External MCP servers are reached through a same-origin proxy (avoids CORS) and
     # given a clean /mcp URL so the runtime classifies them as MCP.
-    ext_url = {url: f"{site_base}/ext-mcp/{i}/mcp" for i, url in enumerate(plan.external_mcps)}
+    ext_url = {
+        url: (url if static_bundle else f"{site_base}/ext-mcp/{i}/mcp")
+        for i, url in enumerate(plan.external_mcps)
+    }
     drop = set(plan.missing_tools) | set(plan.omitted_tools)
+    if static_bundle:
+        drop.update(tool.name for tool in plan.hostable_tools)
 
     config = copy.deepcopy(plan.config)
     _seed_default_model(config)
@@ -161,6 +169,14 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
         plan.links[ref]: _brandize(ref)
         for ref in plan.links
     }
+    if static_bundle:
+        omitted_tools = sorted({tool.name for tool in plan.hostable_tools} | set(plan.omitted_tools))
+        config["deployment"] = {
+            "mode": "static",
+            "omitted_python_tools": omitted_tools,
+            "external_mcp_transport": "direct-cors",
+            "link_persistence": "browser-local",
+        }
     return config
 
 
@@ -174,7 +190,8 @@ def _origin(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
 
 
-def build_linking_metadata(plan: DeploymentPlan, site_base: str) -> Dict[str, Any]:
+def build_linking_metadata(plan: DeploymentPlan, site_base: str,
+                           static_bundle: bool = False) -> Dict[str, Any]:
     """Public, decentralized import/export description for peer linkers."""
     meta = plan.config.get("metadata", {}) or {}
     aliases: List[str] = [plan.network_name, plan.front_man]
@@ -186,14 +203,14 @@ def build_linking_metadata(plan: DeploymentPlan, site_base: str) -> Dict[str, An
         if alias:
             aliases.append(alias)
     aliases = list(dict.fromkeys(a for a in aliases if a))
-    return {
+    base = site_base.rstrip("/")
+    result = {
         "protocol": "nsdeploy-link/v1",
-        "site": site_base.rstrip("/"),
         "exports": [{
             "network": plan.network_name,
             "front_man": plan.front_man,
             "aliases": aliases,
-            "url": f"{site_base.rstrip('/')}/{plan.network_name}",
+            "url": f"{base}/{plan.network_name}" if base else plan.network_name,
         }],
         "imports": [{
             "network": plan.network_name,
@@ -202,12 +219,27 @@ def build_linking_metadata(plan: DeploymentPlan, site_base: str) -> Dict[str, An
             "status": "linked" if ref in plan.links else "pending",
             **({"target": plan.links[ref]} if ref in plan.links else {}),
         } for ref, callers in plan.link_slots.items()],
-        "links_endpoint": "/_nsdeploy/links",
     }
+    if base:
+        result["site"] = base
+    if static_bundle:
+        result["link_updates"] = {"mode": "browser-local"}
+    else:
+        result["links_endpoint"] = "/_nsdeploy/links"
+    return result
 
 
-def build_agent_mcp_metadata(plan: DeploymentPlan, site_base: str) -> Dict[str, Any]:
+def build_agent_mcp_metadata(plan: DeploymentPlan, site_base: str,
+                             available: bool = True) -> Dict[str, Any]:
     """Describe the machine-facing facade published by every deployed site."""
+    if not available:
+        return {
+            "protocol": "nsdeploy-agent-mcp/v1",
+            "network": plan.network_name,
+            "front_man": plan.front_man,
+            "available": False,
+            "reason": "This is a static bundle; a public MCP facade requires an application host.",
+        }
     return {
         "protocol": "nsdeploy-agent-mcp/v1",
         "network": plan.network_name,
@@ -248,7 +280,8 @@ def build_private_steward_hocon(
         for name, url in sorted((known_public_sites or {}).items())
         if name and str(url).strip()
     }
-    public_sites[plan.network_name] = site_base.rstrip("/")
+    if site_base:
+        public_sites[plan.network_name] = f"{site_base.rstrip('/')}/{plan.network_name}"
     public_sites.update({name: url.rstrip("/") for name, url in sorted(plan.links.items())})
     public_site_lines = "\n".join(f"- {name}: {url}" for name, url in public_sites.items())
     gateway_parameters = {
@@ -272,7 +305,11 @@ def build_private_steward_hocon(
         "steward_kind": "private",
         "public_network": plan.network_name,
         "public_site": site_base.rstrip("/"),
-        "public_mcp_endpoint": f"{site_base.rstrip('/')}/mcp",
+        "public_execution": {
+            "mode": "fetch-and-run",
+            "manifest": f"{site_base.rstrip('/')}/agent-manifest.json" if site_base else "agent-manifest.json",
+            "mcp_fallback": f"{site_base.rstrip('/')}/mcp" if site_base else None,
+        },
         "public_sites": public_sites,
         "private_web_policy": {
             "mode": "open",
@@ -297,10 +334,10 @@ def build_private_steward_hocon(
     {
       "name": "public_agent_mcp_gateway",
       "function": {
-        "description": "Call any trusted public nsDeploy agent site over its MCP facade. The site URL is checked against the local deny policy.",
+        "description": "Fetch and run any trusted public nsDeploy agent network locally. The site URL is checked against the local deny policy; MCP is a legacy fallback.",
         "parameters": %s
       },
-      "class": "nsdeploy.steward.PublicAgentMcpGateway"
+      "class": "nsdeploy.steward.PublicAgentNetworkGateway"
     }
   ]
 }
@@ -309,7 +346,7 @@ def build_private_steward_hocon(
         _json.dumps(metadata, indent=2),
         _json.dumps(
             "You are the private steward for the operator of the public network. "
-            "You may reach any public agent site by URL through public_agent_mcp_gateway. "
+            "You may fetch and run any public agent network by URL through public_agent_mcp_gateway. "
             "For known sites, use the exact URL in this directory:\n"
             + public_site_lines
             + "\nNever invent example domains or hostnames. If the needed site is not in the directory, "
@@ -376,12 +413,12 @@ def write_private_steward_manifest(
 
 def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
                    mock_router: str, byok_router: str, site_base: str, theme: ThemeSpec,
-                   mcp_host: str = "127.0.0.1") -> Dict[str, Any]:
+                   mcp_host: str = "127.0.0.1", static_bundle: bool = False) -> Dict[str, Any]:
     meta = plan.config.get("metadata", {}) or {}
     front_fn = next((a.get("function", {}) for a in plan.agents if a.get("name") == plan.front_man), {})
     description = theme.tagline or (front_fn.get("description") or meta.get("description") or plan.network_name).strip()
     allowed_peers: List[str] = []
-    if plan.hostable_tools or plan.external_mcps:  # legacy compatibility for older runtimes
+    if site_base and (plan.hostable_tools or plan.external_mcps):  # legacy compatibility for older runtimes
         allowed_peers.append(site_base)
     allowed_peers.extend(origin for origin in (_origin(url) for url in plan.links.values()) if origin)
     # Modern runtimes use peer_policy.mode=open, but publish direct URL-tool origins
@@ -393,7 +430,9 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
         "networks": [
             {
                 "name": plan.network_name,
-                "hocon": f"/{plan.network_name}.network.json",
+                "front_man": plan.front_man,
+                "hocon": (f"./{plan.network_name}.network.json" if static_bundle
+                          else f"/{plan.network_name}.network.json"),
                 "description": description,
                 "tags": ["deployed", "nsdeploy"],
                 "sample_queries": meta.get("sample_queries", []) or [],
@@ -410,10 +449,19 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
             "deny_origins": [],
             "note": "Public agent sites are reachable like web pages; credentials and capabilities do not transfer.",
         },
-        "agent_mcp": build_agent_mcp_metadata(plan, site_base),
+        "agent_mcp": build_agent_mcp_metadata(plan, site_base, available=not static_bundle),
         "theme": {"primary": theme.colors["primary"]},
-        "linking": build_linking_metadata(plan, site_base),
+        "linking": build_linking_metadata(plan, site_base, static_bundle=static_bundle),
     }
+    if static_bundle:
+        manifest["deployment"] = {
+            "mode": "static",
+            "self_contained_runtime": True,
+            "browser_mock": True,
+            "direct_byok": True,
+            "direct_mcp_requires_cors": True,
+            "public_mcp_facade": False,
+        }
     if theme.welcome:  # LLM-proposed branded landing form (greeting + intake widget)
         welcome = dict(theme.welcome)
         welcome.setdefault("message", theme.hero or "")
@@ -443,22 +491,42 @@ _BOOT = """<script type="module">
       console.error(e);
     });
   </script>"""
+_STATIC_BOOT = """<script type="module">
+    import { boot } from "./runtime/index.js";
+    const siteBase = new URL("./", window.location.href).href;
+    boot("#app", {
+      originUrl: siteBase,
+      sandboxWorkerUrl: new URL("runtime/sandbox-worker.js", siteBase).href,
+    }).then(async (runtime) => {
+      try {
+        const site = await import("./site.js");
+        await site.customize?.({ root: document.querySelector("#app"), runtime });
+      } catch (e) {
+        console.error("Site customization error", e);
+      }
+    }).catch((e) => {
+      const a = document.querySelector("#app"); if (a) a.textContent = "Boot error: " + e.message;
+      console.error(e);
+    });
+  </script>"""
 _META = ('<meta charset="utf-8" />\n'
          '  <meta name="viewport" content="width=device-width, initial-scale=1" />')
 
 
-def _doc(title: str, body: str) -> str:
+def _doc(title: str, body: str, static_bundle: bool = False) -> str:
+    boot = _STATIC_BOOT if static_bundle else _BOOT
+    theme_href = "./theme.css" if static_bundle else "/theme.css"
     return (f"<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  {_META}\n  <title>{title}</title>\n"
-            f"  <link rel=\"stylesheet\" href=\"/theme.css\" />\n"
-            f"</head>\n<body>\n{body}\n  {_BOOT}\n</body>\n</html>\n")
+            f"  <link rel=\"stylesheet\" href=\"{theme_href}\" />\n"
+            f"</head>\n<body>\n{body}\n  {boot}\n</body>\n</html>\n")
 
 
-def _index_html(theme: ThemeSpec, brand_display: str) -> str:
+def _index_html(theme: ThemeSpec, brand_display: str, static_bundle: bool = False) -> str:
     title = html.escape(brand_display)
     if theme.body:
-        return _doc(title, theme.body)
+        return _doc(title, theme.body, static_bundle=static_bundle)
     # Default fixed template (keyless / no creative layout).
-    return _doc(title, f'<div id="app">Loading {title}...</div>')
+    return _doc(title, f'<div id="app">Loading {title}...</div>', static_bundle=static_bundle)
 
 
 def _theme_css(theme: ThemeSpec) -> str:
@@ -498,7 +566,10 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
                   site_base: str, mcp_host: str = "127.0.0.1", cruse: bool = True,
                   theme: Optional[ThemeSpec] = None,
                   site_source_dir: Optional[Path] = None,
-                  private_steward_sites: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                  private_steward_sites: Optional[Dict[str, str]] = None,
+                  static_bundle: bool = False,
+                  runtime_dir: Optional[Path] = None,
+                  ts_package: bool = True) -> Dict[str, Any]:
     """Build the disposable static output from network data and editable site source."""
     theme = theme or ThemeSpec()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -506,14 +577,19 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
         assets = site_source_dir / "assets"
         if assets.is_dir():
             shutil.copytree(assets, out_dir / "assets", dirs_exist_ok=True)
-    network_config = rewrite_config(plan, site_base, mcp_host=mcp_host, cruse=cruse)
-    manifest = build_manifest(plan, network_config, mock_router, byok_router, site_base, theme, mcp_host=mcp_host)
+    network_config = rewrite_config(
+        plan, site_base, mcp_host=mcp_host, cruse=cruse, static_bundle=static_bundle,
+    )
+    manifest = build_manifest(
+        plan, network_config, mock_router, byok_router, site_base, theme,
+        mcp_host=mcp_host, static_bundle=static_bundle,
+    )
 
     (out_dir / f"{plan.network_name}.network.json").write_text(
         json.dumps(network_config, indent=2), encoding="utf-8")
     (out_dir / "agent-manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8")
-    agent_mcp = build_agent_mcp_metadata(plan, site_base)
+    agent_mcp = build_agent_mcp_metadata(plan, site_base, available=not static_bundle)
     (out_dir / "agent-mcp.json").write_text(json.dumps(agent_mcp, indent=2), encoding="utf-8")
     well_known = out_dir / ".well-known"
     well_known.mkdir(parents=True, exist_ok=True)
@@ -544,7 +620,7 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     bindings.update(plan.links)
     links_doc = {"version": 1, "networks": {plan.network_name: bindings}}
     links_path.write_text(json.dumps(links_doc, indent=2), encoding="utf-8")
-    index_html = _index_html(theme, _brand_display(plan, theme))
+    index_html = _index_html(theme, _brand_display(plan, theme), static_bundle=static_bundle)
     (out_dir / "index.html").write_text(index_html, encoding="utf-8")
     (out_dir / "theme.css").write_text(_theme_css(theme), encoding="utf-8")
     site_js = DEFAULT_SITE_JS
@@ -552,4 +628,59 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
         site_js = (site_source_dir / "site.js").read_text(encoding="utf-8")
     (out_dir / "site.js").write_text(site_js, encoding="utf-8")
     (out_dir / "theme.json").write_text(json.dumps(theme.to_dict(), indent=2), encoding="utf-8")
+    if static_bundle:
+        source_runtime = (runtime_dir or DEFAULT_RUNTIME_DIR).resolve()
+        shutil.copytree(source_runtime, out_dir / "runtime", dirs_exist_ok=True)
+        if ts_package:
+            # A static host has no launcher to redirect /runtime/index.js, so the
+            # bundle's copy of it loads the runtime on the neuro-san TS package instead.
+            (out_dir / "runtime" / "index.js").write_text(
+                'export * from "./ts-package/index.js";\n', encoding="utf-8")
+        _write_static_hosting_files(out_dir)
     return manifest
+
+
+def _write_static_hosting_files(out_dir: Path) -> None:
+    """Emit optional header files for common static hosts.
+
+    The bundle still loads on a plain server. These headers are needed when another
+    domain fetches the published agent files and to retain the coded-tool worker's
+    hard CSP boundary.
+    """
+    (out_dir / "_headers").write_text(
+        "/*\n"
+        "  Access-Control-Allow-Origin: *\n"
+        "  Access-Control-Allow-Methods: GET, HEAD, OPTIONS\n"
+        "  Access-Control-Allow-Headers: Content-Type\n"
+        "/runtime/sandbox-worker.js\n"
+        f"  Content-Security-Policy: {WORKER_CSP}\n",
+        encoding="utf-8",
+    )
+    (out_dir / ".htaccess").write_text(
+        "<IfModule mod_headers.c>\n"
+        "  Header always set Access-Control-Allow-Origin \"*\"\n"
+        "  Header always set Access-Control-Allow-Methods \"GET, HEAD, OPTIONS\"\n"
+        "  <Files \"sandbox-worker.js\">\n"
+        f"    Header always set Content-Security-Policy \"{WORKER_CSP}\"\n"
+        "  </Files>\n"
+        "</IfModule>\n",
+        encoding="utf-8",
+    )
+    (out_dir / "STATIC_HOSTING.md").write_text(
+        "# Static nsDeploy bundle\n\n"
+        "Publish this directory as the web root. The site, browser runtime, local mock "
+        "router, and browser-local links require no application server.\n\n"
+        "For cross-domain agent loading, configure all responses with "
+        "`Access-Control-Allow-Origin: *`. The included `_headers` file is used by "
+        "Netlify and compatible hosts; Apache can use the included `.htaccess` when "
+        "`mod_headers` and overrides are enabled.\n\n"
+        "Serve `runtime/sandbox-worker.js` with:\n\n"
+        f"    Content-Security-Policy: {WORKER_CSP}\n\n"
+        "Real BYOK calls go directly from the browser to the router selected in settings, "
+        "so that router must allow browser CORS. External MCP servers are also contacted "
+        "directly and must allow browser CORS. Python tools and the public MCP facade are "
+        "not included. The generated private steward can fetch and run the published "
+        "network JSON from its private Neuro-SAN host; its LLM router does not need browser "
+        "CORS. Unresolved links are stored in this browser's local storage.\n",
+        encoding="utf-8",
+    )

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 
-import { assertRouterKey, isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopRouter } from "../nsdeploy/runtime/engine.js";
+import { Engine, assertRouterKey, isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopRouter } from "../nsdeploy/runtime/ts-package/engine.js";
 import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
-import { isMockResponse, normalizeModelName } from "../nsdeploy/runtime/model.js";
+import { browserMockCompletion, isMockResponse, normalizeModelName } from "../nsdeploy/runtime/ts-package/model.js";
 import {
   consumeAgentBudget, consumeRemoteBudget, remoteIsInChain, requiresThirdPartyApproval,
-} from "../nsdeploy/runtime/composition.js";
-import { AgentNetwork, loadNeuroSan, initNetwork } from "../nsdeploy/runtime/agent-network.js";
+} from "../nsdeploy/runtime/ts-package/composition.js";
+import { AgentNetwork, loadNeuroSan, initNetwork } from "../nsdeploy/runtime/ts-package/agent-network.js";
 import { createTurnEventStream } from "../nsdeploy/runtime/execution-stream.js";
 import { TraceBus } from "../nsdeploy/runtime/trace.js";
 import { createTurnStatusController, statusTextForEvent } from "../nsdeploy/runtime/turn-status.js";
@@ -40,6 +40,48 @@ assert.equal(normalizeModelName('\"gpt-5.6\"'), "gpt-5.6");
 assert.equal(normalizeModelName("'gpt-4o'"), "gpt-4o");
 assert.equal(normalizeModelName('  \"qwen/model:id\"  '), "qwen/model:id");
 assert.equal(normalizeModelName("plain-model"), "plain-model");
+{
+  const tools = [{type: "function", function: {
+    name: "lookup", parameters: {type: "object", properties: {request: {type: "string"}}, required: ["request"]},
+  }}];
+  const first = browserMockCompletion([{role: "user", content: "find it"}], tools);
+  assert.equal(first.finishReason, "tool_calls");
+  assert.equal(first.toolCalls[0].function.name, "lookup");
+  assert.deepEqual(JSON.parse(first.toolCalls[0].function.arguments), {request: "find it"});
+  const second = browserMockCompletion([
+    {role: "user", content: "find it"},
+    {role: "tool", name: "lookup", content: "found"},
+  ], tools);
+  assert.equal(second.finishReason, "stop");
+  assert.match(second.content, /found/);
+
+}
+{
+  const originalFetch = globalThis.fetch;
+  const jsonResponse = (body, ok = true) => ({ok, json: async () => body, text: async () => JSON.stringify(body)});
+  globalThis.fetch = async (url) => {
+    const href = String(url);
+    if (href.endsWith("/agent-manifest.json")) return jsonResponse({
+      networks: [{name: "portable", hocon: "./portable.network.json"}],
+      llm_router: {base_url: "browser://mock", byok_router: "https://api.example/v1", mock: true},
+      peer_policy: {mode: "open"}, deployment: {mode: "static"},
+    });
+    if (href.endsWith("/portable.network.json") || href.endsWith("/./portable.network.json")) {
+      return {ok: true, text: async () => JSON.stringify({tools: [{name: "front", instructions: "Help."}]})};
+    }
+    if (href.endsWith("/links.json")) return jsonResponse({}, false);
+    throw new Error(`unexpected static-bundle fetch: ${href}`);
+  };
+  try {
+    const engine = new Engine({originUrl: "https://static.example", byokKey: "demo"});
+    await engine.loadTop();
+    const answer = await engine.run("hello");
+    assert.match(answer, /mock/);
+    assert.equal(engine.top.llm.baseUrl, "browser://mock");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
 assert.equal(await isPublishedMockRouter("http://127.0.0.1:8091/v1", async () => ({
   ok: true,
   json: async () => ({llm_router: {

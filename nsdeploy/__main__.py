@@ -74,6 +74,8 @@ def main() -> int:
                     help="accepted for backward compatibility and IGNORED: a served site never uses a "
                          "host-side LLM key; the facade only uses the caller's BYOK credentials")
     ap.add_argument("--runtime-dir", default=None, help="neuro-san-web runtime dir (default: vendored nsdeploy/runtime)")
+    ap.add_argument("--no-ts-package", action="store_true",
+                    help="run agents on the original runtime instead of the neuro-san TS package")
     ap.add_argument("--links", default=None, help="link sidecar JSON (default: <hocon>.links.json when present)")
     ap.add_argument("--link", action="append", default=[], metavar="REF=URL",
                     help="bind a dangling agent reference to a remote nsDeploy network (repeatable)")
@@ -103,6 +105,9 @@ def main() -> int:
     ap.add_argument("--theme-refresh", action="store_true",
                     help="re-ask the LLM and replace editable layout/CSS/theme metadata")
     ap.add_argument("--no-serve", action="store_true", help="generate the site but don't launch")
+    ap.add_argument("--static-bundle", action="store_true",
+                    help="emit a self-contained static webroot (browser mock, direct-CORS "
+                         "BYOK/MCP, no Python tools or public MCP facade)")
     args = ap.parse_args()
 
     if args.cailville_base_map and not args.add_to_cailville:
@@ -174,10 +179,13 @@ def main() -> int:
             return 2
     if cailville_draft is not None:
         private_steward_sites.update(cailville.public_site_directory(cailville_draft.community))
-    toolbox_info = load_toolbox_info(source)
-    plan = build_plan(config, toolbox_info, network_name, missing_includes, source)
+    toolbox_info = {} if args.static_bundle else load_toolbox_info(source)
+    plan = build_plan(
+        config, toolbox_info, network_name, missing_includes, source,
+        include_python_tools=not args.static_bundle,
+    )
 
-    print(format_report(plan))
+    print(format_report(plan, static_bundle=args.static_bundle))
     print()
 
     if not plan.front_man:
@@ -251,13 +259,26 @@ def main() -> int:
     else:
         bundle_parent = Path.cwd() / ".nsdeploy" / hocon_path.parent.name
         out_dir = bundle_parent / network_name
-    site_base = (args.site_url or f"http://127.0.0.1:{args.port}").rstrip("/")
-    mock_router = f"{site_base}/v1"
-    byok_router = f"{site_base}/byok/v1"
+    site_base = ((args.site_url or "") if args.static_bundle
+                 else (args.site_url or f"http://127.0.0.1:{args.port}")).rstrip("/")
+    mock_router = "browser://mock" if args.static_bundle else f"{site_base}/v1"
+    byok_router = args.upstream.rstrip("/") if args.static_bundle else f"{site_base}/byok/v1"
+    runtime_dir = Path(args.runtime_dir).resolve() if args.runtime_dir else None
     generate_site(plan, out_dir, mock_router, byok_router, site_base, cruse=not args.no_cruse,
                   theme=theme, site_source_dir=site_dir,
-                  private_steward_sites=private_steward_sites or None)
-    print(f"✅ Generated site → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))
+                  private_steward_sites=private_steward_sites or None,
+                  static_bundle=args.static_bundle, runtime_dir=runtime_dir,
+                  ts_package=not args.no_ts_package)
+    bundle_label = "static bundle" if args.static_bundle else "site"
+    print(f"✅ Generated {bundle_label} → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))
+    if args.static_bundle:
+        omitted_tools = sorted({tool.name for tool in plan.hostable_tools} | set(plan.omitted_tools))
+        if omitted_tools:
+            omitted = ", ".join(omitted_tools)
+            print(f"   static bundle: omitted Python tools: {omitted}")
+        if plan.external_mcps:
+            print("   static bundle: external MCP servers will be called directly and must allow CORS")
+        print("   static bundle: public MCP facade unavailable; private stewards use fetch-and-run")
     print(f"   private steward manifest → {out_dir.parent / 'manifest.hocon'}")
 
     if cailville_draft is not None:
@@ -267,16 +288,15 @@ def main() -> int:
             print(f"error: site generated but Cailville map update failed: {exc}", file=sys.stderr)
             return 2
 
-    if args.no_serve:
-        print("   (--no-serve: not launching)")
+    if args.no_serve or args.static_bundle:
+        print("   (static output: not launching)" if args.static_bundle else "   (--no-serve: not launching)")
         return 0
 
-    runtime_dir = Path(args.runtime_dir).resolve() if args.runtime_dir else None
     # source.root holds the (materialized) coded-tool sources the MCP hosts import.
     serve(out_dir, plan, source.root, port=args.port, site_base=site_base,
           upstream=args.upstream,
           runtime_dir=runtime_dir, ext_mcps=plan.external_mcps,
-          facade_upstream=args.facade_upstream)
+          facade_upstream=args.facade_upstream, ts_package=not args.no_ts_package)
     return 0
 
 

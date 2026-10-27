@@ -7,7 +7,7 @@
 //   node --test tests/engine_stream.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Engine } from "../nsdeploy/runtime/engine.js";
+import { Engine } from "../nsdeploy/runtime/ts-package/engine.js";
 
 const SITE = "https://site.test";
 const PEER = "https://peer.test";

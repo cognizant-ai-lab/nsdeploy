@@ -3,7 +3,7 @@
 // Every boundary in the runtime (compile, model call, tool call, remote
 // fetch-and-run, REST call, stream chunk, error, retry) emits a span here. The
 // bus powers the live graph, the chronological log, and the JSON export
-// ("HAR for agents"). It is platform glue (an intrinsic), not neuro-san logic.
+// ("HAR for agents"). It is platform glue (an intrinsic), not kernel logic.
 
 let SEQ = 0;
 

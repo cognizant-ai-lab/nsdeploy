@@ -9,10 +9,3 @@ export function normalizeModelName(value) {
   }
   return model;
 }
-
-// Whether a model response came from nsdeploy's mock router: the site declared a mock
-// router, the router labelled the route mock (X-Nsdeploy-LLM-Route), or the response
-// names the mock model.
-export function isMockResponse(configuredMock, routeKind, model) {
-  return !!configuredMock || routeKind === "mock" || /neuro-san-mock/.test(model || "");
-}

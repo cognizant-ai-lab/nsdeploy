@@ -1,8 +1,8 @@
-"""MCP facade for a deployed public nsDeploy network.
+"""Data-only runner and MCP facade for deployed public nsDeploy networks.
 
 The browser runtime remains the primary execution path.  This small server-side
-runner gives private stewards a machine-facing path with the same network JSON,
-using caller-owned credentials propagated over MCP or a deterministic mock mode.
+runner can execute the same published network JSON inside a private steward or
+expose it through MCP, using caller-owned credentials or a deterministic mock mode.
 """
 from __future__ import annotations
 
@@ -14,12 +14,14 @@ import hashlib
 import json
 import os
 import urllib.parse
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
 from nsdeploy.byok import (
+    ByokCredentials,
     ByokContextMiddleware,
     current_byok_credentials,
     forwarding_headers,
@@ -32,6 +34,88 @@ PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS = float(
 )
 MOCK_TOOL_CALLS_PER_AGENT = 1
 _CONTEXT_MARKER = "\n\n__NSDEPLOY_PUBLIC_CONTEXT__:"
+MAX_PUBLISHED_NETWORK_BYTES = 2 * 1024 * 1024
+
+
+@dataclass
+class PublishedNetwork:
+    site_base: str
+    network: str
+    front_man: str
+    config: Dict[str, Any]
+
+    @property
+    def key(self) -> str:
+        return f"{self.site_base}::{self.network}".lower()
+
+
+def _published_target(site_url: str) -> Tuple[str, str]:
+    parsed = urllib.parse.urlparse(str(site_url).strip())
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("public agent site URL must use http or https")
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    path = parsed.path.rstrip("/")
+    if path:
+        parent, _, requested = path.rpartition("/")
+        site_base = origin + parent
+    else:
+        site_base, requested = origin, ""
+    return site_base, requested
+
+
+async def load_published_network(site_url: str) -> PublishedNetwork:
+    """Fetch and validate one public network without executing publisher code."""
+    site_base, requested = _published_target(site_url)
+    timeout = _mcp_http_timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        manifest_url = f"{site_base}/agent-manifest.json"
+        manifest_response = await client.get(manifest_url)
+        manifest_response.raise_for_status()
+        if _site_key(str(getattr(manifest_response, "url", manifest_url))) != _site_key(site_base):
+            raise ValueError("published agent manifest redirected to another origin")
+        if len(manifest_response.content) > MAX_PUBLISHED_NETWORK_BYTES:
+            raise ValueError("published agent manifest is too large")
+        manifest = manifest_response.json()
+        networks = manifest.get("networks") if isinstance(manifest, dict) else None
+        if not isinstance(networks, list) or not all(isinstance(item, dict) for item in networks):
+            raise ValueError("published agent manifest has an invalid network list")
+        if requested:
+            entry = next((item for item in networks if item.get("name") == requested), None)
+        else:
+            entry = networks[0] if len(networks) == 1 else None
+        if not entry:
+            names = ", ".join(str(item.get("name", "")) for item in networks) or "none"
+            raise ValueError(
+                f"no unique published network matching '{requested or '(site root)'}'; available: {names}"
+            )
+        network = str(entry.get("name") or "")
+        hocon = entry.get("hocon")
+        if not network or not isinstance(hocon, str) or not hocon:
+            raise ValueError("published network entry is incomplete")
+        config_url = urllib.parse.urljoin(site_base + "/", hocon)
+        if _site_key(config_url) != _site_key(site_base):
+            raise ValueError("published network definition must stay on the site's origin")
+        config_response = await client.get(config_url)
+        config_response.raise_for_status()
+        if _site_key(str(getattr(config_response, "url", config_url))) != _site_key(site_base):
+            raise ValueError("published network definition redirected to another origin")
+        if len(config_response.content) > MAX_PUBLISHED_NETWORK_BYTES:
+            raise ValueError("published network definition is too large")
+        config = config_response.json()
+    tools = config.get("tools") if isinstance(config, dict) else None
+    if not isinstance(tools, list) or len(tools) > 200:
+        raise ValueError("published network has an invalid tool list")
+    # Public definitions are data, never import instructions. A static/deployed
+    # network should contain agents only; Python class/toolbox entries fail closed.
+    if any(not isinstance(item, dict) or "class" in item or "toolbox" in item for item in tools):
+        raise ValueError("published network contains executable server-side tool definitions")
+    agents = [item for item in tools if item.get("name") and "instructions" in item]
+    if not agents:
+        raise ValueError("published network contains no runnable agents")
+    front_man = str(entry.get("front_man") or agents[0]["name"])
+    if not any(item.get("name") == front_man for item in agents):
+        raise ValueError(f"published front-man agent '{front_man}' was not found")
+    return PublishedNetwork(site_base, network, front_man, config)
 
 
 def _text(value: Any) -> str:
@@ -98,15 +182,28 @@ def _unpack_context(request: str) -> Tuple[str, set[str], int]:
 
 
 class NetworkRunner:
-    """Runs the deployed network for MCP callers. There is deliberately no server-side
-    LLM credential here: every real completion uses the caller's BYOK headers
-    (see `_complete`), and the launcher starts this process with provider credentials
-    scrubbed from its environment."""
+    """Run published network data for a private steward or public MCP caller.
 
-    def __init__(self, config: Dict[str, Any], site_base: str, upstream: str, max_steps: int = 8):
+    The public facade deliberately has no server-owned LLM credential. Private
+    fetch-and-run supplies explicit steward credentials, while facade execution uses
+    the caller's BYOK context. The launcher scrubs provider credentials from the
+    public facade process.
+    """
+
+    def __init__(self, config: Dict[str, Any], site_base: str, upstream: str, max_steps: int = 8,
+                 *, credentials: Optional[ByokCredentials] = None,
+                 public_network_mode: str = "mcp", network_name: str = "",
+                 denied_origins: Optional[set[str]] = None):
         self.config = config
         self.site_base = site_base.rstrip("/")
         self.upstream = upstream.rstrip("/")
+        self.credentials = credentials
+        self.public_network_mode = public_network_mode
+        self.network_name = network_name or "network"
+        self.network_key = f"{self.site_base}::{self.network_name}".lower()
+        self.denied_origins = {
+            origin for origin in (_site_key(item) for item in (denied_origins or set())) if origin
+        }
         self.model = (
             os.environ.get("NSDEPLOY_FACADE_MODEL")
             or (config.get("llm_config", {}) or {}).get("model_name")
@@ -119,17 +216,40 @@ class NetworkRunner:
         }
         self.mcp_cache: Dict[str, List[Dict[str, Any]]] = {}
 
+    @classmethod
+    async def from_public_site(cls, site_url: str, upstream: str, *,
+                               credentials: Optional[ByokCredentials] = None,
+                               denied_origins: Optional[set[str]] = None,
+                               max_steps: int = 8) -> Tuple["NetworkRunner", PublishedNetwork]:
+        denied = {
+            origin for origin in (_site_key(item) for item in (denied_origins or set())) if origin
+        }
+        if _site_key(site_url) in denied:
+            raise PermissionError(f"origin {_site_key(site_url)} is denied by the private web policy")
+        published = await load_published_network(site_url)
+        if _site_key(published.site_base) in denied:
+            raise PermissionError(f"origin {published.site_base} is denied by the private web policy")
+        runner = cls(
+            published.config, published.site_base, upstream, max_steps=max_steps,
+            credentials=credentials, public_network_mode="fetch",
+            network_name=published.network, denied_origins=denied_origins,
+        )
+        return runner, published
+
+    def _active_credentials(self) -> Optional[ByokCredentials]:
+        return self.credentials or current_byok_credentials()
+
     async def run(self, request: str, front_man: str) -> str:
         if front_man not in self.agents:
             return "Error: the deployed network has no front-man agent."
-        credentials = current_byok_credentials()
+        credentials = self._active_credentials()
         if not self.upstream.startswith("mock://") and not (credentials and credentials.available):
             return (
                 "Error: caller BYOK credentials are required for this public agent site. "
-                "The private steward must provide them on the MCP transport."
+                "The private steward must provide them for local execution."
             )
         clean_request, visited_sites, remaining_calls = _unpack_context(request)
-        current_site = _site_key(self.site_base)
+        current_site = self.network_key if self.public_network_mode == "fetch" else _site_key(self.site_base)
         if current_site:
             visited_sites.add(current_site)
         budget = {"remaining": remaining_calls}
@@ -178,10 +298,25 @@ class NetworkRunner:
                                    "required": ["request"]
                                }, "kind": "agent"})
                 continue
+            if _site_key(str(ref)) in self.denied_origins:
+                continue
             endpoint = self._mcp_endpoint(ref)
             if not endpoint:
                 continue
             if _is_public_site_ref(str(ref)):
+                if self.public_network_mode == "fetch":
+                    result.append({
+                        "name": f"{_safe_name(str(ref))}__invoke_network",
+                        "description": "Run the linked public agent network locally.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"request": {"type": "string"}},
+                            "required": ["request"],
+                        },
+                        "kind": "network",
+                        "endpoint": str(ref),
+                    })
+                    continue
                 result.append({
                     "name": f"{_safe_name(endpoint)}__invoke_network",
                     "description": "Invoke the linked public agent site.",
@@ -246,6 +381,27 @@ class NetworkRunner:
             request = arguments.get("request") or arguments.get("inquiry") or next(iter(arguments.values()), "")
             return await self._run_agent(name, _text(request), depth + 1,
                                          visited_sites, budget)
+        if spec["kind"] == "network":
+            request = arguments.get("request") or arguments.get("inquiry") or next(iter(arguments.values()), "")
+            if budget["remaining"] <= 0:
+                return "Public-site call budget exhausted for this request."
+            try:
+                child, published = await self.from_public_site(
+                    spec["endpoint"], self.upstream, credentials=self._active_credentials(),
+                    denied_origins=self.denied_origins, max_steps=self.max_steps,
+                )
+                if published.key in visited_sites:
+                    return f"Skipped recursive call to public network {published.key}."
+                budget["remaining"] -= 1
+                next_visited = set(visited_sites)
+                next_visited.add(published.key)
+                return await child._run_agent(
+                    published.front_man, _text(request), depth + 1, next_visited, budget,
+                )
+            except PermissionError as exc:
+                return f"Public network denied: {exc}"
+            except Exception as exc:
+                return f"Public network call failed: {exc}"
         target_site = _site_key(spec.get("endpoint", ""))
         if spec.get("remote_name") == "invoke_network":
             if target_site in visited_sites:
@@ -305,7 +461,7 @@ class NetworkRunner:
             results = [_text(item.get("content", "")) for item in messages if item.get("role") == "tool"]
             return {"message": {"role": "assistant", "content":
                                  "(facade mock) " + " ".join(results)[:4000]}}
-        credentials = current_byok_credentials()
+        credentials = self._active_credentials()
         if not credentials or not credentials.available:
             return {"message": {"role": "assistant", "content":
                     "Facade LLM failed: caller BYOK credentials are required."}}

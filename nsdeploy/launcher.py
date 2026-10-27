@@ -30,11 +30,15 @@ from nsdeploy.resolve import DeploymentPlan
 # the package as data so editable and regular installs both find it. Overridable via
 # serve(..., runtime_dir=...) / --runtime-dir.
 DEFAULT_RUNTIME_DIR = Path(__file__).resolve().parent / "runtime"
+# The runtime on the neuro-san TS package, served in place of runtime/index.js unless
+# nsdeploy runs with --no-ts-package. It imports the shared parts from the folder above.
+TS_PACKAGE_DIR = "ts-package"
 MIME = {
     ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
     ".mjs": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",
     ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".map": "application/json",
 }
+WORKER_CSP = "default-src 'none'; script-src blob:; connect-src 'none'; worker-src 'none'"
 MCP_PROXY_TIMEOUT_SECONDS = 480
 UPSTREAM_REQUEST_TIMEOUT_SECONDS = 480
 MODEL_CATALOG_TIMEOUT_SECONDS = 120
@@ -128,7 +132,7 @@ def _responses_to_chat(body: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List
 
 def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: List[str],
                  local_mcps: Optional[List[str]] = None, facade_mcp: Optional[str] = None,
-                 commerce=None):
+                 commerce=None, ts_package: bool = True):
     ext_mcp_re = re.compile(r"^/ext-mcp/(\d+)/mcp$")
     local_mcp_re = re.compile(r"^/_mcp/(\d+)/mcp$")
     local_mcps = local_mcps or []
@@ -507,6 +511,11 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 return self._byok_models_proxy()
             if path == "/":
                 path = "/index.html"
+            # A redirect rather than serving the file under the old path, so the browser
+            # resolves the TS package runtime's own imports from its folder.
+            if ts_package and path == "/runtime/index.js":
+                return self._send(302, b"", "text/plain", {
+                    "Location": f"/runtime/{TS_PACKAGE_DIR}/index.js", "Cache-Control": "no-store"})
             if path.startswith("/runtime/"):
                 file_path = runtime_dir / path[len("/runtime/"):]
             else:
@@ -514,7 +523,10 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             if ".." in path or not file_path.is_file():
                 return self._send(404, b"404 " + path.encode(), "text/plain")
             data = file_path.read_bytes()
-            self._send(200, data, MIME.get(file_path.suffix, "application/octet-stream"))
+            extra = {}
+            if path == "/runtime/sandbox-worker.js":
+                extra["Content-Security-Policy"] = WORKER_CSP
+            self._send(200, data, MIME.get(file_path.suffix, "application/octet-stream"), extra)
 
         def _byok_models_proxy(self):
             """Expose the active upstream catalog for browser-side model validation."""
@@ -626,11 +638,12 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
           site_base: Optional[str] = None,
           upstream: str = "https://api.openai.com/v1", python_exe: Optional[str] = None,
           runtime_dir: Optional[Path] = None, ext_mcps: Optional[List[str]] = None,
-          facade_upstream: Optional[str] = None) -> None:
+          facade_upstream: Optional[str] = None, ts_package: bool = True) -> None:
     python_exe = python_exe or sys.executable
     runtime_dir = runtime_dir or DEFAULT_RUNTIME_DIR
-    if not (runtime_dir / "generated" / "browser" / "neuro-san.mjs").is_file():
-        raise SystemExit(f"error: the browser runtime is not built ({runtime_dir / 'generated'} is missing). "
+    generated = runtime_dir / TS_PACKAGE_DIR / "generated"
+    if ts_package and not (generated / "browser" / "neuro-san.mjs").is_file():
+        raise SystemExit(f"error: the browser runtime is not built ({generated} is missing). "
                          "Run `npm install && npm run build` in runtime-build/ first.")
     ext_mcps = ext_mcps or []
     bindings = spawn_mcp_servers(plan, studio_root, python_exe)
@@ -654,11 +667,13 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
         commerce = from_plan(plan, site_dir, site_base or f"http://127.0.0.1:{port}")
         httpd = ThreadingHTTPServer(
             ("127.0.0.1", port), make_handler(site_dir, upstream, runtime_dir, ext_mcps,
-                                               local_mcps, f"http://127.0.0.1:{facade_port}/mcp", commerce))
+                                               local_mcps, f"http://127.0.0.1:{facade_port}/mcp", commerce,
+                                               ts_package))
         url = (site_base or f"http://127.0.0.1:{port}").rstrip("/") + "/"
         print(f"\n🌐  {plan.network_name} is live:  {url}")
         if site_base:
             print(f"    Loopback backend: 127.0.0.1:{port}")
+        print(f"    Runtime: {'neuro-san TS package' if ts_package else 'original (--no-ts-package)'}")
         print(f"    LLM: mock router (no key) at /v1  ·  BYOK proxy at /byok/v1 → {upstream}")
         print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: caller BYOK → {facade_upstream}  ·  steward: {plan.network_name}_private_steward.hocon")
         if plan.hostable_tools:
