@@ -13,8 +13,10 @@ matching the repo's git tree, so the repo's internal layout doesn't matter. Any 
 dependency a hosted tool imports (e.g. `ddgs`) is auto-installed on demand.
 
 The browser runs the agents on a **vendored copy of the neuro-san-web runtime** (in
-[`nsdeploy/runtime/`](nsdeploy/runtime) — dependency-free ES modules); the only Python that runs is
-(a) the build-time HOCON resolver and (b) one small MCP server per hostable tool.
+[`nsdeploy/runtime/`](nsdeploy/runtime) — dependency-free ES modules). A normal
+served deployment uses Python for the build-time HOCON resolver, the web launcher,
+and one small MCP server per hostable tool. A static bundle uses Python only while
+building; the resulting webroot has no Python or nsDeploy runtime dependency.
 
 ## Install & run
 
@@ -99,12 +101,58 @@ for compatibility and ignored.
 ## Self-contained static bundle
 
 Use `--static-bundle` to produce a webroot that can be copied to a conventional
-static host without installing Python or nsDeploy there:
+static host without installing Python or nsDeploy there. The command form is:
+
+```bash
+python -m nsdeploy <network.hocon> \
+  --static-bundle \
+  --out <webroot-directory> \
+  [--site-url https://host.example/optional/base/path]
+```
+
+`--static-bundle` implies generate-only mode; it does not start a server. For
+example:
 
 ```bash
 python -m nsdeploy examples/link_demo_travel_agency.hocon \
   --static-bundle --out ./dist/travel
 ```
+
+Preview that bundle with any ordinary static server:
+
+```bash
+python -m http.server 8080 --directory ./dist/travel
+```
+
+Then open <http://127.0.0.1:8080/>. To publish a canonical identity for links and
+private stewards, include the final webroot URL when building:
+
+```bash
+python -m nsdeploy examples/link_demo_travel_agency.hocon \
+  --static-bundle \
+  --out ./dist/travel \
+  --site-url https://agents.example.com/travel
+```
+
+After uploading `./dist/travel/` as that webroot, the public network URL is:
+
+```text
+https://agents.example.com/travel/link_demo_travel_agency
+```
+
+A generated private steward calls the static network with the equivalent coded-tool
+arguments:
+
+```json
+{
+  "site_url": "https://agents.example.com/travel/link_demo_travel_agency",
+  "request": "Find me a flight from San Francisco to New York next Friday."
+}
+```
+
+The steward fetches `agent-manifest.json` and the selected network JSON, then runs
+the network privately. Its LLM key is sent only to the steward's configured LLM
+upstream, never to the static host.
 
 The output includes the browser runtime, a browser-native deterministic mock,
 relative page assets, browser-local unresolved links, and optional `_headers` /
@@ -119,8 +167,13 @@ facade or other server-side process.
 
 When `--site-url` is omitted, the static bundle is origin-neutral and can be moved
 between hosts. Supplying `--site-url` publishes a canonical URL for link discovery.
-See the generated `STATIC_HOSTING.md` for the two response headers needed when the
-site will be loaded as a peer from another domain and for the sandbox-worker CSP.
+The static host only needs to serve files over HTTP(S). When a browser-hosted agent
+on another domain will load the network, responses must include
+`Access-Control-Allow-Origin: *`; server-side private stewards do not require CORS.
+The sandbox worker also needs the CSP shown in the generated `STATIC_HOSTING.md`.
+The included `_headers` and `.htaccess` cover hosts that support those standard
+configuration formats. Hosts that ignore both files need the equivalent headers
+configured in their control panel.
 
 ## Cailville multi-site demo
 
