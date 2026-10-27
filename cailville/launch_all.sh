@@ -23,6 +23,7 @@ THEME_ENABLED="${NSDEPLOY_THEME:-1}"
 THEME_REFRESH="${NSDEPLOY_THEME_REFRESH:-0}"
 OPEN_BROWSER="${NSDEPLOY_OPEN_BROWSER:-1}"
 PRIVATE_STUDIO_ENABLED="${NSDEPLOY_PRIVATE_STUDIO:-1}"
+TS_PACKAGE_ENABLED="${NSDEPLOY_TS_PACKAGE:-1}"
 private_studio_ports=("$PRIVATE_STUDIO_HTTP_PORT" "$PRIVATE_STUDIO_GRPC_PORT" "$PRIVATE_STUDIO_NSFLOW_PORT")
 ROUTING="${NSDEPLOY_ROUTING:-port}"
 BASE_DOMAIN="${NSDEPLOY_BASE_DOMAIN:-localhost}"
@@ -47,6 +48,11 @@ if [[ ! "$THEME_ENABLED" =~ ^(0|false|no)$ ]]; then
   if [[ ! "$THEME_REFRESH" =~ ^(0|false|no)$ ]]; then
     theme_args+=(--theme-refresh)
   fi
+fi
+
+runtime_args=()
+if [[ "$TS_PACKAGE_ENABLED" =~ ^(0|false|no)$ ]]; then
+  runtime_args=(--no-ts-package)
 fi
 
 if [[ -n "${NSDEPLOY_PYTHON:-}" ]]; then
@@ -245,6 +251,9 @@ for i in "${!sites[@]}"; do
   fi
   if ((${#theme_args[@]})); then
     deploy_args+=("${theme_args[@]}")
+  fi
+  if ((${#runtime_args[@]})); then
+    deploy_args+=("${runtime_args[@]}")
   fi
   if [[ "$studio" != "-" ]]; then
     deploy_args+=(--studio "$studio")

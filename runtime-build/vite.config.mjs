@@ -1,5 +1,5 @@
 // vite.config.mjs: builds nsdeploy's adapters over @cognizant-ai-lab/neuro-san-ts-package
-// into nsdeploy/runtime/generated/, which is build output and not checked in:
+// into nsdeploy/runtime/ts-package/generated/, which is build output and not checked in:
 //   browser/     our code from runtime-build/, unminified: browser/neuro-san.mjs (the
 //                entry the runtime imports) and the network and session adapters
 //   neuro-san/   the package, which is already built for the browser: its own Node
@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const generated = path.resolve(root, "..", "nsdeploy", "runtime", "generated");
+const generated = path.resolve(root, "..", "nsdeploy", "runtime", "ts-package", "generated");
 const DEBUG = !!process.env.DEBUG;
 
 function chunkFor(id) {

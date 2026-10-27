@@ -2,7 +2,7 @@
   "name": "nsdeploy-runtime-build",
   "private": true,
   "type": "module",
-  "description": "Builds nsdeploy's adapters over @cognizant-ai-lab/neuro-san-ts-package into nsdeploy/runtime/generated/.",
+  "description": "Builds nsdeploy's adapters over @cognizant-ai-lab/neuro-san-ts-package into nsdeploy/runtime/ts-package/generated/.",
   "engines": {
     "node": ">=26"
   },

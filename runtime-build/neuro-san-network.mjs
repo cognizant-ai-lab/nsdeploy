@@ -3,7 +3,7 @@
 // The npm package is the real neuro-san Python sources transpiled to TypeScript, so
 // the neuro-san logic the runtime needs comes from there rather than being written
 // here. vite.config.mjs builds this file for the browser into
-// runtime/generated/browser/, which generated-bridge.js loads.
+// runtime/ts-package/generated/browser/, which generated-bridge.js loads.
 //
 // Every export here is a thin adapter over a package class. Where the package's
 // transpiled code does not work yet, the adapter works around it and the comment

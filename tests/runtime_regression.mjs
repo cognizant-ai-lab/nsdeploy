@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 
-import { Engine, assertRouterKey, isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopRouter } from "../nsdeploy/runtime/engine.js";
+import { Engine, assertRouterKey, isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopRouter } from "../nsdeploy/runtime/ts-package/engine.js";
 import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
-import { browserMockCompletion, isMockResponse, normalizeModelName } from "../nsdeploy/runtime/model.js";
+import { browserMockCompletion, isMockResponse, normalizeModelName } from "../nsdeploy/runtime/ts-package/model.js";
 import {
   consumeAgentBudget, consumeRemoteBudget, remoteIsInChain, requiresThirdPartyApproval,
-} from "../nsdeploy/runtime/composition.js";
-import { AgentNetwork, loadNeuroSan, initNetwork } from "../nsdeploy/runtime/agent-network.js";
+} from "../nsdeploy/runtime/ts-package/composition.js";
+import { AgentNetwork, loadNeuroSan, initNetwork } from "../nsdeploy/runtime/ts-package/agent-network.js";
 import { createTurnEventStream } from "../nsdeploy/runtime/execution-stream.js";
 import { TraceBus } from "../nsdeploy/runtime/trace.js";
 import { createTurnStatusController, statusTextForEvent } from "../nsdeploy/runtime/turn-status.js";

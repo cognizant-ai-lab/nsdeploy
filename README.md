@@ -15,8 +15,9 @@ dependency a hosted tool imports (e.g. `ddgs`) is auto-installed on demand.
 The browser runs the agents on **neuro-san's own agent loop**, from
 [`@cognizant-ai-lab/neuro-san-ts-package`](https://github.com/cognizant-ai-lab/neuro-san-ts-package)
 (the real neuro-san Python transpiled to TypeScript), bundled by
-[`runtime-build/`](runtime-build) into `nsdeploy/runtime/generated/` and driven by the page
-runtime in [`nsdeploy/runtime/`](nsdeploy/runtime). See
+[`runtime-build/`](runtime-build) into `nsdeploy/runtime/ts-package/generated/` and driven by the page
+runtime in [`nsdeploy/runtime/ts-package/`](nsdeploy/runtime/ts-package), which shares the rest of
+[`nsdeploy/runtime/`](nsdeploy/runtime) with the original runtime (`--no-ts-package`). See
 [The agent loop](#the-agent-loop). A normal served deployment uses Python for the
 build-time HOCON resolver, the web launcher, and one small MCP server per hostable
 tool. A static bundle uses Python only while building; the resulting webroot has no
@@ -55,7 +56,9 @@ instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
 `--site-dir` (editable HTML/CSS/JS source),
 `--site-url` (public origin), `--link`/`--links` (outbound network bindings),
 `--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime),
-`--no-cruse` (skip generative-UI injection), and the theming flags below.
+`--no-cruse` (skip generative-UI injection), `--no-ts-package` (run the original
+runtime instead of the neuro-san TS package; `NSDEPLOY_TS_PACKAGE=0` for Cailville),
+and the theming flags below.
 
 ## Shared subdomain gateway
 
@@ -840,7 +843,7 @@ low-footprint default (~4.7 GB).
 Agents run on neuro-san's `DirectAgentSession`, not on a reimplementation of it.
 The package is built for the browser: its Node stand-ins and third-party libraries are
 bundled into it. [`runtime-build/`](runtime-build) builds nsdeploy's adapters over it with
-Vite into `nsdeploy/runtime/generated/`. That folder is build output, like a `dist`, so
+Vite into `nsdeploy/runtime/ts-package/generated/`. That folder is build output, like a `dist`, so
 it is not checked in: build it before running nsdeploy or building a wheel, which ships
 whatever is there. The layout:
 
