@@ -11,6 +11,8 @@ export function isMockResponse(configuredMock, routeKind, model) {
 // "browser://mock"). Same decision as the launcher's mock router: call the first tool
 // not called yet with the user's request, then summarize what the tools returned.
 export const BROWSER_MOCK_ROUTER = "browser://mock";
+// The most text the mock puts in a search tool's query, as the launcher's mock.
+const MOCK_QUERY_LIMIT = 200;
 
 export function browserMockCompletion(messages = [], tools = []) {
   const called = new Set(messages.filter((m) => m?.role === "tool" && m.name).map((m) => m.name));
@@ -24,6 +26,10 @@ export function browserMockCompletion(messages = [], tools = []) {
     for (const name of schema.required || []) args[name] = request;
     for (const name of ["request", "inquiry", "search_terms", "query", "input"]) {
       if (schema.properties?.[name] || (schema.required || []).includes(name)) args[name] ??= request;
+    }
+    // A short search phrase, as the launcher's mock sends.
+    for (const name of ["search_terms", "query"]) {
+      if (typeof args[name] === "string") args[name] = args[name].slice(0, MOCK_QUERY_LIMIT);
     }
     return {
       content: "",
