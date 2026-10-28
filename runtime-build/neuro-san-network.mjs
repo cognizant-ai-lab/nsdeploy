@@ -14,7 +14,6 @@
 import {
   AgentNetwork,
   NetworkConfigFilterChain,
-  SlyDataRedactor,
   KeywordNetworkValidator,
   MissingNodesNetworkValidator,
   ToolNameNetworkValidator,
@@ -50,15 +49,6 @@ export function getAgentToolSpec(config, name) {
   return new AgentNetwork(config, "browser").get_agent_tool_spec(name);
 }
 
-// --- sly_data ------------------------------------------------------------------
-
-// PORT BACK: with allow_empty_dict false, SlyDataRedactor returns {} where the
-// Python returns None for an empty result. The runtime always passes true, so
-// this path is not exercised here.
-export function filterSlyData(agentSpec, configKeys, slyData, allowEmptyDict = true) {
-  return new SlyDataRedactor(agentSpec, configKeys, allowEmptyDict).filter_config(slyData);
-}
-
 // --- external agent / MCP references --------------------------------------------
 
 export function isMcpTool(toolRef) {
@@ -66,8 +56,8 @@ export function isMcpTool(toolRef) {
 }
 
 // URL parsing is neuro-san's ExternalAgentParsing; see external-agent-parsing.mjs for
-// the workaround that makes it run.
-export { parseExternalAgent, isExternalAgent, getSafeAgentName } from "./external-agent-parsing.mjs";
+// where it still differs from Python.
+export { parseExternalAgent, isExternalAgent } from "./external-agent-parsing.mjs";
 
 // --- validation ------------------------------------------------------------------
 
@@ -94,12 +84,12 @@ function networkValidators(networkName) {
 // Returns error strings, empty when the network is valid.
 export function validateNetwork(config, networkName = "browser") {
   const errors = [];
-  if (!Array.isArray(config?.tools) || config.tools.length === 0) {
-    // WORKAROUND: ToolNameNetworkValidator throws on a network with no tools
-    // ("Cannot read properties of undefined (reading 'slice')"), so that case is
-    // reported here instead of reaching it.
-    // PORT BACK: fix the transpiled ToolNameNetworkValidator for an empty network.
-    errors.push("network has no 'tools' list");
+  if (!Array.isArray(config?.tools) && config?.tools != null) {
+    // WORKAROUND: ToolsShapeValidator throws when tools isn't a list ("Cannot use
+    // 'in' operator to search for 'name' in ..."), so that case is reported here
+    // instead of reaching it.
+    // PORT BACK: fix the transpiled ToolsShapeValidator for a tools value that isn't a list.
+    errors.push("network's 'tools' is not a list");
     return errors;
   }
   for (const validator of networkValidators(networkName)) {
