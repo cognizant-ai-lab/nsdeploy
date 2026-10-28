@@ -118,6 +118,13 @@ python -m nsdeploy examples/link_demo_travel_agency.hocon \
   --static-bundle --out ./dist/travel
 ```
 
+Theme design can run in that same command. Set `OPENAI_API_KEY` (or pass
+`--theme-key`) and add `--theme`. If an editable `sites/<network>/` package was
+already created by an earlier run, add `--theme-refresh` to replace its generated
+layout, CSS, and theme metadata; without `--theme-refresh`, nsDeploy deliberately
+reuses the existing editable design. The `(+CRUSE generative UI)` build message is
+about runtime UI support and does not indicate that an AI theme was generated.
+
 Preview that bundle with any ordinary static server:
 
 ```bash
