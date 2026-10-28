@@ -234,6 +234,24 @@
         "mx": 25,
         "my_px": 1276
       }
+    },
+    {
+      "id": "commerce_arbiter",
+      "name": "Cailville Commerce Arbiter",
+      "description": "Independent negotiation for private stewards, sealed bids, and simulated settlement",
+      "kind": "Commerce arbiter",
+      "type": "broker",
+      "icon": "scale",
+      "port": 8105,
+      "hocon": "commerce_arbiter.hocon",
+      "site_dir": "sites/commerce_arbiter",
+      "base": true,
+      "position": {
+        "x": 76,
+        "y": 57,
+        "mx": 25,
+        "my_px": 1390
+      }
     }
   ],
   "relationships": [
@@ -468,6 +486,18 @@
     [
       "harbor_town_hall",
       "fix_and_found"
+    ],
+    [
+      "seabreeze_inn",
+      "commerce_arbiter"
+    ],
+    [
+      "commerce_arbiter",
+      "seabreeze_inn"
+    ],
+    [
+      "butterpink_family",
+      "commerce_arbiter"
     ]
   ]
 }

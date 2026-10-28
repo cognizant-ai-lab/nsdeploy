@@ -25,7 +25,7 @@
  * one.
  */
 import { api } from '../api/client.js';
-import { acceleratorLink } from '../components/acceleratorLink.js?v=94';
+import { acceleratorLink } from '../components/acceleratorLink.js?v=120';
 import { toast } from '../components/toast.js';
 import { $, esc, icon, onClick, render } from '../util/dom.js';
 import { displayName, isLive } from '../util/format.js';
@@ -37,7 +37,7 @@ import { showAgentDescriptionModal } from '../components/agentDescriptionModal.j
 import { act, iconAction, restart } from './directory.js';
 import { getOrg, onOrgChange } from '../util/org.js';
 import { editDesign } from '../components/designStudio.js';
-import { openLinkPrompt } from '../components/linkPromptModal.js?v=94';
+import { openLinkPrompt } from '../components/linkPromptModal.js?v=120';
 import { showPeerGraph } from '../components/peerGraphModal.js';
 
 const REFRESH_MS = 5000;
@@ -423,7 +423,10 @@ function listTable(view, links, org, already) {
              can afford to give room back. -->
         <colgroup>
           ${selecting() ? '<col style="width:3.5rem">' : ''}
-          <col style="width:21%"><col style="width:14%"><col style="width:8%">
+          <!-- Organization drops 14% -> 11% now that .cell-org caps it at ~14
+               characters: the column no longer has to be wide enough for an arbitrary
+               name, so the 3% goes to Network, which truncates far more often. -->
+          <col style="width:24%"><col style="width:11%"><col style="width:8%">
           <col style="width:11%"><col style="width:24%"><col style="width:22%">
         </colgroup>
         <thead>
@@ -818,7 +821,10 @@ function row(dep, org, links = new Map(), starred = new Set(), already = new Set
          paginated it is a column, and "yours" is marked here instead of on a group
          so a reader can still see at a glance which rows they can act on. -->
     <td>
-      <div class="cell-title">${esc(orgOf(dep))}</div>
+      <!-- title carries the full name: the cell truncates at ~14 characters (see
+           .cell-org in components.css) and a reader needs some way to read the rest
+           without opening the row. -->
+      <div class="cell-title cell-org" title="${esc(orgOf(dep))}">${esc(orgOf(dep))}</div>
       ${mine ? '<div class="cell-sub"><span class="org-group__mine">yours</span></div>' : ''}
     </td>
     <td>${statusPill(dep.status)}</td>

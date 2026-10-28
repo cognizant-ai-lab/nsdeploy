@@ -10,6 +10,38 @@ export function isMockResponse(configuredMock, routeKind, model) {
   return !!configuredMock || routeKind === "mock" || /neuro-san-mock/.test(model || "");
 }
 
+export function browserMockCompletion(messages = [], tools = []) {
+  const called = new Set(messages.filter((m) => m?.role === "tool" && m.name).map((m) => m.name));
+  const available = (tools || []).map((tool) => tool?.function).filter((fn) => fn?.name);
+  const next = available.find((fn) => !called.has(fn.name));
+  const lastUser = [...messages].reverse().find((m) => m?.role === "user");
+  const request = typeof lastUser?.content === "string" ? lastUser.content : JSON.stringify(lastUser?.content || "");
+  if (next) {
+    const args = {};
+    const schema = next.parameters || {};
+    for (const name of schema.required || []) args[name] = request;
+    for (const name of ["request", "inquiry", "search_terms", "query", "input"]) {
+      if (schema.properties?.[name] || (schema.required || []).includes(name)) args[name] ??= request;
+    }
+    return {
+      content: "",
+      toolCalls: [{
+        id: `call_${next.name}`,
+        type: "function",
+        function: { name: next.name, arguments: JSON.stringify(args) },
+      }],
+      finishReason: "tool_calls",
+      usage: null,
+      model: "neuro-san-mock-browser",
+    };
+  }
+  const results = messages.filter((m) => m?.role === "tool").map((m) => String(m.content || ""));
+  const content = results.length
+    ? `(mock summary) Based on the tools I consulted: ${results.join(" ").slice(0, 1200)}`
+    : "(mock) I have no grounded tool output to summarize for this request.";
+  return { content, toolCalls: [], finishReason: "stop", usage: null, model: "neuro-san-mock-browser" };
+}
+
 //
 // In production this is @langchain/openai's ChatOpenAI pointed at a router base
 // URL. Here it is a direct fetch to any OpenAI-compatible endpoint (LiteLLM,
@@ -28,7 +60,7 @@ export class LlmClient {
   // messages: [{role, content, tool_calls?, tool_call_id?, name?}]
   // tools: [{type:'function', function:{name, description, parameters}}]
   // onContentDelta: (text) => void  — streamed natural-language tokens
-  async chat({ model, messages, tools, origin, parentSpan, onContentDelta }) {
+  async chat({ model, messages, tools, origin, parentSpan, onContentDelta, signal }) {
     model = normalizeModelName(model);
     // A real (non-mock) router with no API key: refuse rather than forward the
     // placeholder "demo" to a live provider (which returns a confusing 401). This
@@ -59,6 +91,25 @@ export class LlmClient {
     }
 
     try {
+      if (this.baseUrl === "browser://mock") {
+        signal?.throwIfAborted?.();
+        const result = browserMockCompletion(messages, tools);
+        if (result.content) {
+          onContentDelta?.(result.content);
+          this.trace?.update(span, { streamChunk: result.content });
+        }
+        this.trace?.end(span, {
+          finishReason: result.finishReason,
+          contentChars: result.content.length,
+          toolCalls: result.toolCalls.map((t) => t.function.name),
+          usage: null,
+          mock: true,
+          verifiedReal: false,
+          respModel: result.model,
+          routeKind: "browser-mock",
+        });
+        return result;
+      }
       const resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
@@ -66,6 +117,7 @@ export class LlmClient {
           ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
         },
         body: JSON.stringify(body),
+        signal,
       });
       if (!resp.ok) {
         const txt = await resp.text().catch(() => "");
@@ -73,7 +125,7 @@ export class LlmClient {
       }
 
       const routeKind = resp.headers.get("X-Nsdeploy-LLM-Route") || "";
-      const result = await this._readSse(resp, onContentDelta, span);
+      const result = await this._readSse(resp, onContentDelta, span, signal);
       const respMock = isMockResponse(this.mock, routeKind, result.model);
       this.trace?.end(span, {
         finishReason: result.finishReason,
@@ -87,13 +139,23 @@ export class LlmClient {
       });
       return result;
     } catch (err) {
-      this.trace?.fail(span, err);
+      if (err?.name === "AbortError" && signal?.aborted) {
+        this.trace?.end(span, { status: "steered", interrupted: true });
+      } else {
+        this.trace?.fail(span, err);
+      }
       throw err;
     }
   }
 
-  async _readSse(resp, onContentDelta, span) {
+  async _readSse(resp, onContentDelta, span, signal) {
     const reader = resp.body.getReader();
+    const cancel = () => reader.cancel(signal?.reason).catch(() => {});
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) {
+      await cancel();
+      signal.throwIfAborted();
+    }
     const dec = new TextDecoder();
     let buf = "";
     let content = "";
@@ -110,8 +172,10 @@ export class LlmClient {
       const delta = choice.delta || {};
       if (delta.content) {
         content += delta.content;
-        onContentDelta?.(delta.content);
-        this.trace?.update(span, { streamChunk: delta.content });
+        if (!signal?.aborted) {
+          onContentDelta?.(delta.content);
+          this.trace?.update(span, { streamChunk: delta.content });
+        }
       }
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
@@ -125,23 +189,28 @@ export class LlmClient {
       if (choice.finish_reason) finishReason = choice.finish_reason;
     };
 
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let nl;
-      while ((nl = buf.indexOf("\n")) >= 0) {
-        const line = buf.slice(0, nl).trim();
-        buf = buf.slice(nl + 1);
-        if (!line || !line.startsWith("data:")) continue;
-        const payload = line.slice(5).trim();
-        if (payload === "[DONE]") continue;
-        try {
-          handleChunk(JSON.parse(payload));
-        } catch {
-          /* ignore malformed keep-alive lines */
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        signal?.throwIfAborted();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line || !line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (payload === "[DONE]") continue;
+          try {
+            handleChunk(JSON.parse(payload));
+          } catch {
+            /* ignore malformed keep-alive lines */
+          }
         }
       }
+    } finally {
+      signal?.removeEventListener("abort", cancel);
     }
 
     return { content, toolCalls: toolCalls.filter(Boolean), finishReason, usage, model };

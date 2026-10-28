@@ -15,6 +15,7 @@ This mirrors cailville/launch_all.sh, which supervises the 13-site demo the same
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import re
@@ -292,6 +293,41 @@ def probe_host(deploy_host: str) -> str:
     return "127.0.0.1" if deploy_host in ("", "0.0.0.0", "::", "*") else deploy_host
 
 
+@functools.lru_cache(maxsize=4)
+def engine_supports_host(python_exe: str) -> bool:
+    """Whether this nsdeploy build accepts `--host`.
+
+    Asked rather than assumed. `--host` is the only flag the service needs that
+    upstream nsdeploy does not ship, and three successive engine drops have removed
+    it — each time producing a deployment that reports `ready` and serves nothing,
+    because the site bound loopback inside a bridged container. Probing turns that
+    into a decision the service can act on.
+
+    Reads `--help` instead of importing nsdeploy's argument parser: the parser is
+    built inside `main()` and is not importable without running it, and the help text
+    is the same contract the command line is built against.
+
+    Cached because it spawns a subprocess and the answer cannot change while the
+    process is alive — a new engine means a new container. Keyed on the interpreter so
+    a test can point at a different one.
+
+    Fails CLOSED: anything unexpected (timeout, non-zero exit, missing module) reports
+    False, so the service raises a clear configuration error rather than passing a flag
+    that might not parse.
+    """
+    try:
+        result = subprocess.run(
+            [python_exe, "-m", "nsdeploy", "--help"],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(REPO_ROOT),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if result.returncode != 0:
+        return False
+    return "--host" in (result.stdout or "")
+
+
 def bundle_ready(out_dir: Path, name: str) -> bool:
     """True once nsdeploy has written the artifacts `summarize_build` reads.
 
@@ -472,6 +508,18 @@ def summarize_build(out_dir: Path, name: str, log_text: str) -> NetworkSummary:
     networks = manifest.get("networks") or [{}]
     summary.description = networks[0].get("description", "")
     summary.sample_queries = networks[0].get("sample_queries") or []
+    # The front-man's authored purpose, which theming does not touch. Read from the
+    # resolved config rather than the manifest: `networks[0].description` is the field
+    # the theme pass rewrites, so on a themed build that is a tagline while this is
+    # still the paragraph the author wrote. Both are kept — see NetworkSummary.
+    summary.front_man_description = next(
+        (
+            _agent_description(agent)
+            for agent in (network.get("tools") or [])
+            if isinstance(agent, dict) and agent.get("name") == summary.front_man
+        ),
+        "",
+    )
 
     parsed = _parse_report(log_text)
     summary.hostable_tools = parsed["hostable_tools"]
@@ -605,7 +653,7 @@ class Supervisor:
         return changed
 
     def _repair_summaries(self) -> List[str]:
-        """Re-derive network summaries that were persisted empty.
+        """Re-derive network summaries that were persisted empty or incomplete.
 
         A record marked ready before its bundle was written stored a blank summary:
         no front-man, no agent count, and — the part that matters for a multi-network
@@ -613,12 +661,27 @@ class Supervisor:
         that can in fact call each other. The generated bundle is still on disk and is
         the authoritative source, so the summary is rebuilt from it at startup rather
         than left wrong until someone redeploys.
+
+        It also backfills summaries written before a field existed. `network_json` is a
+        point-in-time snapshot of whatever NetworkSummary looked like at build time, so
+        adding a field leaves every older record without it — and a console that reads
+        the new field then behaves differently for old and new networks with nothing to
+        tell them apart. Re-deriving from the bundle fixes that on the next restart
+        rather than demanding a hundred redeployments.
         """
         repaired: List[str] = []
         for row in self.store.list_deployments():
             summary = row.get("network") or {}
-            if summary.get("agent_count"):
-                continue  # already populated
+            # Populated AND carrying every field this version knows about. The
+            # front-man check is the backfill: a pre-field record has an agent_count
+            # but no front_man_description, and is re-derived once. Guarded on
+            # `front_man` so a genuinely description-less front-man is not re-read on
+            # every single startup.
+            complete = summary.get("agent_count") and (
+                summary.get("front_man_description") or not summary.get("front_man")
+            )
+            if complete:
+                continue
             out_dir = Path(row["work_dir"]) / "site"
             if not bundle_ready(out_dir, row["name"]):
                 continue  # never built; nothing to recover
@@ -1020,13 +1083,34 @@ class Supervisor:
             "--site-url", dep.url,
             "--upstream", opts.upstream or s.upstream,
         ]
-        # Only passed when it differs from nsdeploy's own default. `--host` is a
-        # flag this project added; leaving it off unless it is actually needed is
-        # what lets the service run against an unmodified nsdeploy. It is needed
-        # only for the port-per-deployment model, where sites are reached directly;
-        # with hostname routing the proxy reaches them over loopback.
+        # `--host` is the ONE flag this service has ever needed that upstream nsdeploy
+        # does not ship. Three successive engine drops have removed it, each time
+        # silently: sites bind loopback inside the container, Docker's `-p` forwards to
+        # the container's interface rather than its loopback, and every site answers
+        # connection refused while the build still reports `ready`.
+        #
+        # So it is no longer assumed to exist. `engine_supports_host()` asks the engine
+        # once, and a drop that lacks the flag now degrades to a clear startup error
+        # instead of either a crash ("unrecognized arguments: --host") or silence.
+        #
+        # The flag is only needed at all for the port-per-deployment model on a bridged
+        # container. Two deployments avoid it completely and need no engine patch:
+        #   * `docker run --network host` — the container shares the host's network
+        #     namespace, so a site on 127.0.0.1 is on the host's loopback where a
+        #     reverse proxy already reaches it. DEPLOY_HOST stays 127.0.0.1.
+        #   * SUBDOMAIN_TEMPLATE + siteproxy.py — sites stay on loopback and are routed
+        #     by hostname through the service's own port.
         if s.deploy_host and s.deploy_host != "127.0.0.1":
-            cmd += ["--host", s.deploy_host]
+            if engine_supports_host(s.python_exe):
+                cmd += ["--host", s.deploy_host]
+            else:
+                raise DeploymentError(
+                    f"DEPLOY_HOST is {s.deploy_host!r}, but this nsdeploy build has no "
+                    f"--host flag, so a site cannot be told to bind anything but "
+                    f"loopback. Either run the container with `--network host` and set "
+                    f"DEPLOY_HOST=127.0.0.1, or set SUBDOMAIN_TEMPLATE and let "
+                    f"siteproxy route by hostname. See nsdeploy_service/README.md."
+                )
         if s.facade_upstream:
             cmd += ["--facade-upstream", s.facade_upstream]
         if s.studio:

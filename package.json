@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build:runner": "node scripts/bundle-runner.mjs",
-    "test": "node tests/runtime_regression.mjs && node --test tests/cruse.test.mjs"
+    "test": "node tests/runtime_regression.mjs && node --test tests/cruse.test.mjs tests/link_prompt.test.mjs"
   },
   "devDependencies": {
     "@langchain/core": "1.2.12",

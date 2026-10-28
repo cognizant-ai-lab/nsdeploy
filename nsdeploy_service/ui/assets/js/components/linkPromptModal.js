@@ -14,10 +14,12 @@
  * stem — which is exactly what a person copying a URL out of the address bar does
  * not have. So the console composes the reference itself.
  *
- * WHAT IT ASKS FOR. One new agent per peer, with the peer's URL as that agent's
- * only tool — the shape that is known to work with a HOCON generator. nsdeploy reads
- * a full URL in `tools` as a peer agent network (resolve.py's `external_networks`),
- * and the service picks those up as `peer_urls` so they still draw on the map.
+ * WHAT IT ASKS FOR. That each peer URL end up in some agent's `tools` — and nothing
+ * more specific than that. nsdeploy reads a full URL in `tools` as a peer agent
+ * network (resolve.py's `external_networks`), and the service picks those up as
+ * `peer_urls` so they draw on the map. *Which* agent owns it does not matter to
+ * either, so the prompt leaves that choice to the generator; versions that dictated
+ * "add a new agent per peer" are exactly the ones that failed (see connectPromptFor).
  *
  * The alternative is a named link slot bound through a top-level `links` block. That
  * keeps every URL in one place, so re-pointing a link later is a one-line edit
@@ -35,7 +37,7 @@ import { toast } from './toast.js';
 import { $, esc, icon, render } from '../util/dom.js';
 import { displayName } from '../util/format.js';
 import { openModal } from './modal.js';
-import { acceleratorLink } from './acceleratorLink.js?v=94';
+import { acceleratorLink } from './acceleratorLink.js?v=120';
 
 /** An agent name has to be usable as a bare HOCON identifier. */
 const SLOT_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -91,47 +93,136 @@ export function oneLiner(text, max = 120) {
 }
 
 /**
+ * What to tell a generator the target network is for.
+ *
+ * How much `description` is worth depends on deploy-time theming. With theming off it
+ * is the front-man's own `function.description` — a real paragraph ("Leads and
+ * coordinates end-to-end inventory operations across retail locations/warehouses by
+ * setting policies, KPIs, SLAs...") — but with theming on the LLM replaces it with a
+ * brand tagline. "Prep, staff, sell, recover." is the whole description of a
+ * sixteen-agent food-truck network, and most deployments are themed.
+ *
+ * `sample_queries` survive theming intact and are concrete ("Build a next-day
+ * operations plan for Friday dinner service... 180 covers and rain. Include staffing
+ * by station, prep pars, ticket-time target"), so one of them restores some of the
+ * capability the tagline dropped.
+ *
+ * The example is a fallback, not a companion: it appears only when the description is
+ * short enough to be a tagline. The connect prompt switches it off entirely
+ * (`withExample: false`) — a bullet carries one line per peer and a second quoted
+ * sentence pushes the URL off the side — so it survives for the dialog's own callers.
+ */
+// 420 so a front-man's purpose arrives whole. These descriptions are written to tell
+// one agent what another agent does — "Top-level orchestrator for the Cognizant
+// careers helper. Clarifies the candidate's goal, gathers minimal context, and routes
+// to the right specialist for job search, job details and fit, application materials,
+// Taleo login/application help, status tracking, interview prep, or accommodations" is
+// ~300 characters, and the part a designer needs is the *routing list* at the end.
+//
+// At 160 oneLiner stopped at the first sentence — "Top-level orchestrator for the
+// Cognizant careers helper." — which names the network and says nothing about what it
+// can be asked, i.e. it reintroduces the problem this change exists to fix. The cap is
+// still there to stop one pathological description dominating a multi-peer prompt.
+function targetBrief(dep, { max = 420, withExample = true } = {}) {
+  const net = dep?.network || {};
+  // The front-man's own `function.description` first, the network blurb second.
+  //
+  // WHY. With theming on, `description` is the LLM's brand tagline — "Sharper shifts.
+  // Happier scoops." — while the front-man's description is the author's account of
+  // what the network does and routes to. A tagline cannot tell an agent-network
+  // designer what a down-chain agent is for, which is the whole job of this prompt.
+  //
+  // The fallback is not dead code: `front_man_description` is recorded at build time,
+  // so a record built before that field existed has none. _repair_summaries() backfills
+  // those from the on-disk bundle at startup, but until a restart the tagline is still
+  // better than an empty bullet.
+  //
+  // No trailing-punctuation strip: these are spliced in as quoted material, so a
+  // description ending in '.' is a finished sentence. Stripping it turned
+  // "Prep sharp. Serve fast. Close clean." into "...Close clean", which reads as
+  // truncation. (The doubled '..' that strip once guarded against came from the old
+  // `handles "${summary}".` construction, which no longer exists.)
+  const handles = oneLiner(net.front_man_description || net.description, max);
+
+  // The example is only worth its length when the description is too thin to write a
+  // function.description from — i.e. when theming replaced it with a tagline and no
+  // agent description was recorded to fall back on. A real paragraph needs no help.
+  // 60 is the cut: "Prep, staff, sell, recover." is 27, a front-man purpose is 200+.
+  //
+  // `withExample` is off for a multi-peer list, where every peer gets one line and the
+  // list is meant to be scanned down the agent names. A second quoted sentence per row
+  // pushes the URL off the side and turns a table back into prose.
+  const example = withExample && handles.length < 60
+    ? oneLiner((net.sample_queries || [])[0], 90)
+    : '';
+
+  return { handles, example };
+}
+
+/**
  * The text a person pastes into whatever tool regenerates their HOCON.
  *
- * Kept to the three things that have to be true, with no explanation of why — the
- * reader is a code-generating tool, and the reasoning that used to be in here
- * (what makes a name a bindable slot, which error a bare URL produces) is context
- * for a person, not an instruction. It lives in this module's header instead.
+ * DO NOT reword this without a real generator and a real HOCON to test against. Four
+ * versions have been tried on actual uploads and three failed; every one of them read
+ * perfectly well on the page. The record, because it is the only thing that justifies
+ * the current shape:
  *
- * The one piece of emphasis worth its words is "exactly as written": a tool that
- * tidies the URL by dropping its path puts the operator straight back on the
- * "No published network named ..." error this whole feature exists to avoid.
+ *   1. "add a new agent whose only tool is this web address" — the generator wrote the
+ *      address into the prose of `description`/`instructions` and gave the agent no
+ *      `tools` key at all. nsdeploy filed both peers as dangling `link_slots`: the
+ *      network deployed, the agents were reachable, nothing connected.
+ *   2. The same, with `"tools": ["<address>"] and nowhere else`, a placeholder ban and
+ *      a count self-check — placement became correct (every address that appeared was
+ *      in a tools list) but at NINE peers only four arrived, plus one invented
+ *      `https://example.com/...`. A coverage failure, not a placement one.
+ *   3. An operator's own terse wording, which dropped all field names: worked at three
+ *      peers, then put the addresses back in prose at two. Coverage was never the
+ *      problem; placement was unpredictable.
+ *
+ * So the two failure modes are independent, and this version takes what each attempt
+ * got right. "Find the right place in the agent network" stays — letting the generator
+ * choose which agent owns the tool is what fixed coverage, and prescribing a wrapper
+ * agent per peer is what broke it. The `"tools"` field is named again, with the prose
+ * placement ruled out explicitly, because that is the only thing that has ever made
+ * placement reliable.
+ *
+ * Still deliberately absent, all present in failed versions: the source network's name,
+ * the front-man's name, the placeholder ban, the completeness self-check, and "return
+ * the complete HOCON with everything else unchanged". The URL stays alone on its own
+ * line, which is how the working version had it and keeps it copyable verbatim.
+ *
+ * Coverage at high peer counts is NOT solved here and probably cannot be solved by
+ * wording — nine at once failed under the most explicit prompt of the four. Link two
+ * or three at a time.
+ *
+ * One peer and many peers use the same shape, so there is no branch here. `source` is
+ * unused and kept only because callers pass it.
  */
-export function connectPromptFor(entries, source = null) {
+export function connectPromptFor(entries, source = null) { // eslint-disable-line no-unused-vars
   if (!entries.length) return '';
-  const many = entries.length > 1;
-  const subject = source?.name
-    ? `my agent network "${source.name}"`
-    : 'my agent network';
-
   return [
-    `In the HOCON for ${subject}, add ${many ? 'these agents' : 'this agent'}. `
-      + `Use the URLs exactly as written — the name on the end of each one is `
-      + `required.`,
-    '',
-    // One instruction per peer, in the shape that is known to work with a HOCON
-    // generator: name the agent to create, say what the target is for, then give
-    // the URL last. The agent name is the editable field in the dialog, so
-    // "Add a payments agent" is a rename away from "Add a bofa_credit_card_chooser
-    // agent" — which is why that field is labelled for an agent, not a slot.
-    //
-    // The description is quoted rather than spliced into the sentence. With theming
-    // on it is the LLM's tagline — "Official terms, clearer card choices" — a noun
-    // phrase that reads wrong after a verb and starts with a capital mid-sentence.
-    // Quoted, it stands as the network's own words and its case stops mattering.
-    ...entries.map(({ dep, slot }) => {
-      const summary = oneLiner(dep.network?.description);
-      return `    Add a ${slot} agent, with this URL as its tool.`
-        + (summary ? ` This network handles "${summary}".` : '')
-        + ` ${peerReference(dep)}`;
+    'Find the right place in the agent network and connect the following agents as tools. '
+      + 'Put each address in that agent\'s "tools" list — "tools": ["<address>"] — '
+      + 'not in its description or instructions:',
+    ...entries.flatMap(({ dep, slot }) => {
+      // `described as “…”` rather than the description running straight on from the
+      // name. Two things that buys: the reader can see where the agent's name stops
+      // and the quoted material starts, and a description that itself contains commas
+      // and full stops — most of them do — no longer reads as part of the sentence
+      // around it. Curly quotes on purpose: the straight pair already appears in
+      // `"tools": ["<address>"]` on the line above, and reusing it here would make the
+      // quoted prose look like more HOCON.
+      //
+      // The description still gives up a trailing full stop so `”, use:` reads as one
+      // clause. Only the final stop goes — these are internally punctuated ("Sharper
+      // shifts. Faster fixes. Better dogs.") and stripping more would read as
+      // corruption. A description ending in anything else, such as the "(checklists,
+      // SOPs, schedules, templates, KPIs, and prioritized next steps)" case, is left
+      // exactly as written.
+      const { handles } = targetBrief(dep, { withExample: false });
+      const purpose = handles ? `, described as “${handles.replace(/\.$/, '')}”` : '';
+      return [`- For ${slot}${purpose}, use:`, peerReference(dep)];
     }),
-    '',
-    'Return the complete HOCON with everything else unchanged.',
   ].join('\n');
 }
 
@@ -178,10 +269,10 @@ function showConnectPrompt(candidates, preselectIds, source) {
       render(body, `
         <p class="field__hint">
           These are the networks <strong>your own</strong> network will be able to
-          call. Paste the prompt into the tool that regenerates your HOCON, then
-          upload it — the link is added to your network, not to theirs, so any
-          organization's network can be a target. Every URL below already has the
-          target network's name appended, which the runtime requires.
+          call. Tick the ones you want, copy the prompt, paste it into the tool that
+          writes your HOCON, then upload the updated file. The connection is added to
+          your network, not to theirs, so you can point at any organization's network.
+          The web addresses below are already complete — copy them exactly as they are.
         </p>
         ${acceleratorLink()}
 
@@ -248,6 +339,11 @@ function showConnectPrompt(candidates, preselectIds, source) {
           : (current.length
             ? 'Fix the slot names above to see the prompt.'
             : 'Tick one or more networks above to build the prompt.');
+        // Grow with the peer list instead of sitting at a fixed 14. The prompt is
+        // three lines for one peer and one line longer per peer after that, so a
+        // fixed box was two-thirds empty in the common case and still scrolled at
+        // ten. Floor of 6 leaves room for the wrap the long first line always takes.
+        promptBox.rows = Math.min(16, Math.max(6, promptBox.value.split('\n').length + 3));
       }
 
       function paint() {

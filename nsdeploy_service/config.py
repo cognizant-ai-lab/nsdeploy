@@ -77,11 +77,28 @@ class Settings:
 
     # --- where deployed sites listen, and how their URL is spelled ---
     # deploy_host is the address each site's own listener binds, passed through as
-    # `nsdeploy --host`. Loopback is right on a workstation; in a container it must
-    # be 0.0.0.0 or nothing outside can reach the site. It is independent of
-    # public_scheme/public_host, which only shape the URL handed back to the caller
-    # — that must match what the browser will actually reach, and is baked into the
-    # generated bundle via --site-url.
+    # `nsdeploy --host`. It is independent of public_scheme/public_host, which only
+    # shape the URL handed back to the caller — that must match what the browser will
+    # actually reach, and is baked into the generated bundle via --site-url.
+    #
+    # LEAVE THIS AT LOOPBACK. The advice here used to be "in a container it must be
+    # 0.0.0.0 or nothing outside can reach the site", which was true of a *bridged*
+    # container and cost this project three outages: `--host` is the one flag nsdeploy
+    # does not ship, and three successive engine drops removed it. Each time, sites
+    # bound container-loopback, Docker's published port forwarded to the container's
+    # interface instead, and every URL answered connection refused while the build
+    # reported `ready`.
+    #
+    # Both container shapes that work need no flag at all:
+    #   * `docker run --network host` — the container shares the host's network
+    #     namespace, so a site on 127.0.0.1 is already on the host's loopback where a
+    #     reverse proxy reaches it. No `-p` publishing, no `--host`.
+    #   * SUBDOMAIN_TEMPLATE + siteproxy.py — sites stay on loopback and are reached
+    #     by hostname through the service's own single port.
+    #
+    # Setting this to anything else makes the service probe for `--host`
+    # (supervisor.engine_supports_host) and refuse the deployment outright if the
+    # engine cannot honour it — loudly, rather than serving nothing.
     deploy_host: str = "127.0.0.1"
     public_scheme: str = "http"
     public_host: str = "127.0.0.1"
@@ -140,7 +157,23 @@ class Settings:
     # processes and ~200 MB (one site, one MCP facade, one host per hosted tool), so
     # measure against your own networks before going much higher.
     max_deployments: int = 60
-    max_concurrent_builds: int = 2
+    # How many builds may run at once. Read into a semaphore when the Supervisor is
+    # constructed, so changing it needs a restart, not a POST /settings.
+    #
+    # 4 rather than 2 because a build is I/O-bound, not CPU-bound: with theming on it
+    # spends 30-90s waiting on an HTTP call to the theme model while the CPUs sit idle.
+    # Two slots on a workload that is mostly *waiting* leaves throughput unused, and the
+    # queue is what a reader feels at event scale.
+    #
+    # Capped at 4 deliberately. Above the core count the LLM wait still overlaps fine,
+    # but a cold build can also `pip install` a tool's dependencies, and several of
+    # those at once contend for CPU and disk in a way that has not been measured.
+    #
+    # Safe to raise because a theme failure is not fatal: propose_theme() catches any
+    # exception, logs "using the default look" and returns an empty ThemeSpec, which
+    # __main__ turns into `theme or ThemeSpec()`. More concurrent calls hitting a rate
+    # limit costs plainer styling on some networks, not a failed deployment.
+    max_concurrent_builds: int = 4
     build_timeout_seconds: int = 600
     # Deployments are long-lived by design: an org's URL stays up until someone stops
     # it. Set a non-zero TTL only for demo/ephemeral installations.
@@ -149,7 +182,15 @@ class Settings:
     # How often the map view re-polls /graph. Served to the UI rather than hardcoded
     # there, so an operator can retune it without editing the frontend. The UI lets a
     # viewer pick a different interval for their own session.
-    map_refresh_seconds: int = 60
+    #
+    # 30, not 60: at an event the interesting change is someone else's network arriving
+    # or a new link appearing, and a minute of staleness is long enough for a reader to
+    # conclude nothing happened and stop watching. The cost is small — /graph is a pure
+    # projection over the deployment rows with `suggest=false` (the default), measured
+    # at ~20ms for 100 networks and a 58KB payload — so even 100 viewers at this
+    # cadence is a few requests a second. The UI caps whatever is advertised here at
+    # MAX_MAP_REFRESH_SECONDS, so this can only make the map fresher, never staler.
+    map_refresh_seconds: int = 30
     max_hocon_bytes: int = 512 * 1024
     log_tail_default: int = 200
 

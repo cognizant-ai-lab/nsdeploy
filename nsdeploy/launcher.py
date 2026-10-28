@@ -61,12 +61,14 @@ def scrubbed_env(base: Mapping[str, str]) -> Dict[str, str]:
 
 
 def _facade_command(python_exe: str, site_dir: Path, plan: DeploymentPlan, port: int,
-                    facade_port: int, facade_upstream: str) -> List[str]:
+                    facade_port: int, facade_upstream: str,
+                    site_base: Optional[str] = None) -> List[str]:
     """argv for the public MCP facade subprocess. It carries no credential: the facade
     only ever uses the caller's BYOK headers."""
     return [python_exe, "-m", "nsdeploy.facade", "--config",
             str(site_dir / f"{plan.network_name}.network.json"), "--site-base",
-            f"http://127.0.0.1:{port}", "--front-man", plan.front_man,
+            (site_base or f"http://127.0.0.1:{port}").rstrip("/"),
+            "--front-man", plan.front_man,
             "--port", str(facade_port), "--upstream", facade_upstream]
 
 
@@ -87,7 +89,8 @@ def _called_tool_names(messages: List[Dict[str, Any]]) -> set:
 
 
 def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: List[str],
-                 local_mcps: Optional[List[str]] = None, facade_mcp: Optional[str] = None):
+                 local_mcps: Optional[List[str]] = None, facade_mcp: Optional[str] = None,
+                 commerce=None):
     ext_mcp_re = re.compile(r"^/ext-mcp/(\d+)/mcp$")
     local_mcp_re = re.compile(r"^/_mcp/(\d+)/mcp$")
     local_mcps = local_mcps or []
@@ -114,6 +117,8 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
 
         def do_POST(self):
             path = self.path.split("?")[0]
+            if commerce and (path == "/commerce" or path.startswith("/commerce/")):
+                return commerce.handle(self)
             length = int(self.headers.get("Content-Length", 0) or 0)
             raw = self.rfile.read(length) if length else b""
             if path == "/v1/chat/completions":
@@ -343,6 +348,8 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
         # --- static files: /runtime/* from the runtime, else from the site -------
         def do_GET(self):
             path = self.path.split("?")[0]
+            if commerce and (path == "/commerce" or path.startswith("/commerce/")):
+                return commerce.handle(self)
             if path == "/mcp" and facade_mcp:
                 return self._mcp_proxy(facade_mcp, b"", "public facade", "GET")
             m = local_mcp_re.match(path)
@@ -473,10 +480,11 @@ def spawn_mcp_servers(plan: DeploymentPlan, studio_root: Path, python_exe: str) 
     return bindings
 
 
-def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, host: str = "127.0.0.1",
-          port: int = 8080, upstream: str = "https://api.openai.com/v1",
-          python_exe: Optional[str] = None, runtime_dir: Optional[Path] = None,
-          ext_mcps: Optional[List[str]] = None, facade_upstream: Optional[str] = None) -> None:
+def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int = 8080,
+          site_base: Optional[str] = None,
+          upstream: str = "https://api.openai.com/v1", python_exe: Optional[str] = None,
+          runtime_dir: Optional[Path] = None, ext_mcps: Optional[List[str]] = None,
+          facade_upstream: Optional[str] = None) -> None:
     python_exe = python_exe or sys.executable
     runtime_dir = runtime_dir or DEFAULT_RUNTIME_DIR
     ext_mcps = ext_mcps or []
@@ -492,15 +500,20 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, host: str 
         env = scrubbed_env(os.environ)
         env["PYTHONPATH"] = os.pathsep.join([repo_root, str(studio_root), env.get("PYTHONPATH", "")])
         facade_proc = subprocess.Popen(
-            _facade_command(python_exe, site_dir, plan, port, facade_port, facade_upstream),
+            _facade_command(python_exe, site_dir, plan, port, facade_port, facade_upstream,
+                            site_base),
             env=env, cwd=repo_root,
         )
         _wait_for_listener(facade_proc, facade_port)
+        from nsdeploy.commerce.service import from_plan
+        commerce = from_plan(plan, site_dir, site_base or f"http://127.0.0.1:{port}")
         httpd = ThreadingHTTPServer(
-            (host, port), make_handler(site_dir, upstream, runtime_dir, ext_mcps,
-                                        local_mcps, f"http://127.0.0.1:{facade_port}/mcp"))
-        url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}/"
+            ("127.0.0.1", port), make_handler(site_dir, upstream, runtime_dir, ext_mcps,
+                                               local_mcps, f"http://127.0.0.1:{facade_port}/mcp", commerce))
+        url = (site_base or f"http://127.0.0.1:{port}").rstrip("/") + "/"
         print(f"\n🌐  {plan.network_name} is live:  {url}")
+        if site_base:
+            print(f"    Loopback backend: 127.0.0.1:{port}")
         print(f"    LLM: mock router (no key) at /v1  ·  BYOK proxy at /byok/v1 → {upstream}")
         print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: caller BYOK → {facade_upstream}  ·  steward: {plan.network_name}_private_steward.hocon")
         if plan.hostable_tools:

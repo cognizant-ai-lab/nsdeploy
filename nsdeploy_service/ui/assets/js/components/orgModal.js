@@ -9,7 +9,7 @@
  */
 import { esc, render } from '../util/dom.js';
 import { openModal } from './modal.js';
-import { getOrg, setOrg } from '../util/org.js';
+import { getOrg, orgNameError, setOrg, ORG_NAME_MAX } from '../util/org.js';
 
 export function promptForOrg({ onSaved } = {}) {
   const current = getOrg();
@@ -24,9 +24,15 @@ export function promptForOrg({ onSaved } = {}) {
         </p>
         <div class="field">
           <label class="field__label" for="org-modal-input">Organization name</label>
-          <input class="input input--lg" type="text" id="org-modal-input" maxlength="120"
+          <!-- maxlength from the shared constant, not a literal: it read 120 — the
+               organization model's old cap — long after the API had settled on 40, so
+               the field accepted names the server would refuse. -->
+          <input class="input input--lg" type="text" id="org-modal-input"
+                 maxlength="${ORG_NAME_MAX}"
                  value="${esc(current)}" placeholder="e.g. Acme Logistics"
                  autocomplete="organization" spellcheck="false">
+          <p class="field__hint">Up to ${ORG_NAME_MAX} characters. Letters, numbers,
+             spaces and &amp; ' ( ) . , - / + #</p>
           <p class="field__error" id="org-modal-error" hidden></p>
         </div>
         <div class="modal__foot">
@@ -40,8 +46,12 @@ export function promptForOrg({ onSaved } = {}) {
 
       const save = () => {
         const value = input.value.trim();
-        if (!value) {
-          error.textContent = 'Enter your organization name to continue.';
+        // The same rule the API applies, checked here so an unusable name is refused
+        // while it is being typed rather than as a 422 after Launch. It used to check
+        // only for emptiness, which is how a very long name got through.
+        const why = orgNameError(value);
+        if (why) {
+          error.textContent = why;
           error.hidden = false;
           input.setAttribute('aria-invalid', 'true');
           input.focus();

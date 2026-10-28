@@ -254,6 +254,57 @@ class SummarizeBuildTest(unittest.TestCase):
         self.assertEqual(summary.front_man, "")
         self.assertEqual(summary.agent_count, 0)
 
+    def test_records_the_front_mans_own_purpose_separately_from_the_tagline(self):
+        """Theming rewrites `networks[0].description` and leaves the agent alone.
+
+        On a themed build the two diverge completely: the manifest carries a brand
+        tagline while the front-man still has the paragraph its author wrote. The
+        console's connect prompt needs the paragraph, because a tagline cannot tell an
+        agent-network designer what a down-chain agent actually does.
+        """
+        indented = "\n    Sets business priorities\n    and delegates execution.\n    "
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            (out / "agent-manifest.json").write_text(json.dumps({
+                "agent_mcp": {"front_man": "general_manager"},
+                "networks": [{"description": "Prep, staff, sell, recover."}],
+            }), encoding="utf-8")
+            (out / "food_truck_ops_network.network.json").write_text(json.dumps({
+                "tools": [
+                    {"name": "kitchen_prep_line_lead",
+                     "function": {"description": "Runs the prep line."}},
+                    # HOCON block strings arrive wrapped and indented.
+                    {"name": "general_manager",
+                     "function": {"description": indented}},
+                ],
+            }), encoding="utf-8")
+
+            summary = summarize_build(out, "food_truck_ops_network", "")
+
+        self.assertEqual(summary.description, "Prep, staff, sell, recover.")
+        # Whitespace collapsed, and taken from the front-man rather than the first agent.
+        self.assertEqual(
+            summary.front_man_description,
+            "Sets business priorities and delegates execution.",
+        )
+
+    def test_a_front_man_with_no_description_is_empty_not_an_error(self):
+        # Also covers a front-man absent from `tools` entirely, which `next(..., "")`
+        # has to absorb rather than raising StopIteration.
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            (out / "agent-manifest.json").write_text(json.dumps({
+                "agent_mcp": {"front_man": "nobody"},
+                "networks": [{"description": "x"}],
+            }), encoding="utf-8")
+            (out / "n.network.json").write_text(json.dumps({
+                "tools": [{"name": "someone_else", "function": {"description": "d"}}],
+            }), encoding="utf-8")
+
+            summary = summarize_build(out, "n", "")
+
+        self.assertEqual(summary.front_man_description, "")
+
 
 class WarningsTest(unittest.TestCase):
     def test_flags_dropped_tools_demo_agents_and_open_link_slots(self):
@@ -446,3 +497,288 @@ class SupervisorCreateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OrgNameLimitTest(unittest.TestCase):
+    """The upload fields that create an organization on first use are bounded.
+
+    An unbounded org_name let a deployment arrive with the service's own API token
+    pasted into it — 48 characters, which then rendered as an organization in the
+    directory, the filter dropdown and the map's hover callout, and widened the
+    filter until the control bar wrapped. These assert the bound exists on *both*
+    upload paths, because only one of them was ever going to be remembered.
+
+    Rejection happens at the HTTP layer (FastAPI validates Form/Query), not in the
+    supervisor, so these go through TestClient rather than supervisor.create.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _client(self):
+        from fastapi.testclient import TestClient
+
+        from nsdeploy_service.app import create_app
+        from nsdeploy_service.config import Settings
+
+        return TestClient(create_app(
+            Settings(work_root=self.root, port_start=8890, port_end=8899)))
+
+    def test_both_upload_paths_declare_the_limit(self):
+        """Asserted from the schema, not by uploading something that fits.
+
+        Posting an acceptable name starts a real build, which opens nsdeploy.log and
+        leaves the temp directory undeletable on Windows — the test then fails in
+        teardown for a reason that has nothing to do with the limit. The schema is
+        what actually changed, and reading it back exercises both paths without
+        spawning a process.
+        """
+        from nsdeploy_service.app import ORG_NAME_MAX
+
+        with self._client() as client:
+            schema = client.get("/openapi.json").json()
+
+        def max_length(node):
+            """maxLength, wherever the generator put it.
+
+            An Optional[str] is emitted as anyOf[{string, maxLength}, {null}] rather
+            than carrying maxLength at the top level, so looking only at the top finds
+            nothing even when the constraint is correctly applied. Checking both shapes
+            also survives a Pydantic upgrade that flattens it.
+            """
+            if "maxLength" in node:
+                return node["maxLength"]
+            for branch in node.get("anyOf", []):
+                if "maxLength" in branch:
+                    return branch["maxLength"]
+            return None
+
+        form = (schema["paths"]["/deployments"]["post"]["requestBody"]["content"]
+                ["multipart/form-data"]["schema"])
+        ref = form.get("$ref", "").rsplit("/", 1)[-1]
+        body = schema["components"]["schemas"][ref] if ref else form
+        self.assertEqual(max_length(body["properties"]["org_name"]), ORG_NAME_MAX)
+
+        raw = schema["paths"]["/deployments/raw"]["post"]["parameters"]
+        org = next(p for p in raw if p["name"] == "org_name")
+        self.assertEqual(max_length(org["schema"]), ORG_NAME_MAX)
+
+    def test_a_name_past_the_limit_is_rejected(self):
+        from nsdeploy_service.app import ORG_NAME_MAX
+
+        with self._client() as client:
+            response = client.post(
+                "/deployments",
+                files={"file": ("n.hocon", b"x", "application/octet-stream")},
+                data={"org_name": "a" * (ORG_NAME_MAX + 1)})
+            self.assertEqual(response.status_code, 422, response.text)
+
+    def test_the_raw_upload_path_is_bounded_too(self):
+        # The one that would have been forgotten: /deployments/raw takes org_name as a
+        # query parameter rather than a form field, so it needed its own limit.
+        from nsdeploy_service.app import ORG_NAME_MAX
+
+        with self._client() as client:
+            response = client.post(
+                f"/deployments/raw?name=n&org_name={'a' * (ORG_NAME_MAX + 1)}",
+                content=b"x")
+            self.assertEqual(response.status_code, 422, response.text)
+
+    def test_a_real_team_name_still_fits(self):
+        # The limit is useless if it rejects the names people actually use. These are
+        # drawn from what is deployed today plus a plausibly verbose one.
+        from nsdeploy_service.app import ORG_NAME_MAX
+
+        for name in ("Icecream store", "Acme Logistics", "Team Phoenix",
+                     "Cognizant Agentic Engineering Team"):
+            with self.subTest(name=name):
+                self.assertLessEqual(len(name), ORG_NAME_MAX)
+
+    def test_the_api_token_shape_that_caused_this_is_refused(self):
+        from nsdeploy_service.app import ORG_NAME_MAX
+
+        self.assertGreater(len("YOUR_API_TOKEN"),
+                           ORG_NAME_MAX)
+
+
+class OrgNameCharacterTest(unittest.TestCase):
+    """Which characters an organization name may contain.
+
+    Tested against the pattern directly rather than over HTTP: an accepted name starts
+    a real build, which holds nsdeploy.log open and breaks the temp-directory teardown
+    on Windows. The pattern is the thing being specified, and both endpoints are wired
+    to this same constant (asserted in OrgNameLimitTest).
+    """
+
+    def _matches(self, value):
+        import re
+
+        from nsdeploy_service.app import ORG_NAME_PATTERN
+
+        return bool(re.match(ORG_NAME_PATTERN, value))
+
+    def test_real_team_names_are_accepted(self):
+        # Drawn from what is actually deployed, plus the punctuation that turns up in
+        # company names. A rule that rejects "Smith, Jones & Co." is not usable.
+        for name in ("Max Retail", "Icecream store", "Acme Logistics", "BOFA",
+                     "cailville", "Team Phoenix", "AT&T", "O'Brien Ltd",
+                     "Smith, Jones & Co.", "Cognizant (India)", "R&D / Platform",
+                     "Team #4", "C++ Guild", "team_phoenix"):
+            with self.subTest(name=name):
+                self.assertTrue(self._matches(name), f"should accept {name!r}")
+
+    def test_non_ascii_names_are_accepted(self):
+        # International event: an ASCII-only rule would refuse real team names.
+        for name in ("Zürich Analytics", "北京团队",
+                     "Equipe Numéro 1"):
+            with self.subTest(name=name):
+                self.assertTrue(self._matches(name), f"should accept {name!r}")
+
+    def test_markup_and_shell_characters_are_refused(self):
+        for name in ("<script>alert(1)</script>", 'He said "hi"', "a`b", "a|b",
+                     "a;b", "a$b", "a*b", "a=b", "a\b"):
+            with self.subTest(name=name):
+                self.assertFalse(self._matches(name), f"should refuse {name!r}")
+
+    def test_whitespace_and_control_characters_are_refused(self):
+        # A name carrying a line break breaks every place it is listed.
+        for name in ("", " ", "  Max Retail", "Max Retail  ", "a\nb", "a\tb",
+                     "line1\r\nline2"):
+            with self.subTest(name=repr(name)):
+                self.assertFalse(self._matches(name), f"should refuse {name!r}")
+
+    def test_names_that_are_only_punctuation_are_refused(self):
+        for name in ("....", "!!!", "@@@", "***", "-Max", "---"):
+            with self.subTest(name=name):
+                self.assertFalse(self._matches(name), f"should refuse {name!r}")
+
+    def test_a_pasted_url_is_refused(self):
+        self.assertFalse(self._matches("https://evil.example/x"))
+
+    def test_length_not_characters_is_what_stops_a_pasted_token(self):
+        """The division of labour, stated so it is not mistaken for a gap.
+
+        A hex token is made entirely of legal characters, so the pattern cannot refuse
+        it and is not meant to. ORG_NAME_MAX is what does — and the token that caused
+        all this was 48 characters.
+        """
+        from nsdeploy_service.app import ORG_NAME_MAX
+
+        token = "YOUR_API_TOKEN"
+        self.assertTrue(self._matches(token[:30]), "characters alone cannot catch this")
+        self.assertGreater(len(token), ORG_NAME_MAX, "but the length limit does")
+
+
+class EngineCliContractTest(unittest.TestCase):
+    """Every CLI flag the supervisor passes must exist in the installed nsdeploy.
+
+    The service invokes `python -m nsdeploy` as a child process, so nothing here is
+    checked at import time — a flag that disappears from the engine is found at
+    deployment time, by a participant, as a failed build.
+
+    This exists because exactly that happened: a new engine build dropped `--host`,
+    whose help text read "use 0.0.0.0 in a container". Locally that changes nothing,
+    because the default is loopback and there is no container. On the VM, where
+    DEPLOY_HOST=0.0.0.0, it meant every deployment would have died on an argparse
+    error — and had the flag merely been ignored rather than rejected, every site
+    would have bound container-loopback and returned connection refused through
+    Docker's published port while the build reported success.
+
+    Asserted against --help rather than by deploying, so it costs a subprocess and
+    not a build.
+    """
+
+    # Mirrors the command assembled in supervisor.py. Kept as a literal list because
+    # parsing it out of the source would fail silently the day that code is reshaped.
+    #
+    # `--host` is deliberately NOT here. It is the one flag this project ever added to
+    # the engine, and three successive drops removed it; requiring it made this test
+    # fail against every stock nsdeploy, which is the wrong signal — the engine is not
+    # broken, the service just has to cope. The service now probes for it
+    # (engine_supports_host) and refuses to start a deployment that would need it and
+    # cannot have it. OPTIONAL records the intent so nobody re-adds it here.
+    REQUIRED = (
+        "--port", "--out", "--site-dir", "--site-url", "--upstream",
+        "--facade-upstream", "--studio", "--repo", "--ref",
+        "--theme", "--theme-model", "--theme-refresh", "--theme-prompt", "--no-cruse",
+    )
+    OPTIONAL = ("--host",)
+
+    def test_every_flag_the_supervisor_passes_exists(self):
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "-m", "nsdeploy", "--help"],
+            capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr[:400])
+        help_text = result.stdout + result.stderr
+
+        missing = [flag for flag in self.REQUIRED if flag not in help_text]
+        self.assertEqual(
+            missing, [],
+            f"nsdeploy no longer accepts {missing}. The supervisor passes these; a "
+            f"missing one fails every deployment. If the engine was just replaced, "
+            f"restore the flag (see nsdeploy/launcher.py serve(host=...)).")
+
+    def test_host_is_detected_rather_than_assumed(self):
+        """Whatever the engine does about --host, the service must agree with it.
+
+        Replaces an assertion that the flag exists. It does not, in a stock engine, and
+        three drops in a row removed it — so requiring it meant a red suite that said
+        "the engine is wrong" when the engine was simply upstream. What actually
+        matters is that the service's belief matches reality, because the failure it
+        guards is silent: a site binds container-loopback, Docker's published port
+        forwards to the container's interface instead, and every URL answers connection
+        refused while the build reports `ready`.
+        """
+        import sys
+
+        from nsdeploy_service.supervisor import engine_supports_host
+
+        supported = engine_supports_host(sys.executable)
+        launcher = (Path(__file__).resolve().parents[2]
+                    / "nsdeploy" / "launcher.py").read_text(encoding="utf-8")
+        binds_given_host = "(host, port), make_handler" in launcher
+
+        self.assertEqual(
+            supported, binds_given_host,
+            "engine_supports_host() and launcher.serve() disagree: the flag is "
+            f"{'advertised' if supported else 'absent'} but the listener "
+            f"{'does' if binds_given_host else 'does not'} bind what it is given. "
+            "A flag accepted and ignored is worse than one rejected.")
+
+    def test_a_host_needing_config_fails_loudly_on_a_stock_engine(self):
+        """DEPLOY_HOST=0.0.0.0 against an engine with no --host must raise, not warn.
+
+        This is the combination that cost two silent outages. The old code passed the
+        flag regardless; on an engine without it, argparse rejected the whole command
+        and every build failed with an opaque error. Now it is refused up front with
+        the two ways out named — `--network host`, or SUBDOMAIN_TEMPLATE.
+        """
+        import sys
+        from unittest import mock
+
+        from nsdeploy_service.supervisor import engine_supports_host
+
+        if engine_supports_host(sys.executable):
+            self.skipTest("this engine has --host; nothing to refuse")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = Settings(work_root=Path(tmp), port_start=8600, port_end=8601,
+                                deploy_host="0.0.0.0")
+            supervisor = Supervisor(settings)
+            try:
+                dep = supervisor.create(b"x", DeployOptions(name="needs_host"))
+                with self.assertRaises(DeploymentError) as caught:
+                    supervisor._command(dep)
+                message = str(caught.exception)
+                self.assertIn("--host", message)
+                self.assertIn("network host", message)
+                self.assertIn("SUBDOMAIN_TEMPLATE", message)
+            finally:
+                supervisor.store.close()

@@ -36,6 +36,8 @@ from nsdeploy_service import PRODUCT_NAME, __version__
 from nsdeploy_service import envfile, themespec
 from nsdeploy_service.config import Settings
 from nsdeploy_service.models import (
+    ORG_NAME_MAX,
+    ORG_NAME_PATTERN,
     AgentGraphView,
     DeploymentList,
     DeploymentStatus,
@@ -156,6 +158,9 @@ RELATIONS_LLM_TIMEOUT_SECONDS = 60
 # wait — it watches the build and only opens the map once the site answers — so
 # nothing is left unexplained by holding a pin back until it means something.
 MAP_STATUSES = (DeploymentStatus.READY,)
+
+# Organization-name rules (ORG_NAME_MAX, ORG_NAME_PATTERN) live in models.py, so the
+# upload endpoints here, the /orgs endpoints and the console all enforce one rule.
 
 
 def _utcnow() -> datetime:
@@ -399,9 +404,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         file: Annotated[UploadFile, File(description="the agent-network .hocon")],
         org_id: Annotated[Optional[str], Form(
             description="owning organization by id; omit to attribute to 'Unattributed'")] = None,
+        # ORG_NAME_MAX, because this field had no bound and creates a row on first use.
+        # A deployment arrived with the service's own API token pasted in here — 48
+        # characters, which then rendered as an organization in the directory, the
+        # filter dropdown and the map's hover callout, and stretched the filter until
+        # the control bar wrapped. The limit stops the layout damage and the junk rows;
+        # it is NOT a secret-detection measure, and a shorter credential would still
+        # pass.
         org_name: Annotated[Optional[str], Form(
+            max_length=ORG_NAME_MAX, pattern=ORG_NAME_PATTERN,
             description="owning organization by name, created on first use; ignored "
-                        "when org_id is given")] = None,
+                        "when org_id is given. Letters, digits and & ' ( ) . , - / + # "
+                        f"only, {ORG_NAME_MAX} characters maximum")] = None,
         name: Annotated[Optional[str], Form()] = None,
         upstream: Annotated[Optional[str], Form()] = None,
         theme: Annotated[Optional[bool], Form()] = None,
@@ -434,7 +448,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         name: Annotated[str, Query(description="network name (becomes the HOCON filename stem)")],
         org_id: Annotated[Optional[str], Query()] = None,
         org_name: Annotated[Optional[str], Query(
-            description="owning organization by name, created on first use")] = None,
+            max_length=ORG_NAME_MAX, pattern=ORG_NAME_PATTERN,
+            description="owning organization by name, created on first use. Letters, "
+                        "digits and & ' ( ) . , - / + # only, "
+                        f"{ORG_NAME_MAX} characters maximum")] = None,
         upstream: Annotated[Optional[str], Query()] = None,
         theme: Annotated[Optional[bool], Query()] = None,
         theme_model: Annotated[Optional[str], Query()] = None,

@@ -13,8 +13,10 @@ matching the repo's git tree, so the repo's internal layout doesn't matter. Any 
 dependency a hosted tool imports (e.g. `ddgs`) is auto-installed on demand.
 
 The browser runs the agents on a **vendored copy of the neuro-san-web runtime** (in
-[`nsdeploy/runtime/`](nsdeploy/runtime) — dependency-free ES modules); the only Python that runs is
-(a) the build-time HOCON resolver and (b) one small MCP server per hostable tool.
+[`nsdeploy/runtime/`](nsdeploy/runtime) — dependency-free ES modules). A normal
+served deployment uses Python for the build-time HOCON resolver, the web launcher,
+and one small MCP server per hostable tool. A static bundle uses Python only while
+building; the resulting webroot has no Python or nsDeploy runtime dependency.
 
 ## Install & run
 
@@ -47,6 +49,39 @@ instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
 `--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime),
 `--no-cruse` (skip generative-UI injection), and the theming flags below.
 
+## Shared subdomain gateway
+
+Port-based hosting remains the default for backward compatibility. When the hosting
+environment limits exposed ports, the optional gateway can publish any number of
+nsdeploy sites through one listener and select the site from the request hostname.
+The network name becomes a DNS-safe subdomain (`harbor_town_hall` becomes
+`harbor-town-hall`):
+
+```bash
+# Start the sites on loopback ports and advertise their public subdomain origins.
+python -m nsdeploy examples/link_demo_airline.hocon \
+  --port 9001 --site-url http://link-demo-airline.localhost:8080 &
+python -m nsdeploy examples/link_demo_travel_agency.hocon \
+  --port 9002 --site-url http://link-demo-travel-agency.localhost:8080 &
+
+# Expose both sites through one port.
+python -m nsdeploy gateway --base-domain localhost --port 8080 \
+  --route link_demo_airline=http://127.0.0.1:9001 \
+  --route link_demo_travel_agency=http://127.0.0.1:9002
+```
+
+Open <http://link-demo-airline.localhost:8080/> or
+<http://link-demo-travel-agency.localhost:8080/>. The backend site, facade, and MCP
+tool listeners remain loopback-only; only the gateway port needs to be exposed.
+Unknown hostnames are rejected, and startup fails if two network names normalize to
+the same subdomain.
+
+For Azure or another TLS-terminating ingress, point wildcard DNS such as
+`*.agents.example.com` at the ingress, map its public HTTPS listener to the gateway's
+single internal port, start the gateway with `--bind 0.0.0.0`, and give each site an
+external origin such as `--site-url https://link-demo-airline.agents.example.com`.
+The gateway itself speaks HTTP; TLS can terminate at the platform ingress.
+
 By default it runs on a deterministic **mock** LLM (no key needed). For real output,
 open **⚙ BYOK settings** in the page and enter your API key + model — calls route
 through the same-origin `/byok/v1` CORS proxy to your provider. A saved profile with
@@ -63,29 +98,107 @@ scrubbed from its environment. Deploy-time theming is the only step that reads
 `OPENAI_API_KEY`, and it finishes before the server starts. `--facade-key` is accepted
 for compatibility and ignored.
 
+## Self-contained static bundle
+
+Use `--static-bundle` to produce a webroot that can be copied to a conventional
+static host without installing Python or nsDeploy there. The command form is:
+
+```bash
+python -m nsdeploy <network.hocon> \
+  --static-bundle \
+  --out <webroot-directory> \
+  [--site-url https://host.example/optional/base/path]
+```
+
+`--static-bundle` implies generate-only mode; it does not start a server. For
+example:
+
+```bash
+python -m nsdeploy examples/link_demo_travel_agency.hocon \
+  --static-bundle --out ./dist/travel
+```
+
+Preview that bundle with any ordinary static server:
+
+```bash
+python -m http.server 8080 --directory ./dist/travel
+```
+
+Then open <http://127.0.0.1:8080/>. To publish a canonical identity for links and
+private stewards, include the final webroot URL when building:
+
+```bash
+python -m nsdeploy examples/link_demo_travel_agency.hocon \
+  --static-bundle \
+  --out ./dist/travel \
+  --site-url https://agents.example.com/travel
+```
+
+After uploading `./dist/travel/` as that webroot, the public network URL is:
+
+```text
+https://agents.example.com/travel/link_demo_travel_agency
+```
+
+A generated private steward calls the static network with the equivalent coded-tool
+arguments:
+
+```json
+{
+  "site_url": "https://agents.example.com/travel/link_demo_travel_agency",
+  "request": "Find me a flight from San Francisco to New York next Friday."
+}
+```
+
+The steward fetches `agent-manifest.json` and the selected network JSON, then runs
+the network privately. Its LLM key is sent only to the steward's configured LLM
+upstream, never to the static host.
+
+The output includes the browser runtime, a browser-native deterministic mock,
+relative page assets, browser-local unresolved links, and optional `_headers` /
+`.htaccess` hosting configuration. Python coded tools are intentionally omitted.
+External MCP servers are contacted directly and therefore must permit browser CORS.
+Real BYOK calls go directly to the OpenAI-compatible router selected in settings;
+that router must likewise permit browser CORS. The public MCP facade is marked
+unavailable because accepting inbound MCP calls requires an application server.
+The generated private steward remains usable: it downloads the public network JSON
+and runs it in the private Neuro-SAN environment, so the static host needs no MCP
+facade or other server-side process.
+
+When `--site-url` is omitted, the static bundle is origin-neutral and can be moved
+between hosts. Supplying `--site-url` publishes a canonical URL for link discovery.
+The static host only needs to serve files over HTTP(S). When a browser-hosted agent
+on another domain will load the network, responses must include
+`Access-Control-Allow-Origin: *`; server-side private stewards do not require CORS.
+The sandbox worker also needs the CSP shown in the generated `STATIC_HOSTING.md`.
+The included `_headers` and `.htaccess` cover hosts that support those standard
+configuration formats. Hosts that ignore both files need the equivalent headers
+configured in their control panel.
+
 ## Cailville multi-site demo
 
-[`cailville/`](cailville) contains thirteen independently deployed household,
-business, broker, and civic agent networks, their decentralized link sidecars, and
+[`cailville/`](cailville) contains fourteen base household,
+business, broker, civic, and commerce-arbiter agent networks, their decentralized link sidecars, and
 an interactive town map. Start the complete demo from the repository root:
 
 ```bash
 ./cailville/launch_all.sh
 ```
 
-For real public-facade execution, the private steward supplies the caller profile.
-Use the same OpenAI key already used by the private Neuro-SAN server, or set the
-steward-specific variables explicitly:
+For real private-steward execution, use the same OpenAI key already used by the
+private Neuro-SAN server, or set the steward-specific variables explicitly:
 
 ```bash
 export NSDEPLOY_STEWARD_BYOK_API_KEY="your-key"
 export NSDEPLOY_STEWARD_BYOK_MODEL="gpt-4o"
+export NSDEPLOY_STEWARD_LLM_UPSTREAM="https://api.openai.com/v1"
 ./cailville/launch_all.sh
 ```
 
-The launcher does not install that key in any public facade. It is attached to each
-MCP request by the private steward and propagated only while that request traverses
-linked public sites.
+The launcher does not install that key in any public site. The private steward uses
+it locally while running downloaded, code-free public network definitions; the key
+is never sent to the sites that publish those definitions. MCP facades remain a
+compatibility fallback for older sites.
 
 To verify the complete path, select
 `deneman_place/deneman_place_private_steward` in nsFlow and submit:
@@ -95,16 +208,17 @@ Plan an 80-person wedding in Cailville. Find venue, catering, lodging,
 transportation, neighbor assistance, and any required permits.
 ```
 
-Approve the steward's proposed contacts when prompted. A successful run creates MCP
-sessions in the contacted sites' logs, records `200 OK` responses from the configured
-LLM upstream, and completes without `tool_error: true`, authentication errors, or a
-steward timeout. The public logs must not contain the BYOK authorization header or
-key value. The sites contacted are chosen by the agent from its directory and the
-public links it discovers, so transport success does not guarantee that one turn
-will cover every requested business category.
+Approve the steward's proposed contacts when prompted. A successful run fetches the
+contacted sites' manifests and network JSON, records `200 OK` responses from the
+private steward's configured LLM upstream, and completes without `tool_error: true`,
+authentication errors, or a steward timeout. Public-site logs must not contain the
+BYOK authorization header or key value. The sites contacted are chosen by the agent
+from its directory and the public links it discovers, so transport success does not
+guarantee that one turn will cover every requested business category.
 
 The launcher uses `.venv/bin/python` or `venv/bin/python` when available, starts the sites on ports
-8091-8103, waits for every site, and then opens `cailville/cailville.html`. Logs are
+8091-8103 plus the commerce arbiter on 8105 (and any added sites), waits for every site,
+and then opens `cailville/cailville.html`. Logs are
 written to `.nsdeploy/cailville-logs/`. Its runtime BYOK proxy defaults to OpenAI and
 theme generation defaults to `gpt-5.6`; override those with `NSDEPLOY_UPSTREAM`,
 `NSDEPLOY_THEME_MODEL`, or `NSDEPLOY_PYTHON`. Existing editable themes are preserved;
@@ -116,7 +230,7 @@ to the manifest directory, for example
 and portable with the bundle directory. To run those stewards in a standard
 Neuro-SAN server, set `AGENT_MANIFEST_FILE` to that manifest.
 `launch_all.sh` also starts the private Neuro-SAN studio from
-`/Users/m_754339/PycharmProjects/cailville-private` (using its installed
+`/Users/754339/projects/cailville-private` (using its installed
 `neuro-san-studio` package), points its `AGENT_MANIFEST_FILE` at this generated
 manifest, and opens nsFlow on port `4174`.
 It waits for both the Neuro-SAN HTTP server and nsFlow to be ready before opening
@@ -124,6 +238,23 @@ the demo, avoiding an initial concierge connection race.
 Override the private project or ports with `NSDEPLOY_PRIVATE_STUDIO_DIR`,
 `NSDEPLOY_PRIVATE_STUDIO_HTTP_PORT`, `NSDEPLOY_PRIVATE_STUDIO_GRPC_PORT`, and
 `NSDEPLOY_PRIVATE_STUDIO_NSFLOW_PORT`.
+
+The existing Cailville port mode is also the default. To expose every public site
+through one local gateway port instead, enable subdomain routing explicitly:
+
+```bash
+NSDEPLOY_ROUTING=subdomain \
+NSDEPLOY_BASE_DOMAIN=localhost \
+NSDEPLOY_GATEWAY_PORT=8080 \
+./cailville/launch_all.sh
+```
+
+This publishes URLs such as <http://harbor-guide.localhost:8080/> and rewrites the
+generated Cailville map, public-site directory, manifests, and runtime link sidecars
+to use those origins. The checked-in port-based link sidecars are not modified.
+For a cloud ingress, additionally set `NSDEPLOY_GATEWAY_BIND=0.0.0.0`,
+`NSDEPLOY_PUBLIC_SCHEME=https`, and `NSDEPLOY_PUBLIC_PORT=443`; the internal
+`NSDEPLOY_GATEWAY_PORT` can remain an unprivileged port such as `8080`.
 
 To run the agents with Docker Model Runner instead, explicitly select its upstream
 and enter one of the exact IDs returned by its `/models` endpoint in BYOK settings:
@@ -155,6 +286,128 @@ Stop the complete demo from another terminal:
 ./cailville/stop_all.sh
 ```
 
+### Book through Butterpink's private steward in nsFlow
+
+The Cailville map includes **Cailville Commerce Arbiter**, connected to **Seabreeze
+Inn** and **Butterpink Family**. Booking takes place in the existing private
+steward conversation in **nsFlow**, reached through the map's **Private stewards**
+toggle. There is no separate commerce page, form, pairing code or checkout.
+
+Ask Butterpink's private steward to book a night at the Inn for a stated USD maximum.
+It collects any missing date or budget, creates a fixed mandate at the public
+arbiter, and engages the Inn's coded seller adapter over HTTP. The Inn receives
+stay details and a scoped seller capability, never the raw private ceiling. The
+arbiter receives the sealed policy bid and computes the binding offer. The steward
+presents that offer in chat; a subsequent **Confirm booking** reply approves the
+exact offer and returns a simulated receipt in the same conversation.
+
+The implementation uses the actual SQLite arbiter from
+[babakatwork/agent-commerce-demo](https://github.com/babakatwork/agent-commerce-demo),
+pinned to commit `47fe668ff19c23cf1294685ef122d8ca9fad63e1`. Its engine is vendored
+unchanged with the Apache license and notice; see
+[`PROVENANCE.md`](nsdeploy/commerce/PROVENANCE.md). nsdeploy supplies the fixture
+catalogue, HTTP adapters, private coded tool and chat middleware. The negotiation
+and ledger are coded execution; the private LLM interprets the request and calls
+tools. Public sites retain their usual chat, discovery and MCP functionality.
+
+The fixture is **one night for two adults** with parking, Wi-Fi, one local activity,
+taxes and fees. It excludes meals and travel to Cailville. Catalogue price:
+**$525**. A **$500** ceiling produces **$477.50** under equal-weight Nash bargaining;
+**$450** produces **NO_AGREEMENT**. Other dates must be today or later. Other stay
+lengths or party sizes require a different catalogue fixture; the steward should
+explain that scope instead of silently changing the request. All amounts are
+integer USD cents. Offers expire 15 minutes after negotiation.
+
+#### Manual check before pushing
+
+1. Launch Cailville normally, with its existing private studio and model credentials:
+
+   ```bash
+   NSDEPLOY_THEME=0 ./cailville/launch_all.sh
+   ```
+
+   The launcher opens the map and starts nsFlow. `NSDEPLOY_THEME=0` preserves the
+   editable themes and skips paid theme generation. The private studio uses its
+   configured model credentials; booking adapters do not use or forward LLM keys.
+2. On [`cailville/cailville.html`](cailville/cailville.html), enable **Private
+   stewards**. Click the private steward badge beside **Butterpink Family**. It
+   opens nsFlow with `butterpink_family/butterpink_family_private_steward` selected.
+   The equivalent direct link is
+   [Butterpink private steward](http://127.0.0.1:4174/?network=butterpink_family%2Fbutterpink_family_private_steward).
+3. Start a new chat and ask:
+
+   ```text
+   Book a night at Seabreeze Inn for two adults on 2026-12-15 for no more than $500.
+   ```
+
+   Use a future date if this example date has passed. You can instead start with
+   “Book a night at the Inn for under $500”; the steward should ask for the date.
+   Expect an arbiter-issued **$477.50** offer, the correct dates and inclusions,
+   cancellation terms, and an invitation to confirm. Nothing is held or spent yet.
+4. Reply **Confirm booking** in that chat. Expect a **SIM-...** receipt, **$477.50**
+   paid in the simulation and the same dates. Ask “What is my booking status?”:
+   the same receipt should return. Repeating confirmation must not charge twice.
+5. In a new chat, repeat with **$450**. Expect no agreement and no booking. Try a
+   **$500** offer followed by **Cancel the offer**. Ask for status: it should be
+   cancelled with zero spent. Changing the budget or date on an active offer
+   requires cancelling it first. An offer older than 15 minutes cannot be approved.
+6. Verify other private-steward requests, public-site chat, map filters and links
+   still behave normally. The arbiter and Inn public pages explain the mechanism;
+   they have no commerce banner or checkout. `/commerce` returns 404.
+
+The private graph keeps its booking context between nsFlow turns through a single
+opaque SlyData handle. The private middleware reads the new human message, records
+the user's dollar ceiling, and only permits approval of an offer already presented
+in an earlier turn. A model-supplied approval flag or a request to settle during the
+initial negotiation cannot bypass this. Canonical offers, status and receipts are
+rendered from coded results, rather than model-invented prices or confirmations.
+For predictable confirmation use **Confirm booking**; ambiguous replies do not
+approve a purchase. Ordinary public MCP gateway calls remain available to this
+steward, and other generated stewards are unchanged.
+
+#### Verification and deployment state
+
+```bash
+python -m unittest discover -s tests -v
+npm test
+```
+
+The commerce tests execute real private Neuro-SAN graphs with a scripted test
+model and real local HTTP calls through the arbiter and Inn. They test natural
+booking requests, follow-up confirmation and status, missing details, no agreement,
+cancellation, premature or negated approval, a lowered budget, credential/session
+isolation, forged offers, expiry, inventory failure, retries and persistence. Existing BYOK, MCP, linking,
+resolver, theme, launcher and browser-runtime regressions remain in the full suites.
+The scripted model lives only in tests. Normal nsFlow uses the configured private LLM.
+The chat integration was also exercised in nsFlow 0.6.17 with Neuro-SAN 0.6.92,
+using a temporary scripted-model setting and the real private tool, arbiter and Inn.
+A live-model manual check still requires the private studio's model credentials.
+
+The launcher provisions an owner-only local credential file at
+`.nsdeploy/cailville/.commerce/steward.key`, shared by the arbiter and private studio.
+It also stores the ledger at `.nsdeploy/cailville/.commerce/commerce_arbiter.sqlite`.
+Both are outside public site directories. Runtime credentials and per-chat session
+capabilities are never model arguments, tool responses or seller messages. The
+arbiter API rejects browser-origin writes and unauthenticated private actions.
+Public seller callbacks require separate scoped engine capabilities.
+
+`NSDEPLOY_COMMERCE_KEY_FILE` overrides the shared credential file; set the same
+protected file for the arbiter and private runtime. `NSDEPLOY_COMMERCE_ARBITER_URL`
+sets the private runtime's arbiter origin (default `http://127.0.0.1:8105`). The tool
+honors `NSDEPLOY_STEWARD_DENY_ORIGINS`. Models cannot choose these settings. Existing
+subdomain routing works through the same internal backend; update the HOCON
+`commerce.seller_backend` and `commerce.arbiter_backend` if backend ports move.
+
+This is a trusted-host simulation: no real room reservation or money transfer,
+refund API, production identity provider, or distributed private-session store.
+Keep nsFlow and its SlyData private. The private runtime holds booking bindings in
+memory for 24 hours; restarting it requires a new chat. The arbiter ledger persists,
+but this example does not recover old chat bindings after a private-runtime restart.
+The audit is an application event log, not tamper-proof evidence. Raw ceilings and
+floors are withheld from the opposing party, although prices can reveal information
+by inference. The old standalone checkout has been retired; its historical ledger
+rows, if any, are preserved but its browser sessions no longer authorize actions.
+
 ### Add a public site to Cailville
 
 Use the Cailville workflow to design a site, infer a small set of useful public-network
@@ -172,7 +425,7 @@ modified `*.hocon` file directly inside `~/Downloads`:
 python -m nsdeploy cailville
 ```
 
-Additions are cumulative by default. Start this demo from the original 13-site map while
+Additions are cumulative by default. Start this demo from the 14-site base map while
 still adding the requested site with `--base-map`, or restore only the base map with
 `--reset-map`:
 
@@ -233,7 +486,7 @@ additions from the private-steward manifest.
    sandbox-worker CSP), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
    local-MCP proxy at `/_mcp/<i>/mcp`, an external-MCP proxy at
    `/ext-mcp/<i>/mcp`, plus the private local MCP server subprocesses. Every site
-   also publishes a server-side MCP facade at `/mcp` for private stewards.
+   also publishes a server-side MCP facade at `/mcp` for legacy private stewards.
    The facade propagates a per-request visited-site trace and bounded public-call
    budget, preventing cyclic public-site links from expanding indefinitely.
    With the no-key mock upstream, each public agent takes one deterministic tool
@@ -244,10 +497,13 @@ additions from the private-steward manifest.
 
 Every generated public site includes `<network>_private_steward.hocon`. It is a standard
 Neuro-SAN network for the site's operator, backed by the reusable
-`nsdeploy.steward.PublicAgentMcpGateway` coded tool. The gateway accepts any public
-nsDeploy site URL, discovers `/.well-known/nsdeploy-agent.json`, and invokes the
-site's `invoke_network` MCP tool. Install nsdeploy in the same Python environment as
-the standard Neuro-SAN server, or add this repository to that server's `PYTHONPATH`.
+`nsdeploy.steward.PublicAgentNetworkGateway` coded tool. The gateway accepts any
+public nsDeploy network URL, downloads `agent-manifest.json` and the selected
+`<network>.network.json`, validates that they contain data-only agents, and runs the
+network inside the private environment. It falls back to the site's `invoke_network`
+MCP tool for older deployments that cannot be loaded this way. Install nsdeploy in
+the same Python environment as the standard Neuro-SAN server, or add this repository
+to that server's `PYTHONPATH`.
 When a network has linked public sites, the generated steward includes their exact
 URLs in its private directory and is instructed not to invent hostnames. Unknown
 public sites remain reachable by supplying their URL explicitly.
@@ -257,8 +513,9 @@ an even longer workflow. Each public-site call is bounded to 720 seconds by
 `launch_all.sh`; override that with `NSDEPLOY_STEWARD_SITE_TIMEOUT_SECONDS` when a
 trusted public network needs more time. The public facade bounds nested site calls
 to 480 seconds by default; override that with `NSDEPLOY_FACADE_SITE_TIMEOUT_SECONDS`.
-Those bounds are also applied to the MCP clients' long-lived SSE reads, replacing
-the library default of 300 seconds so an active request is not dropped mid-run.
+Those bounds are also applied to compatibility MCP clients' long-lived SSE reads,
+replacing the library default of 300 seconds so an active request is not dropped
+mid-run.
 
 Public sites are open-web reachable by default, like ordinary HTML links. The
 generated manifest declares `peer_policy.mode = "open"`; it does not turn published
@@ -268,15 +525,15 @@ links into an authorization allow-list. A private steward can deny origins with:
 export NSDEPLOY_STEWARD_DENY_ORIGINS="https://untrusted.example,http://127.0.0.1:9999"
 ```
 
-The server-side facade uses the site's configured `--facade-upstream`, but all real
-LLM execution is caller BYOK. A private steward sends its
-`NSDEPLOY_STEWARD_BYOK_API_KEY` (falling back to `OPENAI_API_KEY`) and
-`NSDEPLOY_STEWARD_BYOK_MODEL` as sensitive MCP transport headers. Every public
-facade uses those credentials and propagates them only when invoking another public
-facade; they are never included in tool arguments, prompts, results, or local and
-third-party MCP calls. A real facade request without caller credentials is rejected,
-and the facade subprocess is started with provider credentials scrubbed from its
-environment (`scrubbed_env` in `nsdeploy/launcher.py`).
+The private steward uses `NSDEPLOY_STEWARD_BYOK_API_KEY` (falling back to
+`OPENAI_API_KEY`), `NSDEPLOY_STEWARD_BYOK_MODEL`, and optionally
+`NSDEPLOY_STEWARD_LLM_UPSTREAM` for its local execution. Those credentials are never
+included in public manifest/network requests, tool arguments, prompts, results, or
+local and third-party MCP calls. In legacy facade mode they are sent as sensitive
+MCP transport headers and propagated only between public facades. A real facade
+request without caller credentials is rejected, and the facade subprocess is
+started with provider credentials scrubbed from its environment (`scrubbed_env` in
+`nsdeploy/launcher.py`).
 Set the facade upstream explicitly to `mock://nsdeploy` only for a deterministic
 keyless demo. The browser `/byok/v1` path remains unchanged.
 
@@ -584,6 +841,25 @@ chatbot:
 - **Generative UI (CRUSE)** carries presentation proposals up the agent hierarchy.
   Each parent consolidates its children's suggestions; the final response can mix
   formatted text, reports, tables, charts, HTML and optional input widgets.
+- **Live activity streaming** exposes typed, per-turn agent/tool lifecycle events,
+  including coded-tool and MCP progress notifications, before the final answer is
+  ready. Sibling tool calls run concurrently (bounded, with deterministic result
+  ordering); tools can opt out with `parallel_safe = false`. The consumer UI reduces
+  these events to one transient `.ns-turn-status` line inside the conversation and
+  removes it when the final answer appears; the complete event log remains in Developer
+  view. Theme designers can style the line, spinner, and text independently.
+  Programmatic consumers can `for await` over `Engine.streamTurn(...)`; events include
+  `turn.*`, `agent.*`, and `tool.*`, with downstream text deltas marked
+  `visibility: "developer"` and the final result carried by `turn.completed`.
+- **Live steering** keeps the input enabled during a running turn. A user can add
+  guidance without starting a second turn; the top orchestrator interrupts an
+  in-flight model response or consumes the update after active tool/downstream work
+  finishes, then replans before producing its final answer. Already-started tools are
+  not cancelled or replayed, which avoids duplicating side effects. Programmatic
+  consumers call `stream.steer(text)` on the object returned by `Engine.streamTurn()`;
+  accepted input produces `turn.steering.received` and `turn.steering.applied` events.
+  Themes can style the active input state, update button, and steering message via
+  `.ns-steering-active`, `.ns-send-steering`, and `.ns-steering-message`.
 - **Resizable layout.** The chat and the right rail sit **side by side** with a
   **draggable splitter** between them (the rail width is remembered across reloads);
   each pane scrolls its own overflow and the app scrolls rather than crushing a pane

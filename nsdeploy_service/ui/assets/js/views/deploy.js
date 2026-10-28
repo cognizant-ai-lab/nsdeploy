@@ -29,7 +29,7 @@ import { networkArt } from '../components/networkArt.js';
 import { ensureOrg, promptForOrg } from '../components/orgModal.js';
 import { deploymentsChanged } from '../util/deployments.js';
 import { getOrg } from '../util/org.js';
-import { acceleratorLink } from '../components/acceleratorLink.js?v=94';
+import { acceleratorLink } from '../components/acceleratorLink.js?v=120';
 
 const MAX_BYTES = 512 * 1024;
 const ACCEPTED = /\.(hocon|conf)$/i;

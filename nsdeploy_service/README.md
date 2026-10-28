@@ -310,7 +310,7 @@ everything (see [config.py](nsdeploy_service/config.py)).
 | Setting | Default | Notes |
 | --- | --- | --- |
 | `HOST` / `PORT` | `127.0.0.1` / `9000` | the API's own listener |
-| `DEPLOY_HOST` | `127.0.0.1` | address each deployed site binds (`nsdeploy --host`); must be `0.0.0.0` in a container |
+| `DEPLOY_HOST` | `127.0.0.1` | address each deployed site binds (`nsdeploy --host`). **Leave at loopback** — run the container with `--network host`, or set `SUBDOMAIN_TEMPLATE`. Anything else needs `--host`, which upstream nsdeploy does not ship; the service probes for it and refuses the deployment rather than serving nothing |
 | `PORT_START` / `PORT_END` | `8100` / `8199` | deployment port pool; must not contain `PORT` |
 | `PUBLIC_SCHEME` / `PUBLIC_HOST` | `http` / `127.0.0.1` | how the returned URL is spelled |
 | `SUBDOMAIN_TEMPLATE` | *(empty)* | e.g. `{id}` → `https://<id>.example.com`, no port in the URL |

@@ -4,8 +4,12 @@ set -Eeuo pipefail
 CAILVILLE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "$CAILVILLE_DIR/.." && pwd)"
 RUN_DIR="${NSDEPLOY_RUN_DIR:-$PROJECT_DIR/.nsdeploy/cailville-pids}"
+ROUTING="${NSDEPLOY_ROUTING:-port}"
+GATEWAY_PORT="${NSDEPLOY_GATEWAY_PORT:-8080}"
 if [[ -n "${NSDEPLOY_PYTHON:-}" ]]; then
   PYTHON_BIN="$NSDEPLOY_PYTHON"
+elif [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+  PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
 elif [[ -x "$PROJECT_DIR/venv/bin/python" ]]; then
   PYTHON_BIN="$PROJECT_DIR/venv/bin/python"
 else
@@ -24,6 +28,13 @@ private_studio_ports=(
   "${NSDEPLOY_PRIVATE_STUDIO_GRPC_PORT:-31021}"
   "${NSDEPLOY_PRIVATE_STUDIO_NSFLOW_PORT:-4174}"
 )
+all_ports=("${ports[@]}")
+if [[ ! "${NSDEPLOY_PRIVATE_STUDIO:-1}" =~ ^(0|false|no)$ ]]; then
+  all_ports+=("${private_studio_ports[@]}")
+fi
+if [[ "$ROUTING" == "subdomain" ]]; then
+  all_ports+=("$GATEWAY_PORT")
+fi
 
 signal_pid() {
   local signal="$1"
@@ -53,7 +64,14 @@ if [[ -f "$RUN_DIR/launcher.pid" ]]; then
   fi
 fi
 
-if [[ -f "$RUN_DIR/private-studio.pid" ]]; then
+if [[ -f "$RUN_DIR/gateway.pid" ]]; then
+  gateway_pid="$(<"$RUN_DIR/gateway.pid")"
+  if stop_pid "$gateway_pid"; then
+    stopped=1
+  fi
+fi
+
+if [[ ! "${NSDEPLOY_PRIVATE_STUDIO:-1}" =~ ^(0|false|no)$ && -f "$RUN_DIR/private-studio.pid" ]]; then
   private_pid="$(<"$RUN_DIR/private-studio.pid")"
   if stop_pid "$private_pid"; then
     stopped=1
@@ -62,6 +80,9 @@ fi
 
 for pid_file in "$RUN_DIR"/*.pid; do
   [[ -f "$pid_file" && "$pid_file" != "$RUN_DIR/launcher.pid" ]] || continue
+  if [[ "$pid_file" == "$RUN_DIR/private-studio.pid" && "${NSDEPLOY_PRIVATE_STUDIO:-1}" =~ ^(0|false|no)$ ]]; then
+    continue
+  fi
   pid="$(<"$pid_file")"
   command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
   if [[ "$command" == *"-m nsdeploy"* && "$command" == *"/cailville/"* ]] && stop_pid "$pid"; then
@@ -69,16 +90,7 @@ for pid_file in "$RUN_DIR"/*.pid; do
   fi
 done
 
-for port in "${ports[@]}"; do
-  while read -r pid; do
-    [[ -n "$pid" ]] || continue
-    if stop_pid "$pid"; then
-      stopped=1
-    fi
-  done < <(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
-done
-
-for port in "${private_studio_ports[@]}"; do
+for port in "${all_ports[@]}"; do
   while read -r pid; do
     [[ -n "$pid" ]] || continue
     if stop_pid "$pid"; then
@@ -90,26 +102,18 @@ done
 deadline=$((SECONDS + 5))
 while ((SECONDS < deadline)); do
   running=0
-  for port in "${ports[@]}"; do
+  for port in "${all_ports[@]}"; do
     if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
       running=1
       break
     fi
   done
-  if ((running == 0)); then
-    for port in "${private_studio_ports[@]}"; do
-      if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-        running=1
-        break
-      fi
-    done
-  fi
   ((running)) || break
   sleep 1
 done
 
 forced=0
-for port in "${ports[@]}" "${private_studio_ports[@]}"; do
+for port in "${all_ports[@]}"; do
   while read -r pid; do
     [[ -n "$pid" ]] || continue
     if force_pid "$pid"; then
@@ -123,7 +127,7 @@ if ((forced)); then
   deadline=$((SECONDS + 5))
   while ((SECONDS < deadline)); do
     running=0
-    for port in "${ports[@]}" "${private_studio_ports[@]}"; do
+    for port in "${all_ports[@]}"; do
       if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
         running=1
         break
@@ -135,13 +139,7 @@ if ((forced)); then
 fi
 
 remaining=()
-for port in "${ports[@]}"; do
-  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    remaining+=("$port")
-  fi
-done
-
-for port in "${private_studio_ports[@]}"; do
+for port in "${all_ports[@]}"; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
     remaining+=("$port")
   fi
@@ -152,7 +150,12 @@ if ((${#remaining[@]})); then
   exit 1
 fi
 
-rm -f "$RUN_DIR"/*.pid 2>/dev/null || true
+for pid_file in "$RUN_DIR"/*.pid; do
+  if [[ "$pid_file" == "$RUN_DIR/private-studio.pid" && "${NSDEPLOY_PRIVATE_STUDIO:-1}" =~ ^(0|false|no)$ ]]; then
+    continue
+  fi
+  rm -f "$pid_file"
+done
 if ((stopped)); then
   printf 'Stopped all Cailville sites.\n'
 else

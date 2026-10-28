@@ -623,8 +623,23 @@ class DeployHostCase(unittest.TestCase):
     from outside a container, and the readiness probe follows it. Passed to nsdeploy
     only when it differs from the default, so an unmodified nsdeploy still works."""
 
-    def test_the_bind_address_is_passed_to_nsdeploy(self):
-        from nsdeploy_service.supervisor import Supervisor
+    def test_the_bind_address_is_passed_when_the_engine_accepts_it(self):
+        """A non-default bind address reaches nsdeploy — if this engine can take it.
+
+        Conditional because `--host` is the one flag this project added to the engine
+        and upstream drops keep removing it. Asserting it unconditionally made the
+        suite fail against a stock nsdeploy, which reports the wrong thing: the engine
+        is not broken, the service simply has to cope. When the flag is absent the
+        service refuses the configuration instead, which the companion assertion below
+        covers.
+        """
+        import sys
+
+        from nsdeploy_service.supervisor import (
+            DeploymentError,
+            Supervisor,
+            engine_supports_host,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             settings = Settings(work_root=Path(tmp), port_start=8750, port_end=8759,
@@ -632,9 +647,15 @@ class DeployHostCase(unittest.TestCase):
             supervisor = Supervisor(settings)
             try:
                 dep = supervisor.create(b"x", DeployOptions(name="demo"))
-                cmd = supervisor._command(dep)
-                self.assertIn("--host", cmd)
-                self.assertEqual(cmd[cmd.index("--host") + 1], "0.0.0.0")
+                if engine_supports_host(sys.executable):
+                    cmd = supervisor._command(dep)
+                    self.assertIn("--host", cmd)
+                    self.assertEqual(cmd[cmd.index("--host") + 1], "0.0.0.0")
+                else:
+                    # Refused up front rather than passed to an engine that would
+                    # reject the whole command, or worse, accept and ignore it.
+                    with self.assertRaises(DeploymentError):
+                        supervisor._command(dep)
             finally:
                 supervisor.ports.release(dep.port)
                 supervisor.store.close()

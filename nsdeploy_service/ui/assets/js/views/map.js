@@ -261,6 +261,10 @@ export function mount(root) {
       cancelPinBatches();
       timer = null;
       focusTimer = null;
+      // Stop the countdown with the poll it was counting down to. Left running, it
+      // would keep sweeping on a hidden view and be mid-fill — implying a poll that
+      // is not scheduled — on the next activate().
+      tick(root, 'off');
       // A frame queued by a gesture just before the view was left would otherwise
       // measure a stage that is no longer displayed.
       if (geometryFrame) cancelAnimationFrame(geometryFrame);
@@ -788,6 +792,31 @@ function wireZoom(root) {
  * building when the start/restart event causes its immediate fetch, and the periodic
  * pass is what guarantees the ready network subsequently appears.
  */
+/**
+ * Drive the refresh bar.
+ *
+ * Two states, because they answer two different questions. `is-busy` means a request
+ * is open right now — that is the one a reader checks when they are waiting for their
+ * own network to appear. The fill is a countdown to the next poll, which is what makes
+ * a quiet map legible as "checked a moment ago" rather than "possibly stale".
+ *
+ * The animation is restarted by removing and re-adding the class with a reflow between
+ * — assigning the same animation name again is a no-op otherwise, so the bar would
+ * fill once and then sit full for the rest of the session.
+ */
+function tick(root, state) {
+  const bar = $('#map-tick', root);
+  const fill = $('#map-tick-fill', root);
+  if (!bar || !fill) return;
+  if (state === 'busy') { bar.classList.add('is-busy'); return; }
+  bar.classList.remove('is-busy');
+  if (!refreshSeconds || !mapActive) { bar.classList.remove('is-counting'); return; }
+  bar.classList.remove('is-counting');
+  void bar.offsetWidth;                                   // reflow: restart the fill
+  fill.style.animationDuration = `${refreshSeconds}s`;
+  bar.classList.add('is-counting');
+}
+
 function schedule(root) {
   clearTimeout(timer);
   timer = null;
@@ -941,6 +970,19 @@ function template() {
           <span class="legend-edge legend-edge--suggested"></span>suggested</span>` : ''}
       </div>
       <span class="mapmeta" id="map-meta"></span>
+
+      <!-- When the next poll lands, and when one is in flight. The map updates itself
+           without being asked, which is a problem of its own: a reader who cannot see
+           that it refreshes has no way to tell "nothing has changed" from "this is
+           stale", and the honest answer to "is my network there yet?" was previously
+           only in the text readout. The bar fills across the refresh interval and
+           pulses while the request is open.
+
+           aria-hidden: the cadence is already announced in #map-meta, and a bar that
+           re-announced itself twice a minute would be noise in a screen reader. -->
+      <div class="maptick" id="map-tick" aria-hidden="true">
+        <div class="maptick__fill" id="map-tick-fill"></div>
+      </div>
     </div>
   </div>`;
 }
@@ -982,6 +1024,7 @@ function syncScopeControl(root) {
 
 /* ── data ───────────────────────────────────────────────────────────────── */
 async function load(root, { quiet = false } = {}) {
+  tick(root, 'busy');
   try {
     const org = getOrg();
     const orgId = (scopeToOrg && org) ? await resolveOrgId(org) : '';
@@ -1015,6 +1058,11 @@ async function load(root, { quiet = false } = {}) {
     announce(root);
   } catch (error) {
     if (!quiet) toast.error(`Could not load the map — ${error.message}`);
+  } finally {
+    // In `finally` so a failed poll still clears the busy state and restarts the
+    // countdown — schedule() re-arms after an error too, so a bar left spinning would
+    // claim a request was open when the next one is actually a cadence away.
+    tick(root, 'idle');
   }
 }
 
@@ -1573,12 +1621,45 @@ function drawEdges(root) {
 
   const boxes = new Map();
   stage.querySelectorAll('[data-pin]').forEach((element) => {
-    const rect = element.getBoundingClientRect();
+    // Measure the DROP, not the whole pin. `.mappin` wraps the name chip as well, and
+    // the chip is in flow (`display: inline-flex, max-width: 13rem`), so the pin's own
+    // box is as wide as the label — up to 208px against the drop's 42px — and taller,
+    // since the chip stacks above it. Insetting an edge to that box left the line
+    // stopping at the edge of the name with a visible gap before the balloon.
+    //
+    // Why it looked intermittent: the chip is only rendered at low density (see
+    // setDensity), so the gap appeared on a sparse map and vanished on a crowded one,
+    // and was worst for the longest names.
+    //
+    // Falls back to the pin itself, which is what the drop used to be measured through
+    // and is still correct to within the chip — better than dropping the edge entirely
+    // if the internals are ever restructured.
+    const marker = element.querySelector('.mappin__drop') || element;
+    const rect = marker.getBoundingClientRect();
+    // Then undo the rotation's inflation. `.mappin__drop` is rotate(-45deg), and a
+    // rotated square's bounding rect is √2 larger than the square itself — 59px for a
+    // 42px marker. The inset below resolves a *rectangle* boundary against this box, so
+    // on a diagonal approach it answered ~42px from centre while the balloon body ends
+    // near 21px, and the line stopped short of the shape it points at.
+    //
+    // Measured from the rect rather than offsetWidth because `.mappin` also carries
+    // `scale(--unzoom × --pin-scale)` and markers are shrunk at high density: the
+    // layout box would claim 42px for a marker rendered at 33px. The rect includes
+    // every transform, so dividing by `scale` and then by √2 leaves the silhouette as
+    // actually drawn.
+    //
+    // SQRT2 is coupled to that 45° rotation. If the drop's transform changes, this
+    // has to change with it — there is no way to read "how much did the rotation
+    // inflate this" back off a bounding rect.
+    const width = rect.width / scale / Math.SQRT2;
+    const height = rect.height / scale / Math.SQRT2;
+    const centreX = (rect.left + rect.width / 2 - sceneBox.left) / scale;
+    const centreY = (rect.top + rect.height / 2 - sceneBox.top) / scale;
     boxes.set(element.dataset.pin, {
-      left: (rect.left - sceneBox.left) / scale,
-      top: (rect.top - sceneBox.top) / scale,
-      width: rect.width / scale,
-      height: rect.height / scale,
+      left: centreX - width / 2,
+      top: centreY - height / 2,
+      width,
+      height,
     });
   });
 
@@ -1593,11 +1674,48 @@ function drawEdges(root) {
   // suggested B→A do not land on top of each other.
   const drawnKeys = new Set(drawn.map(({ edge }) => edgeKey(edge)));
 
-  group.replaceChildren();
-  drawn.forEach(({ edge, kind }) => {
+  // Reconciled, not rebuilt — the same reason reconcilePins exists, for the same
+  // reader-visible symptom. `.mapedge--flow` carries `animation: map-flow 1.5s linear
+  // infinite`, and replacing a path element restarts that animation from frame zero:
+  // every travelling dash on the map jumped back to the start on each poll. At a
+  // 30-second cadence that is twice a minute, which reads as the map flickering.
+  //
+  // Keyed on the geometry and classes actually written, so an unchanged edge keeps its
+  // element and its animation phase. A poll that moves nothing performs no SVG
+  // mutations at all; a pin that moved updates only the paths touching it.
+  const live = new Map();
+  for (const { edge, kind } of drawn) {
     const path = edgePath(edge, kind, boxes, bounds, drawnKeys);
-    if (path) group.append(path);
-  });
+    if (!path) continue;
+    // Several edges can share a source/target pair (two orgs, same network name), so
+    // the index disambiguates rather than collapsing them onto one element.
+    const key = `${kind}|${edgeKey(edge)}|${live.size}`;
+    live.set(key, path);
+  }
+
+  const existing = new Map();
+  for (const element of group.children) {
+    if (element.dataset.edge) existing.set(element.dataset.edge, element);
+  }
+  for (const [key, element] of existing) {
+    if (!live.has(key)) element.remove();
+  }
+  let previous = null;
+  for (const [key, path] of live) {
+    path.dataset.edge = key;
+    const current = existing.get(key);
+    if (current
+        && current.getAttribute('d') === path.getAttribute('d')
+        && current.getAttribute('class') === path.getAttribute('class')
+        && current.getAttribute('marker-end') === path.getAttribute('marker-end')) {
+      previous = current;                      // identical: leave it, animation intact
+      continue;
+    }
+    if (current) current.replaceWith(path);
+    else if (previous) previous.after(path);
+    else group.prepend(path);
+    previous = path;
+  }
 }
 
 function edgePath(edge, kind, boxes, bounds, drawnKeys) {
@@ -1618,10 +1736,24 @@ function edgePath(edge, kind, boxes, bounds, drawnKeys) {
 
   // Distance from each centre out to its own box boundary along the line, so the
   // path starts and ends clear of the pins rather than beneath them.
-  const boundary = (box) => 1 / Math.max(
-    Math.abs(ux) / (box.width / 2) || Infinity,
-    Math.abs(uy) / (box.height / 2) || Infinity,
-  );
+  //
+  // The `|| Infinity` guard this replaces inverted the result for an axis-aligned
+  // edge: a zero component makes its ratio 0, and `0 || Infinity` is Infinity, so
+  // Math.max chose Infinity and the boundary came out as 1/Infinity = 0 — the path
+  // then started at the marker's centre and ran out from under it. A zero component
+  // must contribute *nothing* to the max, which is what plain 0 already does; the
+  // only case the guard was needed for is a zero-sized box, handled explicitly.
+  // A radius, not a rectangle intersection, because the marker is round: the drop is
+  // a square with three rounded corners, so its silhouette is a disc of half-side
+  // radius plus a tail at one corner. A rectangle boundary answered 20.8px across the
+  // axes but 20.8×√2 = 29.4px on the diagonals, so diagonal edges stopped ~9px further
+  // out than horizontal ones and the gap around a pin was visibly uneven — which is
+  // what "the line and the marker are not meeting" looks like once the label is no
+  // longer the cause.
+  //
+  // min of the two half-extents: for the square drop they are equal, and for the
+  // fallback box it errs towards touching the marker rather than floating away.
+  const boundary = (box) => Math.min(box.width, box.height) / 2;
   const startInset = Math.min(boundary(from) + 6, distance * 0.42);
   const endInset = Math.min(boundary(to) + 10, distance * 0.42);
 

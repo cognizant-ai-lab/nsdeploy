@@ -78,6 +78,33 @@ class DeployOptions(BaseModel):
     )
 
 
+# ── organization names ───────────────────────────────────────────────────────
+# Defined here rather than in app.py because three places need the same rule and the
+# first version of this lived in only one of them: the two upload endpoints were
+# bounded while POST /orgs, PATCH /orgs and the console's own "change organization"
+# dialog were not, so a long name was refused on upload and accepted everywhere else.
+# models.py is the lowest layer that all of them already import.
+ORG_NAME_MAX = 40
+
+# Letters and digits are Unicode (\w), so "Zürich Analytics" and non-Latin team names
+# are accepted — this is an international event and an ASCII-only rule would reject
+# real names. Alongside them, only the punctuation that genuinely appears in company
+# and team names: & ' ( ) . , - / + # and the space.
+#
+# First and last character must be a word character (or a closing bracket or full stop
+# at the end), which refuses leading and trailing whitespace, names that are nothing
+# but punctuation, and the "-Max" shape.
+#
+# Refused: angle brackets, quotes, backticks, semicolons, pipes, tabs and newlines.
+# Output is escaped everywhere it is rendered, so this is not what stands between the
+# service and an injection — it is what keeps a name a name, so it cannot carry a URL,
+# a pasted command or a line break into the directory, the filter and the map.
+#
+# Length is a separate job: a 30-character hex string is made entirely of legal
+# characters, so only ORG_NAME_MAX refuses a pasted credential.
+ORG_NAME_PATTERN = r"^[^\W_](?:[\w &'().,\-/+#]*(?:[^\W_]|[).]))?$"
+
+
 class OrgCreate(BaseModel):
     """A 'quick profile' for the team that owns an agent network.
 
@@ -85,13 +112,15 @@ class OrgCreate(BaseModel):
     API token, so anyone who can reach it can act on any organization's deployments.
     """
 
-    name: str = Field(min_length=1, max_length=120, description="organization name (unique)")
+    name: str = Field(min_length=1, max_length=ORG_NAME_MAX, pattern=ORG_NAME_PATTERN,
+                      description="organization name (unique)")
     address: str = Field(default="", max_length=500)
     contact: str = Field(default="", max_length=200, description="email, team channel, or owner")
 
 
 class OrgUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=ORG_NAME_MAX,
+                                pattern=ORG_NAME_PATTERN)
     address: Optional[str] = Field(default=None, max_length=500)
     contact: Optional[str] = Field(default=None, max_length=200)
 
@@ -148,6 +177,20 @@ class NetworkSummary(BaseModel):
     )
     brand: str = ""
     description: str = ""
+    front_man_description: str = Field(
+        default="",
+        description="the front-man agent's own `function.description` — what the "
+                    "network actually does, in the author's words. Kept alongside "
+                    "`description` rather than replacing it because the two diverge "
+                    "under deploy-time theming: the LLM rewrites the network-level "
+                    "`description` into a brand tagline (\"Prep, staff, sell, "
+                    "recover.\") and leaves the agent's authored purpose untouched, "
+                    "so after theming this is the only field that still says what "
+                    "the network is for. The console's connect prompt uses it, "
+                    "because a tagline tells an agent-network designer nothing about "
+                    "what a down-chain agent does. Empty on records built before this "
+                    "was recorded; _repair_summaries() backfills those at startup.",
+    )
     sample_queries: List[str] = Field(default_factory=list)
 
 

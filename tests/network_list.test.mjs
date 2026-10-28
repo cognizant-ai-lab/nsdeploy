@@ -11,8 +11,12 @@ import assert from 'node:assert/strict';
 
 import {
   matchingNodeIds, nodeMatchesQuery, queryTerms, queryTopics,
+
   filterDeployments, sortDeployments, paginate,
 } from '../nsdeploy_service/ui/assets/js/util/listquery.js';
+import {
+  ORG_NAME_MAX, orgNameError,
+} from '../nsdeploy_service/ui/assets/js/util/org.js';
 
 let seq = 0;
 const dep = (over = {}) => ({
@@ -434,4 +438,61 @@ test('an opaquely named network still falls back to its description', () => {
     description: 'Handles hospital admissions, triage and patient wards',
   });
   assert.equal(nodeMatchesQuery(opaque, 'healthcare'), true);
+});
+
+/* ── organization names ───────────────────────────────────────────────────── */
+// The browser copy of the API's rule (ORG_NAME_MAX / ORG_NAME_PATTERN in models.py).
+// It is duplicated deliberately — the remembered organization is written to
+// localStorage and sent as org_name on the next upload, so a name the browser accepts
+// and the server refuses becomes a 422 after Launch. These tests are what keep the two
+// copies saying the same thing.
+
+test('a name within the rules is accepted', () => {
+  for (const name of ['Max Retail', 'Acme Logistics', 'BOFA', "O'Brien Ltd",
+    'Smith, Jones & Co.', 'Cognizant (India)', 'R&D / Platform', 'Team #4',
+    'C++ Guild', 'team_phoenix']) {
+    assert.equal(orgNameError(name), '', `should accept ${name}`);
+  }
+});
+
+test('non-ascii team names are accepted', () => {
+  for (const name of ['Zürich Analytics', '北京团队', 'Equipe Numéro 1']) {
+    assert.equal(orgNameError(name), '', `should accept ${name}`);
+  }
+});
+
+test('an empty name asks for one', () => {
+  assert.match(orgNameError(''), /Enter your organization name/);
+  assert.match(orgNameError('   '), /Enter your organization name/);
+});
+
+test('an over-long name says how long it is', () => {
+  // The reason matters: "too long" and "bad character" need different fixes, and one
+  // generic "invalid" leaves the reader guessing which rule they broke.
+  const msg = orgNameError('a'.repeat(ORG_NAME_MAX + 5));
+  assert.match(msg, new RegExp(String(ORG_NAME_MAX)));
+  assert.match(msg, new RegExp(String(ORG_NAME_MAX + 5)));
+});
+
+test('a name exactly at the limit is fine', () => {
+  assert.equal(orgNameError('a'.repeat(ORG_NAME_MAX)), '');
+});
+
+test('markup, shell and whitespace characters are refused', () => {
+  for (const name of ['<script>alert(1)</script>', 'He said "hi"', 'a`b', 'a|b',
+    'a;b', 'a$b', 'a*b', 'a=b', 'a\nb', 'a\tb', 'https://evil.example/x']) {
+    assert.notEqual(orgNameError(name), '', `should refuse ${JSON.stringify(name)}`);
+  }
+});
+
+test('leading and trailing junk is refused', () => {
+  for (const name of ['-Max', '....', '!!!', '***', '---']) {
+    assert.notEqual(orgNameError(name), '', `should refuse ${name}`);
+  }
+});
+
+test('the browser rule and the API rule agree on the limit', () => {
+  // If these drift, a name passes here and 422s on upload. The number is asserted
+  // rather than assumed so a change on one side fails loudly on the other.
+  assert.equal(ORG_NAME_MAX, 40);
 });

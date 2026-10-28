@@ -13,6 +13,8 @@ import { runAgent } from "./runner.js";
 import { McpClient } from "./mcp.js";
 import { normalizeModelName } from "./model.js";
 import { interactionMessage } from "./cruse.js";
+import { createTurnEventStream } from "./execution-stream.js";
+import { TurnControl } from "./turn-control.js";
 
 function normOrigin(url) {
   try { return new URL(url).origin; } catch { return String(url || ""); }
@@ -101,9 +103,11 @@ export class Engine {
     this.agentRunner = null; // set by enableLangChain(); neuro-san-web owns the loop
     this.history = []; // top-level conversation turns ([{role,content}]) across runs
     this.consent = new Map(); // peerOrigin -> "always" (remembered approvals)
+    this.consentTail = Promise.resolve(); // serialize modal decisions for parallel tools
     this.onConsent = null; // UI hook: async (info) => "allow"|"always"|"decline"
     this.onLinkRequired = null; // UI hook: async ({reference,...}) => peer URL|null
     this.runtimeAllowedPeers = new Set(); // user-entered, validated link origins
+    this.streamSequence = 0;
   }
 
   // Clear the multi-turn conversation history (start a new chat).
@@ -114,11 +118,16 @@ export class Engine {
   // Ask the user to approve contacting another hosted network. Remembers
   // "always" per origin; defaults to allow when no UI hook is attached (headless).
   async requestConsent(info) {
-    if (this.consent.get(info.peerOrigin) === "always") return "allow";
-    if (typeof this.onConsent !== "function") return "allow";
-    const decision = await this.onConsent(info);
-    if (decision === "always") { this.consent.set(info.peerOrigin, "always"); return "allow"; }
-    return decision || "allow";
+    const decide = async () => {
+      if (this.consent.get(info.peerOrigin) === "always") return "allow";
+      if (typeof this.onConsent !== "function") return "allow";
+      const decision = await this.onConsent(info);
+      if (decision === "always") { this.consent.set(info.peerOrigin, "always"); return "allow"; }
+      return decision || "allow";
+    };
+    const pending = this.consentTail.then(decide, decide);
+    this.consentTail = pending.then(() => undefined, () => undefined);
+    return pending;
   }
 
   // Load the prebuilt LangChain.js AgentRunner bundle and use it as the loop.
@@ -236,6 +245,7 @@ export class Engine {
 
   async _persistLink(base, networkName, reference, target) {
     try { localStorage.setItem(this._linkKey(base, networkName, reference), target); } catch {}
+    if (this.top?.manifest?.deployment?.mode === "static") return;
     try {
       await fetch(resolveUrl(base, "/_nsdeploy/links"), {
         method: "POST",
@@ -312,7 +322,7 @@ export class Engine {
     return normalized;
   }
 
-  _makeCtx({ network, base, bundleUrl, integrity, manifest, llm, slyData, chain, composition, isTop, history }) {
+  _makeCtx({ network, base, bundleUrl, integrity, manifest, llm, slyData, chain, composition, isTop, history, turnControl }) {
     const self = this;
     const ctx = {
       network,
@@ -328,6 +338,7 @@ export class Engine {
       composition,
       // Prior conversation turns ([{role,content}]), only for the top front-man.
       history: history || [],
+      turnControl: turnControl || null,
       defaultModel: network.config.llm_config?.model_name || "mock-1",
       isTop: !!isTop,
       frontMan: network.findFrontMan(),
@@ -337,7 +348,9 @@ export class Engine {
       resolveLink: (ref, parentSpan) => self.resolveLink(ref, network, base, parentSpan),
       requestConsent: (info) => self.requestConsent(info),
       // LangChain.js AgentRunner intrinsic (neuro-san-web owns the loop)
-      externalRunner: self.agentRunner,
+      // The bundled LangChain runner expects an HTTP OpenAI-compatible endpoint.
+      // Static bundles use the dependency-free manual loop for browser://mock.
+      externalRunner: llm.baseUrl === "browser://mock" ? null : self.agentRunner,
       routerBaseUrl: llm.baseUrl,
       mock: llm.mock,
       apiKey: self.byokKey,
@@ -406,9 +419,27 @@ export class Engine {
     return (await this.runTurn(userText, { slyData })).text;
   }
 
-  async runTurn(userText, { slyData, interaction } = {}) {
+  // Public incremental API. Consumers receive typed lifecycle events while the
+  // existing runTurn() API remains a single final-result Promise.
+  streamTurn(userText, options = {}) {
+    const streamToken = `turn-stream-${++this.streamSequence}`;
+    const turnControl = new TurnControl();
+    const stream = createTurnEventStream(
+      this.trace,
+      () => this.runTurn(userText, { ...options, _streamToken: streamToken, _turnControl: turnControl }),
+      streamToken,
+    );
+    // AsyncIterable with an intentionally small imperative side-channel. Input
+    // is accepted only until this turn closes; callers can use the boolean to
+    // fall back to starting a normal follow-up turn after a completion race.
+    stream.steer = (text) => turnControl.steer(text);
+    return stream;
+  }
+
+  async runTurn(userText, { slyData, interaction, _streamToken, _turnControl } = {}) {
     if (!this.top) await this.loadTop();
-    const runSpan = this.trace.start("run", { origin: hostOf(this.top.base), input: userText });
+    const runSpan = this.trace.start("run", { origin: hostOf(this.top.base), input: userText, streamToken: _streamToken });
+    _turnControl?.attach(this.trace, runSpan);
     try {
       const ctx = this._makeCtx({
         network: this.top.network,
@@ -421,6 +452,7 @@ export class Engine {
         chain: [`${this.top.base}::${this.top.network.name}`],
         isTop: true,
         history: this.history,
+        turnControl: _turnControl,
         composition: {
           remoteCalls: 0,
           peerCalls: new Map(),
@@ -433,14 +465,19 @@ export class Engine {
       });
       const message = interactionMessage(userText, interaction);
       const result = await runAgent(ctx, this.top.network.findFrontMan(), message, runSpan, ctx_chain(ctx, this.top));
+      _turnControl?.close();
       result.turnId = runSpan;
       // Persist this turn so the next turn has conversation context.
       this.history.push({ role: "user", content: message });
+      for (const input of _turnControl?.accepted || []) {
+        this.history.push({ role: "user", content: input.text });
+      }
       this.history.push({ role: "assistant", content: result.text + (result.presentation ? `\n\nCRUSE presentation turn: ${runSpan}\n\`\`\`cruse-ui\n${JSON.stringify(result.presentation)}\n\`\`\`` : "") });
       if (this.history.length > 24) this.history = this.history.slice(-24); // bound tokens
       this.trace.end(runSpan, { answerPreview: result.text.slice(0, 300) });
       return result;
     } catch (err) {
+      _turnControl?.close();
       this.trace.fail(runSpan, err);
       throw err;
     }

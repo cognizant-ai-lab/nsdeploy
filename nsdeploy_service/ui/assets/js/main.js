@@ -3,12 +3,12 @@ import { api } from './api/client.js';
 import { $, $$, esc, icon } from './util/dom.js';
 import { toast } from './components/toast.js';
 import { openSettings, promptForMissingCredentials } from './components/settingsModal.js';
-import * as deployView from './views/deploy.js?v=94';
+import * as deployView from './views/deploy.js?v=120';
 import * as directoryView from './views/directory.js';
 // Version the Map dependency itself. Changing only main.js leaves an already-open
 // browser free to reuse an older child module even though the entry module is fresh.
-import * as mapView from './views/map.js?v=94';
-import * as networksView from './views/networks.js?v=94';
+import * as mapView from './views/map.js?v=120';
+import * as networksView from './views/networks.js?v=120';
 import * as organizationsView from './views/organizations.js';
 
 const THEME_KEY = 'nsdeploy.theme';

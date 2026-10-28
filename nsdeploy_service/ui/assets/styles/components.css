@@ -824,6 +824,20 @@ details.advanced > .advanced__body { padding-top: var(--space-4); }
 }
 
 .cell-title { font-weight: 600; }
+/* The organization column, trimmed to about 14 characters.
+   `ch` rather than rem, because the question is "how many characters" and ch is the
+   width of a '0' in the current font — so the cut stays at ~14 characters whatever
+   the font size, instead of drifting the next time a size changes. The field accepts
+   up to 40 (ORG_NAME_MAX in app.py); that is the limit on what may be *stored*, and
+   this is the limit on what a table row spends on it. The full name is in the cell's
+   title attribute. */
+.cell-org {
+  display: block;
+  max-width: 15ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cell-sub {
   color: var(--text-muted);
   font-size: 0.76rem;
@@ -2106,6 +2120,68 @@ details.advanced > .advanced__body { padding-top: var(--space-4); }
   font-variant-numeric: tabular-nums;
 }
 
+/* ── refresh tick ──────────────────────────────────────────────────────────
+   The map polls itself, which leaves a reader unable to tell a quiet map from a
+   stale one. This is the smallest honest answer: a hairline across the bottom of
+   the stage that fills towards the next poll and pulses while one is open.
+
+   Flush to the very bottom, unlike .mapmeta above — this is 2px of hairline, and a
+   few pixels of lost viewport cost at most part of a progress bar whose meaning is
+   already carried in the text readout. pointer-events:none so it can never take a
+   drag that belongs to the map underneath it. */
+.maptick {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.maptick.is-counting,
+.maptick.is-busy { opacity: 1; }
+
+.maptick__fill {
+  height: 100%;
+  width: 100%;
+  background: var(--map-edge);
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+/* Driven by scaleX rather than width: a transform is composited, so a sweep lasting
+   30s does not lay out the stage 30 times a second behind a hundred pins. */
+.maptick.is-counting .maptick__fill {
+  /* The duration is in the shorthand deliberately. tick() overrides it inline from
+     refreshSeconds, but `animation: name linear 1 forwards` with no time resets
+     animation-duration to its initial 0s — so if that inline write ever failed to
+     land the bar would complete instantly and sit full, looking like a dead control
+     rather than a countdown. 30s matches the server default. */
+  animation: map-tick-fill 30s linear 1 forwards;
+}
+@keyframes map-tick-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* A request is open. Overrides the countdown so the two states cannot both animate
+   the same element; the sweep restarts from zero when the response lands. */
+.maptick.is-busy .maptick__fill {
+  animation: map-tick-busy 0.9s ease-in-out infinite;
+  transform: scaleX(1);
+  transform-origin: center;
+}
+@keyframes map-tick-busy {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.9; }
+}
+
+/* The countdown is decoration; the busy pulse is feedback on a request in flight, so
+   it survives as a steady bar rather than vanishing entirely. */
+@media (prefers-reduced-motion: reduce) {
+  .maptick.is-counting .maptick__fill { animation: none; transform: scaleX(1); opacity: 0.35; }
+  .maptick.is-busy .maptick__fill { animation: none; opacity: 0.9; }
+}
+
 @media (max-width: 52rem) {
   .mapstage { min-height: 26rem; }
   .maplegend--float { display: none; }
@@ -2992,16 +3068,30 @@ textarea.input--sm { min-height: 3rem; }
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 0.6rem;
+  /* Clear sits hard right on the first row rather than trailing the last filter, so a
+     wrap puts a *filter* on the second line rather than orphaning the one button that
+     is not a filter. It is also where a reader looks for it. */
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface-1);
 }
+/* A select is sized by its LONGEST OPTION, so these widths are data-driven unless they
+   are capped — and the data is user-supplied. A deployment uploaded with a 48-character
+   org_name stretched the Organization filter until the bar overflowed and flex-wrap
+   pushed the Clear button onto a line of its own. Capped, a long name is clipped inside
+   its own control and the bar keeps its shape whatever anybody types. */
+.listbar__field select { max-width: 10rem; }
+/* Pushed to the right-hand end of the row. Without this it simply follows the last
+   filter, so it was the first thing to fall off when the row ran out of room. */
+#net-clear { margin-left: auto; flex: none; }
 .listbar__search {
   display: flex;
   align-items: center;
   gap: 0.4rem;
   flex: 1 1 16rem;
-  min-width: 12rem;
+  /* Lower floor than before: the search is the one control that can afford to give
+     room back, and it shrinking is far better than a button wrapping. */
+  min-width: 9rem;
   padding: 0 0.6rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
