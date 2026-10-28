@@ -5,20 +5,14 @@ import {
   AgentSessionConstants,
 } from "@cognizant-ai-lab/neuro-san-ts-package";
 
-// WORKAROUND: ExternalAgentParsing.parse_external_agent throws on every URL or
-// path, because the transpiled code calls Python str methods on a JS string:
-//   hostinfo = at(parse_result.netloc.rsplit("@", 1), (-1))
-//   port = slice(parse_result.netloc.rsplit(":", 1), 1)
-// JS strings have no rsplit, and slice(..., 1) returns the tail of the list where
-// the Python indexes [1]. is_external_agent and get_safe_agent_name both go
-// through it, so they throw too. Fixing those two lines is not enough on its own:
-// pythonlib's urlparse, which it calls, does not match Python's either. It reads
-// "/agents/booking" as host "agents" with scheme "http", accepts
-// "https://host:/a", and rewrites port "0443" as "443".
-// PORT BACK: substitute the two rsplit lines and point urlparse at a
-// Python-faithful implementation in the transpiling source, then delete
-// this module and use the package's ExternalAgentParsing directly.
-// Until then parseExternalAgent follows the Python line for line.
+// WORKAROUND: the package's ExternalAgentParsing.parse_external_agent parses
+// the URLs nsdeploy uses the same as Python, but pythonlib's urlparse, which it
+// calls, still differs from Python's on some URLs: it accepts an empty port
+// ("https://host:/a"), rewrites port "0443" as "443", and returns an IPv6 host as
+// "[[::1]]". is_external_agent and get_safe_agent_name go through it too.
+// PORT BACK: point urlparse at a Python-faithful implementation in the transpiling
+// source, then delete this module and use the package's ExternalAgentParsing
+// directly. Until then parseExternalAgent follows the Python line for line.
 
 // The parts of CPython's urllib.parse.urlsplit that parse_external_agent reads:
 // scheme, netloc, path, hostname and port, with .port raising for a bad port.
