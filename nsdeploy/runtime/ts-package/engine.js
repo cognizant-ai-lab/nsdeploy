@@ -102,10 +102,10 @@ export function selectPeerRouter(callerRouter) {
   return { baseUrl: callerRouter.baseUrl, mock: callerRouter.mock === true };
 }
 
-// BYOK guarantee: a real (non-mock) router is never contacted without a key the
-// visitor entered. Refuse rather than forward the placeholder "demo" to a live
-// provider (which returns a confusing 401). This happens e.g. when a shared/reloaded
-// URL keeps the proxy router but no saved BYOK profile/key is available here.
+// A real LLM router needs a key the visitor entered (BYOK). "demo" is only the
+// mock's placeholder, so stop with a clear message instead of sending it to a
+// real provider, which would answer with a confusing 401. This happens when a
+// shared or reloaded URL keeps a real router but this browser has no saved key.
 export function assertRouterKey(llm, apiKey) {
   if (!llm?.mock && (!apiKey || apiKey === "demo")) {
     throw new Error(`The selected LLM router (${hostOf(llm?.baseUrl) || "a real provider"}) needs your API key. Open ⚙ BYOK settings and enter it, or switch the router back to the mock to run without a key.`);
