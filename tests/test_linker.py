@@ -293,6 +293,25 @@ class LinkerTests(unittest.TestCase):
         self.assertIn('from "./runtime/index.js"', index)
         self.assertIn('href="./theme.css"', index)
 
+    def test_static_bundle_loads_the_ts_package_runtime_unless_switched_off(self):
+        plan = DeploymentPlan(
+            network_name="portable", config={"tools": [{"name": "front", "instructions": "Help."}]},
+            front_man="front",
+        )
+        runtime = self.root / "runtime-source"
+        runtime.mkdir()
+        (runtime / "index.js").write_text("// original\n")
+        for ts_package in (True, False):
+            out = self.root / f"portable-{ts_package}"
+            generate_site(plan, out, "browser://mock", "https://api.example/v1", "",
+                          cruse=False, static_bundle=True, runtime_dir=runtime, ts_package=ts_package)
+            index = (out / "runtime" / "index.js").read_text()
+            if ts_package:
+                self.assertEqual(index, 'export * from "./ts-package/index.js";\n')
+            else:
+                self.assertEqual(index, "// original\n")
+        self.assertEqual((runtime / "index.js").read_text(), "// original\n")
+
     def test_private_steward_manifest_collects_multiple_bundles(self):
         root = self.root / "cailville"
         (root / "harbor_guide").mkdir(parents=True)

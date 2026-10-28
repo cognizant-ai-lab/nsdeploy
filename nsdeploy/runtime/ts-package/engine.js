@@ -502,17 +502,20 @@ export class Engine {
         if (error) this.trace.fail(span, error);
         else this.trace.end(span, { type: ChatMessageType.AGENT });
       },
+      // A partner's own agents show under its call, each by the path from the partner's URL.
+      peerMessage: ({ url, message }) => this._traceMessage(
+        { ...message, origin: [{ tool: url }, ...(Array.isArray(message.origin) ? message.origin : [])] },
+        peerSpans.get(url),
+      ),
       // A partner's answer goes back to the agent that called it as CRUSE's
       // {cruse, text, presentation} (see cruse.js), so its presentation is a proposal
-      // the caller consolidates, never shown to the user directly.
+      // the caller consolidates, never shown to the user directly. The trace has it
+      // already, as the partner's front man's proposal.
       peerAnswer: ({ url, text }) => {
         const owner = this.refOwners.get(url);
         const agentName = parseExternalAgent(url, owner?.base)?.agentName;
         const source = { origin: hostOf(url), network: agentName, agent: agentName, invocation: `peer-${agentName}` };
         const result = parseAgentResponse(text, source);
-        this.trace.note("presentation_proposal", {
-          parent: this.runSpan, ...source, presentation: result.presentation, issues: result.presentationIssues,
-        });
         peerAnswers.set(url, result.text);
         return JSON.stringify(result);
       },
@@ -999,8 +1002,9 @@ export class Engine {
 
   // One streamed neuro-san message, as trace events. An agent (by its origin path)
   // starts the first time it speaks, as a "tool" call of the agent above it, and
-  // finishes with its AI message, its answer. Each tool result is noted too.
-  _traceMessage(message) {
+  // finishes with its AI message, its answer. Each tool result is noted too. An agent
+  // with no caller in this run (a partner's front man) hangs under `parent`.
+  _traceMessage(message, parent = this.runSpan) {
     const origin = Array.isArray(message.origin) ? message.origin : [];
     const tools = origin.map((o) => o.tool);
     const path = origin.map((o) => `${o.tool}#${o.instantiation_index ?? ""}`).join("/");
@@ -1018,7 +1022,7 @@ export class Engine {
       this.agentSpans.set(path, {
         agent, network, ended: false,
         span: this.trace.start("agent", {
-          parent: this.toolSpans.get(`agent::${path}`) || this.runSpan, origin: where, agent, network,
+          parent: this.toolSpans.get(`agent::${path}`) || parent || this.runSpan, origin: where, agent, network,
           invocation: path, isTopFrontMan,
         }),
       });
@@ -1033,6 +1037,13 @@ export class Engine {
     if (message.type === ChatMessageType.AI && entry && !entry.ended) {
       const text = String(message.text ?? "");
       entry.ended = true;
+      // Each agent's presentation, as main's runAgent records it: the developer view
+      // shows it and its validation issues, but only the front man's reaches the chat.
+      const proposal = parseAgentResponse(text, { origin: where, network, agent, invocation: path });
+      this.trace.note("presentation_proposal", {
+        parent: entry.span, origin: where, network, agent, invocation: path,
+        presentation: proposal.presentation, issues: proposal.presentationIssues,
+      });
       this.trace.note("agent_result", {
         parent: entry.span, origin: where, network, agent, invocation: path, text,
       });
