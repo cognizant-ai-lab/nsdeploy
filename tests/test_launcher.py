@@ -354,6 +354,23 @@ class ByokOnlyTests(unittest.TestCase):
         self.assertIn('"tool_calls"', text)
         self.assertIn('"name": "lookup"', text)
 
+    def test_runtime_index_is_the_ts_package_runtime_unless_switched_off(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        runtime = Path(temp.name)
+        (runtime / "index.js").write_text("// original\n")
+        for ts_package, status, location in ((True, 302, "/runtime/ts-package/index.js"), (False, 200, None)):
+            port = self._serve(None, "http://unused", runtime, [], None, None, None, ts_package)
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request("GET", "/runtime/index.js")
+            response = conn.getresponse()
+            body = response.read()
+            conn.close()
+            self.assertEqual(response.status, status)
+            self.assertEqual(response.getheader("Location"), location)
+            if not ts_package:
+                self.assertEqual(body, b"// original\n")
+
     def test_tool_proxies_do_not_forward_any_credential(self):
         mcp_urls = lambda p: [f"http://127.0.0.1:{p}/mcp"]  # noqa: E731 - both ext and local proxies
         port = self._serve(_SessionMcpHandler, "http://unused", Path("."), mcp_urls, mcp_urls)

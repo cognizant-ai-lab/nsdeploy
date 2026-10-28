@@ -4,9 +4,6 @@
 # the TS package runtime's build output (cd runtime-build && npm install && npm run build)
 nsdeploy/runtime/ts-package/generated/
 
-# editable site sources the bundled examples write next to their HOCON when run
-examples/sites/
-
 # python
 __pycache__/
 *.pyc
