@@ -2,8 +2,8 @@
 //
 // None of this is neuro-san logic. The loop itself is neuro-san's (see engine.js and
 // the built generated/browser/neuro-san.mjs); these are the limits nsdeploy puts on composing
-// public sites (per-query budgets, cycle checks), the consent card's cost estimate,
-// and CRUSE widget extraction from an agent's answer.
+// public sites (per-query budgets, cycle checks), the consent card's request text
+// and its cost estimate.
 
 import { parseExternalAgent } from "./agent-network.js";
 
@@ -85,44 +85,6 @@ export function consumeAgentBudget(composition, now = Date.now()) {
   }
   composition.agentCalls += 1;
   return null;
-}
-
-// Pull any ```cruse-ui {json}``` widget(s) out of an agent's answer, emit each as a
-// "widget" trace event (so it surfaces to the UI), and return the text with the
-// blocks removed. This lets ANY agent in the chain contribute widgets, generated on
-// the fly, while keeping the text passed up to its caller clean (consolidation).
-function tolerantJsonParse(s) {
-  try { return JSON.parse(s); } catch {}
-  // Best-effort repair: normalize smart quotes and drop trailing commas.
-  const fixed = s
-    .replace(/[“”]/g, '"').replace(/[‘’]/g, "'")
-    .replace(/,\s*([}\]])/g, "$1");
-  try { return JSON.parse(fixed); } catch {}
-  return null;
-}
-
-export function extractWidgets(text, ctx, agentName) {
-  if (!text) return text;
-  // Accept ```cruse-ui (preferred), or a bare ```json fence whose body is a widget.
-  const re = /```(?:cruse-ui|json)\s*([\s\S]*?)```/gi;
-  let m;
-  let found = false;
-  while ((m = re.exec(text))) {
-    const widget = tolerantJsonParse(m[1].trim());
-    if (widget && typeof widget === "object" && widget.display !== false && (widget.schema || widget.kind || widget.options || widget.fields)) {
-      found = true;
-      ctx.trace.note("widget", { origin: ctx.displayOrigin, agent: agentName, network: ctx.network?.name, widget });
-    }
-  }
-  if (!found) return text;
-  // Remove only blocks we actually turned into widgets (cruse-ui, or json that parsed as a widget).
-  return text
-    .replace(/```cruse-ui[\s\S]*?```/gi, "")
-    .replace(/```json\s*([\s\S]*?)```/gi, (full, body) => {
-      const w = tolerantJsonParse(body.trim());
-      return w && (w.schema || w.kind || w.options || w.fields) ? "" : full;
-    })
-    .trim();
 }
 
 // Rough per-1M-token prices [input, output] for cost estimates. Approximate.
