@@ -1,6 +1,6 @@
 // The Engine's streamed turns on neuro-san's agent loop: the turn's lifecycle events,
-// steering the top front man while it runs, and consent only where a call leaves the
-// site. Only HTTP is faked: the site's manifest and networks, the LLM router (OpenAI's
+// steering the top front man while it runs, consent only where a call leaves the
+// site, and CRUSE presentations across agents and partner networks. Only HTTP is faked: the site's manifest and networks, the LLM router (OpenAI's
 // Responses API, as neuro-san calls it) and the MCP servers.
 //
 //   npm run build --prefix runtime-build   # build the runtime first
@@ -435,5 +435,87 @@ test("consent is asked only for calls that leave the site", async () => {
     ]);
     const kinds = events.filter((event) => event.type === "tool.started").map((event) => event.tool.kind).sort();
     assert.deepEqual(kinds, ["MCP", "MCP", "MCP", "remote network", "remote network"]);
+  });
+});
+
+test("CRUSE presentations consolidate at every level and across a partner network, and follow-up turns keep them", async () => {
+  const fence = (value) => "```cruse-ui\n" + JSON.stringify(value) + "\n```";
+  const form = (id, properties) => ({ id, kind: "form", title: "Borrowing details", schema: { type: "object", properties, required: Object.keys(properties) } });
+  const date = { type: "string", format: "date", title: "Start date" };
+  const seats = { type: "integer", title: "Seats" };
+  const dates = form("dates", { start_date: date });
+  const logistics = form("logistics", { pickup_date: { ...date, title: "Pickup date" }, seats });
+  const details = form("details", { start_date: date, seats });
+  const table = { kind: "table", columns: ["Vehicle", "Availability"], rows: [["Minivan", "Provisional"]] };
+  const networks = {
+    main: { cruse: { version: 1 }, tools: [agent("root", ["manager", `${PEER}/peer_network`]), agent("manager", ["dates_agent", "logistics_agent"], INQUIRY), agent("dates_agent", [], INQUIRY), agent("logistics_agent", [], INQUIRY)] },
+  };
+  const peerNetwork = { cruse: { version: 1 }, tools: [agent("peer_root", ["peer_leaf"]), agent("peer_leaf", [], INQUIRY)] };
+  const prompts = new Map();
+  const reply = (name, body) => {
+    const system = JSON.stringify((body.input || []).filter((item) => item.role === "system"));
+    assert.match(system, /consolidate them into your own presentation/);
+    prompts.set(name, system);
+    const outputs = toolOutputs(body).map((item) => String(item.output));
+    if (name === "root" && userTexts(body).some((text) => text.includes("CRUSE interaction"))) {
+      assert.match(JSON.stringify(body.input), /\\"id\\":\\"details\\"/);
+      return { text: "Updated to Thursday; your other details are retained." };
+    }
+    if ((body.tools || []).length && !outputs.length) {
+      return { calls: body.tools.map((tool) => ({ name: tool.name, arguments: JSON.stringify({ inquiry: "Minivan availability next week" }) })) };
+    }
+    if (name === "dates_agent") return { text: "Exact dates needed.\n" + fence(dates) };
+    if (name === "logistics_agent") return { text: "Pickup date and seats needed.\n" + fence(logistics) };
+    if (name === "peer_leaf") return { text: "Availability is provisional.\n" + fence({ kind: "info", fields: { Availability: "Provisional" } }) };
+    if (name === "manager") {
+      // Within a network, a child's reply reaches its parent with its cruse-ui block.
+      assert.equal(outputs.length, 2);
+      assert.ok(outputs.some((output) => output.includes('"id":"dates"')));
+      assert.ok(outputs.some((output) => output.includes('"id":"logistics"')));
+      return { text: "Need one date and seat count.\n" + fence({ version: 1, components: [details] }) };
+    }
+    if (name === "peer_root") {
+      assert.match(outputs[0], /"kind":"info"/);
+      return { text: "One provisional option.\n" + fence(table) };
+    }
+    if (name === "root") {
+      // A partner's reply comes back as CRUSE's structured result.
+      const partner = outputs.map((output) => { try { return JSON.parse(output); } catch { return null; } }).find((result) => result?.cruse);
+      assert.equal(partner.source.network, "peer_network");
+      assert.equal(partner.presentation.components[0].kind, "table");
+      return { text: "One option needs confirmation.\n" + fence({ version: 1, components: [table, details] }) };
+    }
+    throw new Error(`unexpected agent ${name}`);
+  };
+  const routes = {
+    [PEER]: (pathname) => {
+      if (pathname === "/agent-manifest.json") return json({ networks: [{ name: "peer_network", hocon: "/peer_network.hocon" }] });
+      if (pathname === "/peer_network.hocon") return json(peerNetwork);
+      return null;
+    },
+  };
+  await withFetch(siteFetch({ networks, manifest: { allowed_peers: [PEER] }, reply, routes }), async () => {
+    const engine = new Engine({ originUrl: SITE });
+    engine.onConsent = async () => "allow";
+    const events = await collect(engine.streamTurn("Are there any minivans available for me to borrow next week?"));
+    const result = events.at(-1).result;
+    assert.equal(events[0].type, "turn.started");
+    assert.equal(events.at(-1).type, "turn.completed");
+    assert.ok(events.some((event) => event.type === "agent.completed" && event.source?.agent === "peer_leaf"));
+    assert.ok(events.findIndex((event) => event.type === "tool.completed") < events.length - 1);
+    assert.equal(result.presentation.components.filter((component) => component.kind === "form").length, 1);
+    assert.deepEqual(Object.keys(result.presentation.components[1].schema.properties), ["start_date", "seats"]);
+    // Every agent's presentation is a proposal in the trace, and none is a widget.
+    assert.equal(engine.trace.events.filter((event) => event.kind === "widget").length, 0);
+    assert.deepEqual(engine.trace.events.filter((event) => event.kind === "presentation_proposal").map((event) => event.agent).sort(),
+      ["dates_agent", "logistics_agent", "manager", "peer_leaf", "peer_root", "root"]);
+    assert.match(prompts.get("peer_root"), /your parent agent/);
+
+    const second = await engine.runTurn("Make that Thursday", { interaction: { turnId: result.turnId, componentId: "details", values: { start_date: "2026-10-01", seats: 6 } } });
+    assert.equal(second.presentation, null);
+    assert.match(second.text, /Thursday/);
+    assert.equal(typeof await engine.run("Thanks"), "string");
+    engine.resetHistory();
+    assert.equal(engine.chatContext, null);
   });
 });

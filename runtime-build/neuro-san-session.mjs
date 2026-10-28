@@ -219,10 +219,18 @@ class PeerSession {
     context.nsdeploy_peer_chain = [...chain, this.agentUrl];
     const metadata = this.invocationContext.get_metadata ? this.invocationContext.get_metadata() : null;
     const session = new AsyncDirectAgentSession(network, context, metadata, null, null);
+    // The partner streams all its agents' messages for the trace, and the caller gets
+    // only what its own chat filter allows. For the default MINIMAL filter that is the
+    // check in neuro-san's MinimalMessageFilter (ChatContextMessageFilter), which the
+    // package doesn't export: the AGENT_FRAMEWORK message with the chat context.
+    const callerSeesAll = String(request?.chat_filter?.chat_filter_type ?? "").toUpperCase() === "MAXIMAL";
+    const traced = { ...request, chat_filter: { chat_filter_type: "MAXIMAL" } };
     let error = null;
     try {
-      for await (const chatResponse of session.streaming_chat(request)) {
+      for await (const chatResponse of session.streaming_chat(traced)) {
         const message = chatResponse?.response;
+        if (message) hooks.peerMessage?.({ url: this.agentUrl, message });
+        if (!callerSeesAll && !(message?.type === ChatMessageType.AGENT_FRAMEWORK && message.chat_context != null)) continue;
         if (hooks.peerAnswer && message?.type === ChatMessageType.AGENT_FRAMEWORK && typeof message.text === "string") {
           message.text = hooks.peerAnswer({ url: this.agentUrl, text: message.text });
         }
