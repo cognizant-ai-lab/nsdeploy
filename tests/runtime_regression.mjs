@@ -424,4 +424,47 @@ assert.throws(
   }
 }
 
+{
+  // A JavaScript coded tool loads its class from its own `url`, resolved against
+  // the declaring HOCON, with spec `args` merged under the LLM's args.
+  const invocations = [];
+  const approvals = [];
+  const ctx = {
+    trace: new TraceBus(),
+    baseOrigin: "https://site.example",
+    displayOrigin: "site.example",
+    codedToolBase: "https://site.example/net.network.json",
+    codedToolBundleUrl: "https://site.example/bundle.js",
+    codedToolIntegrity: "sha384-network",
+    slyData: {},
+    requestConsent: async (info) => { approvals.push(info); return approvals.length > 1 ? "decline" : "allow"; },
+    sandbox: { invoke: async (request) => { invocations.push(request); return { result: { sum: 3 }, slyData: {} }; } },
+  };
+  const spec = { name: "calculator", class: "calculator.Calculator", url: "./coded_tools/calculator.js",
+                 args: { precision: 2, a: 0 } };
+  const result = await dispatchToolCall(ctx, { kind: "coded", ref: "calculator", spec }, { a: 1, b: 2 }, "parent", []);
+  assert.equal(result, JSON.stringify({ sum: 3 }));
+  assert.equal(invocations[0].bundleUrl, "https://site.example/coded_tools/calculator.js");
+  assert.equal(invocations[0].integrity, null);
+  assert.equal(invocations[0].className, "calculator.Calculator");
+  assert.deepEqual(invocations[0].args, { precision: 2, a: 1, b: 2 });
+  assert.equal(approvals.length, 0); // same-site code needs no consent
+
+  // Without a `url`, the manifest's network-wide bundle is still used.
+  await dispatchToolCall(ctx, { kind: "coded", ref: "legacy", spec: { name: "legacy", class: "Legacy" } }, {}, "parent", []);
+  assert.equal(invocations[1].bundleUrl, "https://site.example/bundle.js");
+  assert.equal(invocations[1].integrity, "sha384-network");
+
+  // Code from another site asks first; a decline never reaches the sandbox.
+  const thirdParty = { ...spec, url: "https://tools.example/calc.js", integrity: "sha384-tool" };
+  await dispatchToolCall(ctx, { kind: "coded", ref: "calculator", spec: thirdParty }, {}, "parent", []);
+  assert.equal(approvals[0].kind, "coded");
+  assert.equal(approvals[0].peerOrigin, "tools.example");
+  assert.equal(invocations[2].bundleUrl, "https://tools.example/calc.js");
+  assert.equal(invocations[2].integrity, "sha384-tool");
+  const declined = await dispatchToolCall(ctx, { kind: "coded", ref: "calculator", spec: thirdParty }, {}, "parent", []);
+  assert.match(declined, /declined to load tool code from tools\.example/);
+  assert.equal(invocations.length, 3);
+}
+
 console.log("runtime regression tests passed");

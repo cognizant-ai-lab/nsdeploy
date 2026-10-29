@@ -181,6 +181,7 @@ export class AgentNetwork {
 
   // Delegates classification to the cross-compiled kernel, then attaches the
   // local agent spec (needed by the runner) for non-remote/non-mcp kinds.
+  // DEF - 1st entry point for tool calling
   classifyTool(ref) {
     let kind = classify_tool(this.config, ref);
     if (kind === "missing" && typeof ref === "string" && this.linkSlots.has(ref)) kind = "link";
@@ -203,6 +204,7 @@ export class AgentNetwork {
 
 // --- validators (mirrors the validator chain) --------------------------------
 
+// DEF - 2nd entry point for tool calling
 export function validateNetwork(network) {
   // Errors come from the cross-compiled kernel (neuro_san/kernel/validation.py).
   const errors = validate_network(network.config).filter((message) =>

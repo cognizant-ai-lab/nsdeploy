@@ -104,6 +104,41 @@ class LinkerTests(unittest.TestCase):
         self.assertEqual(plan.missing_tools, [])
         self.assertEqual(plan.omitted_tools, ["private_search"])
 
+    def test_javascript_coded_tool_ships_to_the_browser(self):
+        hocon_dir = self.root / "networks"
+        (hocon_dir / "tools").mkdir(parents=True)
+        (hocon_dir / "tools" / "calculator.js").write_text("export class Calculator {}\n")
+        config = {"tools": [
+            {"name": "front", "instructions": "Help.", "tools": ["calculator", "converter"]},
+            {"name": "calculator", "class": "calculator.Calculator", "url": "./tools/calculator.js",
+             "function": {"description": "Add numbers."}},
+            {"name": "converter", "class": "convert.Converter", "url": "https://tools.example/convert.js"},
+        ]}
+        plan = build_plan(config, {}, "portable", [], self.source, include_python_tools=False)
+        self.assertEqual(plan.coded_tools, ["calculator", "converter"])
+        self.assertEqual(plan.omitted_tools, [])
+
+        out = self.root / "out"
+        manifest = generate_site(plan, out, "browser://mock", "https://router.example/v1", "",
+                                 cruse=False, static_bundle=True, tool_source_dir=hocon_dir)
+        deployed = json.loads((out / "portable.network.json").read_text())
+        specs = {t["name"]: t for t in deployed["tools"]}
+        self.assertEqual(specs["front"]["tools"], ["calculator", "converter"])
+        self.assertEqual(specs["calculator"]["url"], "./coded_tools/calculator.js")
+        self.assertEqual(specs["converter"]["url"], "https://tools.example/convert.js")
+        self.assertTrue((out / "coded_tools" / "calculator.js").is_file())
+        self.assertIn("https://tools.example", manifest["allowed_peers"])
+
+    def test_javascript_coded_tool_file_must_exist(self):
+        config = {"tools": [
+            {"name": "front", "instructions": "Help.", "tools": ["calculator"]},
+            {"name": "calculator", "class": "calculator.Calculator", "url": "./nope.js"},
+        ]}
+        plan = build_plan(config, {}, "portable", [], self.source, include_python_tools=False)
+        with self.assertRaisesRegex(ValueError, "not found"):
+            generate_site(plan, self.root / "out", "browser://mock", "", "",
+                          cruse=False, static_bundle=True, tool_source_dir=self.root)
+
     def test_unlinked_demo_leaf_remains_as_local_fallback(self):
         config = {
             "tools": [

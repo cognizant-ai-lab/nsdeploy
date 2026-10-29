@@ -1,0 +1,53 @@
+{
+# A minimal network whose front man calls a JavaScript CodedTool.
+#
+# The `calculator` node names its class with `class` and the JS file holding it
+# with `url` (relative to this HOCON, or an absolute http(s) URL). nsDeploy
+# copies relative files into the site and the browser runs them in its
+# coded-tool sandbox.
+    "metadata": {
+        "sample_queries": [
+            "What is 1234 times 5678?",
+            "Divide 22 by 7."
+        ]
+    },
+
+    "llm_config": {
+        "model_name": "gpt-4o-mini"
+    },
+
+    "tools": [
+        {
+            "name": "math_helper",
+            "function": {
+                "description": "I answer arithmetic questions."
+            },
+            "instructions": """
+You answer arithmetic questions. For any calculation, call the calculator tool
+instead of working it out yourself, then report its result.
+""",
+            "tools": ["calculator"]
+        },
+        {
+            "name": "calculator",
+            "function": {
+                "description": "Performs one arithmetic operation on two numbers.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "operation": {
+                            "type": "string",
+                            "enum": ["add", "subtract", "multiply", "divide"],
+                            "description": "The operation to perform."
+                        },
+                        "a": { "type": "number", "description": "The first operand." },
+                        "b": { "type": "number", "description": "The second operand." }
+                    },
+                    "required": ["operation", "a", "b"]
+                }
+            },
+            "url": "./tools/calculator.js",
+            "class": "calculator.Calculator"
+        }
+    ]
+}

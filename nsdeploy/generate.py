@@ -132,6 +132,10 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
         config["cruse"] = {"version": 1}
     new_tools: List[Dict[str, Any]] = []
     for entry in config.get("tools", []) or []:
+        # JavaScript coded tools run in the browser sandbox, so their specs ship as is.
+        if entry.get("name") in plan.coded_tools:
+            new_tools.append(copy.deepcopy(entry))
+            continue
         # Keep only LLM agents; the leaf coded/toolbox entries are replaced by inline
         # MCP URLs inside the agents that reference them.
         if not ("instructions" in entry and "class" not in entry and "toolbox" not in entry):
@@ -411,6 +415,44 @@ def write_private_steward_manifest(
     return manifest_path
 
 
+def _is_http_url(value: str) -> bool:
+    return urlparse(value).scheme in ("http", "https")
+
+
+def _coded_tool_specs(network_config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [t for t in network_config.get("tools", []) or []
+            if isinstance(t, dict) and "class" in t and isinstance(t.get("url"), str)]
+
+
+def _external_coded_tool_urls(network_config: Dict[str, Any]) -> List[str]:
+    return [t["url"] for t in _coded_tool_specs(network_config) if _is_http_url(t["url"])]
+
+
+def publish_coded_tools(network_config: Dict[str, Any], tool_source_dir: Optional[Path],
+                        out_dir: Path) -> None:
+    """Copy each JavaScript coded tool whose `url` is a relative path (resolved
+    against the HOCON's directory) into out_dir/coded_tools/, and point `url` at
+    the copy. Absolute http(s) URLs are left for the browser to fetch."""
+    for spec in _coded_tool_specs(network_config):
+        url = spec["url"]
+        if _is_http_url(url):
+            continue
+        if tool_source_dir is None:
+            raise ValueError(f"coded tool '{spec.get('name')}' has relative url '{url}' "
+                             "but no HOCON directory was given to resolve it")
+        src = (tool_source_dir / url).resolve()
+        if src.suffix != ".js":
+            raise ValueError(f"coded tool '{spec.get('name')}': url '{url}' must be a .js file "
+                             "(TypeScript is not compiled yet)")
+        if not src.is_file():
+            raise ValueError(f"coded tool '{spec.get('name')}': {src} not found")
+        dest_dir = out_dir / "coded_tools"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / f"{spec['name']}.js"
+        shutil.copyfile(src, dest)
+        spec["url"] = f"./coded_tools/{dest.name}"
+
+
 def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
                    mock_router: str, byok_router: str, site_base: str, theme: ThemeSpec,
                    mcp_host: str = "127.0.0.1", static_bundle: bool = False) -> Dict[str, Any]:
@@ -424,6 +466,8 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
     # Modern runtimes use peer_policy.mode=open, but publish direct URL-tool origins
     # for compatibility with older allow-list runtimes.
     allowed_peers.extend(origin for origin in (_origin(url) for url in plan.external_networks) if origin)
+    allowed_peers.extend(origin for origin in (_origin(url) for url in _external_coded_tool_urls(network_config))
+                         if origin)
     allowed_peers = list(dict.fromkeys(allowed_peers))
     manifest: Dict[str, Any] = {
         "brand": _brand_display(plan, theme),
@@ -568,8 +612,10 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
                   site_source_dir: Optional[Path] = None,
                   private_steward_sites: Optional[Dict[str, str]] = None,
                   static_bundle: bool = False,
-                  runtime_dir: Optional[Path] = None) -> Dict[str, Any]:
-    """Build the disposable static output from network data and editable site source."""
+                  runtime_dir: Optional[Path] = None,
+                  tool_source_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Build the disposable static output from network data and editable site source.
+    `tool_source_dir` is the HOCON's directory, for relative coded-tool `url`s."""
     theme = theme or ThemeSpec()
     out_dir.mkdir(parents=True, exist_ok=True)
     if site_source_dir:
@@ -579,6 +625,7 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     network_config = rewrite_config(
         plan, site_base, mcp_host=mcp_host, cruse=cruse, static_bundle=static_bundle,
     )
+    publish_coded_tools(network_config, tool_source_dir, out_dir)
     manifest = build_manifest(
         plan, network_config, mock_router, byok_router, site_base, theme,
         mcp_host=mcp_host, static_bundle=static_bundle,

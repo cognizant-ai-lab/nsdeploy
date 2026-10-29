@@ -88,6 +88,8 @@ self.onmessage = async (e) => {
       }
       cache.set(key, mod);
     }
+    // ToolClass implements the CodedTool interface (coded_tool.ts). Reference only:
+    // this worker's CSP forbids importing it.
     const ToolClass = resolveClass(mod, className);
     if (!ToolClass) throw new Error(`coded tool class '${className}' not found`);
     const tool = new ToolClass();
@@ -106,9 +108,10 @@ self.onmessage = async (e) => {
       };
     }
     let result;
-    if (typeof tool.asyncInvoke === "function") result = await tool.asyncInvoke(callArgs, sly);
+    if (typeof tool.async_invoke === "function") result = await tool.async_invoke(callArgs, sly);
+    else if (typeof tool.asyncInvoke === "function") result = await tool.asyncInvoke(callArgs, sly);
     else if (typeof tool.invoke === "function") result = await tool.invoke(callArgs, sly);
-    else throw new Error(`coded tool '${className}' implements neither asyncInvoke nor invoke`);
+    else throw new Error(`coded tool '${className}' implements neither async_invoke nor invoke`);
     self.postMessage({ id, ok: true, result, slyData: sly });
   } catch (err) {
     self.postMessage({ id, ok: false, error: String(err && err.message ? err.message : err) });

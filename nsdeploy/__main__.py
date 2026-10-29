@@ -265,7 +265,8 @@ def main() -> int:
     generate_site(plan, out_dir, mock_router, byok_router, site_base, cruse=not args.no_cruse,
                   theme=theme, site_source_dir=site_dir,
                   private_steward_sites=private_steward_sites or None,
-                  static_bundle=args.static_bundle, runtime_dir=runtime_dir)
+                  static_bundle=args.static_bundle, runtime_dir=runtime_dir,
+                  tool_source_dir=hocon_path.parent)
     bundle_label = "static bundle" if args.static_bundle else "site"
     print(f"✅ Generated {bundle_label} → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))
     if args.static_bundle:

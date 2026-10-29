@@ -175,6 +175,7 @@ export class Engine {
     }
   }
 
+  // DEF Interpretation begins here.
   async _compile(base, manifest, entry, { isTop = false } = {}) {
     const hoconUrl = resolveUrl(base, entry.hocon);
     const text = await fetchText(hoconUrl);
@@ -182,6 +183,7 @@ export class Engine {
     const publishedLinks = await this._loadPublishedLinks(base, entry.name || entry.hocon);
     config.links = { ...(config.links || {}), ...publishedLinks };
     const network = new AgentNetwork(config, entry.name || entry.hocon);
+    network.sourceUrl = hoconUrl; // base for resolving per-tool coded-tool `url`s
     // Validation gate: a network with structural errors must never run. (Warnings
     // are non-fatal and surfaced in the trace/UI.) This applies to the top network
     // AND to every fetched-and-run peer network compiled below.
@@ -331,6 +333,7 @@ export class Engine {
       displayOrigin: hostOf(base),
       codedToolBundleUrl: bundleUrl,
       codedToolIntegrity: integrity || null,
+      codedToolBase: network.sourceUrl || base,
       llm,
       sandbox: this.sandbox,
       trace: this.trace,

@@ -48,6 +48,12 @@ export function requiresThirdPartyApproval(ref, baseOrigin) {
   }
 }
 
+// Resolve a coded tool's `url`: absolute http(s) as is, otherwise relative to
+// the HOCON that declared it.
+export function codedToolUrl(ctx, url) {
+  return new URL(url, ctx.codedToolBase || ctx.baseOrigin).href;
+}
+
 export function remoteIsInChain(ref, baseOrigin, chain = []) {
   try {
     const parsed = parseExternalAgent(ref, baseOrigin);
@@ -130,6 +136,7 @@ export function schemaFor(name, fn) {
 }
 
 // Build the tool table + OpenAI-style schemas for one agent's `tools`.
+// DEF - 3rd tool entry point
 export async function buildToolTable(ctx, spec, chain, parentSpan) {
   const { network } = ctx;
   const toolByName = new Map();
@@ -304,11 +311,30 @@ export async function dispatchToolCall(ctx, entry, args, parentSpan, chain) {
     // including secrets like backend_token.) Untrusted peer code never sees more
     // than it is declared to need.
     const permitted = filterSlyData(ctx.slyData, allowedDownstreamSly(entry.spec) || []);
+    // A tool's own `url` names the JS file holding its class (a CodedTool, see
+    // coded_tool.ts), resolved against the network's HOCON. Without one, fall
+    // back to the manifest's network-wide coded-tool bundle.
+    const bundleUrl = entry.spec.url ? codedToolUrl(ctx, entry.spec.url) : ctx.codedToolBundleUrl;
+    const integrity = entry.spec.url ? entry.spec.integrity || null : ctx.codedToolIntegrity;
+    if (entry.spec.url && requiresThirdPartyApproval(bundleUrl, ctx.baseOrigin)) {
+      // Loading code from another site is a cross-site contact. Ask first.
+      const host = hostOfUrl(bundleUrl);
+      const decision = await ctx.requestConsent?.({
+        kind: "coded", phase: "fetch", peerLabel: `Tool code for ${entry.spec.name}`, peerOrigin: host,
+        requestText: bundleUrl,
+        est: { totalTokens: 0, costText: ctx.mock ? "$0.00 (mock)" : "code download only" },
+      });
+      if (decision === "decline") {
+        ctx.trace.note("consent", { parent: parentSpan, origin: ctx.displayOrigin, peerOrigin: host, phase: "fetch", decision: "declined" });
+        return `The user declined to load tool code from ${host}. Continue without it.`;
+      }
+    }
     const { result, slyData } = await ctx.sandbox.invoke({
-      bundleUrl: ctx.codedToolBundleUrl,
-      integrity: ctx.codedToolIntegrity,
+      bundleUrl,
+      integrity,
       className: entry.spec.class,
-      args,
+      // neuro-san `args` on the tool spec are fixed extras; the LLM's args win.
+      args: { ...(entry.spec.args || {}), ...(args || {}) },
       permittedSly: permitted,
       origin: ctx.displayOrigin,
       parentSpan,

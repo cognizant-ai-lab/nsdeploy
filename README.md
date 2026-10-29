@@ -464,7 +464,9 @@ additions from the private-steward manifest.
    exactly as neuro-san would resolve them.
 2. **Classify & dependency-check** every entry in `tools`:
    - LLM agents (run in the browser),
-   - `toolbox`/`class` tools resolved against the studio's `toolbox_info.hocon` +
+   - `class` tools with a `url` → **JavaScript coded tools** (run in the browser
+     sandbox; see [JavaScript coded tools](#javascript-coded-tools)),
+   - other `toolbox`/`class` tools resolved against the studio's `toolbox_info.hocon` +
      `coded_tools/` → **hostable** (can run as MCP) or **missing**,
    - URL tools, classified as either **external MCP servers** or **public agent
      networks**,
@@ -492,6 +494,44 @@ additions from the private-steward manifest.
    With the no-key mock upstream, each public agent takes one deterministic tool
    hop so demo requests remain bounded; a configured LLM upstream controls normal
    multi-step tool selection.
+
+## JavaScript coded tools
+
+A tool node with both `class` and `url` is a JavaScript implementation of the
+`CodedTool` interface (`nsdeploy/runtime/coded_tool.ts`). It runs in the visitor's
+browser, so it works in static bundles too:
+
+```hocon
+{
+    "name": "calculator",
+    "function": {
+        "description": "Performs one arithmetic operation on two numbers.",
+        "parameters": { "type": "object", "properties": { ... }, "required": [ ... ] }
+    },
+    "url": "./tools/calculator.js",     # relative to this HOCON, or an absolute http(s) URL
+    "class": "calculator.Calculator"    # the exported class ("module.Class" or "Class")
+}
+```
+
+- **Relative `url`**: at deploy time the file is copied to `coded_tools/<name>.js`
+  in the site and `url` is rewritten to point at the copy. A missing file stops the
+  deploy.
+- **Absolute `url`**: the browser fetches it at call time. The host must allow CORS.
+  If it's on another site, the visitor is asked before the code is downloaded, and its
+  origin is listed in `allowed_peers`. Add `"integrity": "sha384-…"` to pin the
+  exact file. A mismatch fails closed.
+- The file must be a **self-contained ES module that exports the class**. `import`
+  statements are rejected. The code runs in a sandboxed worker with no network, DOM,
+  storage, or `eval`.
+- The class needs a no-argument constructor. The worker calls `async_invoke(args,
+  sly_data)` (or `invoke` if that's all there is). `args` are the LLM's arguments over
+  the node's optional `args` map, plus `args.progress_reporter.report(progress,
+  message)`. Return a string or something JSON-serializable. The tool only sees the
+  sly_data keys its `allow.to_downstream.sly_data` grants. New keys it writes are
+  merged back.
+- Only `.js` is supported for now. Compile TypeScript first.
+
+See `examples/coded_tool_demo.hocon` and `examples/tools/calculator.js`.
 
 ## Private stewards and open-web reachability
 

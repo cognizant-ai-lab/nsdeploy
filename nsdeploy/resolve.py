@@ -74,6 +74,7 @@ class DeploymentPlan:
     agents: List[Dict[str, Any]] = field(default_factory=list)
     demo_mode_agents: List[str] = field(default_factory=list)
     hostable_tools: List[HostableTool] = field(default_factory=list)
+    coded_tools: List[str] = field(default_factory=list)         # JS CodedTool leaves (class + url), run in the browser
     missing_tools: List[str] = field(default_factory=list)       # referenced, unresolvable
     external_mcps: List[str] = field(default_factory=list)       # http(s) MCP URLs — proxied & callable
     external_networks: List[str] = field(default_factory=list)   # public agent-network URLs
@@ -384,6 +385,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
             break
 
     seen_hostable: Dict[str, HostableTool] = {}
+    seen_coded: set[str] = set()
     referenced_missing: set[str] = set()
     referenced_omitted: set[str] = set()
     referenced_links: Dict[str, set[str]] = {}
@@ -405,7 +407,12 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
 
     def resolve_leaf(name: str, spec: Dict[str, Any]) -> None:
         """Classify a non-agent tool entry (toolbox/class) as hostable or missing."""
-        if name in seen_hostable or name in referenced_missing or name in referenced_omitted:
+        if name in seen_hostable or name in seen_coded or name in referenced_missing or name in referenced_omitted:
+            return
+        if "class" in spec and "url" in spec and "toolbox" not in spec:
+            # A JavaScript CodedTool: `class` lives in the JS file at `url` and runs
+            # in the browser sandbox, so it needs no Python host (static bundles too).
+            seen_coded.add(name)
             return
         if name in BROWSER_OMITTED_TOOLS or not include_python_tools:
             referenced_omitted.add(name)
@@ -472,6 +479,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
     # assigns an available private port and exposes each tool at a stable same-origin
     # /_mcp/<index>/mcp URL, so independently launched sites cannot collide.
     plan.hostable_tools.extend(seen_hostable.values())
+    plan.coded_tools = sorted(seen_coded)
     plan.missing_tools = sorted(referenced_missing)
     plan.omitted_tools = sorted(referenced_omitted)
     plan.external_mcps = sorted(external_mcp)
@@ -496,6 +504,10 @@ def format_report(plan: DeploymentPlan, static_bundle: bool = False) -> str:
     out.append(f"✅ Hostable tools (will run as local MCP servers): {len(plan.hostable_tools)}")
     for index, tool in enumerate(plan.hostable_tools):
         out.append(f"   • {tool.name}  →  {tool.class_path}  (MCP /_mcp/{index}/mcp)")
+    if plan.coded_tools:
+        out.append(f"✅ JavaScript coded tools (run in the browser sandbox): {len(plan.coded_tools)}")
+        for name in plan.coded_tools:
+            out.append(f"   • {name}")
     if plan.demo_mode_agents:
         out.append("")
         out.append(f"⚠️  DEMO-MODE agents — NOT GROUNDED ({len(plan.demo_mode_agents)}): these fabricate")
