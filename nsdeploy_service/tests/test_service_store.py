@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from nsdeploy_service.config import Settings
-from nsdeploy_service.models import DeploymentStatus, DeployOptions
+from nsdeploy_service.models import SUMMARY_SCHEMA_VERSION, DeploymentStatus, DeployOptions
 from nsdeploy_service.ports import PortPoolExhausted
 from nsdeploy_service.store import (
     RESTART_REASON,
@@ -599,6 +599,22 @@ class SummaryRepairCase(unittest.TestCase):
 
         third = self._supervisor()
         self.assertEqual(third.resummarized, [])
+
+    def test_repair_stamps_the_schema_version_so_it_converges(self):
+        """A front-man with no description of its own used to be re-derived forever:
+        the completeness check read the fields, and a legitimately empty field looks
+        the same as one that was never filled in."""
+        seeder = self._supervisor()
+        self._seed_empty_record(seeder)
+
+        repaired = self._supervisor()
+        summary = repaired.store.get_deployment("dep1")["network"]
+        self.assertEqual(summary["schema_version"], SUMMARY_SCHEMA_VERSION)
+        self.assertEqual(summary["front_man_description"], "")
+
+        for _ in range(3):
+            again = self._supervisor()
+            self.assertEqual(again.resummarized, [])
 
     def test_repair_skips_a_record_with_no_bundle(self):
         seeder = self._supervisor()

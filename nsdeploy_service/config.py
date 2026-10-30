@@ -190,7 +190,7 @@ class Settings:
     # at ~20ms for 100 networks and a 58KB payload — so even 100 viewers at this
     # cadence is a few requests a second. The UI caps whatever is advertised here at
     # MAX_MAP_REFRESH_SECONDS, so this can only make the map fresher, never staler.
-    map_refresh_seconds: int = 30
+    map_refresh_seconds: int = 60
     max_hocon_bytes: int = 512 * 1024
     log_tail_default: int = 200
 

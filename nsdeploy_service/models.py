@@ -152,9 +152,27 @@ class NetworkLink(BaseModel):
                                description="agents in this network that call it")
 
 
+# Bump this whenever a field is added to NetworkSummary that _repair_summaries()
+# should backfill onto records built before it existed. A stored summary carrying
+# an older version is re-derived from the bundle once, at the next startup.
+SUMMARY_SCHEMA_VERSION = 1
+
+
 class NetworkSummary(BaseModel):
     """Structured build result, read back from the generated bundle."""
 
+    schema_version: int = Field(
+        default=SUMMARY_SCHEMA_VERSION,
+        description="which revision of this model the summary was derived under. It "
+                    "is what tells _repair_summaries() that a record has been "
+                    "derived at all, which no individual field can: a field that is "
+                    "legitimately empty — a front-man with no description, a network "
+                    "with no links — is indistinguishable from one that was never "
+                    "filled in, so a completeness check written over the fields "
+                    "themselves re-derives such a record on every single startup and "
+                    "never converges. Records written before this field existed read "
+                    "back as 0 and are backfilled once.",
+    )
     front_man: str = ""
     agent_count: int = 0
     hostable_tools: List[str] = Field(default_factory=list)

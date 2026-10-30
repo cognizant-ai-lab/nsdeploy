@@ -422,7 +422,7 @@ class HealthWarningTest(unittest.TestCase):
 
 
 class MapRefreshSettingTest(unittest.TestCase):
-    def test_defaults_to_two_minutes(self):
+    def test_defaults_to_one_minute(self):
         self.assertEqual(Settings().map_refresh_seconds, 60)
 
     def test_reads_the_environment_override(self):

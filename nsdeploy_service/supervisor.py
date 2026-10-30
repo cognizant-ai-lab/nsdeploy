@@ -41,6 +41,7 @@ from nsdeploy_service.models import (
     DeployOptions,
     NetworkLink,
     NetworkSummary,
+    SUMMARY_SCHEMA_VERSION,
 )
 from nsdeploy_service.ports import PortPool, PortPoolExhausted
 from nsdeploy_service.shared_byok import sync_shared_byok
@@ -668,18 +669,21 @@ class Supervisor:
         the new field then behaves differently for old and new networks with nothing to
         tell them apart. Re-deriving from the bundle fixes that on the next restart
         rather than demanding a hundred redeployments.
+
+        Which records need that backfill is decided by SUMMARY_SCHEMA_VERSION, not by
+        inspecting the fields. No field can answer it: one that is legitimately empty —
+        a front-man with no description of its own, a network with no outbound links —
+        looks exactly like one that was never filled in, so a check written over the
+        fields re-derives such a record at every startup and never converges.
         """
         repaired: List[str] = []
         for row in self.store.list_deployments():
             summary = row.get("network") or {}
-            # Populated AND carrying every field this version knows about. The
-            # front-man check is the backfill: a pre-field record has an agent_count
-            # but no front_man_description, and is re-derived once. Guarded on
-            # `front_man` so a genuinely description-less front-man is not re-read on
-            # every single startup.
-            complete = summary.get("agent_count") and (
-                summary.get("front_man_description") or not summary.get("front_man")
-            )
+            # Derived under this revision of the model, and not left blank by the
+            # premature-ready bug. A record written before the version was recorded
+            # reads back as 0 and is re-derived once, which stamps the version.
+            version = int(summary.get("schema_version") or 0)
+            complete = summary.get("agent_count") and version >= SUMMARY_SCHEMA_VERSION
             if complete:
                 continue
             out_dir = Path(row["work_dir"]) / "site"
