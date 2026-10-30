@@ -1,0 +1,75 @@
+# Agentic City — packaging owned by the service itself.
+#
+# This lives here, not in nsdeploy's pyproject.toml, because that file belongs to
+# nsdeploy and is replaced wholesale whenever nsdeploy is upgraded. It previously
+# carried three service concerns — the `service` dependency extra, both console
+# scripts, and `packages = [..., "nsdeploy_service"]` — all of which would have
+# silently disappeared on the first upgrade, leaving the service uninstalled with
+# no declared dependencies.
+#
+# Install from the nsdeploy checkout root:
+#
+#     pip install -e ./nsdeploy_service
+#
+# Editable is the natural mode for a drop-in folder: the files stay where they are,
+# so SERVICE_ROOT (and with it ui/ and _bootstrap/) resolves to this directory.
+#
+# nsdeploy is NOT a dependency here. The service imports nothing from it — it drives
+# it as a CLI (`python -m nsdeploy`) — so declaring it would create a version
+# constraint this project deliberately does not have.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nsdeploy-service"
+version = "0.1.0"
+description = "Agentic City — expose nsdeploy as an HTTP deployment service: POST an agent-network HOCON, get back a live site URL."
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.30",
+    # FastAPI needs this for multipart/form-data HOCON uploads.
+    "python-multipart>=0.0.9",
+    # The hostname router (siteproxy.py) streams to each site over HTTP.
+    "httpx>=0.27",
+    # TLS trust (trust.py). truststore routes verification through the OS store,
+    # which is the only thing that works behind a TLS-inspecting proxy — its root
+    # is in the OS store and deliberately not in certifi's. certifi is the
+    # fallback for an interpreter that ships no store at all.
+    "truststore>=0.9; python_version >= '3.10'",
+    "certifi",
+]
+
+[project.scripts]
+# `nsdeploy-service` is kept as an alias so existing scripts and systemd units do
+# not break on the product rename.
+nsdeploy-nexgen = "nsdeploy_service.__main__:main"
+nsdeploy-service = "nsdeploy_service.__main__:main"
+
+[tool.setuptools]
+# The package *is* this directory, so it maps to ".". Tests are deliberately not
+# listed: they are not installed, but they still run in place from the checkout.
+package-dir = { "nsdeploy_service" = "." }
+# Subpackages must be listed explicitly: setuptools stops auto-discovering them
+# once `packages` is set, so adminPanel would be silently absent from a wheel.
+packages = [
+    "nsdeploy_service",
+    "nsdeploy_service.adminPanel",
+    "nsdeploy_service.adminPanel.routes",
+]
+
+[tool.setuptools.package-data]
+# The console and the child-process trust hook are data, not importable modules,
+# and must survive a non-editable install too.
+nsdeploy_service = [
+    "ui/**/*",
+    "_bootstrap/*.py",
+    "*.md",
+]
+# The admin panel's own console, its injected console assets, and its docs.
+"nsdeploy_service.adminPanel" = [
+    "ui/**/*",
+    "console/**/*",
+    "*.md",
+]
