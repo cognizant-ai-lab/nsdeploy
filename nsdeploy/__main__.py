@@ -66,6 +66,8 @@ def main() -> int:
                     help="output site dir (default: ./.nsdeploy/<source-dir>/<name>)")
     ap.add_argument("--site-dir", default=None,
                     help="editable site source dir (default: <hocon-dir>/sites/<name>)")
+    ap.add_argument("--actions", default=None, metavar="FILE",
+                    help="site-owned JavaScript action adapter (otherwise <site-dir>/actions.js)")
     ap.add_argument("--upstream", default="https://api.openai.com/v1",
                     help="RUNTIME BYOK proxy upstream — where the page's key is forwarded (default OpenAI)")
     ap.add_argument("--facade-upstream", default=None,
@@ -107,6 +109,8 @@ def main() -> int:
                     help="emit a self-contained static webroot (browser mock, direct-CORS "
                          "BYOK/MCP, no Python tools or public MCP facade)")
     args = ap.parse_args()
+    if args.actions and not Path(args.actions).is_file():
+        ap.error("--actions must name an existing JavaScript adapter")
 
     if args.cailville_base_map and not args.add_to_cailville:
         ap.error("--cailville-base-map requires --add-to-cailville")
@@ -265,7 +269,8 @@ def main() -> int:
     generate_site(plan, out_dir, mock_router, byok_router, site_base, cruse=not args.no_cruse,
                   theme=theme, site_source_dir=site_dir,
                   private_steward_sites=private_steward_sites or None,
-                  static_bundle=args.static_bundle, runtime_dir=runtime_dir)
+                  static_bundle=args.static_bundle, runtime_dir=runtime_dir,
+                  actions_file=Path(args.actions).resolve() if args.actions else None)
     bundle_label = "static bundle" if args.static_bundle else "site"
     print(f"✅ Generated {bundle_label} → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))
     if args.static_bundle:

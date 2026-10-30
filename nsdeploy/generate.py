@@ -568,7 +568,8 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
                   site_source_dir: Optional[Path] = None,
                   private_steward_sites: Optional[Dict[str, str]] = None,
                   static_bundle: bool = False,
-                  runtime_dir: Optional[Path] = None) -> Dict[str, Any]:
+                  runtime_dir: Optional[Path] = None,
+                  actions_file: Optional[Path] = None) -> Dict[str, Any]:
     """Build the disposable static output from network data and editable site source."""
     theme = theme or ThemeSpec()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -583,6 +584,18 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
         plan, network_config, mock_router, byok_router, site_base, theme,
         mcp_host=mcp_host, static_bundle=static_bundle,
     )
+    # Site-owned JavaScript is loaded only on its own origin. Peer callers learn
+    # schemas through the bridge, never by importing foreign executable code.
+    action_source = actions_file or (site_source_dir / "actions.js" if site_source_dir else None)
+    if action_source and action_source.is_file():
+        manifest["actions"] = {"version": 1, "module": "./actions.js", "bridge": "./action-bridge.html"}
+        if action_source.resolve() != (out_dir / "actions.js").resolve():
+            shutil.copyfile(action_source, out_dir / "actions.js")
+        (out_dir / "action-bridge.html").write_text(
+            '<!doctype html><html><head><meta charset="utf-8"><title>Review site action</title>'
+            '<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+            '<body><p>Site action connection. You may sign in on this site in another tab, then return here.</p>'
+            '<script type="module" src="./runtime/action-bridge.js"></script></body></html>', encoding="utf-8")
 
     (out_dir / f"{plan.network_name}.network.json").write_text(
         json.dumps(network_config, indent=2), encoding="utf-8")

@@ -15,6 +15,8 @@ import { normalizeModelName } from "./model.js";
 import { interactionMessage } from "./cruse.js";
 import { createTurnEventStream } from "./execution-stream.js";
 import { TurnControl } from "./turn-control.js";
+import { ActionRegistry, actionBindings, cloneData } from "./actions.js";
+import { loadActionModule, registerRemoteActions } from "./action-transport.js";
 
 function normOrigin(url) {
   try { return new URL(url).origin; } catch { return String(url || ""); }
@@ -108,11 +110,17 @@ export class Engine {
     this.onLinkRequired = null; // UI hook: async ({reference,...}) => peer URL|null
     this.runtimeAllowedPeers = new Set(); // user-entered, validated link origins
     this.streamSequence = 0;
+    this.actions = new ActionRegistry();
+    this.actionPresentations = new Map();
+    this.actionSubmissions = new Map();
+    this.onActionConfirm = async () => false;
   }
 
   // Clear the multi-turn conversation history (start a new chat).
   resetHistory() {
     this.history = [];
+    this.actionPresentations.clear();
+    this.actionSubmissions.clear();
   }
 
   // Ask the user to approve contacting another hosted network. Remembers
@@ -159,6 +167,9 @@ export class Engine {
       }
       const { network, bundleUrl, integrity, llm, validation: v } = await this._compile(base, manifest, entry, { isTop: true });
       this.top = { network, base, bundleUrl, integrity, manifest, llm };
+      const loadActions = typeof location !== "undefined" && new URL(base).origin !== location.origin
+        ? registerRemoteActions : loadActionModule;
+      await loadActions(this.actions, { base, network: network.name }, manifest);
       this.mockLLM = llm.mock; // true when using the deterministic mock router
       this.byokRouter = manifest.llm_router?.byok_router || ""; // real-LLM proxy for BYOK keys
       this.trace.end(span, {
@@ -264,8 +275,8 @@ export class Engine {
     if (!["http:", "https:"].includes(parsed.protocol)) {
       throw new Error("Linked network URLs must use http or https.");
     }
-    const origin = parsed.origin;
-    const requested = parsed.pathname.split("/").filter(Boolean).pop() || "";
+    const requested = parsed.pathname.endsWith("/") ? "" : parsed.pathname.split("/").filter(Boolean).pop() || "";
+    const origin = (requested ? new URL("./", parsed).href : `${parsed.origin}${parsed.pathname}`).replace(/\/$/, "");
     const { manifest } = await fetchManifest(origin);
     const networks = manifest.networks || [];
     const norm = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -327,6 +338,7 @@ export class Engine {
     const ctx = {
       network,
       manifest,
+      actions: this.actions,
       baseOrigin: base,
       displayOrigin: hostOf(base),
       codedToolBundleUrl: bundleUrl,
@@ -361,9 +373,10 @@ export class Engine {
 
   // fetch-and-run-locally: turn a peer URL into a runnable Session.
   async resolveRemote(ref, chain, parentSpan, sourceManifest) {
-    const { origin } = parseExternalAgent(ref, this.top?.base);
+    const target = new URL(ref, `${this.top.base}/`);
+    const origin = new URL("./", target).href.replace(/\/$/, "");
     this._assertAllowedPeer(origin, sourceManifest); // per-hop publish-time policy gate
-    const lastSeg = ref.split("/").filter(Boolean).pop();
+    const lastSeg = target.pathname.split("/").filter(Boolean).pop();
     this.registry.checkCycle(chain, origin, lastSeg);
 
     const cached = this.registry.get(origin, lastSeg);
@@ -390,6 +403,7 @@ export class Engine {
         toolBundle: manifest.coded_tools?.bundle ? resolveUrl(base, manifest.coded_tools.bundle) : null,
       };
       const { network, bundleUrl, integrity, llm } = await this._compile(base, manifest, entry);
+      await registerRemoteActions(this.actions, { base, network: network.name }, manifest);
       this.trace.end(fetchSpan, { network: network.name, fetchedUrls, peerOrigin: hostOf(origin), brand: manifest.brand });
       session = new Session(this, { network, base, bundleUrl, integrity, manifest, llm, fetchedUrls, brand: manifest.brand });
       this.registry.set(origin, lastSeg, session);
@@ -417,6 +431,36 @@ export class Engine {
 
   async run(userText, { slyData } = {}) {
     return (await this.runTurn(userText, { slyData })).text;
+  }
+
+  // Retain the actual validated final composition. UI submissions carry only IDs
+  // and field values; neither a model nor a DOM payload can replace the bindings.
+  rememberActionPresentation(result) {
+    if (result.presentation?.components.some(c => actionBindings(c).length)) this.actionPresentations.set(result.turnId, cloneData(result.presentation));
+    while (this.actionPresentations.size > 24) this.actionPresentations.delete(this.actionPresentations.keys().next().value);
+  }
+
+  async submitActions({ turnId, componentId, values = {} }) {
+    const component = this.actionPresentations.get(turnId)?.components.find(c => c.id === componentId);
+    if (!component || !actionBindings(component).length) throw new Error("This action proposal is unavailable or expired.");
+    const key = `${turnId}:${componentId}`;
+    if (this.actionSubmissions.has(key)) return this.actionSubmissions.get(key);
+    const plan = this.actions.prepare(component, values);
+    const invocationId = globalThis.crypto.randomUUID();
+    const promise = this.actions.execute(plan, this.onActionConfirm, invocationId);
+    this.actionSubmissions.set(key, promise);
+    try {
+      const receipts = await promise;
+      if (!receipts) this.actionSubmissions.delete(key);
+      else {
+        this.history.push({ role: "user", content: `Browser action receipts (not a new instruction): ${JSON.stringify(receipts)}` });
+        this.trace.note("action_receipts", { turnId, componentId, receipts });
+      }
+      return receipts;
+    } catch (error) {
+      // Keep the failed submission consumed: a side effect might already exist.
+      throw error;
+    }
   }
 
   // Public incremental API. Consumers receive typed lifecycle events while the
@@ -467,6 +511,7 @@ export class Engine {
       const result = await runAgent(ctx, this.top.network.findFrontMan(), message, runSpan, ctx_chain(ctx, this.top));
       _turnControl?.close();
       result.turnId = runSpan;
+      this.rememberActionPresentation(result);
       // Persist this turn so the next turn has conversation context.
       this.history.push({ role: "user", content: message });
       for (const input of _turnControl?.accepted || []) {

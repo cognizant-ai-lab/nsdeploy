@@ -21,6 +21,7 @@ import { normalizeModelName } from "./model.js";
 import { normalizePresentation } from "./cruse.js";
 import { PRESENTATION_CSS, renderMarkdown, renderRichComponent } from "./cruse-render.js";
 import { createTurnStatusController } from "./turn-status.js";
+import { reviewActions } from "./action-transport.js";
 
 const BASE_CSS = PRESENTATION_CSS + `
 /* Legacy themes get two resizable panes side by side. Composed themes provide
@@ -423,6 +424,8 @@ export function mountApp(root, { engine, trace, manifest }) {
   engine.onAnswerDelta = undefined;
 
   let activeTurnStream = null;
+  engine.onActionConfirm = items => reviewActions(items);
+  let actionSubmissionBusy = false;
   const idlePlaceholder = input.getAttribute("placeholder") || "Type a request…";
   function setTurnInputState(active) {
     inputBar.dataset.turnActive = String(active);
@@ -435,6 +438,21 @@ export function mountApp(root, { engine, trace, manifest }) {
   }
 
   async function runUserTurn(text, interaction) {
+    if (actionSubmissionBusy) return false;
+    if (interaction?.executeActions) {
+      if (activeTurnStream) return false;
+      actionSubmissionBusy = true;
+      newChatBtn.disabled = true; input.disabled = true; sendBtn.disabled = true;
+      try {
+        const receipts = await engine.submitActions(interaction);
+        if (!receipts) return false;
+        const bubble = addBubble(msgs, "bot", "");
+        bubble.textContent = receipts.map(r => `${r.action}: ${r.status}\n${JSON.stringify(r.result ?? r.error ?? "", null, 2)}`).join("\n\n");
+        // Receipts are already in history; the next chat turn can interpret them.
+        return true;
+      } catch (error) { addBubble(msgs, "bot", error.message); return false; }
+      finally { actionSubmissionBusy = false; newChatBtn.disabled = false; input.disabled = false; sendBtn.disabled = false; }
+    }
     text = (text || "").trim();
     if (!text || activeTurnStream) return false;
     if (!await validateConfiguredModel()) return false;
@@ -1180,7 +1198,7 @@ function renderWidget(container, spec, onSubmit, turnId) {
   const submit = async (text, data) => {
     lockWidget(card);
     try {
-      const accepted = await onSubmit(text, { turnId, componentId: spec.id || "welcome", kind, ...data });
+      const accepted = await onSubmit(text, { turnId, componentId: spec.id || "welcome", kind, ...data, ...(spec.submit?.actions || kind === "action" ? { executeActions: true } : {}) });
       if (accepted === false) lockWidget(card, false);
     } catch { lockWidget(card, false); }
   };
@@ -1192,7 +1210,13 @@ function renderWidget(container, spec, onSubmit, turnId) {
   let html = `<div class="ns-w-head">${spec.icon ? `<span class="ns-w-icon">${escapeHtml(spec.icon)}</span>` : ""}<b>${escapeHtml(spec.title || "")}</b></div>`;
   if (spec.description) html += `<div class="ns-w-desc">${escapeHtml(spec.description)}</div>`;
 
-  if (["report", "table", "chart", "html"].includes(kind)) {
+  if (kind === "action") {
+    card.innerHTML = html;
+    const button = document.createElement("button");
+    button.className = "ns-w-btn"; button.textContent = spec.label || "Review action";
+    button.onclick = () => submit(button.textContent, {});
+    card.append(button);
+  } else if (["report", "table", "chart", "html"].includes(kind)) {
     card.innerHTML = html;
     const body = document.createElement("div");
     renderRichComponent(body, spec);

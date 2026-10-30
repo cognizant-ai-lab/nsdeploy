@@ -686,6 +686,161 @@ not exercise semantic consolidation. Regenerate a deployment to install updated
 CRUSE prompts. Theme prompt version 9 describes optional forms and rich responses;
 existing editable themes are preserved until explicitly refreshed.
 
+## Browser actions: ANDe → nsDeploy → CRUSE
+
+CRUSE can now propose and execute site-owned JavaScript actions without extending
+the source HOCON. Child and remote networks return structured proposals; their
+parents can merge the fields and action bindings into one final form. Nothing is
+executed while agents reason or while a widget renders. Submitting a widget shows
+a runtime-owned review of the actual actions, destination origins and arguments.
+
+Each site supplies an `actions.js` adapter. nsDeploy copies it into the bundle,
+publishes its bridge location in `agent-manifest.json`, and loads its public action
+descriptions/schemas into the agents' CRUSE context at runtime. Local actions run
+on the local page. Remote action code runs on its own site, never imported into
+the caller. Remote writes require a second confirmation in a window on the owning
+site; read actions can use a hidden iframe. All agent reasoning still runs in the
+caller browser using the caller's LLM settings.
+
+### 1. Ask ANDe for an ordinary network
+
+Example prompt (replace the restaurant workflow with your website's workflow):
+
+> Generate a valid neuro-SAN HOCON network for a restaurant concierge. Output
+> HOCON only. Design agents to understand the user's visit, collect missing
+> requirements, and propose a reservation request. Do not invent availability or
+> claim a reservation is complete without an execution receipt. The website uses
+> nsDeploy and CRUSE. At runtime nsDeploy will supply the exact catalog of browser
+> actions, their input schemas and the CRUSE proposal format. These browser actions
+> are not HOCON tools: do not create coded tools, HTTP endpoints or tool references
+> for them. Agents should use the supplied catalog, preserve exact action references
+> and pass structured proposals upward. Parents should consolidate compatible
+> forms, retaining every action's input mappings and destination. The final user
+> interaction may combine local and remote actions. Treat action execution receipts
+> as results and report partial failures accurately. Include only genuine agents
+> and available data sources in tools. If no grounded search source is available,
+> describe the operation as a request, not a confirmed booking.
+
+For a caller network, additionally ask ANDe to include a leaf named `venue` and
+delegate restaurant questions to it. Bind that leaf to the deployed venue using
+`--link`, as in the example below. The caller does not duplicate the venue's action
+schema or implementation. Existing HOCONs also work: the action protocol is injected
+at runtime, though domain instructions can improve how agents choose proposals.
+
+### 2. Add the site's action adapter
+
+Place `actions.js` in the editable site directory, or pass `--actions FILE`:
+
+```js
+export function registerActions(actions) {
+  actions.register({
+    name: "reserve_table",
+    description: "Request a restaurant reservation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        date: { type: "string", format: "date", title: "Visit date" },
+        partySize: { type: "integer", minimum: 1, maximum: 12, title: "Guests" }
+      },
+      required: ["date", "partySize"]
+    },
+    effect: "write",
+    availability: "bridge",
+    callerOrigins: ["https://concierge.example"],
+    async execute(values, { requestId, signal }) {
+      const response = await fetch("/api/reservations", {
+        method: "POST", credentials: "same-origin", signal,
+        headers: { "Content-Type": "application/json", "Idempotency-Key": requestId },
+        body: JSON.stringify(values)
+      });
+      if (!response.ok) throw new Error(`Reservation failed: ${response.status}`);
+      return response.json();
+    }
+  });
+}
+```
+
+Use your existing endpoint or call an existing exported JavaScript function in
+`execute`. The example endpoint is not created by nsDeploy. If the site uses a
+form-encoded POST, the adapter can send `new URLSearchParams(values)` with the
+endpoint's expected fields and CSRF token. Keep authentication and CSRF handling
+inside the site adapter/backend, outside model-visible schemas and arguments.
+
+For functions dependent on the visible page's DOM, use `availability: "local-only"`.
+Those functions are intentionally absent from remote catalogs. To expose them
+remotely, move their submission logic into a shared function that can run on the
+bridge page. `availability: "top-level"` forces a separate window for remote reads
+as well. A bridge popup is a fresh document, not a copy of the original page DOM.
+Site adapters are trusted application code and must be reviewed before deployment.
+
+### 3. Build and run the included two-site example
+
+From the repository root, using the Python environment where nsdeploy is installed:
+
+```sh
+python -m nsdeploy examples/actions_demo/venue.hocon \
+  --static-bundle --actions examples/actions_demo/venue-actions.js \
+  --out .nsdeploy/actions-demo/venue
+
+python -m nsdeploy examples/actions_demo/caller.hocon \
+  --static-bundle --actions examples/actions_demo/caller-actions.js \
+  --link venue=http://127.0.0.1:8122/venue \
+  --out .nsdeploy/actions-demo/caller
+
+python examples/actions_demo/serve.py
+```
+
+The demo server serves both static bundles with CORS and supplies one demonstration
+reservation endpoint. Its records live only in memory; it never books anything.
+The caller's seating preference is stored in localStorage. The adapters explicitly
+identify their results as demonstrations. For production, the bundles remain static
+and the existing site's backend supplies any server-side functions.
+
+### 4. Test on the same site
+
+Open <http://127.0.0.1:8122/>. Configure a real CORS-enabled model router through
+BYOK settings; the ordinary built-in mock does not synthesize action proposals.
+Ask: “Request a restaurant visit for three people on December 15, 2026.”
+Review the proposed form/action and submit it. Cancel once to verify no request is
+sent, then confirm. The result should include `succeeded` and a demonstration
+receipt. Ask a follow-up question to verify the model receives that receipt.
+
+### 5. Test through a caller with local actions
+
+Open <http://127.0.0.1:8121/> and configure its model router. Ask: “Arrange a
+restaurant visit for three people on December 15, 2026, and save my preference for
+outside seating. Combine the inputs into one form.” Allow contact with the venue.
+
+The caller loads and runs the venue network. Its final CRUSE form should combine
+the local seating preference with the remote date/guest fields. Submit and review
+the exact field routing. Choose **Open action site**, then confirm on the venue's
+own origin. You should receive separate local and remote receipts. Only date and
+party size are sent to the venue; the local seating preference stays local. A
+failed remote action can leave the local preference saved: these are separate
+operations, not a distributed transaction. Network errors are reported as
+`unknown`, and unstarted operations as `not_started`; the runtime does not retry.
+
+For repeatable testing without a model/key, leave the demo server running, install
+Playwright and its Chromium browser in your development environment, then run:
+
+```sh
+node tests/actions-browser.mjs
+npm test
+python -m unittest discover -s tests -p 'test_*.py'
+```
+
+The browser test supplies deterministic model replies but uses the real agent
+loops, CRUSE renderer, cross-origin bridge, first-party confirmation and HTTP
+endpoint. It verifies same-site execution, cancellation, combined local/remote
+execution, field isolation, duplicate submission prevention and rejection of a
+remote write attempted through an iframe. It does not measure a model's ability
+to synthesize good forms; use the manual prompts above for that check.
+For an existing browser installation, set `NSDEPLOY_CHROME` to its executable;
+`NSDEPLOY_PLAYWRIGHT_MODULE` can point to Playwright's `index.mjs`.
+
+See [the action adapter and protocol reference](docs/actions.md) for supported
+schemas, existing-site embedding, hosting requirements and limitations.
+
 ## Look & feel (optional LLM-designed layout)
 
 By default the site uses a fixed template. With a key, the LLM **designs a distinctive

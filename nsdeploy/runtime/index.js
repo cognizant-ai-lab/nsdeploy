@@ -9,6 +9,7 @@ export { TraceBus } from "./trace.js";
 export { mountApp } from "./ui.js";
 export { AgentNetwork, validateNetwork, ChatMessageType } from "./kernel.js";
 export { parseHocon } from "./hocon.js";
+export { ActionRegistry } from "./actions.js";
 
 import { Engine } from "./engine.js";
 import { TraceBus } from "./trace.js";
@@ -58,5 +59,5 @@ export async function boot(rootSelector = "#app", opts = {}) {
   mountApp(root, { engine, trace, manifest });
   // expose for debugging / e2e tests
   if (typeof window !== "undefined") window.__nsweb = { engine, trace };
-  return { engine, trace };
+  return { engine, trace, actions: { register: definition => engine.actions.register({ base: engine.top.base, network: engine.top.network.name }, definition) } };
 }

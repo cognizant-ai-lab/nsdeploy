@@ -56,6 +56,13 @@ Legacy single-widget `cruse-ui` or recognizable `json` fences still work.
 | `table` | String `columns` and equally sized scalar `rows` |
 | `chart` | `chartType: "bar" or "line"`, `labels`, `series: [{name, values}]`, `summary`, optional `unit` |
 | `html` | `html` containing semantic presentational markup |
+| `action` | `action` exact registered reference, optional `arguments`, and `label` |
+
+Forms can additionally carry `submit.actions` with validated action references,
+constant arguments and input-field mappings. These are browser action proposals,
+not HOCON tools. The runtime preserves the publishing origin through child/remote
+composition and requires review before executing the final submission. See
+[browser actions](actions.md) for the protocol, adapter and confirmation model.
 
 Chart series must contain finite numbers, match the labels, and use known data.
 The current limits are 8 series and 120 labels. Charts include an accessible summary
