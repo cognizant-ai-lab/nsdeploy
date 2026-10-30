@@ -22,7 +22,7 @@ import { neuroSanSession } from "./generated-bridge.js";
 import { TraceBus } from "../trace.js";
 import { fetchManifest, fetchText, resolveUrl, RemoteRegistry } from "../remote.js";
 import {
-  agentDeadlineReason, argsToText, consumeRemoteBudget, estimateRemoteCost, peerRequestText, remoteIsInChain, requiresThirdPartyApproval,
+  argsToText, consumeAgentBudget, consumeRemoteBudget, estimateRemoteCost, peerRequestText, remoteIsInChain, requiresThirdPartyApproval,
 } from "./composition.js";
 import { agentPresentationContext, interactionMessage, parseAgentResponse } from "../cruse.js";
 import { BROWSER_MOCK_ROUTER, browserMockResponse, isMockResponse, normalizeModelName } from "./model.js";
@@ -114,11 +114,12 @@ export function assertRouterKey(llm, apiKey) {
 }
 
 export class Engine {
-  constructor({ originUrl, trace, byokKey, routerOverride } = {}) {
+  constructor({ originUrl, trace, byokKey, routerOverride, maxAgentCalls = 24 } = {}) {
     this.originUrl = (originUrl || (typeof location !== "undefined" ? location.origin : "")).replace(/\/$/, "");
     this.trace = trace || new TraceBus();
     this.byokKey = byokKey || "";
     this.routerOverride = routerOverride || "";
+    this.maxAgentCalls = maxAgentCalls; // agents one query may run, counting partners', as on main
     this.modelOverride = normalizeModelName(arguments[0] && arguments[0].modelOverride);
     this.registry = new RemoteRegistry({ trace: this.trace }); // compiled partner networks, for the UI
     this.top = null; // {network, base, manifest, llm}
@@ -267,6 +268,17 @@ export class Engine {
       const source = manifest?.networks?.[0]?.name || "calling network";
       throw new Error(`Policy: ${hostOf(target)} is not in ${source}'s allowed_peers; refusing to contact it.`);
     }
+  }
+
+  // Counts one agent run against the query's limits. Returns the skip message for the
+  // caller when a limit is reached, or null, as main's runAgent does.
+  _agentBudgetSkip(agentName) {
+    const reason = consumeAgentBudget(this.composition);
+    if (!reason) return null;
+    this.trace.note("composition_limit", {
+      parent: this.runSpan, origin: hostOf(this.top.base), agent: agentName, reason, agentCalls: this.composition?.agentCalls,
+    });
+    return `Skipped ${agentName}: ${reason}. Continue with available results and do not retry it.`;
   }
 
   // The site a reference is judged from for consent. A URL several sites declare has
@@ -617,6 +629,9 @@ export class Engine {
       return { answer: `Skipped ${label}: ${budgetReason}. Continue with available results and do not retry it.` };
     }
     this._assertAllowedPeer(parsed.origin, owner?.manifest, owner);
+    // The partner's front man is an agent run too, as on main.
+    const skipped = this._agentBudgetSkip(label);
+    if (skipped) return { answer: skipped };
 
     const lastSeg = target.split("/").filter(Boolean).pop();
     const fetchSpan = this.trace.start("remote_fetch", {
@@ -728,12 +743,12 @@ export class Engine {
   // (parallel_safe = false, or a REST tool that changes something). neuro-san's own
   // loop starts all of them at once, so this holds back the ones over the limit.
   async _scheduleTool(caller, tool, run, ref = "") {
-    // Past the query's deadline, a call to another agent is skipped, as on main.
+    // Each call to another agent counts against the query's limits, as on main: past
+    // the deadline or the agent limit, it is skipped.
     const callerNetwork = this.networksByName.get(caller.network);
-    const late = agentDeadlineReason(this.composition);
-    if (late && callerNetwork?.classifyTool(ref || tool)?.kind === "agent") {
-      this.trace.note("composition_limit", { parent: this.runSpan, origin: hostOf(this.top.base), agent: tool, reason: late });
-      return `Skipped ${tool}: ${late}. Continue with available results and do not retry it.`;
+    if (callerNetwork?.classifyTool(ref || tool)?.kind === "agent") {
+      const skipped = this._agentBudgetSkip(tool);
+      if (skipped) return skipped;
     }
     // resolvePeer only gets the partner's URL, so it finds the agent that called it here.
     if (/^https?:\/\//.test(ref) && !/\/mcp$/.test(new URL(ref).pathname)) {
@@ -1012,9 +1027,11 @@ export class Engine {
       maxRemoteCalls: 4,
       maxCallsPerPeer: 1,
       agentCalls: 0,
-      maxAgentCalls: 24,
+      maxAgentCalls: this.maxAgentCalls,
       deadline: Date.now() + 90_000,
     };
+    // The top front man is the query's first agent run, as on main.
+    consumeAgentBudget(this.composition);
     try {
       assertRouterKey(this.top.llm, this.byokKey);
       const session = neuroSanSession();
@@ -1118,23 +1135,23 @@ export class Engine {
   }
 }
 
-// The most messages each agent's history keeps between turns, as main does, to bound
-// tokens on a long chat.
-const MAX_HISTORY_MESSAGES = 24;
+// The user messages each agent's history keeps between turns. Main keeps the last 24
+// entries of the conversation, a user message and an answer per turn, to bound tokens.
+const MAX_HISTORY_TURNS = 12;
 
-// The chat_context with each agent's history cut to about MAX_HISTORY_MESSAGES. A cut
-// starts at a user message, so a tool call is never kept without what led to it, and
-// system messages at the start stay.
+// The chat_context with each agent's history cut to its last MAX_HISTORY_TURNS user
+// messages and what followed them. System messages at the start stay.
 function boundedHistory(chatContext) {
   if (!chatContext?.chat_histories) return chatContext;
   const context = structuredClone(chatContext);
   for (const history of context.chat_histories) {
     const messages = history.messages;
-    if (!Array.isArray(messages) || messages.length <= MAX_HISTORY_MESSAGES) continue;
+    if (!Array.isArray(messages)) continue;
+    const users = messages.flatMap((message, index) => (message.type === ChatMessageType.HUMAN ? [index] : []));
+    if (users.length <= MAX_HISTORY_TURNS) continue;
     let lead = 0;
     while (lead < messages.length && messages[lead].type === ChatMessageType.SYSTEM) lead += 1;
-    const start = messages.findIndex((message, index) => index >= messages.length - MAX_HISTORY_MESSAGES && message.type === ChatMessageType.HUMAN);
-    if (start > lead) history.messages = [...messages.slice(0, lead), ...messages.slice(start)];
+    history.messages = [...messages.slice(0, lead), ...messages.slice(users[users.length - MAX_HISTORY_TURNS])];
   }
   return context;
 }

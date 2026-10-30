@@ -532,15 +532,15 @@ test("the trace has what the UI shows for model, partner and MCP calls", async (
   assert.equal(realCall.respModel, realCall.model);
 });
 
-test("each agent's history keeps about the last 24 messages, from a user message", async () => {
+test("each agent's history keeps the last 12 turns, as main does", async () => {
   const networks = { main: { tools: [agent("front")] } };
   await withFetch(siteFetch({ networks, reply: () => ({ text: "ok" }) }), async () => {
     const engine = new Engine({ originUrl: SITE });
     for (let turn = 0; turn < 20; turn++) await collect(engine.streamTurn(`turn ${turn}`));
     const [history] = engine.chatContext.chat_histories;
-    assert.ok(history.messages.length <= 24);
+    const users = history.messages.filter((message) => message.type === ChatMessageType.HUMAN).map((message) => message.text);
+    assert.deepEqual(users, Array.from({ length: 12 }, (_, i) => `turn ${i + 8}`));
     assert.equal(history.messages[0].type, ChatMessageType.HUMAN);
-    assert.equal(history.messages.at(-2).text, "turn 19");
   });
 });
 
@@ -560,6 +560,26 @@ test("past the query's deadline, a call to another agent is skipped, as on main"
     const events = await collect(engine.streamTurn("Hi"));
     assert.deepEqual(routed, ["front", "front"]);
     assert.match(events.at(-1).result.text, /Skipped helper: the 90-second query deadline was reached/);
+  });
+});
+
+test("a query runs at most maxAgentCalls agents, counting the front man, as on main", async () => {
+  const networks = { main: { tools: [agent("front", ["first", "second"]), agent("first", [], INQUIRY), agent("second", [], INQUIRY)] } };
+  const routed = [];
+  // The front man asks one helper at a time, then answers with what it was told.
+  const reply = (name, body) => {
+    routed.push(name);
+    const outputs = toolOutputs(body);
+    if (name !== "front") return { text: `${name} answer` };
+    if (outputs.length < 2) return { call: { name: outputs.length ? "second" : "first", arguments: JSON.stringify({ inquiry: "q" }) } };
+    return { text: outputs.map((output) => String(output.output)).join(" | ") };
+  };
+  await withFetch(siteFetch({ networks, reply }), async () => {
+    const engine = new Engine({ originUrl: SITE, maxAgentCalls: 2 });
+    const events = await collect(engine.streamTurn("Hi"));
+    assert.deepEqual(routed, ["front", "first", "front", "front"]);
+    assert.match(events.at(-1).result.text, /Skipped second: the per-query limit of 2 agent invocations was reached/);
+    assert.equal(engine.trace.events.filter((event) => event.kind === "composition_limit").length, 1);
   });
 });
 
