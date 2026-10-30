@@ -309,7 +309,7 @@ trace. It runs on the mock LLM by default, so no key is needed.
 
 It tests the runtime on the neuro-san TS package, which Cailville runs by default, and
 every check passes there. With the original runtime
-(`NSDEPLOY_USE_TS_PACKAGE=0 ./cailville/launch_all.sh`), 12 of the Cailville sites fail,
+(`USE_TS_PACKAGE=0 ./cailville/launch_all.sh`), 12 of the Cailville sites fail,
 because they stop at the original runtime's per-query limit of 24 agent invocations
 before every agent has run.
 
