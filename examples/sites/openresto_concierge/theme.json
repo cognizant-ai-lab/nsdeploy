@@ -2,19 +2,19 @@
   "brand": "OpenResto Concierge",
   "icon": "\ud83c\udf7d\ufe0f",
   "tagline": "Your table, thoughtfully arranged.",
-  "hero": "A discreet digital ma\u00eetre d\u2019 for finding, booking, managing, and understanding every reservation.",
+  "hero": "Find the right table, confirm every detail, and arrive with confidence.",
   "font": "Georgia, 'Times New Roman', serif",
-  "radius": 14,
+  "radius": 16,
   "colors": {
-    "primary": "#7A263A",
-    "accent": "#B87924",
-    "bg": "#F4EFE5",
-    "bg_tint": "#E8DDCA",
-    "fg": "#241D18",
-    "muted": "#695E54",
-    "border": "#CFC1AC",
-    "msgbg": "#FFFDF8",
-    "panelbg": "#F8F3EA"
+    "primary": "#8a302b",
+    "accent": "#d79a3b",
+    "bg": "#f4efe6",
+    "bg_tint": "#ebe2d4",
+    "fg": "#28231f",
+    "muted": "#6d6258",
+    "border": "#cfc2b2",
+    "msgbg": "#fffdf8",
+    "panelbg": "#f9f5ed"
   },
   "welcome": null
 }
