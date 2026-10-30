@@ -20,14 +20,18 @@ Once the original runtime is no longer needed:
    `./`. This `model.js` replaces the one there, with `normalizeModelName` moved back into
    it. Delete this file.
 3. In `ui.js`, import `ChatMessageType` from `./agent-network.js` and remove the "Drive the
-   LLM via LangChain.js" checkbox, then remove the line in `index.js` that hides it.
-4. Remove the feature switch and point `ts-package/generated` back at `generated`. This lists
-   every place:
+   LLM via LangChain.js" checkbox with the code that reads it (`langchainEl`, the profile's
+   `runner` field and the `runner` URL parameter), then remove the line in `index.js` that
+   hides it.
+4. Remove the feature switch (`--use-ts-package` and `NSDEPLOY_USE_TS_PACKAGE`) and point
+   `ts-package/generated` back at `generated`. This lists every place, apart from the hits
+   for the package's own name, `neuro-san-ts-package`:
 
    ```bash
-   git grep -n 'ts-package/\|ts_package\|TS_PACKAGE'
+   git grep -n 'ts-package\|ts_package\|TS_PACKAGE' -- ':!*lock*'
    ```
 
-   In `launcher.py`, also remove `WORKER_CSP`, and in `generate.py` the
-   `sandbox-worker.js` headers for static hosts, since only the original runtime has a
-   sandbox worker.
+   Only the original runtime has a sandbox worker, so also remove `WORKER_CSP` from
+   `launcher.py` and `generate.py`, the `sandbox-worker.js` headers for static hosts and
+   `sandboxWorkerUrl` in `generate.py`'s `_STATIC_BOOT`, and the `agent-runner.bundle.js`
+   line in `.gitattributes`.

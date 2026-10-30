@@ -6,8 +6,7 @@
 // defaults, name correction), AgentNetwork's front man and agent specs, the network
 // validators, and external agent / MCP reference parsing. What stays here is
 // nsdeploy's own: link slots (a reference the developer links to another site at
-// run time), the trace's display redaction, and adapting neuro-san's parsed
-// references to browser origins.
+// run time) and adapting neuro-san's parsed references to browser origins.
 
 import { neuroSanNetwork } from "./generated-bridge.js";
 

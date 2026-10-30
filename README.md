@@ -881,10 +881,10 @@ A partner network is still fetched and run in this browser: neuro-san asks the e
 for the partner's published network the first time an agent calls it, after consent, and
 runs it as its own `AsyncDirectAgentSession` with the caller's router.
 
-The package's transpiled code does not all run as-is yet. Each gap is worked around in
-`runtime-build/` (never by editing the package, so a rebundled package stays reproducible
-from its transpiling source) and marked `WORKAROUND` / `PORT BACK` with what to fix
-upstream.
+Two gaps in the package are worked around in `runtime-build/`, never by editing the
+package, so a rebundled package stays reproducible from its transpiling source. Its
+`urlparse` differs from Python's on some URLs, and it doesn't export `BaseToolFactory`.
+Each is marked `WORKAROUND` / `PORT BACK` with what to fix upstream.
 
 ## Runtime UI
 

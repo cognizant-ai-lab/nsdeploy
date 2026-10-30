@@ -22,7 +22,7 @@ import { neuroSanSession } from "./generated-bridge.js";
 import { TraceBus } from "../trace.js";
 import { fetchManifest, fetchText, resolveUrl, RemoteRegistry } from "../remote.js";
 import {
-  argsToText, consumeRemoteBudget, estimateRemoteCost, peerRequestText, remoteIsInChain, requiresThirdPartyApproval,
+  agentDeadlineReason, argsToText, consumeRemoteBudget, estimateRemoteCost, peerRequestText, remoteIsInChain, requiresThirdPartyApproval,
 } from "./composition.js";
 import { agentPresentationContext, interactionMessage, parseAgentResponse } from "../cruse.js";
 import { BROWSER_MOCK_ROUTER, browserMockResponse, isMockResponse, normalizeModelName } from "./model.js";
@@ -127,7 +127,8 @@ export class Engine {
     this.consentTail = Promise.resolve(); // serialize modal decisions for parallel tools
     this.onConsent = null; // UI hook: async (info) => "allow"|"always"|"decline"
     this.onLinkRequired = null; // UI hook: async ({reference,...}) => peer URL|null
-    this.runtimeAllowedPeers = new Set(); // user-entered, validated link origins
+    // Link origins the user entered and that validated, per network that links to them.
+    this.runtimeAllowedPeers = new Map(); // "<site>::<network>" -> Set of origins
     this.refOwners = new Map(); // tool reference URL -> the network (and site) that declares it
     this.composition = null; // this query's composition budget
     this.runSpan = null;
@@ -220,9 +221,13 @@ export class Engine {
     if (validation.errors && validation.errors.length) {
       throw new Error(`Network '${network.name}' (${hostOf(base)}) failed validation: ${validation.errors.join("; ")}`);
     }
-    // Every reference is policed by the manifest of the site that declares it.
+    // Every reference is policed by the manifest of the site that declares it. A URL
+    // another site's network already declares keeps its first owner, and from then on
+    // always asks for consent, so a partner can't make itself a URL's owner to skip it.
     for (const ref of [...validation.externals, ...validation.mcps, ...Object.values(network.links)]) {
-      this.refOwners.set(ref, { network, base, manifest });
+      const prior = this.refOwners.get(ref);
+      if (!prior) this.refOwners.set(ref, { network, base, manifest });
+      else if (prior.base !== base && /^https?:\/\//i.test(ref)) prior.shared = true;
     }
     // LLM routing boundary. The top site chooses the active router. Peer manifests
     // contribute network definitions only and can never redirect execution or keys.
@@ -256,12 +261,22 @@ export class Engine {
 
   // Every hop is constrained by the immediate caller's published manifest. The
   // user still approves each remote call, so a peer cannot silently expand access.
-  _assertAllowedPeer(target, sourceManifest) {
+  _assertAllowedPeer(target, sourceManifest, owner = null) {
     const manifest = sourceManifest || this.top?.manifest;
-    if (!manifestAllowsPeer(target, manifest, this.runtimeAllowedPeers)) {
+    if (!manifestAllowsPeer(target, manifest, this.runtimeAllowedPeers.get(this._linkOwnerKey(owner)))) {
       const source = manifest?.networks?.[0]?.name || "calling network";
       throw new Error(`Policy: ${hostOf(target)} is not in ${source}'s allowed_peers; refusing to contact it.`);
     }
+  }
+
+  // The site a reference is judged from for consent. A URL several sites declare has
+  // none, so calling it always asks.
+  _consentBase(owner) {
+    return owner?.shared ? "" : owner?.base || this.top.base;
+  }
+
+  _linkOwnerKey(owner) {
+    return owner ? `${owner.base}::${owner.network?.name}` : `${this.top?.base}::${this.top?.network?.name}`;
   }
 
   async _loadPublishedLinks(base, networkName) {
@@ -354,7 +369,11 @@ export class Engine {
         throw new Error(`Stored link '${reference}' is not a valid http(s) URL.`);
       }
     }
-    this.runtimeAllowedPeers.add(new URL(normalized).origin);
+    // Only the network that has this link may contact its site, so a partner's links
+    // can't open sites for the rest of the page.
+    const key = this._linkOwnerKey({ base, network });
+    if (!this.runtimeAllowedPeers.has(key)) this.runtimeAllowedPeers.set(key, new Set());
+    this.runtimeAllowedPeers.get(key).add(new URL(normalized).origin);
     network.setLink(reference, normalized);
     await this._persistLink(base, network.name, reference, normalized);
     this.trace.note("link", {
@@ -364,8 +383,8 @@ export class Engine {
   }
 
   // The config neuro-san's loop runs for a network: every agent uses the active
-  // router's model (neuro-san reads the key and router from OPENAI_API_KEY and
-  // OPENAI_BASE_URL), and link slots with no local agent become partner URLs. A slot
+  // router's model (neuro-san takes the key from OPENAI_API_KEY, and the OpenAI client
+  // it builds falls back to OPENAI_BASE_URL for the router), and link slots with no local agent become partner URLs. A slot
   // not linked yet becomes LINK_SLOT_PREFIX + its name, which resolvePeer turns into a
   // request for the developer to link it.
   _runnableConfig(network) {
@@ -441,7 +460,7 @@ export class Engine {
         const owner = this.refOwners.get(url);
         try {
           this._assertPartnerMcpUrl(url, owner);
-          this._assertAllowedPeer(url, owner?.manifest);
+          this._assertAllowedPeer(url, owner?.manifest, owner);
         } catch (err) {
           this.trace.note("consent", { parent: this.runSpan, origin: hostOf(owner?.base || this.top.base), peerOrigin: hostOf(url), phase: "discover", decision: "blocked", reason: err.message });
           return false;
@@ -449,7 +468,7 @@ export class Engine {
         // Discovering a third-party server's tools (initialize, tools/list) IS contact
         // with it, so it waits for consent; declining means the agent runs without these
         // tools. The site's own services are within the page's trust boundary.
-        if (!requiresThirdPartyApproval(url, owner?.base || this.top.base)) return true;
+        if (!requiresThirdPartyApproval(url, this._consentBase(owner))) return true;
         const decision = await this.requestConsent({
           kind: "mcp", phase: "discover", peerLabel: "Destination service", peerOrigin: hostOf(url),
           requestText: "(discover available tools)",
@@ -471,7 +490,7 @@ export class Engine {
         } catch (err) {
           return `${err.message} Continue without it.`;
         }
-        if (requiresThirdPartyApproval(url, owner?.base || this.top.base)) {
+        if (requiresThirdPartyApproval(url, this._consentBase(owner))) {
           const requestText = argsToText(args);
           const decision = await this.requestConsent({
             kind: "mcp", phase: "call", peerLabel: "Destination service", peerOrigin: hostOf(url),
@@ -484,7 +503,7 @@ export class Engine {
           }
         }
         mcpSpans.set(callId, this.trace.start("mcp_call", {
-          parent: this.runSpan, origin: hostOf(this.top.base), peerOrigin: hostOf(url), url, tool, requestPayload: args,
+          parent: this.runSpan, origin: hostOf(this.top.base), peerOrigin: hostOf(url), url, tool, method: "tools/call", requestPayload: args,
         }));
         this.mcpCalls.set(callId, { url, tool, response: false });
         this._startTool(`mcp::${callId}`, { tool, toolKind: "MCP", args, parent: caller ? this._callerSpan(caller) : null });
@@ -516,13 +535,14 @@ export class Engine {
         }
       },
       peerDone: ({ url, error }) => {
-        this._endTool(`peer::${url}`, error ? { error } : { result: peerAnswers.get(url) });
+        const answer = peerAnswers.get(url);
+        this._endTool(`peer::${url}`, error ? { error } : { result: answer });
         peerAnswers.delete(url);
         const span = peerSpans.get(url);
         peerSpans.delete(url);
         if (!span) return;
         if (error) this.trace.fail(span, error);
-        else this.trace.end(span, { type: ChatMessageType.AGENT });
+        else this.trace.end(span, { type: ChatMessageType.AGENT, responsePreview: String(answer ?? "").slice(0, 300) });
       },
       // A partner's own agents show under its call, each by the path from the partner's URL.
       peerMessage: ({ url, message }) => this._traceMessage(
@@ -564,7 +584,9 @@ export class Engine {
       if (!target) return { answer: `The user did not link '${reference}'. Continue without it.` };
       this.refOwners.set(target, owner);
     }
-    const label = owner?.network.linkLabels?.[target] || hostOf(target);
+    // The consent card names the site by its host, unless the top site's own network
+    // labels it, so a partner can't call its next hop "Your Bank".
+    const label = (owner?.network === this.top.network && owner.network.linkLabels?.[target]) || hostOf(target);
     const base = owner?.base || this.top.base;
     const parsed = parseExternalAgent(target, base);
     const chainKeys = chain.map((ref) => {
@@ -579,7 +601,7 @@ export class Engine {
     // coarse: the partner has not been fetched yet. A network published by this same
     // site stays local.
     const requestText = peerRequestText(request) || "(the request your agent is sending)";
-    if (requiresThirdPartyApproval(target, base)) {
+    if (requiresThirdPartyApproval(target, this._consentBase(owner))) {
       const decision = await this.requestConsent({
         kind: "network", peerLabel: label, peerOrigin: hostOf(target), requestText,
         est: { totalTokens: Math.round((requestText.length + 300) / 4) * 2, costText: this.mockLLM ? "$0.00 (mock)" : null },
@@ -594,7 +616,7 @@ export class Engine {
       this.trace.note("composition_limit", { parent: this.runSpan, origin: hostOf(base), target, reason: budgetReason, remoteCalls: this.composition?.remoteCalls });
       return { answer: `Skipped ${label}: ${budgetReason}. Continue with available results and do not retry it.` };
     }
-    this._assertAllowedPeer(parsed.origin, owner?.manifest);
+    this._assertAllowedPeer(parsed.origin, owner?.manifest, owner);
 
     const lastSeg = target.split("/").filter(Boolean).pop();
     const fetchSpan = this.trace.start("remote_fetch", {
@@ -617,6 +639,8 @@ export class Engine {
       peerSpans.set(url, this.trace.start("remote_call", {
         parent: this.runSpan, origin: hostOf(this.top.base), peerOrigin: hostOf(peerBase),
         method: "fetch-and-run-locally", fetchedUrls, network: compiled.network.name, brand: manifest.brand,
+        // What was asked, for the inspector. sly_data is left out of the trace.
+        requestPayload: { user_message: request?.user_message },
         est: estimateRemoteCost({ network: compiled.network, requestText, model: this.modelOverride, mock: this.mockLLM }),
       }));
     } catch (err) {
@@ -681,7 +705,7 @@ export class Engine {
       }
       // neuro-san reads the response as it streams; a copy of it fills in the span.
       this._readModelResponse(response.clone(), span, init?.signal).then(
-        (read) => { settle(read); this._endModelCall(span, response, body, read.model); },
+        (read) => { settle(read); this._endModelCall(span, response, body, read); },
         (err) => { settle(null); this.trace.fail(span, err); },
       );
       return response;
@@ -704,6 +728,13 @@ export class Engine {
   // (parallel_safe = false, or a REST tool that changes something). neuro-san's own
   // loop starts all of them at once, so this holds back the ones over the limit.
   async _scheduleTool(caller, tool, run, ref = "") {
+    // Past the query's deadline, a call to another agent is skipped, as on main.
+    const callerNetwork = this.networksByName.get(caller.network);
+    const late = agentDeadlineReason(this.composition);
+    if (late && callerNetwork?.classifyTool(ref || tool)?.kind === "agent") {
+      this.trace.note("composition_limit", { parent: this.runSpan, origin: hostOf(this.top.base), agent: tool, reason: late });
+      return `Skipped ${tool}: ${late}. Continue with available results and do not retry it.`;
+    }
     // resolvePeer only gets the partner's URL, so it finds the agent that called it here.
     if (/^https?:\/\//.test(ref) && !/\/mcp$/.test(new URL(ref).pathname)) {
       if (!this.peerCallers.has(ref)) this.peerCallers.set(ref, []);
@@ -772,13 +803,17 @@ export class Engine {
   }
 
   _startModelCall(body, agentSpan) {
+    const router = hostOf(this.top.llm.baseUrl);
     return this.trace.start("model_call", {
-      parent: agentSpan || this.runSpan, origin: hostOf(this.top.base), via: hostOf(this.top.llm.baseUrl), model: body?.model || "",
+      parent: agentSpan || this.runSpan, origin: hostOf(this.top.base), via: router, routerHost: router, model: body?.model || "",
+      keySource: this.byokKey && this.byokKey !== "demo" ? "local BYOK (not shown)" : "none",
+      toolNames: (body?.tools || []).map((tool) => tool?.name || tool?.function?.name).filter(Boolean),
     });
   }
 
   // Reads a model call's response to its end, adding each piece of streamed text to
-  // the span. Returns the whole text, and the model the endpoint says answered.
+  // the span. Returns the whole text, the model the endpoint says answered, and the
+  // token usage it reported.
   async _readModelResponse(response, span, signal) {
     let text = "";
     if (!response.body) return { text, model: "" };
@@ -806,14 +841,17 @@ export class Engine {
     } finally {
       signal?.removeEventListener("abort", cancel);
     }
-    return { text, model: (text.match(/"model"\s*:\s*"([^"]+)"/) || [])[1] || "" };
+    return { text, model: (text.match(/"model"\s*:\s*"([^"]+)"/) || [])[1] || "", usage: lastUsage(text) };
   }
 
-  _endModelCall(span, response, body, model = "") {
+  // The badge says "real LLM" only for a model the endpoint itself named, as on main.
+  _endModelCall(span, response, body, read = null) {
     const route = response.headers.get("X-Nsdeploy-LLM-Route") || "";
-    const answered = model || body?.model || "";
+    const respModel = read?.model || "";
+    const answered = respModel || body?.model || "";
     if (response.ok) {
-      this.trace.end(span, { model: answered, mock: isMockResponse(this.top?.llm?.mock, route, answered), status: "ok" });
+      const mock = isMockResponse(this.top?.llm?.mock, route, answered);
+      this.trace.end(span, { model: answered, respModel, mock, verifiedReal: !mock && !!respModel, usage: read?.usage ?? null, status: "ok" });
     } else {
       this.trace.fail(span, new Error(`LLM router returned ${response.status}`));
     }
@@ -843,7 +881,7 @@ export class Engine {
       const span = this._startModelCall(body, agentSpan);
       const response = await originalFetch(input, init);
       const read = await this._readModelResponse(response.clone(), span);
-      this._endModelCall(span, response, body, read.model);
+      this._endModelCall(span, response, body, read);
       return { response, read };
     }
     const responses = Array.isArray(body.input);
@@ -873,7 +911,7 @@ export class Engine {
         this.trace.fail(span, err);
         throw err;
       }
-      this._endModelCall(span, response, request, read?.model);
+      this._endModelCall(span, response, request, read);
       // Guidance that arrived as the answer finished goes in before it's used.
       if (control.pending.length) continue;
       const headers = new Headers(response.headers);
@@ -1006,7 +1044,7 @@ export class Engine {
       }
       // Steering is accepted until here, so later turns see all of it.
       _turnControl?.close();
-      this.chatContext = withSteering(this.chatContext, network.findFrontMan(), _turnControl?.accepted || []);
+      this.chatContext = boundedHistory(withSteering(this.chatContext, network.findFrontMan(), _turnControl?.accepted || []));
       for (const entry of this.agentSpans.values()) if (!entry.ended) this.trace.end(entry.span, {});
       for (const key of [...this.toolSpans.keys()]) this._endTool(key);
       // The answer's text for the chat, and the presentation the UI renders, if the
@@ -1080,6 +1118,27 @@ export class Engine {
   }
 }
 
+// The most messages each agent's history keeps between turns, as main does, to bound
+// tokens on a long chat.
+const MAX_HISTORY_MESSAGES = 24;
+
+// The chat_context with each agent's history cut to about MAX_HISTORY_MESSAGES. A cut
+// starts at a user message, so a tool call is never kept without what led to it, and
+// system messages at the start stay.
+function boundedHistory(chatContext) {
+  if (!chatContext?.chat_histories) return chatContext;
+  const context = structuredClone(chatContext);
+  for (const history of context.chat_histories) {
+    const messages = history.messages;
+    if (!Array.isArray(messages) || messages.length <= MAX_HISTORY_MESSAGES) continue;
+    let lead = 0;
+    while (lead < messages.length && messages[lead].type === ChatMessageType.SYSTEM) lead += 1;
+    const start = messages.findIndex((message, index) => index >= messages.length - MAX_HISTORY_MESSAGES && message.type === ChatMessageType.HUMAN);
+    if (start > lead) history.messages = [...messages.slice(0, lead), ...messages.slice(start)];
+  }
+  return context;
+}
+
 // The chat_context with this turn's steering in the front man's history, right
 // after the turn's own message, so the next turn knows the user said it.
 function withSteering(chatContext, frontMan, accepted) {
@@ -1100,8 +1159,8 @@ function withSteering(chatContext, frontMan, accepted) {
 // The llm_config settings a network may choose: the model and how it answers. A partner's
 // network runs here on the visitor's key, so where model calls go and with which key
 // (openai_api_base, base_url, openai_api_key, a proxy, another provider's class) are
-// never the network's to set. Every call uses OPENAI_API_KEY and OPENAI_BASE_URL, the
-// visitor's key and router. That includes networks that ask for their key from sly_data
+// never the network's to set. Every call uses the visitor's key and router: OPENAI_API_KEY,
+// and OPENAI_BASE_URL, which the OpenAI client falls back to. That includes networks that ask for their key from sly_data
 // ("openai_api_key": "sly_data"), so the key is never put in sly_data either.
 const LLM_CONFIG_FIELDS = new Set([
   "model_name", "temperature", "top_p", "max_tokens", "presence_penalty", "frequency_penalty", "seed", "stop",
@@ -1127,6 +1186,24 @@ const carriesKey = (input, init, key) => {
 // The settings panel lists the models of a router the visitor typed, with the key they typed.
 const isModelList = (url, input, init) =>
   String(init?.method || input?.method || "GET").toUpperCase() === "GET" && /\/models\/?$/.test(new URL(url).pathname);
+
+// The last "usage" object in a response's text, plain JSON or an event stream, or null.
+const lastUsage = (text) => {
+  const at = text.lastIndexOf('"usage"');
+  if (at < 0) return null;
+  const start = text.slice(at + 7).search(/\S/) + at + 7;
+  if (text[start] !== ":") return null;
+  const open = text.slice(start + 1).search(/\S/) + start + 1;
+  if (text[open] !== "{") return null;
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === "{") depth += 1;
+    else if (text[i] === "}" && --depth === 0) {
+      try { return JSON.parse(text.slice(open, i + 1)); } catch { return null; }
+    }
+  }
+  return null;
+};
 
 // The text of a message's content, which is a string or a list of parts.
 function contentText(content) {
