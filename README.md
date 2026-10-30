@@ -886,10 +886,12 @@ curl http://localhost:12434/engines/v1/models
 The LLM authors the page's **CSS + HTML composition**, but it's treated as untrusted
 and **strictly sanitized**: only safe presentational tags/attributes survive (no
 `<script>`, `on*` handlers, `<iframe>`/`<form>`/`<svg>`; CSS stripped of `@import`,
-`expression()`, unsafe `url()`). A generated layout places three empty runtime mounts
-inside `#app`: the compact header, the primary chat, and agent activity. This lets the
-designer choose an inline rail, stacked panel, overlay, or native `<details>` pull-out
-instead of inheriting one fixed split. The runtime fills those mounts and protects page
+`expression()`, unsafe `url()`). A generated layout places four empty runtime mounts
+inside `#app`: the compact header, the primary chat, agent activity, and BYOK/router
+settings. The designer chooses whether settings live under a gear disclosure, in a
+utility rail, footer, or another suitable location, as well as whether agents use an
+inline rail, stacked panel, overlay, or native `<details>` pull-out. The runtime fills
+those mounts and protects page
 scrolling and CRUSE form reachability. Older cached themes with one empty `#app` keep
 the legacy resizable split layout. On any problem (no key, error, invalid/unsafe output,
 missing or incomplete mounts), nsdeploy **falls back to the default template**, so a
