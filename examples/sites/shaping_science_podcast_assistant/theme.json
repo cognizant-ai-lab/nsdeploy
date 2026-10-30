@@ -1,0 +1,51 @@
+{
+  "brand": "Shaping Science Desk",
+  "icon": "\ud83c\udf99\ufe0f",
+  "tagline": "Episodes, quotes, context, faithful drafts",
+  "hero": "A research-grade listening desk for navigating Nick Dirks conversations with evidence, transcripts, and clear context.",
+  "font": "Georgia, 'Times New Roman', Times, serif",
+  "radius": 18,
+  "colors": {
+    "primary": "#214F63",
+    "accent": "#D48927",
+    "bg": "#F6F0E6",
+    "bg_tint": "#E8F2F0",
+    "fg": "#14212A",
+    "muted": "#65727A",
+    "border": "#D6C8B4",
+    "msgbg": "#FFFDF7",
+    "panelbg": "#FBF6EC"
+  },
+  "welcome": {
+    "widget": {
+      "title": "Start a research listening request",
+      "icon": "\ud83d\udcdd",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "topic_or_episode": {
+            "type": "string",
+            "title": "Topic or episode",
+            "description": "Name a topic, guest, episode clue, or link you want explored."
+          },
+          "desired_output": {
+            "type": "string",
+            "title": "Desired output",
+            "description": "Recommendation list, transcript quotes, summary, explainer, LinkedIn draft, newsletter blurb, or feedback report."
+          },
+          "citation_preference": {
+            "type": "string",
+            "title": "Citation preference",
+            "description": "Say whether you need episode links, transcript citations, web context citations, or a quick uncited draft."
+          }
+        },
+        "required": [
+          "topic_or_episode",
+          "desired_output"
+        ]
+      },
+      "submitLabel": "Begin listening brief"
+    },
+    "message": "Tell the desk what you need from Shaping Science and how evidence-heavy the answer should be."
+  }
+}

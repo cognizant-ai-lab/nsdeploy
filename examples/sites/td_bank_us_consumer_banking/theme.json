@@ -1,0 +1,50 @@
+{
+  "brand": "TD Care Ledger",
+  "icon": "\ud83c\udfe6",
+  "tagline": "Banking help routed with care",
+  "hero": "A privacy-first TD consumer banking assistant that triages urgent issues, finds official guidance, and routes you to the right specialist.",
+  "font": "'Segoe UI', Arial, sans-serif",
+  "radius": 18,
+  "colors": {
+    "primary": "#0A6B3E",
+    "accent": "#B7E45A",
+    "bg": "#F3F7F1",
+    "bg_tint": "#E1EDE3",
+    "fg": "#10251B",
+    "muted": "#566B5F",
+    "border": "#C5D7C8",
+    "msgbg": "#FBFDF9",
+    "panelbg": "#FFFFFF"
+  },
+  "welcome": {
+    "widget": {
+      "title": "Start a safe support request",
+      "icon": "\ud83d\udcdd",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "string",
+            "title": "What do you need help with?",
+            "description": "Examples include comparing checking fees, mobile app login trouble, suspicious Zelle activity, or credit card travel insurance."
+          },
+          "product": {
+            "type": "string",
+            "title": "Product or channel",
+            "description": "Optional. Checking, savings, credit card, TD app, online banking, Zelle, branch, ATM, or insurance benefit."
+          },
+          "urgency": {
+            "type": "string",
+            "title": "Urgency",
+            "description": "Optional. Tell us if this involves suspected fraud, locked access, travel disruption, or a deadline."
+          }
+        },
+        "required": [
+          "request"
+        ]
+      },
+      "submitLabel": "Route my request"
+    },
+    "message": "Tell me what you need help with. Do not share full account numbers, SSN, card numbers, PINs or one-time codes."
+  }
+}

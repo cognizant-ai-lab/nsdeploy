@@ -15,6 +15,26 @@ from nsdeploy.byok import BYOK_AUTH_HEADER, BYOK_MODEL_HEADER
 from nsdeploy.launcher import _facade_command, make_handler, scrubbed_env
 
 
+class StaticHeaderTests(unittest.TestCase):
+    def test_only_public_agent_data_has_static_cors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("agent-manifest.json", "example.network.json", "links.json", "actions.js", "action-bridge.html", "sandbox-worker.js"):
+                (root / name).write_text("{}")
+            server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(root, "", root, []))
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                for path, cors in (("agent-manifest.json", True), ("example.network.json", True), ("links.json", True),
+                                   ("actions.js", False), ("action-bridge.html", False), ("runtime/sandbox-worker.js", False)):
+                    with urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/{path}", timeout=5) as response:
+                        self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), "*" if cors else None, path)
+                        if path.endswith("sandbox-worker.js"):
+                            self.assertIn("connect-src 'none'", response.headers["Content-Security-Policy"])
+            finally:
+                server.shutdown()
+                server.server_close()
+
+
 class _SessionMcpHandler(BaseHTTPRequestHandler):
     session_id = "test-session-id"
     get_session_id = ""
