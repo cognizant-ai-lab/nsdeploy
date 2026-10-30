@@ -574,6 +574,7 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
                   static_bundle: bool = False,
                   runtime_dir: Optional[Path] = None,
                   actions_file: Optional[Path] = None,
+                  action_pages=None, action_modules=None, action_caller_origins=None,
                   mock_llm: bool = False) -> Dict[str, Any]:
     """Build the disposable static output from network data and editable site source."""
     theme = theme or ThemeSpec()
@@ -592,15 +593,26 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     # Site-owned JavaScript is loaded only on its own origin. Peer callers learn
     # schemas through the bridge, never by importing foreign executable code.
     action_source = actions_file or (site_source_dir / "actions.js" if site_source_dir else None)
+    from nsdeploy.form_actions import action_discovery_config
+    discovery = action_discovery_config(action_pages, action_modules, action_caller_origins)
+    if discovery:
+        manifest["actions"] = {"version": 1, "bridge": "./action-bridge.html", **discovery}
     if action_source and action_source.is_file():
-        manifest["actions"] = {"version": 1, "module": "./actions.js", "bridge": "./action-bridge.html"}
+        manifest.setdefault("actions", {"version": 1, "bridge": "./action-bridge.html"})["module"] = "./actions.js"
         if action_source.resolve() != (out_dir / "actions.js").resolve():
             shutil.copyfile(action_source, out_dir / "actions.js")
+    if "actions" in manifest:
+        print("   browser actions: " + ("adapter; " if action_source and action_source.is_file() else "")
+              + f"{len(action_pages or [])} form page(s), {len(action_modules or [])} existing module(s); "
+              + "capabilities checked on the owning origin at runtime")
         (out_dir / "action-bridge.html").write_text(
             '<!doctype html><html><head><meta charset="utf-8"><title>Review site action</title>'
             '<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
             '<body><p>Site action connection. You may sign in on this site in another tab, then return here.</p>'
             '<script type="module" src="./runtime/action-bridge.js"></script></body></html>', encoding="utf-8")
+    else:
+        print("   browser actions: NONE configured. Chat/forms collect information only. "
+              "Use --action-page for existing native forms, or --actions/--action-module for JavaScript.")
 
     (out_dir / f"{plan.network_name}.network.json").write_text(
         json.dumps(network_config, indent=2), encoding="utf-8")

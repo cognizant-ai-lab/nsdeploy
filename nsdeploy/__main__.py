@@ -68,6 +68,15 @@ def main() -> int:
                     help="editable site source dir (default: <hocon-dir>/sites/<name>)")
     ap.add_argument("--actions", default=None, metavar="FILE",
                     help="site-owned JavaScript action adapter (otherwise <site-dir>/actions.js)")
+    ap.add_argument("--action-page", action="append", default=None, metavar="PATH",
+                    help="discover native HTML forms on this same-origin page at runtime (repeatable; "
+                         "default: deployed --site-url path)")
+    ap.add_argument("--no-action-discovery", action="store_true",
+                    help="disable automatic native-form discovery")
+    ap.add_argument("--action-module", action="append", default=[], metavar="PATH",
+                    help="existing same-origin module exporting registerActions (repeatable; not copied)")
+    ap.add_argument("--action-caller-origin", action="append", default=[], metavar="ORIGIN",
+                    help="allow this caller origin to use discovered forms remotely (repeatable)")
     ap.add_argument("--upstream", default="https://api.openai.com/v1",
                     help="RUNTIME BYOK proxy upstream — where the page's key is forwarded (default OpenAI)")
     ap.add_argument("--facade-upstream", default=None,
@@ -113,6 +122,18 @@ def main() -> int:
     args = ap.parse_args()
     if args.actions and not Path(args.actions).is_file():
         ap.error("--actions must name an existing JavaScript adapter")
+    from nsdeploy.form_actions import action_discovery_config, default_action_page
+    provisional_site_base = ((args.site_url or "") if args.static_bundle
+                             else (args.site_url or f"http://127.0.0.1:{args.port}")).rstrip("/")
+    if args.no_action_discovery and (args.action_page or args.action_caller_origin):
+        ap.error("--no-action-discovery cannot be combined with --action-page or --action-caller-origin")
+    action_pages = ([] if args.no_action_discovery else
+                    (args.action_page if args.action_page is not None
+                     else [default_action_page(provisional_site_base)]))
+    try:
+        action_discovery_config(action_pages, args.action_module, args.action_caller_origin)
+    except ValueError as exc:
+        ap.error(str(exc))
 
     if args.cailville_base_map and not args.add_to_cailville:
         ap.error("--cailville-base-map requires --add-to-cailville")
@@ -273,6 +294,8 @@ def main() -> int:
                   private_steward_sites=private_steward_sites or None,
                   static_bundle=args.static_bundle, runtime_dir=runtime_dir,
                   actions_file=Path(args.actions).resolve() if args.actions else None,
+                  action_pages=action_pages, action_modules=args.action_module,
+                  action_caller_origins=args.action_caller_origin,
                   mock_llm=args.mock_llm)
     bundle_label = "static bundle" if args.static_bundle else "site"
     print(f"✅ Generated {bundle_label} → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))

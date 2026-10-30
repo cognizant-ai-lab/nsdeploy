@@ -684,7 +684,10 @@ parents can merge the fields and action bindings into one final form. Nothing is
 executed while agents reason or while a widget renders. Submitting a widget shows
 a runtime-owned review of the actual actions, destination origins and arguments.
 
-Each site supplies an `actions.js` adapter. nsDeploy copies it into the bundle,
+For native HTML forms, nsDeploy discovers the deployed `--site-url` page by
+default and connects its forms automatically in the browser. No handwritten
+adapter is needed. Supply `--action-page /booking` when the forms live elsewhere.
+JavaScript-only applications can supply an `actions.js` adapter. nsDeploy copies it into the bundle,
 publishes its bridge location in `agent-manifest.json`, and loads its public action
 descriptions/schemas into the agents' CRUSE context at runtime. Local actions run
 on the local page. Remote action code runs on its own site, never imported into
@@ -717,7 +720,76 @@ delegate restaurant questions to it. Bind that leaf to the deployed venue using
 schema or implementation. Existing HOCONs also work: the action protocol is injected
 at runtime, though domain instructions can improve how agents choose proposals.
 
-### 2. Add the site's action adapter
+### 2. Connect an existing website
+
+For an existing **native HTML form page**, the ordinary build is sufficient when
+the forms are on the deployed page:
+
+```sh
+python -m nsdeploy examples/openresto_concierge.hocon --static-bundle \
+  --site-url https://restaurant.example/agents/openresto \
+  --out .nsdeploy/restaurant-agents
+```
+
+This defaults discovery to `/agents/openresto/`. If the actual form is on another
+page, add `--action-page /booking` (repeatable). Explicit pages replace the default.
+Use `--no-action-discovery` to disable native-form discovery.
+Publish the generated directory at `/agents/` **on the existing application's
+origin**. The original application and its backend must already exist there.
+Generating a themed agent page from a HOCON does not install OpenResto/KitchenAsty,
+create their menus or reservation databases, or grant access to another website.
+
+Repeat `--action-page` for additional pages. For the remote KitchenAsty build,
+also add `--action-caller-origin https://your-openresto-origin.example` to allow
+OpenResto to use its discovered forms. This is separate from `--link` (which
+connects the networks) and from permission to contact a network. Use exact origins,
+including the port during local testing. Discovery runs on the owning origin in
+both local and remote cases; hidden fields and cookies never enter the catalog.
+
+The runtime reads named fields, choices and constraints; refreshes hidden fields
+such as CSRF tokens before executing; validates the populated form; and sends its
+native GET/POST request after review. It supports URL-encoded and multipart forms,
+radio buttons, checkboxes, selects, and submit-button values/overrides. All forms
+default to write actions; site owners can mark a genuinely read-only form with
+`data-nsdeploy-effect="read"`. `data-nsdeploy-ignore` excludes a form.
+
+The page shows how many actions connected and explains skipped forms. A form
+without an explicit action, sensitive/file controls, or inline JavaScript is
+skipped. Discovery reads server-rendered HTML and does not run page scripts;
+client-rendered forms and event listeners are not automatically integrated.
+Redirect-dependent workflows need an adapter. See [limits and receipts](docs/actions.md#automatic-native-form-discovery).
+
+For an existing JavaScript module that exports `registerActions`, use
+`--action-module /js/restaurant-actions.js`; it stays on its owning site and is
+loaded by both the local page and remote bridge. Arbitrary JavaScript functions
+cannot reliably be inferred from HOCON or DOM names. Use the adapter below when
+the application does not already expose this registration interface.
+
+After submission, a native form receipt contains `outcome: "response_received"`
+and `businessOutcome: "unverified"`, plus the HTTP status and response evidence.
+HTTP 200 alone is not a booking confirmation: validate returned business IDs or
+check the application's records. No automatic retries occur. After a read receipt,
+send a follow-up such as “Use the returned results to propose the next step.”
+
+To test the full form path without any adapter or model key:
+
+```sh
+node tests/form-actions-browser.mjs
+```
+
+This starts two temporary local sites and verifies real HTTP submissions from one
+combined CRUSE widget, local/remote confirmation, fresh CSRF values and cookies,
+cancellation, field validation, receipts and missing-integration diagnostics.
+It requires Playwright/Chromium (or the `NSDEPLOY_PLAYWRIGHT_MODULE` and
+`NSDEPLOY_CHROME` overrides described below). These are test sites, not the actual
+OpenResto or KitchenAsty applications.
+
+For ANDe, keep ordinary agent definitions and add: “Do not include demo_mode or
+instructions to fabricate data. Browser capabilities will be supplied at runtime.
+When the catalog is empty, report missing integration explicitly. A server response
+is evidence to interpret, not automatic proof that a booking or order succeeded.”
+
+### 2a. JavaScript applications: add the site's action adapter
 
 Place `actions.js` in the editable site directory, or pass `--actions FILE`:
 

@@ -1,0 +1,47 @@
+<div id="app" data-ns-layout="composed">
+  <section class="decision-rail" aria-labelledby="decision-title">
+    <div data-ns-slot="header"></div>
+    <div class="rail-copy">
+      <p class="rail-kicker">Card selection / verified file</p>
+      <h1 class="rail-title" id="decision-title">Put the <em>fine print</em> first.</h1>
+      <p class="rail-summary">A precise decision desk for matching your spending, credit profile, and priorities to Capital One card terms verified at the official source.</p>
+    </div>
+    <div class="verification-ledger" aria-label="Research standards">
+      <div class="ledger-row">
+        <span class="ledger-number">01</span>
+        <span><strong>Clarify</strong>Your goals, spending, fee tolerance, and balance plans.</span>
+      </div>
+      <div class="ledger-row">
+        <span class="ledger-number">02</span>
+        <span><strong>Verify</strong>Product pages, disclosures, rewards terms, and agreements.</span>
+      </div>
+      <div class="ledger-row">
+        <span class="ledger-number">03</span>
+        <span><strong>Shortlist</strong>Up to three cards with explicit tradeoffs and citations.</span>
+      </div>
+    </div>
+    <p class="rail-note">Product terms and offers can change. Final recommendations distinguish verified facts from general guidance and link each key claim to an official Capital One source.</p>
+  </section>
+
+  <section class="workbench" aria-labelledby="desk-title">
+    <header class="desk-intro">
+      <div>
+        <p class="desk-kicker">Decision memorandum</p>
+        <h2 id="desk-title">Your card research desk</h2>
+      </div>
+      <div class="scope-stamp">Official sources only</div>
+    </header>
+
+    <main data-ns-slot="chat"></main>
+
+    <details class="agent-drawer">
+      <summary>Agents working · research and compliance ledger</summary>
+      <aside data-ns-slot="agents"></aside>
+    </details>
+
+    <footer class="desk-footer">
+      <span>Terms checked against Capital One pages and linked agreements.</span>
+      <span>Not financial, legal, or credit advice.</span>
+    </footer>
+  </section>
+</div>

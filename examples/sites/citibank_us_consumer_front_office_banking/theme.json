@@ -1,0 +1,57 @@
+{
+  "brand": "Citi Control Desk",
+  "icon": "\ud83c\udfe6",
+  "tagline": "Route, resolve, and evidence every case",
+  "hero": "A precision command center for consumer banking requests, incidents, controls, and auditable closure.",
+  "font": "Arial, Helvetica, sans-serif",
+  "radius": 18,
+  "colors": {
+    "primary": "#0B3A75",
+    "accent": "#C41230",
+    "bg": "#F4F7FA",
+    "bg_tint": "#E7EEF7",
+    "fg": "#142033",
+    "muted": "#5C6B7C",
+    "border": "#CAD6E3",
+    "msgbg": "#F8FAFC",
+    "panelbg": "#FFFFFF"
+  },
+  "welcome": {
+    "widget": {
+      "title": "Banking intake",
+      "icon": "\ud83c\udfe6",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "customerNeed": {
+            "type": "string",
+            "title": "Customer need",
+            "description": "Describe the account access, onboarding, payment, dispute, branch, or digital issue."
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel",
+            "description": "Mobile app, web, branch, contact center, ATM, or cross-channel."
+          },
+          "urgency": {
+            "type": "string",
+            "title": "Urgency",
+            "description": "Routine, time-sensitive, suspected fraud, regulatory complaint, or active incident."
+          },
+          "knownDetails": {
+            "type": "string",
+            "title": "Known details",
+            "description": "Include dates, transaction amounts, error messages, case IDs, and what has already been tried."
+          }
+        },
+        "required": [
+          "customerNeed",
+          "channel",
+          "urgency"
+        ]
+      },
+      "submitLabel": "Open controlled case"
+    },
+    "message": "Start with the customer or incident context. I will route it to the right banking manager, apply controls, and drive closure."
+  }
+}

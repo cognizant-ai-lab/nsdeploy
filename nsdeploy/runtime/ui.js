@@ -471,7 +471,7 @@ export function mountApp(root, { engine, trace, manifest }) {
         const receipts = await engine.submitActions(interaction);
         if (!receipts) return false;
         const bubble = addBubble(msgs, "bot", "");
-        bubble.textContent = receipts.map(r => `${r.action}: ${r.status}\n${JSON.stringify(r.result ?? r.error ?? "", null, 2)}`).join("\n\n");
+        bubble.textContent = receipts.map(r => `${r.action}: ${r.result?.businessOutcome === "unverified" ? "response received; business outcome unverified" : r.status}\n${JSON.stringify(r.result ?? r.error ?? "", null, 2)}`).join("\n\n");
         // Receipts are already in history; the next chat turn can interpret them.
         return true;
       } catch (error) { addBubble(msgs, "bot", error.message); return false; }

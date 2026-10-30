@@ -60,11 +60,12 @@ export function proposalRefs(result) {
   return (result?.presentation?.components || []).flatMap(c => actionBindings(c).map(b => b.action));
 }
 export function actionContext(catalog) {
+  if (!catalog.length) return "\nNo browser actions are registered for this network. Forms can collect information only. Do not say availability/menu data was checked or an operation ran. Report missing integration explicitly. Validated proposals from children may still be relayed.\n";
   return `\nCRUSE browser actions (proposals only; these are NOT tool calls):\n${JSON.stringify(catalog)}\nReturn proposals in the ordinary version:1 cruse-ui components. A ready action is {kind:"action",id:"save",action:"EXACT ref",label:"Save",arguments:{...}}. A form may have submit:{actions:[{action:"EXACT ref",arguments:{knownValue:123},inputs:{argumentName:"fieldName"}}]}. inputs maps argument names to top-level form field names, not expressions. Use inputSchema for field types, enum choices and constraints. Preserve exact action references from this catalog or validated child proposals. Consolidate child/local forms and their submit.actions into one form where useful. Keep the mappings when renaming fields. An action proposal never means completion. Submission is executed by the browser after user review; only returned receipts establish results. Do not collect passwords, tokens or payment credentials in CRUSE. Never invent handlers, destinations or successful receipts.`;
 }
 
 export class ActionRegistry {
-  constructor() { this.entries = new Map(); this.sequence = 0; }
+  constructor() { this.entries = new Map(); this.sequence = 0; this.discoveryIssues = []; }
   register(scope, definition, execute = definition.execute) {
     const { name, description, inputSchema, outputSchema, effect = "write", availability = "local-only", callerOrigins = [], timeoutMs = 180000 } = cloneData(definition);
     if (!/^[A-Za-z][\w-]{0,79}$/.test(name || "") || !description || typeof execute !== "function") throw new Error("Action requires name, description and execute function.");

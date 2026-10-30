@@ -1,5 +1,85 @@
 # Browser action adapters and CRUSE bindings
 
+## Automatic native form discovery
+
+Without action options, nsDeploy publishes the path portion of `--site-url` as the
+page-discovery default. For example, `https://app.example/agents/concierge`
+discovers `/agents/concierge/`. `--action-page /booking` replaces that default;
+repeat it for additional pages. `--no-action-discovery` disables the default.
+The page must already exist on the origin hosting the bundle. Repeat the flag for
+additional pages; paths are origin-relative, even when the bundle is at `/agents/`.
+No adapter or HOCON extension is required. Discovery happens at runtime using the
+user's session, never at build time, and is read-only. Do not point it at GET URLs
+that perform mutations. The runtime fetches HTML without executing its scripts.
+
+The registry generates a stable action for each form/submit-button combination,
+with a schema for its named editable controls. Native form action/method/encoding,
+submitter overrides and named submit buttons are respected. Hidden and readonly
+fields remain on the owning origin and are reloaded before execution. The browser
+validates pattern, step, date bounds and other native constraints beyond those
+expressible in CRUSE. The runtime uses the browser's `FormData` construction for
+successful controls, then submits using `fetch` with same-origin credentials.
+See the [HTML form submission standard](https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#constructing-the-entry-list).
+
+All discovered forms default to `effect: "write"`, including GET forms. A site
+owner can opt into read semantics with `data-nsdeploy-effect="read"`. Exclude a
+form with `data-nsdeploy-ignore`. Remote access defaults to denied; add repeatable
+`--action-caller-origin https://caller.example` flags for exact caller origins.
+The same static bridge, origin checks, argument validation and confirmation flow
+used by explicit adapters apply to discovered forms. Do not copy the target site's
+forms to the caller; deploy the bridge beside the actual application.
+
+Discovery diagnostics appear below the chat and in the browser console. The
+`action_catalog` trace event reports local count and discovery issues. If no
+capabilities are registered, agents are explicitly told to report the integration
+gap instead of claiming to have checked data. Builds without any action source
+also print that no browser actions are configured.
+
+Supported: server-rendered forms with an explicit same-origin action, GET/POST,
+URL-encoded or multipart encoding, ordinary text/date/number controls, radio and
+checkbox groups, selects, and multiple submit buttons. Public schemas omit current
+field values to avoid leaking saved personal information. Optional fields omitted
+from a proposal are cleared, rather than silently submitting saved values.
+
+Limits:
+
+- Client-rendered forms, JS event handlers, custom controls, uploads, passwords,
+  payment fields and authentication UI need the site's own UI or an adapter.
+  Inline handlers are detected and skipped. Listeners attached by scripts cannot
+  be inferred from HTML: choose pages whose native form endpoint is functional
+  without those scripts. No existing page JavaScript runs in the fetched document.
+- Redirects are rejected, including login and post/redirect/get flows. A POST may
+  have committed before a redirect is encountered; the outcome is then unknown.
+  Use a registered adapter for such flows. This avoids following a redirect that
+  could forward form data to an unreviewed destination.
+- Discovery reads HTML pages up to 1 MB. Response evidence is capped at 12,000
+  characters, excludes form/script content, redacts known hidden values and
+  sensitive JSON keys. Review your responses before exposing them to callers:
+  automatic filtering cannot identify every application-specific secret.
+- Form identity, endpoint, method, schema and fixed fields are checked again before
+  submission. Structural changes require refreshing the agent page; hidden fields
+  with token/CSRF names may rotate, while other hidden values stay pinned to avoid
+  changing the target record. Large/dynamic catalogs should use an explicit adapter.
+- Generic native forms do not add server idempotency guarantees. Repeated clicks
+  are suppressed within the session; reloads/new proposals may repeat operations.
+
+Successful HTTP handling returns `outcome: "response_received"`,
+`businessOutcome: "unverified"`, `httpStatus`, and `evidence: {format, text}`.
+The enclosing action's `status: "succeeded"` means its handler returned a response,
+not that the business accepted the request. Read the evidence and independently
+verify reservation/order records. Error statuses, redirects, network failures and
+timeouts produce `unknown`; never automatically retry a possibly committed write.
+
+## Existing JavaScript modules
+
+`--action-module /js/site-actions.js` loads an existing same-origin ES module
+exporting `registerActions(actions)`. The file is not copied; it must already be
+hosted there. Registration uses the API below, including its own `callerOrigins`.
+Multiple modules, form pages and a copied `--actions` adapter can coexist (action
+names must be unique). No arbitrary globals/functions are scanned or executed.
+
+## Explicit adapters
+
 No new HOCON syntax or action tools are needed. `--actions path/to/adapter.js`
 copies the adapter to `actions.js` in the output. Without the flag, the generator
 uses `<site-dir>/actions.js` when present. Adapter modules are not executed at build

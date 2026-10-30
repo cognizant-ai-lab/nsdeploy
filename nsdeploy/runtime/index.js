@@ -57,6 +57,16 @@ export async function boot(rootSelector = "#app", opts = {}) {
     await engine.enableLangChain();
   }
   mountApp(root, { engine, trace, manifest });
+  if (manifest.actions?.pages?.length) {
+    const count = engine.actions.catalog({ base: engine.top.base, network: engine.top.network.name }).length;
+    const status = document.createElement("details");
+    status.className = "ns-action-status";
+    const summary = document.createElement("summary");
+    summary.textContent = count ? `${count} website actions connected` : "No website actions connected";
+    const detail = document.createElement("p");
+    detail.textContent = engine.actions.discoveryIssues.map(i => `${i.page}: ${i.reason}`).join(" ") || "Actions run after you review and confirm them. Server responses appear as receipts.";
+    status.append(summary, detail); root.append(status);
+  }
   // expose for debugging / e2e tests
   if (typeof window !== "undefined") window.__nsweb = { engine, trace };
   return { engine, trace, actions: { register: definition => engine.actions.register({ base: engine.top.base, network: engine.top.network.name }, definition) } };

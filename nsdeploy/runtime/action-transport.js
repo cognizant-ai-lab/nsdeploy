@@ -1,4 +1,5 @@
 import { ActionRegistry, cloneData, validateData } from "./actions.js";
+import { registerFormActions } from "./form-actions.js";
 
 const protocol = "nsdeploy-actions-v1";
 export function sameOriginAsset(base, path) {
@@ -10,9 +11,16 @@ export async function loadActionModule(registry, scope, manifest) {
   if (!manifest.actions) return;
   if (new URL(scope.base).origin !== location.origin) throw new Error("Executable action adapters must run on their own origin.");
   if (manifest.actions.version !== 1) throw new Error("Unsupported action protocol.");
-  const module = await import(sameOriginAsset(scope.base, manifest.actions.module));
-  if (typeof module.registerActions !== "function") throw new Error("actions.js must export registerActions.");
-  await module.registerActions({ register: definition => registry.register(scope, definition) });
+  const actions = { register: definition => registry.register(scope, definition) };
+  for (const path of new Set([manifest.actions.module, ...(manifest.actions.modules || [])].filter(Boolean))) {
+    const module = await import(sameOriginAsset(scope.base, path));
+    if (typeof module.registerActions !== "function") throw new Error("Action modules must export registerActions.");
+    await module.registerActions(actions);
+  }
+  await registerFormActions(actions, {
+    pages: manifest.actions.pages || [], callerOrigins: manifest.actions.callerOrigins || [], base: scope.base,
+    report: issue => { registry.discoveryIssues.push({ ...scope, ...issue }); console.warn("Action discovery:", issue); },
+  });
 }
 
 // Used by both the local UI and the trusted, first-party bridge popup.

@@ -1,0 +1,20 @@
+{
+  "brand": "",
+  "icon": "",
+  "tagline": "",
+  "hero": "",
+  "font": "\"Segoe UI\", system-ui, sans-serif",
+  "radius": 16,
+  "colors": {
+    "primary": "#0ea5e9",
+    "accent": "#14b8a6",
+    "bg": "#eef7ff",
+    "bg_tint": "#d8f1ff",
+    "fg": "#0f2a43",
+    "muted": "#5b7a97",
+    "border": "#cfe6fb",
+    "msgbg": "#e0f2fe",
+    "panelbg": "#f7fcff"
+  },
+  "welcome": null
+}
