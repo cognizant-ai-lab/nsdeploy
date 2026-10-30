@@ -70,7 +70,9 @@ def main() -> int:
                     help="site-owned JavaScript action adapter (otherwise <site-dir>/actions.js)")
     ap.add_argument("--action-page", action="append", default=None, metavar="PATH",
                     help="discover native HTML forms on this same-origin page at runtime (repeatable; "
-                         "default: deployed --site-url path)")
+                         "no implicit page default)")
+    ap.add_argument("--action-host-page", action="store_true",
+                    help="discover native forms in the page embedding the widget (local only)")
     ap.add_argument("--no-action-discovery", action="store_true",
                     help="disable automatic native-form discovery")
     ap.add_argument("--action-module", action="append", default=[], metavar="PATH",
@@ -122,16 +124,12 @@ def main() -> int:
     args = ap.parse_args()
     if args.actions and not Path(args.actions).is_file():
         ap.error("--actions must name an existing JavaScript adapter")
-    from nsdeploy.form_actions import action_discovery_config, default_action_page
-    provisional_site_base = ((args.site_url or "") if args.static_bundle
-                             else (args.site_url or f"http://127.0.0.1:{args.port}")).rstrip("/")
-    if args.no_action_discovery and (args.action_page or args.action_caller_origin):
-        ap.error("--no-action-discovery cannot be combined with --action-page or --action-caller-origin")
-    action_pages = ([] if args.no_action_discovery else
-                    (args.action_page if args.action_page is not None
-                     else [default_action_page(provisional_site_base)]))
+    from nsdeploy.form_actions import action_discovery_config
+    if args.no_action_discovery and (args.action_page or args.action_host_page or args.action_caller_origin):
+        ap.error("--no-action-discovery cannot be combined with form discovery options")
+    action_pages = args.action_page or []
     try:
-        action_discovery_config(action_pages, args.action_module, args.action_caller_origin)
+        action_discovery_config(action_pages, args.action_module, args.action_caller_origin, args.action_host_page)
     except ValueError as exc:
         ap.error(str(exc))
 
@@ -295,6 +293,7 @@ def main() -> int:
                   static_bundle=args.static_bundle, runtime_dir=runtime_dir,
                   actions_file=Path(args.actions).resolve() if args.actions else None,
                   action_pages=action_pages, action_modules=args.action_module,
+                  action_host_page=args.action_host_page,
                   action_caller_origins=args.action_caller_origin,
                   mock_llm=args.mock_llm)
     bundle_label = "static bundle" if args.static_bundle else "site"

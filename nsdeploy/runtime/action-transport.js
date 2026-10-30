@@ -1,5 +1,5 @@
 import { ActionRegistry, cloneData, validateData } from "./actions.js";
-import { registerFormActions } from "./form-actions.js";
+import { registerFormActions, watchHostForms } from "./form-actions.js";
 
 const protocol = "nsdeploy-actions-v1";
 export function sameOriginAsset(base, path) {
@@ -7,7 +7,7 @@ export function sameOriginAsset(base, path) {
   if (!["http:", "https:"].includes(url.protocol) || url.origin !== new URL(base).origin || url.username || url.password) throw new Error("Action assets must belong to their publishing origin.");
   return url.href;
 }
-export async function loadActionModule(registry, scope, manifest) {
+export async function loadActionModule(registry, scope, manifest, { bridge = false } = {}) {
   if (!manifest.actions) return;
   if (new URL(scope.base).origin !== location.origin) throw new Error("Executable action adapters must run on their own origin.");
   if (manifest.actions.version !== 1) throw new Error("Unsupported action protocol.");
@@ -21,6 +21,13 @@ export async function loadActionModule(registry, scope, manifest) {
     pages: manifest.actions.pages || [], callerOrigins: manifest.actions.callerOrigins || [], base: scope.base,
     report: issue => { registry.discoveryIssues.push({ ...scope, ...issue }); console.warn("Action discovery:", issue); },
   });
+  if (manifest.actions.hostPage && !bridge) {
+    registry.hostForms?.dispose();
+    registry.hostForms = watchHostForms(registry, scope, { onChange: () => registry.onChange?.() });
+  }
+  if (!registry.catalog(scope).length && !(manifest.actions.hostPage && !bridge)) {
+    registry.discoveryIssues.push({ ...scope, page: "Action sources", reason: "No website actions connected. Check configured routes/modules on the actual application origin; a generated agent page supplies no business actions." });
+  }
 }
 
 // Used by both the local UI and the trusted, first-party bridge popup.
@@ -130,6 +137,7 @@ export async function registerRemoteActions(registry, scope, manifest) {
   const loading = discoverRemoteActions(registry, scope, url);
   registry.remoteLoads.set(key, loading);
   try { await loading; } catch (error) { registry.remoteLoads.delete(key); throw error; }
+  finally { registry.onChange?.(); }
 }
 
 async function discoverRemoteActions(registry, scope, url) {
@@ -140,6 +148,7 @@ async function discoverRemoteActions(registry, scope, url) {
     catch { await client.connect(true); } // explicit user-opened fallback for framing restrictions
     const catalog = await client.request("catalog");
     if (!Array.isArray(catalog) || catalog.length > 100) throw new Error("Invalid remote action catalog.");
+    if (!catalog.length) registry.discoveryIssues.push({ ...scope, page: "Remote action bridge", reason: "No actions exposed to this caller. Check the remote site's action sources and callerOrigins; host-page forms are local only." });
     for (const definition of catalog) registered.push(registry.register(scope, definition, async (args, { requestId, signal }) => {
       // Mutations are approved on the owning origin in a top-level window. The
       // receiving bridge enforces this independently of the caller's catalog.
@@ -166,7 +175,7 @@ export async function serveActionBridge() {
   const manifest = await response.json();
   const registry = new ActionRegistry();
   const scope = { base, network: manifest.networks[0].name };
-  await loadActionModule(registry, scope, manifest);
+  await loadActionModule(registry, scope, manifest, { bridge: true });
   const peer = window.opener || (window.parent !== window ? window.parent : null);
   if (!peer) { document.body.append("Open this page through an agent action."); return; }
   let connected = false;

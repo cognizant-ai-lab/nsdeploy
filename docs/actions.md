@@ -2,10 +2,11 @@
 
 ## Automatic native form discovery
 
-Without action options, nsDeploy publishes the path portion of `--site-url` as the
-page-discovery default. For example, `https://app.example/agents/concierge`
-discovers `/agents/concierge/`. `--action-page /booking` replaces that default;
-repeat it for additional pages. `--no-action-discovery` disables the default.
+There is no guessed action page. `--site-url` names the agent bundle, which usually
+has no business forms. Use `--action-page /booking` for an existing application
+route; repeat it for additional pages. `--action-host-page` opts into local live
+document discovery when embedding the widget. `--no-action-discovery` cannot be
+combined with either form flag; it does not disable explicitly registered modules.
 The page must already exist on the origin hosting the bundle. Repeat the flag for
 additional pages; paths are origin-relative, even when the bundle is at `/agents/`.
 No adapter or HOCON extension is required. Discovery happens at runtime using the
@@ -34,6 +35,34 @@ Discovery diagnostics appear below the chat and in the browser console. The
 capabilities are registered, agents are explicitly told to report the integration
 gap instead of claiming to have checked data. Builds without any action source
 also print that no browser actions are configured.
+Explicitly targeting an empty generated agent page produces a build warning.
+Other configured routes are verified only at runtime in the user's browser;
+builds do not claim the application has been validated. Empty remote catalogs
+report missing sources or caller authorization rather than implying connectivity.
+
+### Forms beside an embedded widget
+
+Build with `--action-host-page`, import the bundle's `runtime/index.js` in the
+existing application page and call `boot("#agent-widget", { originUrl:
+location.origin + "/agents/concierge", sandboxWorkerUrl:
+"/agents/concierge/runtime/sandbox-worker.js" })`. Use a dedicated empty mount;
+the mount and its descendants are excluded from discovery. Forms under
+`data-nsdeploy-ignore` are also excluded.
+
+Native forms already in the visible document, including forms rendered by the
+application's JavaScript, are discovered. A DOM observer refreshes the catalog
+when forms are added, changed or removed. When changing properties without DOM
+mutations, call the returned `actions.refreshHostForms()` before asking for a new
+proposal. Changed contracts invalidate old references. Execution rechecks the live
+form, copies current fields/tokens into a detached document, and submits without
+altering the user's draft or invoking JavaScript event handlers. This mode is for
+native endpoints that work without submit listeners; JS-only forms still need a
+registered action. Hidden/readonly values are never put in the public schema.
+
+Host-page actions are always local-only: the remote bridge has a separate document
+and cannot access the widget's live application state. Use explicit same-origin
+route discovery or a bridge-compatible module to expose those capabilities
+remotely. Host discovery is disabled inside the bridge itself.
 
 Supported: server-rendered forms with an explicit same-origin action, GET/POST,
 URL-encoded or multipart encoding, ordinary text/date/number controls, radio and
@@ -43,7 +72,7 @@ from a proposal are cleared, rather than silently submitting saved values.
 
 Limits:
 
-- Client-rendered forms, JS event handlers, custom controls, uploads, passwords,
+- Client-rendered forms on fetched routes, JS event handlers, custom controls, uploads, passwords,
   payment fields and authentication UI need the site's own UI or an adapter.
   Inline handlers are detected and skipped. Listeners attached by scripts cannot
   be inferred from HTML: choose pages whose native form endpoint is functional
@@ -77,6 +106,34 @@ exporting `registerActions(actions)`. The file is not copied; it must already be
 hosted there. Registration uses the API below, including its own `callerOrigins`.
 Multiple modules, form pages and a copied `--actions` adapter can coexist (action
 names must be unique). No arbitrary globals/functions are scanned or executed.
+This export is the standard registration interface for existing JavaScript actions;
+wrap an existing exported business function in `execute` and provide its schema
+and caller policy. The function must work in a fresh bridge document if exposed
+remotely; functions tied to live UI state must remain `local-only`. Registration
+describes capabilities; it must not execute the business operation.
+
+## Hosting and CORS
+
+The static action bridge must be hosted on the actual application's origin.
+Configured pages, modules and endpoints must be on that origin. No proxy, new
+agent server, HOCON extension or business-endpoint CORS is required. Existing
+authentication, authorization and CSRF checks still apply.
+
+Only remote network loading uses CORS: publish public `agent-manifest.json`,
+`<network>.network.json`, `links.json`, `agent-mcp.json` and the generated
+`.well-known` discovery JSON with `Access-Control-Allow-Origin: *`. Generated
+hosting rules scope that header to these files. Action modules and bridge HTML
+load on their own origin and communicate through validated MessagePorts; no CORS
+on JavaScript is needed. The sandbox worker's CSP is a separate requirement.
+
+For subpath deployment, `_headers` includes the `--site-url` prefix and must be
+merged into the host-root configuration. Adjust it when moving the bundle;
+the Apache `.htaccess` stays in the bundle directory. The host's framing policy
+must allow the approved caller to embed the bridge; otherwise the runtime offers
+a user-opened popup. Remote writes always use a popup with first-party review.
+Third-party cookie restrictions can affect iframe reads; use `top-level` actions
+for reads needing a first-party session. A host with an opener-isolating COOP
+policy also needs a compatible bridge policy for popup messaging.
 
 ## Explicit adapters
 

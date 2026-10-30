@@ -162,12 +162,16 @@ configuration is generated only for application-hosted deployments.
 When `--site-url` is omitted, the static bundle is origin-neutral and can be moved
 between hosts. Supplying `--site-url` publishes a canonical URL for link discovery.
 The static host only needs to serve files over HTTP(S). When a browser-hosted agent
-on another domain will load the network, responses must include
-`Access-Control-Allow-Origin: *`.
+on another domain will load the network, its public manifest, network JSON and
+link/discovery JSON responses must include `Access-Control-Allow-Origin: *`.
+Action JavaScript, bridge pages and business endpoints do not need CORS. Remote
+actions run on their own origin through validated iframe/popup messages.
 The sandbox worker also needs the CSP shown in the generated `STATIC_HOSTING.md`.
 The included `_headers` and `.htaccess` cover hosts that support those standard
 configuration formats. Hosts that ignore both files need the equivalent headers
-configured in their control panel.
+configured in their control panel. For subpath deployments, merge `_headers` into
+the host's root configuration; its paths include the `--site-url` path prefix.
+If relocating a bundle, adjust that prefix. `.htaccess` remains in the bundle directory.
 
 ## Cailville multi-site demo
 
@@ -684,9 +688,12 @@ parents can merge the fields and action bindings into one final form. Nothing is
 executed while agents reason or while a widget renders. Submitting a widget shows
 a runtime-owned review of the actual actions, destination origins and arguments.
 
-For native HTML forms, nsDeploy discovers the deployed `--site-url` page by
-default and connects its forms automatically in the browser. No handwritten
-adapter is needed. Supply `--action-page /booking` when the forms live elsewhere.
+For native HTML forms, supply `--action-page /booking` to discover an existing
+same-origin application route, or `--action-host-page` to discover native forms
+beside an embedded widget. No handwritten adapter is needed for those forms.
+There is no implicit discovery route: `--site-url` identifies the bundle location,
+not the business application. Builds without action sources explicitly report
+that chat/forms can only collect information.
 JavaScript-only applications can supply an `actions.js` adapter. nsDeploy copies it into the bundle,
 publishes its bridge location in `agent-manifest.json`, and loads its public action
 descriptions/schemas into the agents' CRUSE context at runtime. Local actions run
@@ -722,19 +729,20 @@ at runtime, though domain instructions can improve how agents choose proposals.
 
 ### 2. Connect an existing website
 
-For an existing **native HTML form page**, the ordinary build is sufficient when
-the forms are on the deployed page:
+For an existing **native HTML form page**, publish the bundle on the application's
+origin and specify the real form route:
 
 ```sh
 python -m nsdeploy examples/openresto_concierge.hocon --static-bundle \
   --site-url https://restaurant.example/agents/openresto \
+  --action-page /booking \
   --out .nsdeploy/restaurant-agents
 ```
 
-This defaults discovery to `/agents/openresto/`. If the actual form is on another
-page, add `--action-page /booking` (repeatable). Explicit pages replace the default.
-Use `--no-action-discovery` to disable native-form discovery.
-Publish the generated directory at `/agents/` **on the existing application's
+Repeat `--action-page` for other existing routes. No pages are guessed from
+`--site-url`. `--no-action-discovery` explicitly disables form discovery and cannot
+be combined with form discovery flags; registered modules remain available.
+Publish the generated directory at `/agents/openresto/` **on the existing application's
 origin**. The original application and its backend must already exist there.
 Generating a themed agent page from a HOCON does not install OpenResto/KitchenAsty,
 create their menus or reservation databases, or grant access to another website.
@@ -756,7 +764,9 @@ default to write actions; site owners can mark a genuinely read-only form with
 The page shows how many actions connected and explains skipped forms. A form
 without an explicit action, sensitive/file controls, or inline JavaScript is
 skipped. Discovery reads server-rendered HTML and does not run page scripts;
-client-rendered forms and event listeners are not automatically integrated.
+scripts on configured routes are not run. For native forms rendered into the
+visible host page, use the embedding option below. JavaScript event handlers
+require explicit registration.
 Redirect-dependent workflows need an adapter. See [limits and receipts](docs/actions.md#automatic-native-form-discovery).
 
 For an existing JavaScript module that exports `registerActions`, use
@@ -764,6 +774,40 @@ For an existing JavaScript module that exports `registerActions`, use
 loaded by both the local page and remote bridge. Arbitrary JavaScript functions
 cannot reliably be inferred from HOCON or DOM names. Use the adapter below when
 the application does not already expose this registration interface.
+
+To embed in an existing page, build with `--action-host-page`, then add a dedicated
+mount beside the site's existing forms (do not replace the application page with
+the generated `index.html`):
+
+```html
+<div id="agent-widget"></div>
+<script type="module">
+  import { boot } from "/agents/openresto/runtime/index.js";
+  const agent = await boot("#agent-widget", {
+    originUrl: location.origin + "/agents/openresto",
+    sandboxWorkerUrl: "/agents/openresto/runtime/sandbox-worker.js"
+  });
+  // If your app changes control properties without DOM mutations:
+  // agent.actions.refreshHostForms();
+</script>
+```
+
+Host discovery observes native forms added or changed in the live document,
+excludes agent UI, and preserves the user's draft when submitting a detached copy.
+It uses native endpoints, without invoking JavaScript submit listeners. Only enable
+it for forms whose native endpoints work independently of those listeners.
+Host forms are local-only. To expose the same capability remotely, additionally
+configure `--action-page` for its server-rendered route or register a module that
+works in the bridge's fresh document. `--action-caller-origin` permits only
+configured route forms; modules declare their own caller policy.
+
+For the OpenResto/KitchenAsty deployment, keep your theme/model/output flags and add
+the actual application routes to each build. Add
+`--action-caller-origin https://agent-b.decisionai.ml` to KitchenAsty if OpenResto
+is hosted on that origin. These agent domains must also host their corresponding
+real applications and backends. An unrelated original website cannot be inspected
+or operated just by naming it in HOCON. The routes must be taken from your actual
+installation; `/booking` above is illustrative.
 
 After submission, a native form receipt contains `outcome: "response_received"`
 and `businessOutcome: "unverified"`, plus the HTTP status and response evidence.

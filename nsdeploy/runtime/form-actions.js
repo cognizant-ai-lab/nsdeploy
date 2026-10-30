@@ -39,7 +39,7 @@ async function pageDocument(url, signal) {
 }
 
 function describe(form, pageUrl, base, index, submitIndex) {
-  if (form.hasAttribute("data-nsdeploy-ignore")) throw new Error("Excluded by site owner.");
+  if (form.closest("[data-nsdeploy-ignore],[data-nsdeploy-ui]")) throw new Error("Excluded by site owner or agent UI.");
   const all = controls(form);
   if (form.hasAttribute("onsubmit") || [...form.elements].some(e => [...e.attributes].some(a => /^on/i.test(a.name)))) throw new Error("Inline JavaScript form requires a registered module.");
   if (all.some(e => ["password", "file", "image"].includes(e.type) || /cc-|one-time-code|password/.test(e.autocomplete || ""))) throw new Error("Sensitive/file controls require the site's own UI.");
@@ -132,8 +132,8 @@ function responseEvidence(text, contentType, hiddenValues) {
 export async function registerFormActions(actions, { pages = [], callerOrigins = [], base = location.href, report = () => {} } = {}) {
   let count = 0;
   for (const path of pages) {
-    const url = ownUrl(path, base).href;
     try {
+      const url = ownUrl(path, base).href;
       const source = await pageDocument(url, AbortSignal.timeout(15000));
       const forms = [...source.doc.forms];
       if (!forms.length) report({ page: path, reason: "No native forms found. Client-rendered/JavaScript-only pages need a registered module." });
@@ -150,17 +150,7 @@ export async function registerFormActions(actions, { pages = [], callerOrigins =
                 if (!form || form.tagName !== "FORM") throw new Error("Form disappeared; refresh the agent page.");
                 const current = describe(form, url, fresh.base, index, submitIndex);
                 if (current.signature !== def.signature) throw new Error("Form changed since review; refresh the agent page. Nothing was submitted.");
-                fill(current, args);
-                const data = new FormData(form, current.submitter);
-                const endpoint = new URL(current.endpoint);
-                const options = { method: current.method, credentials: "same-origin", redirect: "error", signal };
-                if (current.method === "GET") endpoint.search = new URLSearchParams(data).toString();
-                else options.body = current.enctype === "multipart/form-data" ? data : new URLSearchParams(data);
-                const response = await fetch(endpoint, options);
-                if (!response.ok) throw new Error(`Website returned HTTP ${response.status}; check the site before retrying.`);
-                const evidence = responseEvidence(await boundedText(response), response.headers.get("content-type") || "",
-                  controls(form).filter(e => e.type === "hidden" || e.readOnly).map(e => e.value));
-                return { outcome: "response_received", businessOutcome: "unverified", httpStatus: response.status, evidence };
+                return submitNativeForm(current, args, signal);
               }
             });
             count++;
@@ -170,4 +160,83 @@ export async function registerFormActions(actions, { pages = [], callerOrigins =
     } catch (error) { report({ page: path, reason: error.message }); }
   }
   return count;
+}
+
+async function submitNativeForm(current, args, signal) {
+  fill(current, args);
+  const data = new FormData(current.form, current.submitter);
+  const endpoint = new URL(current.endpoint);
+  const options = { method: current.method, credentials: "same-origin", redirect: "error", signal };
+  if (current.method === "GET") endpoint.search = new URLSearchParams(data).toString();
+  else options.body = current.enctype === "multipart/form-data" ? data : new URLSearchParams(data);
+  const response = await fetch(endpoint, options);
+  if (!response.ok) throw new Error(`Website returned HTTP ${response.status}; check the site before retrying.`);
+  const evidence = responseEvidence(await boundedText(response), response.headers.get("content-type") || "",
+    controls(current.form).filter(e => e.type === "hidden" || e.readOnly).map(e => e.value));
+  return { outcome: "response_received", businessOutcome: "unverified", httpStatus: response.status, evidence };
+}
+
+// Opt-in for widgets embedded beside native forms. It never invokes page event
+// handlers. JS-only behavior belongs in registerActions. Host forms are local:
+// the separate bridge cannot assume it has the host document or application state.
+export function watchHostForms(registry, scope, { doc = document, onChange = () => {} } = {}) {
+  const ids = new WeakMap(), owned = new Set();
+  let serial = 0, timer;
+  const refresh = () => {
+    clearTimeout(timer);
+    const before = [...owned].join("|");
+    for (const ref of owned) registry.entries.delete(ref);
+    owned.clear();
+    registry.discoveryIssues = registry.discoveryIssues.filter(i => !(i.base === scope.base && i.network === scope.network && i.source === "host"));
+    const report = reason => registry.discoveryIssues.push({ ...scope, source: "host", page: "Host page", reason });
+    let page, base;
+    try { page = ownUrl(doc.URL, doc.URL).href; base = ownUrl(doc.baseURI, page); }
+    catch (error) { report(error.message); onChange(); return 0; }
+    const forms = [...doc.forms].filter(f => !f.closest("[data-nsdeploy-ui],[data-nsdeploy-ignore]"));
+    for (const form of forms) {
+      if (!ids.has(form)) ids.set(form, ++serial);
+      const index = ids.get(form);
+      const n = Math.max(1, [...form.elements].filter(e => e.type === "submit" && !e.matches(":disabled")).length);
+      for (let submitIndex = 0; submitIndex < n; submitIndex++) {
+        try {
+          const def = describe(form, page, base, index, submitIndex);
+          // Different contracts must not reuse references in already-rendered proposals.
+          const name = `host_${index}_${submitIndex}_${hash(page + def.signature)}`;
+          owned.add(registry.register(scope, { name, description: def.description, inputSchema: def.inputSchema,
+            effect: def.effect, availability: "local-only",
+            async execute(args, { signal } = {}) {
+              if (!form.isConnected || ownUrl(doc.URL, doc.URL).href !== page) throw new Error("Host form disappeared or page changed; request a new proposal.");
+              const current = describe(form, page, ownUrl(doc.baseURI, page), index, submitIndex);
+              if (current.signature !== def.signature) throw new Error("Form changed since review. Nothing was submitted.");
+              // Work on a detached document, preserving external form controls and
+              // current token values without altering the user's unfinished form.
+              const copy = doc.cloneNode(true);
+              const originals = doc.querySelectorAll("input,textarea,select");
+              const copies = copy.querySelectorAll("input,textarea,select");
+              originals.forEach((e, i) => {
+                if (e.type !== "file") copies[i].value = e.value;
+                if (e.tagName === "INPUT") copies[i].checked = e.checked;
+                if (e.tagName === "SELECT") [...e.options].forEach((o, j) => { copies[i].options[j].selected = o.selected; });
+              });
+              const cloned = copy.forms[[...doc.forms].indexOf(form)];
+              return submitNativeForm(describe(cloned, page, base, index, submitIndex), args, signal);
+            }
+          }));
+        } catch (error) { report(error.message); }
+      }
+    }
+    if (!owned.size) report("No native host forms connected. Embed the widget beside existing native forms or register JavaScript actions.");
+    if (before !== [...owned].join("|")) onChange();
+    return owned.size;
+  };
+  refresh();
+  const observer = new MutationObserver(records => {
+    if (records.some(r => !r.target.parentElement?.closest("[data-nsdeploy-ui]") && !r.target.closest?.("[data-nsdeploy-ui]"))) {
+      clearTimeout(timer); timer = setTimeout(refresh, 50);
+    }
+  });
+  observer.observe(doc.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+  const dispose = () => { observer.disconnect(); clearTimeout(timer); for (const ref of owned) registry.entries.delete(ref); owned.clear(); };
+  window.addEventListener("pagehide", dispose, { once: true });
+  return { refresh, dispose };
 }

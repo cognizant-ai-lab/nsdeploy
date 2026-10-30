@@ -1,18 +1,44 @@
 import json
+import contextlib
+import io
 from pathlib import Path
 import tempfile
 import unittest
 
 from nsdeploy.generate import generate_site
 from nsdeploy.resolve import DeploymentPlan
-from nsdeploy.form_actions import action_discovery_config, default_action_page
+from nsdeploy.form_actions import action_discovery_config
 
 
 class ActionBundleTests(unittest.TestCase):
-    def test_default_action_page_tracks_the_deployed_site_path(self):
-        self.assertEqual(default_action_page("https://app.example/agents/openresto"), "/agents/openresto/")
-        self.assertEqual(default_action_page("https://app.example/"), "/")
-        self.assertEqual(default_action_page(""), "/")
+    def test_discovery_has_no_guessed_route_and_host_forms_are_explicit(self):
+        self.assertEqual(action_discovery_config(), {})
+        config = action_discovery_config(host_page=True)
+        self.assertTrue(config["hostPage"])
+        self.assertEqual(config["pages"], [])
+        with self.assertRaises(ValueError):
+            action_discovery_config(host_page=True, callers=["https://caller.test"])
+
+    def test_subpath_headers_only_expose_public_agent_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            plan = DeploymentPlan(network_name="example", config={"tools": [{"name": "front", "instructions": "Help."}]}, front_man="front")
+            log = io.StringIO()
+            with contextlib.redirect_stdout(log):
+                manifest = generate_site(plan, out, "browser://mock", "", "https://app.test/agents/example", static_bundle=True)
+            self.assertNotIn("actions", manifest)
+            self.assertIn("NONE configured", log.getvalue())
+            headers = (out / "_headers").read_text()
+            self.assertIn("/agents/example/example.network.json\n  Access-Control-Allow-Origin: *", headers)
+            self.assertIn("/agents/example/runtime/sandbox-worker.js\n  Content-Security-Policy:", headers)
+            self.assertNotIn("/*", headers)
+            self.assertNotIn("actions.js", headers)
+            self.assertNotIn("action-bridge.html", headers)
+            self.assertIn("<FilesMatch", (out / ".htaccess").read_text())
+            with contextlib.redirect_stdout(log):
+                generate_site(plan, out, "browser://mock", "", "https://app.test/agents/example", static_bundle=True,
+                              action_pages=["/agents/example/"])
+            self.assertIn("targets the generated agent page, which has no native forms", log.getvalue())
 
     def test_native_forms_need_no_adapter_and_remain_static(self):
         with tempfile.TemporaryDirectory() as directory:

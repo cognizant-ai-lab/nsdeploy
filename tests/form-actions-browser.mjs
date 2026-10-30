@@ -9,8 +9,9 @@ const records = [], servers = [];
 let localOrigin, remoteOrigin, token = 0, change = false, recordId = "target-1";
 async function server(remote) {
   const s = http.createServer(async (req, res) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
     const url = new URL(req.url, "http://localhost");
+    // Only public network data needs CORS. Bridge code and business endpoints do not.
+    if (url.pathname === "/agent-manifest.json") res.setHeader("Access-Control-Allow-Origin", "*");
     const send = (type, data) => { res.setHeader("Content-Type", type); res.end(data); };
     if (url.pathname.startsWith("/runtime/") && !url.pathname.includes("..")) {
       try { return send("text/javascript", await readFile(fileURLToPath(new URL(url.pathname.slice(9), runtime)))); }
@@ -37,9 +38,18 @@ async function server(remote) {
         <form action="https://third-party.invalid/write"><input name="bad"></form>`);
     }
     if (url.pathname === "/empty") return send("text/html", "<p>No forms here</p>");
+    if (url.pathname === "/embedded/agent-manifest.json") return send("application/json", JSON.stringify({
+      brand: "Embedded native forms", deployment: { mode: "static" }, llm_router: { mock: true, base_url: "browser://mock" },
+      networks: [{ name: "embedded", hocon: "./embedded.network.json" }], actions: { version: 1, hostPage: true }
+    }));
+    if (url.pathname === "/embedded/embedded.network.json") return send("application/json", JSON.stringify({ tools: [{ name: "front", instructions: "Help." }] }));
+    if (url.pathname === "/js-agent/agent-manifest.json") return send("application/json", JSON.stringify({ networks: [{ name: "js" }],
+      actions: { version: 1, bridge: "./action-bridge.html", modules: ["/existing-actions.js"] } }));
+    if (url.pathname === "/js-agent/action-bridge.html") return send("text/html", '<script type="module" src="/runtime/action-bridge.js"></script>');
     if (url.pathname === "/existing-actions.js") return send("text/javascript", `export function registerActions(actions) {
       actions.register({ name: 'existing_js', description: 'Existing site function', inputSchema: {type:'object',properties:{}},
-        effect:'read', execute: async () => ({source:'existing-module'}) });
+        effect:'read', availability:'bridge', callerOrigins: [${JSON.stringify(localOrigin)}],
+        execute: async () => ({source:'existing-module', origin:location.origin}) });
     }`);
     if (url.pathname === "/submit" && req.method === "POST") {
       let body = ""; for await (const c of req) body += c;
@@ -142,6 +152,55 @@ try {
     return { count, issues };
   });
   assert.equal(empty.count, 0); assert.match(empty.issues[0].reason, /No native forms/);
+  const host = await page.evaluate(async () => {
+    const { ActionRegistry } = await import("/runtime/actions.js");
+    const { loadActionModule } = await import("/runtime/action-transport.js");
+    document.querySelector("#app").setAttribute("data-nsdeploy-ui", "");
+    const holder = document.createElement("section"); holder.id = "host-forms";
+    holder.innerHTML = '<form id="host-search" action="/search" data-nsdeploy-effect="read"><input name="q" value="unsent draft" required><button>Search</button></form>';
+    document.body.append(holder);
+    const registry = new ActionRegistry();
+    const scope = { base: location.origin, network: "embedded" };
+    await loadActionModule(registry, scope, { actions: { version: 1, hostPage: true } });
+    window.hostFixture = { registry, scope };
+    const entry = [...registry.entries.values()][0];
+    const receipt = await entry.execute({ q: "tables" });
+    return { catalog: registry.catalog(scope), receipt, draft: document.querySelector('#host-search input').value };
+  });
+  assert.equal(host.catalog.length, 1, "CRUSE forms must never be rediscovered");
+  assert.equal(host.catalog[0].availability, "local-only");
+  assert.match(host.receipt.evidence.text, /19:00/);
+  assert.equal(host.draft, "unsent draft", "execution must preserve the live form draft");
+  await page.evaluate(() => {
+    document.querySelector("#host-forms").insertAdjacentHTML("beforeend", '<form id="added" action="/search"><input name="q"><button>New native form</button></form>');
+  });
+  await page.waitForFunction(() => hostFixture.registry.entries.size === 2);
+  const stale = await page.evaluate(async () => {
+    const entry = [...hostFixture.registry.entries.values()][0];
+    document.querySelector("#host-search").action = "/changed";
+    try { await entry.execute({ q: "tables" }); } catch (e) { return e.message; }
+  });
+  assert.match(stale, /Form changed/);
+  await page.evaluate(() => document.querySelector("#added").remove());
+  await page.waitForFunction(() => hostFixture.registry.entries.size === 1);
+  const bridgeHost = await page.evaluate(async () => {
+    const { ActionRegistry } = await import("/runtime/actions.js");
+    const { loadActionModule } = await import("/runtime/action-transport.js");
+    const registry = new ActionRegistry();
+    await loadActionModule(registry, hostFixture.scope, { actions: { version: 1, hostPage: true } }, { bridge: true });
+    return registry.entries.size;
+  });
+  assert.equal(bridgeHost, 0, "bridge cannot expose the local widget's host forms");
+  await page.evaluate(() => hostFixture.registry.hostForms.dispose());
+  const denied = await page.evaluate(async () => {
+    const { ActionRegistry } = await import("/runtime/actions.js");
+    const { registerRemoteActions } = await import("/runtime/action-transport.js");
+    const registry = new ActionRegistry();
+    // The local site's forms have no remote caller allowlist.
+    await registerRemoteActions(registry, { base: location.origin, network: "denied" }, { actions: { version: 1, bridge: "/action-bridge.html" } });
+    return { count: registry.entries.size, issues: registry.discoveryIssues };
+  });
+  assert.equal(denied.count, 0); assert.match(denied.issues[0].reason, /callerOrigins/);
   const js = await page.evaluate(async () => {
     const { loadActionModule } = await import("/runtime/action-transport.js");
     await loadActionModule(fixture.registry, { base: location.origin, network: "js" }, { actions: { version: 1, modules: ["/existing-actions.js"] } });
@@ -149,7 +208,27 @@ try {
     return entry.execute({}, {});
   });
   assert.equal(js.source, "existing-module");
-  console.log("PASS: automatic native forms; unified local/remote CRUSE; both confirmations; fresh CSRF/cookies; real HTTP records; receipts; cancellation; validation; form changes; sensitive exclusions; GET reads; missing integration diagnostics.");
+  const remoteJs = await page.evaluate(async remote => {
+    const { ActionRegistry } = await import("/runtime/actions.js");
+    const { registerRemoteActions } = await import("/runtime/action-transport.js");
+    const registry = new ActionRegistry();
+    await registerRemoteActions(registry, { base: remote + "/js-agent", network: "js" }, {
+      actions: { version: 1, bridge: "./action-bridge.html" }
+    });
+    return [...registry.entries.values()][0].execute({}, { requestId: "js-read" });
+  }, remoteOrigin);
+  assert.deepEqual(remoteJs, { source: "existing-module", origin: remoteOrigin });
+  const booted = await page.evaluate(async () => {
+    document.querySelector("#host-search").action = "/search";
+    const { boot } = await import("/runtime/index.js");
+    window.embedded = await boot("#app", { originUrl: location.origin + "/embedded", sandboxWorkerUrl: "/runtime/sandbox-worker.js" });
+    return { count: embedded.engine.actions.entries.size, excluded: document.querySelector("#app").hasAttribute("data-nsdeploy-ui") };
+  });
+  assert.equal(booted.count, 1); assert.equal(booted.excluded, true);
+  await page.getByText("1 website actions connected", { exact: true }).waitFor();
+  await page.evaluate(() => document.querySelector("#host-search").remove());
+  await page.getByText("No website actions connected", { exact: true }).waitFor();
+  console.log("PASS: native route and live host discovery; unified local/remote CRUSE without JS or endpoint CORS; confirmations; fresh CSRF/cookies; HTTP records; receipts; cancellation; validation; changed/removed forms; draft preservation; caller denial; JS registration; missing source diagnostics.");
 } finally {
   await browser?.close();
   await Promise.all(servers.map(s => new Promise(resolve => s.close(resolve))));

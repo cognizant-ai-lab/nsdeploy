@@ -2,13 +2,7 @@
 from urllib.parse import urlsplit
 
 
-def default_action_page(site_base):
-    """The deployed page itself, expressed as a portable origin-relative path."""
-    path = urlsplit(site_base or "").path or "/"
-    return path if path.endswith("/") else path + "/"
-
-
-def action_discovery_config(pages=None, modules=None, callers=None):
+def action_discovery_config(pages=None, modules=None, callers=None, host_page=False):
     pages, modules, callers = list(pages or []), list(modules or []), list(callers or [])
     for path in pages + modules:
         # Origin-relative paths keep bundles portable and cannot point discovery
@@ -22,7 +16,7 @@ def action_discovery_config(pages=None, modules=None, callers=None):
             raise ValueError("Action callers must be exact HTTP(S) origins without paths.")
     if callers and not pages:
         raise ValueError("--action-caller-origin requires --action-page; JavaScript modules declare their own policy.")
-    if not pages and not modules:
+    if not pages and not modules and not host_page:
         return {}
-    return {"pages": list(dict.fromkeys(pages)), "modules": list(dict.fromkeys(modules)),
+    return {"pages": list(dict.fromkeys(pages)), "hostPage": bool(host_page), "modules": list(dict.fromkeys(modules)),
             "callerOrigins": list(dict.fromkeys(callers))}
