@@ -37,7 +37,8 @@ function sameRouter(left, right) {
   try {
     const normalize = (value) => {
       const url = new URL(value);
-      const loopback = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+      // All of 127.0.0.0/8 is loopback, not just 127.0.0.1.
+      const loopback = ["localhost", "::1", "[::1]"].includes(url.hostname) || /^127(\.\d{1,3}){3}$/.test(url.hostname);
       const host = loopback ? "loopback" : url.hostname.toLowerCase();
       return `${url.protocol}//${host}:${url.port}${url.pathname.replace(/\/$/, "")}${url.search}`;
     };
@@ -243,6 +244,15 @@ export class Engine {
     return { network, llm: { baseUrl: routerBase, mock }, hoconUrl, validation };
   }
 
+  // A relative MCP URL means this page's site, not the partner's, and the consent check
+  // reads it against the partner's site. So a partner names its MCP servers by absolute
+  // URL, and can't name the calling site's own ones.
+  _assertPartnerMcpUrl(url, owner) {
+    if (owner && owner.network !== this.top?.network && !/^https?:\/\//i.test(url)) {
+      throw new Error(`Policy: a partner network can't use the relative MCP URL ${url}.`);
+    }
+  }
+
   _assertAllowedPeer(target, sourceManifest) {
     const manifest = sourceManifest || this.top?.manifest;
     if (!manifestAllowsPeer(target, manifest, this.runtimeAllowedPeers)) {
@@ -366,10 +376,13 @@ export class Engine {
     // Streaming, so the trace and the turn's event stream get each answer's text as
     // it arrives, as main's own loop does. neuro-san builds the model from a fallback
     // when there are fallbacks, so each one streams too.
+    // Only the settings in LLM_CONFIG_FIELDS come from the network, so a partner can't
+    // choose where its model calls go or which key they carry.
     const llmConfig = (agentConfig) => {
-      const out = { ...(agentConfig || {}), class: "openai", streaming: true, ...override };
-      if (this.modelOverride) delete out.fallbacks;
-      if (Array.isArray(out.fallbacks)) out.fallbacks = out.fallbacks.map((fallback) => ({ ...fallback, streaming: true }));
+      const out = { ...allowedLlmFields(agentConfig), class: "openai", streaming: true, ...override };
+      if (!this.modelOverride && Array.isArray(agentConfig?.fallbacks)) {
+        out.fallbacks = agentConfig.fallbacks.map((fallback) => ({ ...allowedLlmFields(fallback), class: "openai", streaming: true }));
+      }
       return out;
     };
     config.llm_config = llmConfig(config.llm_config);
@@ -424,6 +437,7 @@ export class Engine {
       mcpConsent: async ({ url }) => {
         const owner = this.refOwners.get(url);
         try {
+          this._assertPartnerMcpUrl(url, owner);
           this._assertAllowedPeer(url, owner?.manifest);
         } catch (err) {
           this.trace.note("consent", { parent: this.runSpan, origin: hostOf(owner?.base || this.top.base), peerOrigin: hostOf(url), phase: "discover", decision: "blocked", reason: err.message });
@@ -449,6 +463,11 @@ export class Engine {
         // confirmed with the real payload, unless the origin is "always" allowed.
         // Same-site calls skip both prompts, as they don't cross the site's boundary.
         const owner = this.refOwners.get(url);
+        try {
+          this._assertPartnerMcpUrl(url, owner);
+        } catch (err) {
+          return `${err.message} Continue without it.`;
+        }
         if (requiresThirdPartyApproval(url, owner?.base || this.top.base)) {
           const requestText = argsToText(args);
           const decision = await this.requestConsent({
@@ -614,8 +633,14 @@ export class Engine {
     this._observingModelCalls = true;
     const originalFetch = globalThis.fetch.bind(globalThis);
     globalThis.fetch = async (input, init) => {
-      const url = String(input?.url ?? input);
+      const url = absoluteUrl(String(input?.url ?? input));
       const router = this.top?.llm?.baseUrl;
+      const base = router ? absoluteUrl(router).replace(/\/$/, "") : "";
+      // The visitor's key goes only to their router. A request anywhere else that
+      // carries it stops here, whatever made it.
+      if (!(base && url.startsWith(base + "/")) && !isModelList(url, input, init) && carriesKey(input, init, this.byokKey)) {
+        throw new Error(`Not sending the API key to ${normOrigin(url)}, which isn't the LLM router.`);
+      }
       const mcpCall = mcpToolCall(url, init);
       if (mcpCall) {
         const response = await originalFetch(input, init);
@@ -623,7 +648,6 @@ export class Engine {
         return response;
       }
       // Chat completions, or the Responses API that neuro-san uses for OpenAI models.
-      const base = router ? router.replace(/\/$/, "") : "";
       if (!router || !(url.startsWith(base + "/chat/completions") || url.startsWith(base + "/responses"))) {
         return originalFetch(input, init);
       }
@@ -961,7 +985,7 @@ export class Engine {
       const loop = session.createSession(this._runnableConfig(network), network.name);
       const request = {
         user_message: { type: ChatMessageType.HUMAN, text: interactionMessage(userText, interaction) },
-        sly_data: withLlmKey(slyData, this.byokKey),
+        sly_data: slyData,
         // MAXIMAL so the trace can show every agent's messages; the answer is the final
         // AGENT_FRAMEWORK message either way.
         chat_filter: { chat_filter_type: "MAXIMAL" },
@@ -1070,16 +1094,36 @@ function withSteering(chatContext, frontMan, accepted) {
   return context;
 }
 
-// A network's llm_config can ask for its key from the request instead of the
-// environment ("openai_api_key": "sly_data", common in fallbacks), and neuro-san then
-// reads it from sly_data.llm_config. The BYOK key is put there too, so those networks
-// run on it as well. The key never leaves this browser: partner networks run here, and
-// neuro-san's own redaction decides what sly_data they see.
-function withLlmKey(slyData, apiKey) {
-  const out = { ...(slyData || {}) };
-  out.llm_config = { ...(out.llm_config || {}), openai_api_key: apiKey || "demo" };
-  return out;
-}
+// The llm_config settings a network may choose: the model and how it answers. A partner's
+// network runs here on the visitor's key, so where model calls go and with which key
+// (openai_api_base, base_url, openai_api_key, a proxy, another provider's class) are
+// never the network's to set. Every call uses OPENAI_API_KEY and OPENAI_BASE_URL, the
+// visitor's key and router. That includes networks that ask for their key from sly_data
+// ("openai_api_key": "sly_data"), so the key is never put in sly_data either.
+const LLM_CONFIG_FIELDS = new Set([
+  "model_name", "temperature", "top_p", "max_tokens", "presence_penalty", "frequency_penalty", "seed", "stop",
+  "logprobs", "top_logprobs", "logit_bias", "reasoning", "reasoning_effort", "verbosity", "use_responses_api",
+  "include", "tool_strict", "tiktoken_model_name",
+]);
+
+const allowedLlmFields = (config) =>
+  Object.fromEntries(Object.entries(config || {}).filter(([key]) => LLM_CONFIG_FIELDS.has(key)));
+
+const absoluteUrl = (value) => {
+  try { return new URL(value, globalThis.location?.href).href; } catch { return String(value); }
+};
+
+// Whether a request carries the visitor's key, in a header or the URL.
+const carriesKey = (input, init, key) => {
+  if (!key || key === "demo") return false;
+  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  for (const [, value] of headers) if (value.includes(key)) return true;
+  return String(input?.url ?? input).includes(key);
+};
+
+// The settings panel lists the models of a router the visitor typed, with the key they typed.
+const isModelList = (url, input, init) =>
+  String(init?.method || input?.method || "GET").toUpperCase() === "GET" && /\/models\/?$/.test(new URL(url).pathname);
 
 // The text of a message's content, which is a string or a list of parts.
 function contentText(content) {
