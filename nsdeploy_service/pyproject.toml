@@ -51,13 +51,7 @@ nsdeploy-service = "nsdeploy_service.__main__:main"
 # The package *is* this directory, so it maps to ".". Tests are deliberately not
 # listed: they are not installed, but they still run in place from the checkout.
 package-dir = { "nsdeploy_service" = "." }
-# Subpackages must be listed explicitly: setuptools stops auto-discovering them
-# once `packages` is set, so adminPanel would be silently absent from a wheel.
-packages = [
-    "nsdeploy_service",
-    "nsdeploy_service.adminPanel",
-    "nsdeploy_service.adminPanel.routes",
-]
+packages = ["nsdeploy_service"]
 
 [tool.setuptools.package-data]
 # The console and the child-process trust hook are data, not importable modules,
@@ -65,11 +59,5 @@ packages = [
 nsdeploy_service = [
     "ui/**/*",
     "_bootstrap/*.py",
-    "*.md",
-]
-# The admin panel's own console, its injected console assets, and its docs.
-"nsdeploy_service.adminPanel" = [
-    "ui/**/*",
-    "console/**/*",
     "*.md",
 ]
