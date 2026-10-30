@@ -77,9 +77,16 @@ export function consumeRemoteBudget(composition, targetKey, now = Date.now()) {
   return null;
 }
 
+// Why no more agents may run for this query, as main checks before every agent call,
+// or null. The deadline only: the count of agent calls is left to the TS package.
+export function agentDeadlineReason(composition, now = Date.now()) {
+  return composition && now >= composition.deadline ? "the 90-second query deadline was reached" : null;
+}
+
 export function consumeAgentBudget(composition, now = Date.now()) {
   if (!composition) return null;
-  if (now >= composition.deadline) return "the 90-second query deadline was reached";
+  const late = agentDeadlineReason(composition, now);
+  if (late) return late;
   if (composition.agentCalls >= composition.maxAgentCalls) {
     return `the per-query limit of ${composition.maxAgentCalls} agent invocations was reached`;
   }

@@ -12,8 +12,8 @@ export function isMockResponse(configuredMock, routeKind, model) {
 }
 
 // The mock LLM a static bundle runs on, with no server behind it (llm_router base_url
-// "browser://mock"). Same decision as the launcher's mock router: call the first tool
-// not called yet with the user's request, then summarize what the tools returned.
+// "browser://mock"). Same tool choice as the launcher's mock router: call the first
+// tool not called yet with the user's request, then summarize what the tools returned.
 export const BROWSER_MOCK_ROUTER = "browser://mock";
 // The most text the mock puts in a search tool's query, as the launcher's mock.
 const MOCK_QUERY_LIMIT = 200;

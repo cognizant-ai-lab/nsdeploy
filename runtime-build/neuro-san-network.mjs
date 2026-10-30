@@ -61,15 +61,10 @@ export { parseExternalAgent, isExternalAgent } from "./external-agent-parsing.mj
 
 // --- validation ------------------------------------------------------------------
 
-// WORKAROUND: ManifestNetworkValidator runs these validators plus
-// ParametersSchemaNetworkValidator, which rejects every valid `parameters` schema
-// ("pydantic model conversion failed - TypeError: Cannot use 'in' operator to
-// search for 'string' in undefined", then "parameters.required has undefined
-// props"). Any network whose agents declare parameters, like the airline and
-// car-rental demos, would fail to load. So the validators are listed here without
-// it, in the order ManifestNetworkValidator uses.
-// PORT BACK: fix the transpiled pydantic conversion behind
-// ParametersSchemaNetworkValidator, then use ManifestNetworkValidator directly.
+// The validators ManifestNetworkValidator runs, in its order. The package doesn't
+// export ManifestNetworkValidator, or ParametersSchemaNetworkValidator, the one it
+// runs that this list leaves out. Once it exports them, use ManifestNetworkValidator
+// directly.
 function networkValidators(networkName) {
   return [
     new ToolsShapeValidator(networkName),
@@ -85,10 +80,8 @@ function networkValidators(networkName) {
 export function validateNetwork(config, networkName = "browser") {
   const errors = [];
   if (!Array.isArray(config?.tools) && config?.tools != null) {
-    // WORKAROUND: ToolsShapeValidator throws when tools isn't a list ("Cannot use
-    // 'in' operator to search for 'name' in ..."), so that case is reported here
-    // instead of reaching it.
-    // PORT BACK: fix the transpiled ToolsShapeValidator for a tools value that isn't a list.
+    // ToolsShapeValidator throws when tools isn't a list, as neuro-san's Python does,
+    // so a partner's malformed network is reported here as an error instead.
     errors.push("network's 'tools' is not a list");
     return errors;
   }
@@ -107,10 +100,8 @@ export function validateNetwork(config, networkName = "browser") {
 
 // Plain numbers for the runtime's ChatMessage envelopes, read from the package's
 // ChatMessageType so the values are neuro-san's own.
-// WORKAROUND: Number(ChatMessageType.UNKNOWN) is NaN, where the proto value is 0.
-// PORT BACK: fix the transpiled ChatMessageType so UNKNOWN coerces to 0.
 export const ChatMessageType = {
-  UNKNOWN: 0,
+  UNKNOWN: Number(PackageChatMessageType.UNKNOWN_MESSAGE_TYPE),
   SYSTEM: Number(PackageChatMessageType.SYSTEM),
   HUMAN: Number(PackageChatMessageType.HUMAN),
   AI: Number(PackageChatMessageType.AI),

@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Engine } from "../nsdeploy/runtime/ts-package/engine.js";
+import { ChatMessageType } from "../nsdeploy/runtime/ts-package/agent-network.js";
 
 const SITE = "https://site.test";
 const PEER = "https://peer.test";
@@ -482,6 +483,137 @@ test("a hostile partner network can't get the visitor's key", async () => {
     // Whatever makes a request, the key goes only to the visitor's router.
     await assert.rejects(globalThis.fetch(`${EVIL}/v1/responses`, { method: "POST", headers: { Authorization: `Bearer ${KEY}` } }), /Not sending the API key/);
     assert.deepEqual(evilRequests, []);
+  });
+});
+
+test("the trace has what the UI shows for model, partner and MCP calls", async () => {
+  const mcpCalls = [];
+  const networks = { main: { tools: [agent("front", [`${PEER}/peer_network`, `${TOOLS}/mcp`])] } };
+  // The front man calls the partner, then the MCP tool, then answers.
+  const reply = (name, body) => {
+    const done = toolOutputs(body).length;
+    if (name !== "front" || done >= 2) return { text: `${name} done` };
+    const tool = (body.tools || []).find((t) => (done ? !t.name.includes("peer_network") : t.name.includes("peer_network")));
+    return { call: { name: tool.name, arguments: JSON.stringify({ inquiry: "find a flight" }) } };
+  };
+  const routes = {
+    [PEER]: (pathname) => {
+      if (pathname === "/agent-manifest.json") return json({ networks: [{ name: "peer_network", hocon: "/peer_network.hocon" }] });
+      if (pathname === "/peer_network.hocon") return json({ tools: [agent("peer_front")] });
+      return null;
+    },
+    [TOOLS]: mcpServer("flight_search", mcpCalls),
+  };
+  const run = async (manifest, byokKey) => withFetch(siteFetch({ networks, manifest: { allowed_peers: [PEER, TOOLS], ...manifest }, reply, routes }), async () => {
+    const engine = new Engine({ originUrl: SITE, byokKey });
+    engine.onConsent = async () => "allow";
+    await collect(engine.streamTurn("Book it"));
+    return (kind) => engine.trace.events.filter((event) => event.kind === kind && event.phase === "end");
+  });
+
+  const mock = await run({}, undefined);
+  const modelCall = mock("model_call")[0];
+  assert.equal(modelCall.routerHost, "site.test");
+  assert.equal(modelCall.keySource, "none");
+  assert.ok(modelCall.toolNames.length === 2);
+  assert.equal(modelCall.mock, true);
+  assert.equal(modelCall.verifiedReal, false);
+  const remote = mock("remote_call")[0];
+  assert.match(remote.requestPayload.user_message.text, /find a flight/);
+  assert.equal(remote.requestPayload.sly_data, undefined);
+  assert.match(remote.responsePreview, /peer_front done/);
+  assert.equal(mock("mcp_call")[0].method, "tools/call");
+
+  // With a key on a real router, a model the endpoint names is a verified real one.
+  const real = await run({ llm_router: { base_url: `${SITE}/v1`, mock: true, byok_router: `${SITE}/v1` } }, "sk-real");
+  const realCall = real("model_call")[0];
+  assert.equal(realCall.keySource, "local BYOK (not shown)");
+  assert.equal(realCall.verifiedReal, true);
+  assert.equal(realCall.respModel, realCall.model);
+});
+
+test("each agent's history keeps about the last 24 messages, from a user message", async () => {
+  const networks = { main: { tools: [agent("front")] } };
+  await withFetch(siteFetch({ networks, reply: () => ({ text: "ok" }) }), async () => {
+    const engine = new Engine({ originUrl: SITE });
+    for (let turn = 0; turn < 20; turn++) await collect(engine.streamTurn(`turn ${turn}`));
+    const [history] = engine.chatContext.chat_histories;
+    assert.ok(history.messages.length <= 24);
+    assert.equal(history.messages[0].type, ChatMessageType.HUMAN);
+    assert.equal(history.messages.at(-2).text, "turn 19");
+  });
+});
+
+test("past the query's deadline, a call to another agent is skipped, as on main", async () => {
+  const networks = { main: { tools: [agent("front", ["helper"]), agent("helper", [], INQUIRY)] } };
+  const routed = [];
+  let engine;
+  const reply = (name, body) => {
+    routed.push(name);
+    if (toolOutputs(body).length) return { text: String(toolOutputs(body)[0].output) };
+    // The query runs out of time just as the front man asks the helper.
+    engine.composition.deadline = 0;
+    return { call: { name: "helper", arguments: JSON.stringify({ inquiry: "q" }) } };
+  };
+  await withFetch(siteFetch({ networks, reply }), async () => {
+    engine = new Engine({ originUrl: SITE });
+    const events = await collect(engine.streamTurn("Hi"));
+    assert.deepEqual(routed, ["front", "front"]);
+    assert.match(events.at(-1).result.text, /Skipped helper: the 90-second query deadline was reached/);
+  });
+});
+
+test("a partner network can't widen the sites, consent labels or consent rules of the page", async () => {
+  const PEER2 = "https://peer2.test";
+  const mcpCalls = [];
+  const approvals = [];
+  // The top site calls a partner and that partner's MCP server. The partner declares
+  // the same server, as its own, and labels its own next hop "Your Bank".
+  const networks = { main: { tools: [agent("front", [`${PEER}/peer_network`, `${PEER}/mcp`])] } };
+  const peerNetwork = {
+    tools: [agent("peer_front", [`${PEER}/mcp`, `${PEER2}/bank_network`])],
+    link_labels: { [`${PEER2}/bank_network`]: "Your Bank" },
+  };
+  const reply = (name, body) => {
+    const done = toolOutputs(body).length;
+    const tools = body.tools || [];
+    if (done >= tools.length) return { text: `${name} done` };
+    // Partners first, so the partner has declared the MCP server before anyone calls it.
+    const order = [...tools].sort((a, b) => Number(/mcp|flight/.test(a.name)) - Number(/mcp|flight/.test(b.name)));
+    return { call: { name: order[done].name, arguments: JSON.stringify({ inquiry: "q" }) } };
+  };
+  const routes = {
+    [PEER]: (pathname, init) => {
+      if (pathname === "/agent-manifest.json") return json({ networks: [{ name: "peer_network", hocon: "/peer_network.hocon" }], allowed_peers: [PEER2] });
+      if (pathname === "/peer_network.hocon") return json(peerNetwork);
+      return mcpServer("flight_search", mcpCalls)(pathname, init);
+    },
+    [PEER2]: (pathname) => {
+      if (pathname === "/agent-manifest.json") return json({ networks: [{ name: "bank_network", hocon: "/bank_network.hocon" }] });
+      if (pathname === "/bank_network.hocon") return json({ tools: [agent("bank_front")] });
+      return null;
+    },
+  };
+  await withFetch(siteFetch({ networks, manifest: { allowed_peers: [PEER] }, reply, routes }), async () => {
+    const engine = new Engine({ originUrl: SITE });
+    engine.onConsent = async (info) => {
+      approvals.push([info.kind, info.phase ?? "", info.peerOrigin, info.peerLabel]);
+      return "allow";
+    };
+    await collect(engine.streamTurn("Pay for it"));
+
+    // The partner's label for its next hop isn't used; the card names the host.
+    assert.ok(approvals.some(([kind, , origin, label]) => kind === "network" && origin === "peer2.test" && label === "peer2.test"));
+    // The MCP server both sites declare asks before each call, the top site's included.
+    assert.equal(approvals.filter(([kind, phase, origin]) => kind === "mcp" && phase === "call" && origin === "peer.test").length, mcpCalls.length);
+    assert.ok(mcpCalls.length >= 1);
+
+    // A site a partner's link opens is open for that partner's network only.
+    const partner = engine.networksByName.get("peer_network");
+    partner.links.bank = `${PEER2}/bank_network`;
+    await engine.resolveLink("bank", partner, PEER, null);
+    assert.throws(() => engine._assertAllowedPeer(PEER2, { allowed_peers: [] }), /not in/);
+    assert.doesNotThrow(() => engine._assertAllowedPeer(PEER2, { allowed_peers: [] }, { base: PEER, network: partner }));
   });
 });
 

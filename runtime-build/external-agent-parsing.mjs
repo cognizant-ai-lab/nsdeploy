@@ -122,7 +122,7 @@ export function getSafeAgentName(agentUrl) {
   return "__" + location.agent_name.replaceAll("/", "__");
 }
 
-// The package's own agent loop calls these statics too (BaseToolFactory asks
+// The package's own agent loop calls these statics too (its tool creators ask
 // is_external_agent for every tool; the session factory calls
 // parse_external_agent), so they are replaced on the class, not only wrapped here.
 // parse_external_agent takes its server_port either positionally or as the

@@ -49,6 +49,9 @@ const hooks = {
   resolvePeer: null,
   // ({ url, error }) => void. After a partner network's run ends.
   peerDone: null,
+  // ({ url, message }) => void. Each message a partner network's agents stream, so
+  // the runtime can show the partner's own agents in the trace.
+  peerMessage: null,
   // ({ url, text }) => string. A partner network's final answer before it goes back
   // to its caller, so the runtime can take the ```cruse-ui``` widgets out of it and
   // show them, as it does for the top network's answer. Returns the text to pass on.
@@ -186,7 +189,7 @@ class PeerSession {
 
   // Advertise the partner without contacting it. With no published contract, the
   // description alone is enough: neuro-san then synthesizes a single "inquiry"
-  // parameter on the calling side (BaseToolFactory.ensure_external_parameters).
+  // parameter on the calling side (ExternalAgentToolCreator.ensure_external_parameters).
   async function() {
     const published = hooks.peerFunction ? hooks.peerFunction(this.agentUrl) : null;
     const location = parseExternalAgent(this.agentUrl);
