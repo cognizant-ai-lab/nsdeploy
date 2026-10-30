@@ -21,35 +21,41 @@ import { TraceBus } from "../trace.js";
 import { mountApp } from "../ui.js";
 import { getSelectedByokProfile, resolveByokRouter } from "../byok.js";
 
+const sameRouterUrl = (left, right) => {
+  const normalize = (value) => {
+    try { return new URL(resolveByokRouter(value), location.origin).href.replace(/\/$/, ""); } catch { return ""; }
+  };
+  return !!left && normalize(left) === normalize(right);
+};
+
 export async function boot(rootSelector = "#app", opts = {}) {
   const root = typeof rootSelector === "string" ? document.querySelector(rootSelector) : rootSelector;
   const trace = new TraceBus();
   const params = new URLSearchParams(location.search);
-  // BYOK key handling: a real API key must NEVER live in the URL/query string -
-  // that leaks it to the static origin (initial GET), browser history, server
-  // logs, and shared links. If a key ever arrives via the URL (legacy/shared
-  // link), migrate it into sessionStorage and strip it from the address bar
-  // immediately. Saved BYOK profiles, when present, provide cross-network
-  // defaults without putting the key in the URL.
+  // An API key in the URL is refused, not used. Query strings end up in server logs,
+  // browser history and shared links, and a crafted link could plant someone else's
+  // key. It's taken out of the address bar before the page stops.
   if (params.has("key")) {
-    const urlKey = params.get("key");
-    if (urlKey && urlKey !== "demo") {
-      try { sessionStorage.setItem("nsweb-byok-key", urlKey); } catch {}
-    }
     params.delete("key");
     const qs = params.toString();
     try { history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash); } catch {}
+    throw new Error("API keys can't be passed in the URL. Open ⚙ BYOK settings and enter it there.");
   }
   let storedKey = "";
   try { storedKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
   const savedProfile = getSelectedByokProfile();
   const savedRouter = resolveByokRouter(savedProfile?.router || "");
+  // The settings panel puts the router in the URL so links stay shareable, and saves
+  // it with the key. A link naming any other router gets no saved key, so a link can't
+  // send the visitor's key somewhere new.
+  const urlRouter = params.get("router") || "";
+  const keyFollows = !urlRouter || sameRouterUrl(urlRouter, savedRouter);
   const siteBase = (opts.originUrl || location.origin).replace(/\/$/, "");
   const engine = new Engine({
     originUrl: siteBase,
     trace,
-    byokKey: opts.byokKey || storedKey || savedProfile?.key || "demo",
-    routerOverride: opts.router || params.get("router") || savedRouter || "",
+    byokKey: opts.byokKey || (keyFollows ? storedKey || savedProfile?.key : "") || "demo",
+    routerOverride: opts.router || urlRouter || savedRouter || "",
     modelOverride: opts.model || params.get("model") || savedProfile?.model || "",
   });
   const { manifest } = await engine.loadTop();
