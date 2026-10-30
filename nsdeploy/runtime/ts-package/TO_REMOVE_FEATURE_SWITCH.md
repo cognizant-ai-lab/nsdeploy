@@ -6,8 +6,8 @@ The folder above is the original runtime, unchanged from main. Files here import
 parts both runtimes share (`../ui.js`, `../trace.js` and so on) from there.
 
 It is on by default. The launcher redirects `/runtime/index.js` to `ts-package/index.js`,
-and a static bundle's copy of `runtime/index.js` re-exports it. `--no-use-ts-package`
-(`NSDEPLOY_USE_TS_PACKAGE=0` for Cailville) serves the original runtime instead.
+and a static bundle's copy of `runtime/index.js` re-exports it. `--use-ts-package false`
+(`USE_TS_PACKAGE=0` for Cailville) serves the original runtime instead.
 
 ## To remove the feature switch
 
@@ -23,7 +23,7 @@ Once the original runtime is no longer needed:
    LLM via LangChain.js" checkbox with the code that reads it (`langchainEl`, the profile's
    `runner` field and the `runner` URL parameter), then remove the line in `index.js` that
    hides it.
-4. Remove the feature switch (`--use-ts-package` and `NSDEPLOY_USE_TS_PACKAGE`) and point
+4. Remove the feature switch (`--use-ts-package` and `USE_TS_PACKAGE`) and point
    `ts-package/generated` back at `generated`. This lists every place, apart from the hits
    for the package's own name, `neuro-san-ts-package`:
 

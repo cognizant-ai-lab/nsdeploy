@@ -17,7 +17,7 @@ The browser runs the agents on **neuro-san's own agent loop**, from
 (the real neuro-san Python transpiled to TypeScript), bundled by
 [`runtime-build/`](runtime-build) into `nsdeploy/runtime/ts-package/generated/` and driven by the page
 runtime in [`nsdeploy/runtime/ts-package/`](nsdeploy/runtime/ts-package), which shares the rest of
-[`nsdeploy/runtime/`](nsdeploy/runtime) with the original runtime (`--no-use-ts-package`). See
+[`nsdeploy/runtime/`](nsdeploy/runtime) with the original runtime (`--use-ts-package false`). See
 [The agent loop](#the-agent-loop). A normal served deployment uses Python for the
 build-time HOCON resolver, the web launcher, and one small MCP server per hostable
 tool. A static bundle uses Python only while building; the resulting webroot has no
@@ -56,8 +56,8 @@ instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
 `--site-dir` (editable HTML/CSS/JS source),
 `--site-url` (public origin), `--link`/`--links` (outbound network bindings),
 `--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime),
-`--no-cruse` (skip generative-UI injection), `--use-ts-package` (run the agents on the
-neuro-san TS package, on by default; `--no-use-ts-package`, or `NSDEPLOY_USE_TS_PACKAGE=0` for
+`--no-cruse` (skip generative-UI injection), `--use-ts-package true|false` (run the agents
+on the neuro-san TS package, true by default; false, or `USE_TS_PACKAGE=0` for
 Cailville, runs the original runtime),
 and the theming flags below.
 
