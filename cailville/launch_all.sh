@@ -23,7 +23,7 @@ THEME_ENABLED="${NSDEPLOY_THEME:-1}"
 THEME_REFRESH="${NSDEPLOY_THEME_REFRESH:-0}"
 OPEN_BROWSER="${NSDEPLOY_OPEN_BROWSER:-1}"
 PRIVATE_STUDIO_ENABLED="${NSDEPLOY_PRIVATE_STUDIO:-1}"
-NSDEPLOY_USE_TS_PACKAGE="${NSDEPLOY_USE_TS_PACKAGE:-1}"
+USE_TS_PACKAGE="${USE_TS_PACKAGE:-1}"
 private_studio_ports=("$PRIVATE_STUDIO_HTTP_PORT" "$PRIVATE_STUDIO_GRPC_PORT" "$PRIVATE_STUDIO_NSFLOW_PORT")
 ROUTING="${NSDEPLOY_ROUTING:-port}"
 BASE_DOMAIN="${NSDEPLOY_BASE_DOMAIN:-localhost}"
@@ -51,8 +51,8 @@ if [[ ! "$THEME_ENABLED" =~ ^(0|false|no)$ ]]; then
 fi
 
 runtime_args=()
-if [[ "$NSDEPLOY_USE_TS_PACKAGE" =~ ^(0|false|no)$ ]]; then
-  runtime_args=(--no-use-ts-package)
+if [[ "$USE_TS_PACKAGE" =~ ^(0|false|no|off)$ ]]; then
+  runtime_args=(--use-ts-package false)
 fi
 
 if [[ -n "${NSDEPLOY_PYTHON:-}" ]]; then
