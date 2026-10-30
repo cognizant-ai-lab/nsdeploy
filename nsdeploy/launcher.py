@@ -484,7 +484,7 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
           site_base: Optional[str] = None,
           upstream: str = "https://api.openai.com/v1", python_exe: Optional[str] = None,
           runtime_dir: Optional[Path] = None, ext_mcps: Optional[List[str]] = None,
-          facade_upstream: Optional[str] = None) -> None:
+          facade_upstream: Optional[str] = None, mock_llm: bool = False) -> None:
     python_exe = python_exe or sys.executable
     runtime_dir = runtime_dir or DEFAULT_RUNTIME_DIR
     ext_mcps = ext_mcps or []
@@ -514,7 +514,8 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
         print(f"\n🌐  {plan.network_name} is live:  {url}")
         if site_base:
             print(f"    Loopback backend: 127.0.0.1:{port}")
-        print(f"    LLM: mock router (no key) at /v1  ·  BYOK proxy at /byok/v1 → {upstream}")
+        llm_default = "mock /v1 (developer mode)" if mock_llm else "BYOK /byok/v1 (API key required)"
+        print(f"    LLM default: {llm_default}  ·  BYOK upstream → {upstream}")
         print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: caller BYOK → {facade_upstream}  ·  steward: {plan.network_name}_private_steward.hocon")
         if plan.hostable_tools:
             print("    MCP tool servers (same-origin proxy → private subprocess):")

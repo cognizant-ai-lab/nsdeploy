@@ -36,6 +36,17 @@ assert.deepEqual(
   { baseUrl: "http://127.0.0.1:8091/byok/v1", mock: false, upgradedToByok: true },
 );
 assert.equal(selectTopRouter(manifest, "http://localhost:8091/v1", "", "").mock, true);
+const byokDefaultManifest = {
+  llm_router: {
+    base_url: "http://127.0.0.1:8091/byok/v1",
+    byok_router: "http://127.0.0.1:8091/byok/v1",
+    mock: false,
+  },
+};
+assert.deepEqual(
+  selectTopRouter(byokDefaultManifest, "", ""),
+  { baseUrl: "http://127.0.0.1:8091/byok/v1", mock: false, upgradedToByok: false },
+);
 assert.equal(isMockResponse(false, "byok", "model.gguf"), false);
 assert.equal(isMockResponse(false, "mock", ""), true);
 assert.equal(isMockResponse(false, "byok", "neuro-san-mock"), true);
@@ -391,9 +402,9 @@ assert.throws(
   globalThis.fetch = async () => { fetched += 1; throw new Error("fetch reached"); };
   try {
     const real = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "demo", mock: false });
-    await assert.rejects(real.chat({ model: "m", messages: [] }), /needs your API key/);
+    await assert.rejects(real.chat({ model: "m", messages: [] }), /API key is required/);
     const empty = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "", mock: false });
-    await assert.rejects(empty.chat({ model: "m", messages: [] }), /needs your API key/);
+    await assert.rejects(empty.chat({ model: "m", messages: [] }), /API key is required/);
     assert.equal(fetched, 0);
     const mock = new LlmClient({ baseUrl: "http://127.0.0.1:8091/v1", apiKey: "demo", mock: true });
     await assert.rejects(mock.chat({ model: "m", messages: [] }), /fetch reached/);

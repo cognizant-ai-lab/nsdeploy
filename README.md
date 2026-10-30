@@ -47,7 +47,8 @@ instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
 `--site-dir` (editable HTML/CSS/JS source),
 `--site-url` (public origin), `--link`/`--links` (outbound network bindings),
 `--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime),
-`--no-cruse` (skip generative-UI injection), and the theming flags below.
+`--no-cruse` (skip generative-UI injection), `--mock-llm` (developer-only keyless
+mock mode), and the theming flags below.
 
 ## Shared subdomain gateway
 
@@ -82,10 +83,11 @@ single internal port, start the gateway with `--bind 0.0.0.0`, and give each sit
 external origin such as `--site-url https://link-demo-airline.agents.example.com`.
 The gateway itself speaks HTTP; TLS can terminate at the platform ingress.
 
-By default it runs on a deterministic **mock** LLM (no key needed). For real output,
-open **⚙ BYOK settings** in the page and enter your API key + model — calls route
-through the same-origin `/byok/v1` CORS proxy to your provider. A saved profile with
-a real key is automatically moved off the site's mock `/v1` route. The header reports
+By default the site requires BYOK. Open **⚙ BYOK settings** in the page and enter
+your API key + model — calls route through the same-origin `/byok/v1` CORS proxy to
+your provider. Without a key, the UI explains how to configure one and does not make
+an LLM request. Developers who need deterministic, keyless test behavior can deploy
+with `--mock-llm`; this makes the local `/v1` mock the default for that build. The header reports
 a real LLM only after the endpoint returns a verifiable, non-mock model response;
 routing errors are shown as errors rather than silently falling back to mock.
 
@@ -1058,9 +1060,9 @@ resolve. The point is the report tells you precisely what is grounded vs not.)
 
 ## Notes / limits
 
-- The mock router is a deterministic, name-agnostic stand-in (it calls each
+- The opt-in mock router is a deterministic, name-agnostic stand-in (it calls each
   advertised tool once, then summarizes); orchestration quality is only meaningful
-  with a real LLM via BYOK. The mock exists so the site runs end-to-end with no key.
+  with a real LLM via BYOK. Use `--mock-llm` only for developer demos and tests.
 - Hosting a studio tool imports its `CodedTool` class (a lightweight neuro-san
   interface) — that's a build/host-time library import, **not** a neuro-san server.
 - One MCP server per hostable tool preserves per-agent tool scoping. Private ports are

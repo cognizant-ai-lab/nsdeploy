@@ -215,6 +215,8 @@ export function mountApp(root, { engine, trace, manifest }) {
 
   const net = engine.top?.network;
   const title = manifest?.networks?.[0]?.description || net?.name || "Agent network";
+  const needsByok = !engine.mockLLM && (!engine.byokKey || engine.byokKey === "demo");
+  const setupMessage = "This site needs your LLM API key before it can answer. Open BYOK / router settings below, enter your key, then click Apply, save & reload. Your key stays in this browser and is sent only to the configured provider.";
 
   const headerHtml = `
     <div class="ns-header">
@@ -222,6 +224,8 @@ export function mountApp(root, { engine, trace, manifest }) {
       <div class="ns-title">${escapeHtml(manifest?.brand || net?.name || "neuro-san-web")}</div>
       ${engine.mockLLM
         ? `<div class="ns-llmbadge mock" title="The default router is a deterministic mock — it ignores the model name. Add a real key + router in ⚙ settings.">⚠ MOCK LLM — no real model</div>`
+        : needsByok
+          ? `<div class="ns-llmbadge error" title="${escapeHtml(setupMessage)}">API key required</div>`
         : `<div class="ns-llmbadge pending" title="Configured router: ${escapeHtml(engine.top?.llm?.baseUrl || "")}. It will be verified by the first response.">LLM configured — awaiting verification</div>`}
       <div class="ns-breadcrumb" id="ns-breadcrumb">${escapeHtml(location.host)}</div>
       <button class="ns-devtoggle" id="ns-devtoggle" title="Show the technical execution trace">⚙ Developer</button>
@@ -229,9 +233,9 @@ export function mountApp(root, { engine, trace, manifest }) {
   const chatHtml = `
     <div class="ns-chat">
       <div class="ns-msgs" id="ns-msgs">
-        <div class="ns-msg bot">${escapeHtml(title)}\n\nAsk me anything to see the web of agents in action.</div>
+        <div class="ns-msg bot">${escapeHtml(title)}\n\n${escapeHtml(needsByok ? setupMessage : "Ask me anything to see the web of agents in action.")}</div>
       </div>
-      <details class="ns-settings">
+      <details class="ns-settings"${needsByok ? " open" : ""}>
         <summary>⚙ BYOK / router settings</summary>
         <div class="ns-settings-body">
           <label>Saved setup <select id="ns-profile"></select></label>
@@ -836,12 +840,14 @@ export function mountApp(root, { engine, trace, manifest }) {
   const saveProfileBtn = root.querySelector("#ns-save-profile");
   const deleteProfileBtn = root.querySelector("#ns-delete-profile");
   // The compiled LLM may already point at BYOK after a saved-profile upgrade.
-  // Compare settings against the route the manifest explicitly declares as mock.
-  const mockUrl = manifest?.llm_router?.base_url || "";
+  // New manifests identify an opt-in mock separately; retain compatibility with
+  // older manifests where the mock was the declared default base URL.
+  const mockUrl = manifest?.llm_router?.mock_router
+    || (manifest?.llm_router?.mock ? manifest?.llm_router?.base_url : "");
   const byokRouter = engine.byokRouter || "";
   const staticMode = manifest?.deployment?.mode === "static";
 
-  routerEl.value = engine.routerOverride || mockUrl;
+  routerEl.value = engine.routerOverride || engine.top?.llm?.baseUrl || byokRouter || mockUrl;
   modelEl.value = engine.modelOverride || "";
   let storedKey = "";
   try { storedKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
@@ -914,7 +920,9 @@ export function mountApp(root, { engine, trace, manifest }) {
     }
     catch { return String(url || "").replace(/\/$/, ""); }
   };
-  const isMockRouter = (url) => !url || normalizedRouter(url) === normalizedRouter(mockUrl) || /:8003(\/|$)/.test(url);
+  const isMockRouter = (url) => Boolean(
+    url && ((mockUrl && normalizedRouter(url) === normalizedRouter(mockUrl)) || /:8003(\/|$)/.test(url)),
+  );
   const refreshHint = () => {
     const hasKey = keyEl.value.trim().length > 0;
     if (hasKey && isMockRouter(routerEl.value.trim())) {
@@ -954,11 +962,21 @@ export function mountApp(root, { engine, trace, manifest }) {
       return null;
     }
   };
-  validateConfiguredModel = async () => {
+  validateConfiguredModel = async (requireActiveKey = true) => {
     let router = routerEl.value.trim();
     const key = keyEl.value.trim();
     const model = normalizeModelName(modelEl.value);
     modelEl.value = model;
+    if (requireActiveKey && !engine.mockLLM && (!engine.byokKey || engine.byokKey === "demo")) {
+      const message = key
+        ? "Your API key is ready. Click Apply, save & reload before sending a request."
+        : setupMessage;
+      setProfileHint(message, "warn");
+      root.querySelector(".ns-settings").open = true;
+      (key ? root.querySelector("#ns-apply") : keyEl).focus();
+      addBubble(msgs, "bot", `⚠️ ${message}`);
+      return false;
+    }
     if (!model) return true;
     if ((key || model) && byokRouter && isMockRouter(router)) {
       router = byokRouter;
@@ -1019,6 +1037,7 @@ export function mountApp(root, { engine, trace, manifest }) {
     setProfileHint(`Deleted setup "${oldName}".`);
   });
   refreshHint();
+  if (needsByok) setProfileHint(setupMessage, "warn");
 
   root.querySelector("#ns-apply").addEventListener("click", async () => {
     const p = new URLSearchParams(location.search);
@@ -1029,7 +1048,7 @@ export function mountApp(root, { engine, trace, manifest }) {
     modelEl.value = model;
     // Safety net: a real key must never be sent to the mock router.
     if ((key || model) && byokRouter && isMockRouter(router)) router = byokRouter;
-    if (!await validateConfiguredModel()) return;
+    if (!await validateConfiguredModel(false)) return;
     const saved = saveCurrentProfile();
     // The key is kept in browser storage, never the query string.
     try {

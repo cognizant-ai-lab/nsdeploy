@@ -106,8 +106,10 @@ def main() -> int:
                     help="re-ask the LLM and replace editable layout/CSS/theme metadata")
     ap.add_argument("--no-serve", action="store_true", help="generate the site but don't launch")
     ap.add_argument("--static-bundle", action="store_true",
-                    help="emit a self-contained static webroot (browser mock, direct-CORS "
+                    help="emit a self-contained static webroot (direct-CORS "
                          "BYOK/MCP, no Python tools or public MCP facade)")
+    ap.add_argument("--mock-llm", action="store_true",
+                    help="developer mode: make the deterministic keyless mock LLM the default")
     args = ap.parse_args()
     if args.actions and not Path(args.actions).is_file():
         ap.error("--actions must name an existing JavaScript adapter")
@@ -270,7 +272,8 @@ def main() -> int:
                   theme=theme, site_source_dir=site_dir,
                   private_steward_sites=private_steward_sites or None,
                   static_bundle=args.static_bundle, runtime_dir=runtime_dir,
-                  actions_file=Path(args.actions).resolve() if args.actions else None)
+                  actions_file=Path(args.actions).resolve() if args.actions else None,
+                  mock_llm=args.mock_llm)
     bundle_label = "static bundle" if args.static_bundle else "site"
     print(f"✅ Generated {bundle_label} → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))
     if args.static_bundle:
@@ -298,7 +301,7 @@ def main() -> int:
     serve(out_dir, plan, source.root, port=args.port, site_base=site_base,
           upstream=args.upstream,
           runtime_dir=runtime_dir, ext_mcps=plan.external_mcps,
-          facade_upstream=args.facade_upstream)
+          facade_upstream=args.facade_upstream, mock_llm=args.mock_llm)
     return 0
 
 

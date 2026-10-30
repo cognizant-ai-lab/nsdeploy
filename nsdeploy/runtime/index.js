@@ -44,7 +44,7 @@ export async function boot(rootSelector = "#app", opts = {}) {
     originUrl: siteBase,
     trace,
     sandboxWorkerUrl: opts.sandboxWorkerUrl || "/runtime/sandbox-worker.js",
-    byokKey: opts.byokKey || storedKey || savedProfile?.key || "demo",
+    byokKey: opts.byokKey || storedKey || savedProfile?.key || "",
     routerOverride: opts.router || params.get("router") || savedRouter || "",
     modelOverride: opts.model || params.get("model") || savedProfile?.model || "",
   });

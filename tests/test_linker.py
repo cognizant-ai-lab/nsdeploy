@@ -77,6 +77,28 @@ class LinkerTests(unittest.TestCase):
             ThemeSpec(),
         )
         self.assertIn("http://127.0.0.1:8093", manifest["allowed_peers"])
+        self.assertEqual(manifest["llm_router"]["base_url"], "http://127.0.0.1:8094/byok/v1")
+        self.assertFalse(manifest["llm_router"]["mock"])
+        self.assertNotIn("mock_router", manifest["llm_router"])
+
+    def test_mock_llm_is_an_explicit_developer_opt_in(self):
+        plan = DeploymentPlan(
+            network_name="demo",
+            config={"tools": [{"name": "front", "instructions": "Help."}]},
+            front_man="front",
+        )
+        config = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
+        manifest = build_manifest(
+            plan, config,
+            "http://127.0.0.1:8091/v1",
+            "http://127.0.0.1:8091/byok/v1",
+            "http://127.0.0.1:8091",
+            ThemeSpec(),
+            mock_llm=True,
+        )
+        self.assertEqual(manifest["llm_router"]["base_url"], "http://127.0.0.1:8091/v1")
+        self.assertEqual(manifest["llm_router"]["mock_router"], "http://127.0.0.1:8091/v1")
+        self.assertTrue(manifest["llm_router"]["mock"])
 
     def test_mcp_url_is_not_classified_as_public_agent_network(self):
         remote = "https://tools.example/mcp"
@@ -272,7 +294,9 @@ class LinkerTests(unittest.TestCase):
         config = json.loads((out / "portable.network.json").read_text())
         self.assertEqual(config["tools"][0]["tools"], [direct_mcp])
         self.assertEqual(config["deployment"]["omitted_python_tools"], ["search"])
-        self.assertEqual(manifest["llm_router"]["base_url"], "browser://mock")
+        self.assertEqual(manifest["llm_router"]["base_url"], "https://api.example/v1")
+        self.assertFalse(manifest["llm_router"]["mock"])
+        self.assertFalse(manifest["deployment"]["browser_mock"])
         self.assertEqual(manifest["networks"][0]["front_man"], "front")
         self.assertFalse(manifest["agent_mcp"]["available"])
         self.assertEqual(manifest["linking"]["link_updates"]["mode"], "browser-local")
@@ -292,6 +316,13 @@ class LinkerTests(unittest.TestCase):
         index = (out / "index.html").read_text()
         self.assertIn('from "./runtime/index.js"', index)
         self.assertIn('href="./theme.css"', index)
+
+        mock_manifest = generate_site(
+            plan, self.root / "portable-mock", "browser://mock", "https://api.example/v1", "",
+            cruse=False, static_bundle=True, runtime_dir=runtime, mock_llm=True,
+        )
+        self.assertEqual(mock_manifest["llm_router"]["base_url"], "browser://mock")
+        self.assertTrue(mock_manifest["deployment"]["browser_mock"])
 
     def test_private_steward_manifest_collects_multiple_bundles(self):
         root = self.root / "cailville"

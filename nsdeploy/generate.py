@@ -413,7 +413,8 @@ def write_private_steward_manifest(
 
 def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
                    mock_router: str, byok_router: str, site_base: str, theme: ThemeSpec,
-                   mcp_host: str = "127.0.0.1", static_bundle: bool = False) -> Dict[str, Any]:
+                   mcp_host: str = "127.0.0.1", static_bundle: bool = False,
+                   mock_llm: bool = False) -> Dict[str, Any]:
     meta = plan.config.get("metadata", {}) or {}
     front_fn = next((a.get("function", {}) for a in plan.agents if a.get("name") == plan.front_man), {})
     description = theme.tagline or (front_fn.get("description") or meta.get("description") or plan.network_name).strip()
@@ -438,10 +439,13 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
                 "sample_queries": meta.get("sample_queries", []) or [],
             }
         ],
+        # Real BYOK is the safe production default. The deterministic mock remains
+        # available only when the developer explicitly enables it for this build.
         "llm_router": {
-            "base_url": mock_router,
-            "mock": True,
+            "base_url": mock_router if mock_llm else byok_router,
+            "mock": mock_llm,
             "byok_router": byok_router,
+            **({"mock_router": mock_router} if mock_llm else {}),
         },
         "allowed_peers": allowed_peers,
         "peer_policy": {
@@ -457,7 +461,7 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
         manifest["deployment"] = {
             "mode": "static",
             "self_contained_runtime": True,
-            "browser_mock": True,
+            "browser_mock": mock_llm,
             "direct_byok": True,
             "direct_mcp_requires_cors": True,
             "public_mcp_facade": False,
@@ -569,7 +573,8 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
                   private_steward_sites: Optional[Dict[str, str]] = None,
                   static_bundle: bool = False,
                   runtime_dir: Optional[Path] = None,
-                  actions_file: Optional[Path] = None) -> Dict[str, Any]:
+                  actions_file: Optional[Path] = None,
+                  mock_llm: bool = False) -> Dict[str, Any]:
     """Build the disposable static output from network data and editable site source."""
     theme = theme or ThemeSpec()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -582,7 +587,7 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     )
     manifest = build_manifest(
         plan, network_config, mock_router, byok_router, site_base, theme,
-        mcp_host=mcp_host, static_bundle=static_bundle,
+        mcp_host=mcp_host, static_bundle=static_bundle, mock_llm=mock_llm,
     )
     # Site-owned JavaScript is loaded only on its own origin. Peer callers learn
     # schemas through the bridge, never by importing foreign executable code.
@@ -675,8 +680,8 @@ def _write_static_hosting_files(out_dir: Path) -> None:
     )
     (out_dir / "STATIC_HOSTING.md").write_text(
         "# Static nsDeploy bundle\n\n"
-        "Publish this directory as the web root. The site, browser runtime, local mock "
-        "router, and browser-local links require no application server.\n\n"
+        "Publish this directory as the web root. The site, browser runtime, and "
+        "browser-local links require no application server.\n\n"
         "For cross-domain agent loading, configure all responses with "
         "`Access-Control-Allow-Origin: *`. The included `_headers` file is used by "
         "Netlify and compatible hosts; Apache can use the included `.htaccess` when "

@@ -67,7 +67,7 @@ export class LlmClient {
     // happens e.g. when a shared/reloaded URL keeps the proxy router but no saved
     // BYOK profile/key is available in this browser.
     if (!this.mock && (!this.apiKey || this.apiKey === "demo")) {
-      throw new Error(`The selected LLM router (${hostOf(this.baseUrl) || "a real provider"}) needs your API key. Open ⚙ BYOK settings and enter it — or switch the router back to the mock to run without a key.`);
+      throw new Error(`An LLM API key is required for ${hostOf(this.baseUrl) || "the configured provider"}. Open ⚙ BYOK / router settings, enter your key, then click Apply, save & reload. Your key stays in this browser and is sent only to the configured provider.`);
     }
     const span = this.trace?.start("model_call", {
       parent: parentSpan,
