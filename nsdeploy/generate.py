@@ -615,13 +615,26 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     (well_known / "nsdeploy-agent.json").write_text(json.dumps(agent_mcp, indent=2), encoding="utf-8")
     steward_path = out_dir / f"{plan.network_name}_private_steward.hocon"
     legacy_steward_path = out_dir / "private-steward.hocon"
-    if legacy_steward_path.is_file() and not steward_path.is_file():
-        legacy_steward_path.replace(steward_path)
-    elif legacy_steward_path.is_file():
-        legacy_steward_path.unlink()
-    steward_path.write_text(
-        build_private_steward_hocon(plan, site_base, private_steward_sites), encoding="utf-8")
-    write_private_steward_manifest(out_dir.parent)
+    if static_bundle:
+        # A private steward is an operator-side Neuro-SAN configuration, not a
+        # browser asset. Keep static webroots limited to files the browser or
+        # static host actually consumes, and clean up outputs regenerated from
+        # older nsDeploy releases.
+        for obsolete_steward in (steward_path, legacy_steward_path):
+            if obsolete_steward.is_file():
+                obsolete_steward.unlink()
+        # Do not create an empty operator manifest as a side effect of a fresh
+        # static build. If one already exists, refresh it to drop stale entries.
+        if (out_dir.parent / "manifest.hocon").is_file():
+            write_private_steward_manifest(out_dir.parent)
+    else:
+        if legacy_steward_path.is_file() and not steward_path.is_file():
+            legacy_steward_path.replace(steward_path)
+        elif legacy_steward_path.is_file():
+            legacy_steward_path.unlink()
+        steward_path.write_text(
+            build_private_steward_hocon(plan, site_base, private_steward_sites), encoding="utf-8")
+        write_private_steward_manifest(out_dir.parent)
 
     # Preserve valid runtime-created bindings across regeneration. Each site owns
     # only its own outbound map; this file is not a registry or discovery service.
@@ -691,8 +704,6 @@ def _write_static_hosting_files(out_dir: Path) -> None:
         "Real BYOK calls go directly from the browser to the router selected in settings, "
         "so that router must allow browser CORS. External MCP servers are also contacted "
         "directly and must allow browser CORS. Python tools and the public MCP facade are "
-        "not included. The generated private steward can fetch and run the published "
-        "network JSON from its private Neuro-SAN host; its LLM router does not need browser "
-        "CORS. Unresolved links are stored in this browser's local storage.\n",
+        "not included. Unresolved links are stored in this browser's local storage.\n",
         encoding="utf-8",
     )

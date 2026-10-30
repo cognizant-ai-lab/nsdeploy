@@ -133,8 +133,8 @@ Preview that bundle with any ordinary static server:
 python -m http.server 8080 --directory ./dist/travel
 ```
 
-Then open <http://127.0.0.1:8080/>. To publish a canonical identity for links and
-private stewards, include the final webroot URL when building:
+Then open <http://127.0.0.1:8080/>. To publish a canonical identity for links,
+include the final webroot URL when building:
 
 ```bash
 python -m nsdeploy examples/link_demo_travel_agency.hocon \
@@ -149,20 +149,6 @@ After uploading `./dist/travel/` as that webroot, the public network URL is:
 https://agents.example.com/travel/link_demo_travel_agency
 ```
 
-A generated private steward calls the static network with the equivalent coded-tool
-arguments:
-
-```json
-{
-  "site_url": "https://agents.example.com/travel/link_demo_travel_agency",
-  "request": "Find me a flight from San Francisco to New York next Friday."
-}
-```
-
-The steward fetches `agent-manifest.json` and the selected network JSON, then runs
-the network privately. Its LLM key is sent only to the steward's configured LLM
-upstream, never to the static host.
-
 The output includes the browser runtime, a browser-native deterministic mock,
 relative page assets, browser-local unresolved links, and optional `_headers` /
 `.htaccess` hosting configuration. Python coded tools are intentionally omitted.
@@ -170,15 +156,14 @@ External MCP servers are contacted directly and therefore must permit browser CO
 Real BYOK calls go directly to the OpenAI-compatible router selected in settings;
 that router must likewise permit browser CORS. The public MCP facade is marked
 unavailable because accepting inbound MCP calls requires an application server.
-The generated private steward remains usable: it downloads the public network JSON
-and runs it in the private Neuro-SAN environment, so the static host needs no MCP
-facade or other server-side process.
+Static bundles do not include a private-steward HOCON; that operator-side Neuro-SAN
+configuration is generated only for application-hosted deployments.
 
 When `--site-url` is omitted, the static bundle is origin-neutral and can be moved
 between hosts. Supplying `--site-url` publishes a canonical URL for link discovery.
 The static host only needs to serve files over HTTP(S). When a browser-hosted agent
 on another domain will load the network, responses must include
-`Access-Control-Allow-Origin: *`; server-side private stewards do not require CORS.
+`Access-Control-Allow-Origin: *`.
 The sandbox worker also needs the CSP shown in the generated `STATIC_HOSTING.md`.
 The included `_headers` and `.htaccess` cover hosts that support those standard
 configuration formats. Hosts that ignore both files need the equivalent headers
@@ -489,8 +474,9 @@ additions from the private-steward manifest.
    removes any assumption of a local neuro-san server—tools are reached over MCP or
    by loading a public agent network into the browser.
 5. **Generate** `index.html` + `theme.css` + `site.js` + `agent-manifest.json` +
-   `<network>.network.json` + `agent-mcp.json` + `<network>_private_steward.hocon` +
-   `theme.json` from the editable site source and network.
+   `<network>.network.json` + `agent-mcp.json` + `theme.json` from the editable site
+   source and network. Application-hosted deployments also generate
+   `<network>_private_steward.hocon`; static bundles do not.
 6. **Serve** one static origin (site + the `neuro-san-web` runtime, with the
    sandbox-worker CSP), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
    local-MCP proxy at `/_mcp/<i>/mcp`, an external-MCP proxy at
@@ -504,8 +490,10 @@ additions from the private-steward manifest.
 
 ## Private stewards and open-web reachability
 
-Every generated public site includes `<network>_private_steward.hocon`. It is a standard
-Neuro-SAN network for the site's operator, backed by the reusable
+Application-hosted deployments include `<network>_private_steward.hocon`. Static
+bundles omit it because it is operator-side Neuro-SAN configuration, not a browser
+or static-host asset. The file is a standard Neuro-SAN network for the site's
+operator, backed by the reusable
 `nsdeploy.steward.PublicAgentNetworkGateway` coded tool. The gateway accepts any
 public nsDeploy network URL, downloads `agent-manifest.json` and the selected
 `<network>.network.json`, validates that they contain data-only agents, and runs the
@@ -910,9 +898,10 @@ sites/<network>/
 
 Use `--site-dir DIR` to put it elsewhere. Normal deploys read these files and never
 overwrite them; `.nsdeploy/<source-dir>/<network>/` remains disposable build output.
-The containing `.nsdeploy/<source-dir>/manifest.hocon` is regenerated to list every
-generated private steward in that bundle group. Set `AGENT_MANIFEST_FILE` directly to
-that file when running the standard Neuro-SAN server. A normal
+For application-hosted deployments, the containing
+`.nsdeploy/<source-dir>/manifest.hocon` is regenerated to list every generated
+private steward in that bundle group. Set `AGENT_MANIFEST_FILE` directly to that
+file when running the standard Neuro-SAN server. A normal
 `--theme` run also uses an existing package instead of calling the model again. The
 LLM result is therefore a starting point: edit the source package and redeploy. The
 generated `site.js` exports an optional `customize({ root, runtime })` hook, and any
