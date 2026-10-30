@@ -61,6 +61,7 @@ interface TraceEvent {
   preview?: string;
   error?: string;
   responsePreview?: string;
+  reason?: string;
 }
 
 interface Example {
@@ -80,6 +81,9 @@ interface Answers {
   consent: "always" | "decline";
   // Guidance to send while the front man's first model call is still running.
   steer?: string;
+  // The most agents one query may run. The site's limit is 24, as on main, but the mock
+  // calls every tool, so on the mock the test lifts it to check every agent runs.
+  agentLimit?: number;
 }
 
 interface Run {
@@ -276,6 +280,8 @@ async function runPage(browser: Browser, port: string, answers: Answers, label =
   if (REAL_LLM) {
     await page.addInitScript((value) => sessionStorage.setItem("nsweb-byok-key", value), process.env.OPENAI_API_KEY || "");
   }
+  const agentLimit = answers.agentLimit ?? (REAL_LLM ? undefined : 1000);
+  if (agentLimit != null) await page.addInitScript((value) => { (window as any).__nsdeployMaxAgentCalls = value; }, agentLimit);
   const run: Run = {
     seconds: 0, events: [], errors: [], links: [], approvals: 0, declines: 0, finished: false, routerRequests: 0, mcpRequests: 0,
     outsideMcpRequests: 0, statusTexts: [], statusLeft: false, steered: false, steeringMessages: 0, steeredRequests: 0,
@@ -531,6 +537,17 @@ async function checkScenarios(browser: Browser): Promise<Result[]> {
     problems.push("the agent wasn't told the contact was declined");
   }
   add("decline a contact", run, problems);
+
+  // At the site's own limit of 24 agents, a Cailville query stops calling agents and
+  // still finishes, as on main.
+  run = await runPage(browser, "8091", { consent: "always", agentLimit: 24 }, "agent-limit");
+  problems = basicProblems(run);
+  const agents = run.events.filter((event) => event.kind === "agent" && event.phase === "start").length;
+  if (agents > 24) problems.push(`ran ${agents} agents, over the limit of 24`);
+  if (!run.events.some((event) => event.kind === "composition_limit" && (event.reason || "").includes("limit of 24 agent"))) {
+    problems.push("never reached the limit of 24 agents");
+  }
+  add("stop at the agent limit", run, problems);
 
   // A real router with no key: nothing may reach the router, and the run ends with an
   // error that tells the user to add a key.
