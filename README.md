@@ -17,7 +17,7 @@ The browser runs the agents on **neuro-san's own agent loop**, from
 (the real neuro-san Python transpiled to TypeScript), bundled by
 [`runtime-build/`](runtime-build) into `nsdeploy/runtime/ts-package/generated/` and driven by the page
 runtime in [`nsdeploy/runtime/ts-package/`](nsdeploy/runtime/ts-package), which shares the rest of
-[`nsdeploy/runtime/`](nsdeploy/runtime) with the original runtime (`--no-ts-package`). See
+[`nsdeploy/runtime/`](nsdeploy/runtime) with the original runtime (`--no-use-ts-package`). See
 [The agent loop](#the-agent-loop). A normal served deployment uses Python for the
 build-time HOCON resolver, the web launcher, and one small MCP server per hostable
 tool. A static bundle uses Python only while building; the resulting webroot has no
@@ -28,7 +28,7 @@ Python or nsDeploy runtime dependency.
 ```bash
 pip install "mcp>=1.0.0" uvicorn starlette pyhocon neuro-san
 
-# Build the browser runtime once, and again after updating the neuro-san package.
+# Build the browser runtime before the first run, and after each neuro-san package update.
 # It is build output, so it is not checked in (see The agent loop).
 (cd runtime-build && npm install && npm run build)
 
@@ -56,8 +56,9 @@ instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
 `--site-dir` (editable HTML/CSS/JS source),
 `--site-url` (public origin), `--link`/`--links` (outbound network bindings),
 `--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime),
-`--no-cruse` (skip generative-UI injection), `--no-ts-package` (run the original
-runtime instead of the neuro-san TS package; `NSDEPLOY_TS_PACKAGE=0` for Cailville),
+`--no-cruse` (skip generative-UI injection), `--use-ts-package` (run the agents on the
+neuro-san TS package, on by default; `--no-use-ts-package`, or `NSDEPLOY_USE_TS_PACKAGE=0` for
+Cailville, runs the original runtime),
 and the theming flags below.
 
 ## Shared subdomain gateway
@@ -852,12 +853,10 @@ whatever is there. The layout:
 - `neuro-san/neuro-san.mjs`: the package, minified and pinned by
   `runtime-build/package-lock.json`.
 
-The package comes from GitHub Packages, which needs a GitHub token even to read, so
-set `NODE_AUTH_TOKEN` before installing. `runtime-build/.npmrc` reads it from there.
+The package comes from npmjs, so installing needs no token.
 
 ```bash
 cd runtime-build
-export NODE_AUTH_TOKEN=$(gh auth token)   # or a token with read:packages
 npm install
 npm run build   # DEBUG=1 npm run build leaves the package unminified and adds source maps
 ```

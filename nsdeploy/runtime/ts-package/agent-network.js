@@ -28,18 +28,6 @@ export function chatMessage(type, text, origin = [], extra = {}) {
   return { type, text, origin, ...extra };
 }
 
-// --- sly_data (display only) ---------------------------------------------------
-
-// Keep keys, drop values, when sly_data is shown across a boundary in the trace. This
-// is presentation, not policy: what crosses a boundary is decided by neuro-san's own
-// SlyDataRedactor inside the agent loop.
-export function redactSlyData(slyData) {
-  if (!slyData) return slyData;
-  const out = {};
-  for (const k of Object.keys(slyData)) out[k] = "<redacted>";
-  return out;
-}
-
 // --- external / MCP references (neuro-san's ExternalAgentParsing) ----------------
 
 export function isExternalAgent(ref) {

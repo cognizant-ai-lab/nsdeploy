@@ -6,8 +6,8 @@ The folder above is the original runtime, unchanged from main. Files here import
 parts both runtimes share (`../ui.js`, `../trace.js` and so on) from there.
 
 It is on by default. The launcher redirects `/runtime/index.js` to `ts-package/index.js`,
-and a static bundle's copy of `runtime/index.js` re-exports it. `--no-ts-package`
-(`NSDEPLOY_TS_PACKAGE=0` for Cailville) serves the original runtime instead.
+and a static bundle's copy of `runtime/index.js` re-exports it. `--no-use-ts-package`
+(`NSDEPLOY_USE_TS_PACKAGE=0` for Cailville) serves the original runtime instead.
 
 ## To remove the feature switch
 
