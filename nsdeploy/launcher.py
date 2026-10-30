@@ -78,6 +78,8 @@ def _facade_command(python_exe: str, site_dir: Path, plan: DeploymentPlan, port:
 
 # The most text the mock LLM passes on, in a tool call's arguments or a summary.
 MOCK_TEXT_LIMIT = 1200
+# The most text the mock LLM puts in a search tool's query.
+MOCK_QUERY_LIMIT = 200
 
 
 def _sse(obj: Dict[str, Any]) -> bytes:
@@ -310,6 +312,10 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 args[p] = text
             for common in ("request", "inquiry", "search_terms", "query", "input"):
                 args.setdefault(common, text)
+            # A real model sends a search tool a short phrase. Some reject anything
+            # longer, like You.com's search, which stops at 400 characters.
+            for search in ("search_terms", "query"):
+                args[search] = args[search][:MOCK_QUERY_LIMIT]
             return (name, json.dumps(args)), ""
 
         def _mock_responses(self, raw: bytes):
