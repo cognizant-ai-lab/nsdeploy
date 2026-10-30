@@ -16,7 +16,7 @@
 
 import { parseHocon } from "../hocon.js";
 import {
-  AgentNetwork, ChatMessageType, initNetwork, loadNeuroSan, parseExternalAgent, redactSlyData, validateNetwork,
+  AgentNetwork, ChatMessageType, initNetwork, loadNeuroSan, parseExternalAgent, validateNetwork,
 } from "./agent-network.js";
 import { neuroSanSession } from "./generated-bridge.js";
 import { TraceBus } from "../trace.js";
@@ -144,7 +144,7 @@ export class Engine {
     this.mcpCalls = new Map(); // MCP call id -> { url, tool, response }, while the call runs
   }
 
-  // Start a new chat.
+  // Clear the multi-turn conversation history (start a new chat).
   resetHistory() {
     this.chatContext = null;
   }
@@ -213,8 +213,9 @@ export class Engine {
     const publishedLinks = await this._loadPublishedLinks(base, entry.name || entry.hocon);
     config.links = { ...(config.links || {}), ...publishedLinks };
     const network = new AgentNetwork(config, entry.name || entry.hocon);
-    // Validation gate: a network with structural errors must never run. This applies
-    // to the top network AND to every fetched-and-run partner network.
+    // Validation gate: a network with structural errors must never run. (Warnings
+    // are non-fatal and surfaced in the trace/UI.) This applies to the top network
+    // AND to every fetched-and-run peer network compiled below.
     const validation = validateNetwork(network);
     if (validation.errors && validation.errors.length) {
       throw new Error(`Network '${network.name}' (${hostOf(base)}) failed validation: ${validation.errors.join("; ")}`);
@@ -223,7 +224,7 @@ export class Engine {
     for (const ref of [...validation.externals, ...validation.mcps, ...Object.values(network.links)]) {
       this.refOwners.set(ref, { network, base, manifest });
     }
-    // LLM routing boundary. The top site chooses the active router. Partner manifests
+    // LLM routing boundary. The top site chooses the active router. Peer manifests
     // contribute network definitions only and can never redirect execution or keys.
     let routerBase;
     let mock;
@@ -234,9 +235,9 @@ export class Engine {
       this.routerOverride = selected.upgradedToByok ? routerBase : this.routerOverride;
       this.userRouter = { baseUrl: routerBase, mock };
     } else {
-      // A partner contributes its network definition, not its execution environment.
-      // It always runs in this browser with the top caller's active router, even for
-      // keyless/mock sessions. Never send execution or a BYOK key to the partner.
+      // A peer contributes its network definition, not its execution environment.
+      // It always runs in this browser with the top caller's active router, even
+      // for keyless/mock sessions. Never send execution or a BYOK key to the peer.
       const selected = selectPeerRouter(this.userRouter);
       routerBase = selected.baseUrl;
       mock = selected.mock;
@@ -253,6 +254,8 @@ export class Engine {
     }
   }
 
+  // Every hop is constrained by the immediate caller's published manifest. The
+  // user still approves each remote call, so a peer cannot silently expand access.
   _assertAllowedPeer(target, sourceManifest) {
     const manifest = sourceManifest || this.top?.manifest;
     if (!manifestAllowsPeer(target, manifest, this.runtimeAllowedPeers)) {

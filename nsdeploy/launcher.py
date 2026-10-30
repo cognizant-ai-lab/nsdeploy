@@ -31,7 +31,7 @@ from nsdeploy.resolve import DeploymentPlan
 # serve(..., runtime_dir=...) / --runtime-dir.
 DEFAULT_RUNTIME_DIR = Path(__file__).resolve().parent / "runtime"
 # The runtime on the neuro-san TS package, served in place of runtime/index.js unless
-# nsdeploy runs with --no-ts-package. It imports the shared parts from the folder above.
+# nsdeploy runs with --no-use-ts-package. It imports the shared parts from the folder above.
 TS_PACKAGE_DIR = "ts-package"
 MIME = {
     ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -679,7 +679,7 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
         print(f"\n🌐  {plan.network_name} is live:  {url}")
         if site_base:
             print(f"    Loopback backend: 127.0.0.1:{port}")
-        print(f"    Runtime: {'neuro-san TS package' if ts_package else 'original (--no-ts-package)'}")
+        print(f"    Runtime: {'neuro-san TS package' if ts_package else 'original (--no-use-ts-package)'}")
         print(f"    LLM: mock router (no key) at /v1  ·  BYOK proxy at /byok/v1 → {upstream}")
         print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: caller BYOK → {facade_upstream}  ·  steward: {plan.network_name}_private_steward.hocon")
         if plan.hostable_tools:

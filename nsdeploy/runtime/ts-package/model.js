@@ -1,3 +1,7 @@
+// model.js: nsdeploy's mock LLM, the one a site runs on before a visitor enters a key.
+// It tells mock responses from real ones, and in a static bundle, with no server
+// behind it, answers neuro-san's OpenAI requests itself, as the launcher's mock
+// router does.
 export { normalizeModelName } from "../model.js";
 
 // Whether a model response came from nsdeploy's mock router: the site declared a mock

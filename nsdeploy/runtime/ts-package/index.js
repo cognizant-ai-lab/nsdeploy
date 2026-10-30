@@ -6,7 +6,7 @@
 // neuro-san's own loop (see engine.js).
 //
 // This folder is the runtime on the neuro-san TS package. The launcher serves it in
-// place of ../index.js unless nsdeploy runs with --no-ts-package. Files here import
+// place of ../index.js unless nsdeploy runs with --no-use-ts-package. Files here import
 // the parts of the runtime that are the same either way (../ui.js, ../trace.js and
 // so on) from the folder above.
 

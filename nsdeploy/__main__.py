@@ -74,8 +74,9 @@ def main() -> int:
                     help="accepted for backward compatibility and IGNORED: a served site never uses a "
                          "host-side LLM key; the facade only uses the caller's BYOK credentials")
     ap.add_argument("--runtime-dir", default=None, help="neuro-san-web runtime dir (default: vendored nsdeploy/runtime)")
-    ap.add_argument("--no-ts-package", action="store_true",
-                    help="run agents on the original runtime instead of the neuro-san TS package")
+    ap.add_argument("--use-ts-package", action=argparse.BooleanOptionalAction, default=True,
+                    help="run agents on the neuro-san TS package (the default); "
+                         "--no-use-ts-package runs them on the original runtime")
     ap.add_argument("--links", default=None, help="link sidecar JSON (default: <hocon>.links.json when present)")
     ap.add_argument("--link", action="append", default=[], metavar="REF=URL",
                     help="bind a dangling agent reference to a remote nsDeploy network (repeatable)")
@@ -268,7 +269,7 @@ def main() -> int:
                   theme=theme, site_source_dir=site_dir,
                   private_steward_sites=private_steward_sites or None,
                   static_bundle=args.static_bundle, runtime_dir=runtime_dir,
-                  ts_package=not args.no_ts_package)
+                  ts_package=args.use_ts_package)
     bundle_label = "static bundle" if args.static_bundle else "site"
     print(f"✅ Generated {bundle_label} → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))
     if args.static_bundle:
@@ -296,7 +297,7 @@ def main() -> int:
     serve(out_dir, plan, source.root, port=args.port, site_base=site_base,
           upstream=args.upstream,
           runtime_dir=runtime_dir, ext_mcps=plan.external_mcps,
-          facade_upstream=args.facade_upstream, ts_package=not args.no_ts_package)
+          facade_upstream=args.facade_upstream, ts_package=args.use_ts_package)
     return 0
 
 
