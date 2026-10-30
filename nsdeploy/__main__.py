@@ -73,6 +73,13 @@ def main() -> int:
                          "no implicit page default)")
     ap.add_argument("--action-host-page", action="store_true",
                     help="discover native forms in the page embedding the widget (local only)")
+    ap.add_argument("--action-site", metavar="URL", help="discover public native forms and linked JSON OpenAPI 3 descriptions while bundling")
+    ap.add_argument("--action-spec", metavar="FILE_OR_URL", help="explicit OpenAPI 3 JSON description for --action-site")
+    ap.add_argument("--action-lock", metavar="FILE", help="reviewed discovery lock (default: <site-dir>/discovered-actions.json)")
+    ap.add_argument("--action-refresh", action="store_true", help="rediscover actions; reset selections for review")
+    ap.add_argument("--action-allow", action="append", default=[], metavar="NAME", help="enable a discovered operation by exact name (repeatable)")
+    ap.add_argument("--action-include-all", action="store_true", help="enable every supported discovered operation; intended for public test sites")
+    ap.add_argument("--action-max-pages", type=int, default=6, help="maximum documentation/form pages to inspect (1–20, default 6)")
     ap.add_argument("--no-action-discovery", action="store_true",
                     help="disable automatic native-form discovery")
     ap.add_argument("--action-module", action="append", default=[], metavar="PATH",
@@ -125,11 +132,12 @@ def main() -> int:
     if args.actions and not Path(args.actions).is_file():
         ap.error("--actions must name an existing JavaScript adapter")
     from nsdeploy.form_actions import action_discovery_config
-    if args.no_action_discovery and (args.action_page or args.action_host_page or args.action_caller_origin):
+    if args.no_action_discovery and (args.action_page or args.action_host_page or args.action_caller_origin or args.action_site or args.action_spec or args.action_lock or args.action_refresh or args.action_allow or args.action_include_all):
         ap.error("--no-action-discovery cannot be combined with form discovery options")
     action_pages = args.action_page or []
     try:
-        action_discovery_config(action_pages, args.action_module, args.action_caller_origin, args.action_host_page)
+        # The conventional discovery lock can also supply these capabilities.
+        action_discovery_config(action_pages, args.action_module, args.action_caller_origin, args.action_host_page, discovered=True)
     except ValueError as exc:
         ap.error(str(exc))
 
@@ -154,6 +162,19 @@ def main() -> int:
     network_name = hocon_path.stem
     site_dir = (Path(args.site_dir).resolve() if args.site_dir
                 else hocon_path.parent / "sites" / network_name)
+    from nsdeploy.action_discovery import prepare_actions
+    action_lock = Path(args.action_lock) if args.action_lock else site_dir / "discovered-actions.json"
+    discovered_actions = None
+    if not args.no_action_discovery and (args.action_site or args.action_spec or args.action_lock or args.action_refresh or args.action_allow or args.action_include_all or action_lock.exists()):
+        try:
+            discovered_actions = prepare_actions(action_lock, args.action_site, args.action_spec,
+                args.site_url or "", args.action_refresh, args.action_include_all, args.action_allow, args.action_max_pages)
+        except (ValueError, OSError) as exc:
+            ap.error(str(exc))
+    try:
+        action_discovery_config(action_pages, args.action_module, args.action_caller_origin, args.action_host_page, bool(discovered_actions))
+    except ValueError as exc:
+        ap.error(str(exc))
     config, missing_includes = resolve_hocon(hocon_path, source)
     cailville_draft = None
     cailville = None
@@ -295,6 +316,7 @@ def main() -> int:
                   action_pages=action_pages, action_modules=args.action_module,
                   action_host_page=args.action_host_page,
                   action_caller_origins=args.action_caller_origin,
+                  discovered_actions=discovered_actions,
                   mock_llm=args.mock_llm)
     bundle_label = "static bundle" if args.static_bundle else "site"
     print(f"✅ Generated {bundle_label} → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))

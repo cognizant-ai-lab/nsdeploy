@@ -129,7 +129,7 @@ export class ActionRegistry {
   }
   async execute(plan, confirm, invocationId) {
     // Confirm the immutable complete payload before any action begins.
-    if (!await confirm(plan.map(({ entry, args }) => ({ action: entry.name, origin: new URL(entry.base).origin, effect: entry.effect, arguments: cloneData(args) })))) return null;
+    if (!await confirm(plan.map(({ entry, args }) => ({ action: entry.name, description: entry.description, origin: new URL(entry.base).origin, effect: entry.effect, arguments: cloneData(args) })))) return null;
     const receipts = [];
     for (let i = 0; i < plan.length; i++) {
       const { entry, args } = plan[i];

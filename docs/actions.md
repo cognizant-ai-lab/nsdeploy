@@ -1,5 +1,30 @@
 # Browser action adapters and CRUSE bindings
 
+## Build-time discovery of public websites
+
+`--action-site URL` optionally discovers stateless native forms and linked JSON
+OpenAPI 3 specifications while building. `--action-spec FILE_OR_URL` supplies an
+explicit specification when one is not linked. Discovery does not execute page
+JavaScript or business operations. It writes a reviewable
+`<site-dir>/discovered-actions.json` lock; select operations with `enabled: true`
+or `--action-allow NAME`. `--action-include-all` selects all supported candidates
+for test sites. Refresh with `--action-refresh --action-site URL` and the original
+`--action-spec`, if used. Otherwise builds reuse the lock without crawling again.
+
+The runtime reads that data on the publishing origin and registers a generic HTTP
+executor. The existing catalog, CRUSE bindings, confirmation and bridge protocol
+apply unchanged. Agent output cannot change the fixed destination or HTTP method.
+External requests omit credentials, reject redirects, validate arguments and
+return bounded response evidence. Source forms are refreshed and their pinned
+definition and HTML validity checked before submitting. Hidden state, credentials,
+uploads and JavaScript handlers require another integration method.
+
+External form pages and APIs must already permit CORS from the agent origin.
+OPTIONS checks in the lock are advisory, never proof of successful execution.
+The agent-site bridge does not bypass another website's origin restrictions.
+See [the README](../README.md#discover-a-public-site-while-bundling) for supported
+schema subsets, build commands, and isolated/interconnected test instructions.
+
 ## Automatic native form discovery
 
 There is no guessed action page. `--site-url` names the agent bundle, which usually
@@ -9,7 +34,7 @@ document discovery when embedding the widget. `--no-action-discovery` cannot be
 combined with either form flag; it does not disable explicitly registered modules.
 The page must already exist on the origin hosting the bundle. Repeat the flag for
 additional pages; paths are origin-relative, even when the bundle is at `/agents/`.
-No adapter or HOCON extension is required. Discovery happens at runtime using the
+No adapter or HOCON extension is required. This discovery happens at runtime using the
 user's session, never at build time, and is read-only. Do not point it at GET URLs
 that perform mutations. The runtime fetches HTML without executing its scripts.
 
@@ -114,17 +139,21 @@ describes capabilities; it must not execute the business operation.
 
 ## Hosting and CORS
 
-The static action bridge must be hosted on the actual application's origin.
-Configured pages, modules and endpoints must be on that origin. No proxy, new
-agent server, HOCON extension or business-endpoint CORS is required. Existing
+The static action bridge runs on the agent bundle's origin. For `--action-page`
+and existing modules, that must also be the actual application's origin.
+Those pages, modules and endpoints must be on that origin. No proxy, new
+agent server, HOCON extension or business-endpoint CORS is required in this case. Existing
 authentication, authorization and CSRF checks still apply.
 
-Only remote network loading uses CORS: publish public `agent-manifest.json`,
+For remote network loading, publish public `agent-manifest.json`,
 `<network>.network.json`, `links.json`, `agent-mcp.json` and the generated
 `.well-known` discovery JSON with `Access-Control-Allow-Origin: *`. Generated
 hosting rules scope that header to these files. Action modules and bridge HTML
 load on their own origin and communicate through validated MessagePorts; no CORS
 on JavaScript is needed. The sandbox worker's CSP is a separate requirement.
+External operations discovered with `--action-site` separately require the
+target service's existing CORS support. The generated hosting rules do not and
+cannot configure that external service.
 
 For subpath deployment, `_headers` includes the `--site-url` prefix and must be
 merged into the host-root configuration. Adjust it when moving the bundle;
