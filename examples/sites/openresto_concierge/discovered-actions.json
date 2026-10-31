@@ -2,7 +2,7 @@
   "version": 1,
   "source": "https://restful-api.dev/",
   "spec": "examples/actions/restful-api.openapi.json",
-  "siteOrigin": "https://agent-b.decisionai.ml",
+  "siteOrigin": "http://cors.decisionai.ml",
   "visited": [
     "https://restful-api.dev/"
   ],

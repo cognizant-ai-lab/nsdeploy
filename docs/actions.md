@@ -22,6 +22,9 @@ uploads and JavaScript handlers require another integration method.
 External form pages and APIs must already permit CORS from the agent origin.
 OPTIONS checks in the lock are advisory, never proof of successful execution.
 The agent-site bridge does not bypass another website's origin restrictions.
+The action runtime includes request-ID and SHA-256 fallbacks for plain-HTTP static
+demos where `crypto.randomUUID()` and `crypto.subtle` are unavailable. HTTPS is
+still required to protect a browser-local BYOK key and the JavaScript receiving it.
 See [the README](../README.md#discover-a-public-site-while-bundling) for supported
 schema subsets, build commands, and isolated/interconnected test instructions.
 
