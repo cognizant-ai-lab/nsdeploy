@@ -1,5 +1,6 @@
 // Static, publisher-approved HTTP descriptions. Never evaluate website/model code.
 import { cloneData, validateData } from "./actions.js";
+import { sha256Hex } from "./web-crypto.js";
 
 function url(value) {
   const u = new URL(value);
@@ -34,8 +35,7 @@ async function formFingerprint(form) {
   const contract = { attributes: attributes(form), controls: [...form.querySelectorAll("input,select,textarea,button,option")].map(n => ({
     tag: n.tagName.toLowerCase(), attributes: attributes(n), ...(n.tagName === "OPTION" ? { text: n.textContent } : {}),
   })) };
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(canonical(contract))));
-  return [...new Uint8Array(hash)].map(n => n.toString(16).padStart(2, "0")).join("");
+  return sha256Hex(JSON.stringify(canonical(contract)));
 }
 async function formRequest(request, args, signal) {
   const response = await fetch(url(request.page), options(signal));

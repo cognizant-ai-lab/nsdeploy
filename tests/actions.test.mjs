@@ -7,10 +7,20 @@ import { sameOriginAsset } from "../nsdeploy/runtime/action-transport.js";
 import { AgentNetwork } from "../nsdeploy/runtime/kernel.js";
 import { runAgent } from "../nsdeploy/runtime/runner.js";
 import { TraceBus } from "../nsdeploy/runtime/trace.js";
+import { randomUuid, sha256Hex } from "../nsdeploy/runtime/web-crypto.js";
 
 const scope = { base: "https://local.test", network: "local" };
 const schema = { type: "object", properties: { count: { type: "integer", minimum: 1, maximum: 5 } }, required: ["count"] };
 const definition = execute => ({ name: "save", description: "Save count", inputSchema: schema, execute });
+
+test("HTTP-compatible UUID and SHA-256 fallbacks match browser primitives", async () => {
+  const noCrypto = {};
+  const uuid = randomUuid(noCrypto);
+  assert.match(uuid, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.notEqual(uuid, randomUuid(noCrypto));
+  assert.equal(await sha256Hex("abc", noCrypto), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  assert.equal(await sha256Hex("🍕 café", noCrypto), await sha256Hex("🍕 café"));
+});
 function fixture(execute = async a => a) {
   const registry = new ActionRegistry();
   const ref = registry.register(scope, definition(execute));

@@ -17,6 +17,7 @@ import { createTurnEventStream } from "./execution-stream.js";
 import { TurnControl } from "./turn-control.js";
 import { ActionRegistry, actionBindings, cloneData } from "./actions.js";
 import { loadActionModule, registerRemoteActions } from "./action-transport.js";
+import { randomUuid } from "./web-crypto.js";
 
 function normOrigin(url) {
   try { return new URL(url).origin; } catch { return String(url || ""); }
@@ -448,7 +449,7 @@ export class Engine {
     const key = `${turnId}:${componentId}`;
     if (this.actionSubmissions.has(key)) return this.actionSubmissions.get(key);
     const plan = this.actions.prepare(component, values);
-    const invocationId = globalThis.crypto.randomUUID();
+    const invocationId = randomUuid();
     const promise = this.actions.execute(plan, this.onActionConfirm, invocationId);
     this.actionSubmissions.set(key, promise);
     try {

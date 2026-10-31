@@ -64,7 +64,14 @@ try {
   }
   assert.equal(records.length, 0, "Discovery must not execute any business operation");
   browser = await chromium.launch({ headless: true, ...(process.env.NSDEPLOY_CHROME ? { executablePath: process.env.NSDEPLOY_CHROME } : {}) });
-  const context = await browser.newContext(), page = await context.newPage();
+  const context = await browser.newContext();
+  // Plain HTTP lacks randomUUID/subtle in browsers. Keep getRandomValues, which
+  // remains available, and exercise both runtime fallbacks end to end.
+  await context.addInitScript(() => {
+    try { Object.defineProperty(Crypto.prototype, "randomUUID", { value: undefined, configurable: true }); } catch {}
+    try { Object.defineProperty(Crypto.prototype, "subtle", { get: () => undefined, configurable: true }); } catch {}
+  });
+  const page = await context.newPage();
   await page.goto(remote);
   const isolated = await page.evaluate(async () => {
     const { ActionRegistry } = await import("/runtime/actions.js");
