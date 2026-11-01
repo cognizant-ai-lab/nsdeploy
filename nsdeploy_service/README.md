@@ -11,9 +11,15 @@ a live site URL.**
 
 ## Install
 
-This folder is **self-contained and portable**. It imports nothing from nsdeploy and
-needs no patches to it — it drives nsdeploy as a CLI (`python -m nsdeploy`). To
+This folder is **self-contained and portable**. It needs no patches to nsdeploy. To
 upgrade nsdeploy: replace everything else, drop this folder back in.
+
+Deploying drives nsdeploy as a CLI (`python -m nsdeploy`), because a deployed site is
+a process that has to outlive the request. Two modules import nsdeploy in process
+instead, and say why in their own header: `themespec.py`, which restyles a built
+bundle without a rebuild, and `bundler.py`, which builds a static bundle — a build
+product with nothing to supervise. Both import at module level, so an upstream rename
+is an ImportError at start-up rather than a failure during a request.
 
 ```
 <nsdeploy checkout>/
@@ -187,6 +193,8 @@ before it can serve. Expect **~20s warm**, considerably longer on a cold cache.
 | `POST` | `/deployments/{id}/publish` | put a tested network on the map; `400` unless it is `ready` |
 | `POST` | `/deployments/{id}/unpublish` | take it off the map; the deployment keeps running |
 | `DELETE` | `/deployments/{id}?purge=false` | kill the process tree, free the port; `purge=true` also drops the record, and is refused while the deployment is live |
+| `POST` | `/bundles` | multipart upload (`file`, plus optional `name`, `site_url`, `upstream`, `theme`, `theme_model`, `theme_refresh`, `theme_prompt`, `cruse`) → `200 application/gzip`. Builds a static bundle and returns it in the same request; nothing is kept |
+| `POST` | `/bundles/raw?name=…` | same, with the HOCON as the raw request body |
 | `GET` | `/health` | capacity, environment, warnings, console `ui_version` — unauthenticated for probes |
 
 Statuses: `queued` → `building` → `ready`, or `failed` / `stopped`.
@@ -330,7 +338,9 @@ everything (see [config.py](nsdeploy_service/config.py)).
 | `RELATIONS_MAX_PER_NETWORK` | `4` | most inferred relations suggested per network |
 | `RELATIONS_LLM` | `off` | let `GET /relations?strategy=llm` ask a model; needs `OPENAI_API_KEY` |
 | `RELATIONS_MODEL` | `gpt-4o` | model used when `RELATIONS_LLM` is on |
+| `MAX_CONCURRENT_BUNDLE_BUILDS` | `4` | bounds `POST /bundles`, separately from deployments so a bundle never queues behind a cold build |
 | `API_TOKEN` | *(empty)* | when set, every route except `/health` needs `Authorization: Bearer …` |
+| `CORS_ORIGINS` | *(empty)* | comma-separated origins allowed to call this API from a browser on another host, e.g. `https://app.example.com,http://127.0.0.1:5173`. Empty sends no CORS headers at all. Each entry is `scheme://host[:port]` with no path; `*` allows any origin and is only safe with `API_TOKEN` set |
 | `ENV_FILE` | `<repo root>/.env` | where credentials are read from and `POST /settings` writes; put it on a volume in a container, or saved settings are lost on restart |
 
 **Deployments are long-lived and records are persisted.** Organizations, deployment

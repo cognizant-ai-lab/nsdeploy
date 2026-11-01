@@ -34,11 +34,15 @@ from fastapi.staticfiles import StaticFiles
 
 from nsdeploy_service import PRODUCT_NAME, __version__
 from nsdeploy_service import envfile, themespec
+from nsdeploy_service.bundle_error import BundleError
+from nsdeploy_service.bundle_result import BundleResult
+from nsdeploy_service.bundler import Bundler
 from nsdeploy_service.config import Settings
 from nsdeploy_service.models import (
     ORG_NAME_MAX,
     ORG_NAME_PATTERN,
     AgentGraphView,
+    BundleOptions,
     DeploymentList,
     DeploymentStatus,
     DeploymentView,
@@ -255,6 +259,44 @@ def _tokens(spec) -> ThemeTokens:
     )
 
 
+# A bundle build reports its caveats in a response header, because the body of that
+# response is the bundle itself. No ceiling on a header is documented, but every
+# proxy enforces one — commonly 8 KB for the whole block — so the list is trimmed
+# rather than risking a 431 on a build that did produce a bundle. json.dumps escapes
+# non-ASCII, which keeps the value inside what a header is allowed to carry.
+MAX_BUNDLE_WARNING_HEADER_CHARS = 2000
+
+
+def _bundle_warning_header(warnings: List[str]) -> str:
+    """The warnings as a JSON header value, trimmed to what a proxy will carry."""
+    shown: List[str] = list(warnings)
+    listed: List[str] = list(shown)
+    encoded: str = json.dumps(listed)
+    dropped: int = 0
+    # Drop the last line and say how many are missing, until the value fits.
+    while shown and len(encoded) > MAX_BUNDLE_WARNING_HEADER_CHARS:
+        shown.pop()
+        dropped = len(warnings) - len(shown)
+        listed = list(shown)
+        listed.append(f"...and {dropped} more")
+        encoded = json.dumps(listed)
+    return encoded
+
+
+def _bundle_headers(result: BundleResult) -> dict:
+    """What a bundle build produced, for a response whose body is the archive."""
+    headers = {
+        "Content-Disposition": f'attachment; filename="{result.name}.tar.gz"',
+        "X-Bundle-Name": result.name,
+        "X-Bundle-Files": str(result.files),
+        "X-Bundle-Unpacked-Bytes": str(result.unpacked_bytes),
+        "X-Bundle-Sha256": result.sha256,
+    }
+    if result.warnings:
+        headers["X-Bundle-Warnings"] = _bundle_warning_header(result.warnings)
+    return headers
+
+
 def _suggested_edge(relation: SuggestedRelation) -> SuggestedEdge:
     return SuggestedEdge(
         source=relation.source, target=relation.target, kind=relation.kind,
@@ -321,6 +363,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # Built inside the loop so the build semaphore binds to the right one.
         app.state.settings = settings
         app.state.supervisor = Supervisor(settings)
+        # Same reason as the Supervisor: its semaphore binds to this loop.
+        app.state.bundler = Bundler(settings)
         if app.state.supervisor.orphaned:
             print(f"reconciled {len(app.state.supervisor.orphaned)} deployment record(s) "
                   f"left live by a previous run", file=sys.stderr)
@@ -351,6 +395,40 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         lifespan=lifespan,
     )
 
+    # --- cross-origin access ----------------------------------------------
+    # Installed only when CORS_ORIGINS names something. With it empty the middleware
+    # is not added at all, so the service answers byte for byte as it did before:
+    # no Vary, no Access-Control-* on any response.
+    #
+    # allow_credentials stays False. Every route is gated by a bearer header, never
+    # by a cookie, so there is nothing a browser would attach on its own — and
+    # allowing credentials would forbid "*" outright and turn a listed origin into a
+    # standing invitation to act as whoever is signed in.
+    #
+    # The exposed list is what a cross-origin caller actually has to read. A browser
+    # hides every other response header, so a bundle fetched from another origin
+    # would otherwise arrive with its name, digest and warnings reading as null.
+    if settings.cors_origins:
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_allowed_origins(),
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type"],
+            expose_headers=[
+                "Location",
+                "Content-Disposition",
+                "X-Bundle-Name",
+                "X-Bundle-Files",
+                "X-Bundle-Unpacked-Bytes",
+                "X-Bundle-Sha256",
+                "X-Bundle-Warnings",
+            ],
+            max_age=600,
+        )
+
     def require_token(request: Request) -> None:
         """Bearer-token gate. Disabled when no token is configured (loopback default)."""
         if not settings.api_token:
@@ -367,6 +445,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     def supervisor_of(request: Request) -> Supervisor:
         return request.app.state.supervisor
 
+    def bundler_of(request: Request) -> Bundler:
+        return request.app.state.bundler
+
     def find_row(request: Request, deployment_id: str) -> dict:
         row = supervisor_of(request).store.get_deployment(deployment_id)
         if row is None:
@@ -381,6 +462,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.exception_handler(DeploymentError)
     async def _deployment_error(_: Request, exc: DeploymentError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(BundleError)
+    async def _bundle_error(_: Request, exc: BundleError) -> JSONResponse:
+        # Same reading as DeploymentError: a request the caller can correct.
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     @app.exception_handler(StoreError)
@@ -909,6 +995,72 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             await supervisor.forget(deployment_id)
         return view
 
+    # --- static bundles --------------------------------------------------
+    # A separate resource from a deployment, because a static bundle is a build
+    # product and not a process: it has no port, no lifecycle, no place on the map
+    # and no record. It is built, handed over and forgotten, so everything here is
+    # answered on the open connection and nothing reaches the store.
+    BUNDLE_MEDIA_TYPE = "application/gzip"
+    BUNDLE_RESPONSES = {
+        200: {"content": {BUNDLE_MEDIA_TYPE: {"schema": {"type": "string",
+                                                         "format": "binary"}}},
+              "description": "the bundle, as a gzipped tar with the files at its root"},
+    }
+
+    @app.post("/bundles", dependencies=AUTH, response_class=Response,
+              responses=BUNDLE_RESPONSES,
+              summary="Build a HOCON into a static bundle and return it (multipart)")
+    async def build_bundle(
+        request: Request,
+        file: Annotated[UploadFile, File(description="the agent-network .hocon")],
+        name: Annotated[Optional[str], Form()] = None,
+        site_url: Annotated[Optional[str], Form(
+            description="where the client will host this bundle; baked into the "
+                        "manifest and cannot be changed afterwards")] = None,
+        upstream: Annotated[Optional[str], Form()] = None,
+        theme: Annotated[bool, Form()] = False,
+        theme_model: Annotated[Optional[str], Form()] = None,
+        theme_refresh: Annotated[bool, Form()] = False,
+        theme_prompt: Annotated[Optional[str], Form(max_length=4000)] = None,
+        cruse: Annotated[Optional[bool], Form()] = None,
+    ) -> Response:
+        # Same naming rule as POST /deployments: an explicit name is validated
+        # verbatim, and only an upload filename is basenamed.
+        candidate = name.strip() if name and name.strip() else PurePosixPath(
+            (file.filename or "network").replace("\\", "/")).name
+        options = BundleOptions(
+            name=candidate, site_url=site_url, upstream=upstream, theme=theme,
+            theme_model=theme_model, theme_refresh=theme_refresh,
+            theme_prompt=theme_prompt, cruse=cruse,
+        )
+        result = await bundler_of(request).build(await file.read(), options)
+        return Response(content=result.archive, media_type=BUNDLE_MEDIA_TYPE,
+                        headers=_bundle_headers(result))
+
+    @app.post("/bundles/raw", dependencies=AUTH, response_class=Response,
+              responses=BUNDLE_RESPONSES,
+              summary="Build a HOCON posted as a raw request body into a static bundle")
+    async def build_bundle_raw(
+        request: Request,
+        name: Annotated[str, Query(description="network name (becomes the HOCON "
+                                               "filename stem and names the archive)")],
+        site_url: Annotated[Optional[str], Query()] = None,
+        upstream: Annotated[Optional[str], Query()] = None,
+        theme: Annotated[bool, Query()] = False,
+        theme_model: Annotated[Optional[str], Query()] = None,
+        theme_refresh: Annotated[bool, Query()] = False,
+        theme_prompt: Annotated[Optional[str], Query(max_length=4000)] = None,
+        cruse: Annotated[Optional[bool], Query()] = None,
+    ) -> Response:
+        options = BundleOptions(
+            name=name, site_url=site_url, upstream=upstream, theme=theme,
+            theme_model=theme_model, theme_refresh=theme_refresh,
+            theme_prompt=theme_prompt, cruse=cruse,
+        )
+        result = await bundler_of(request).build(await request.body(), options)
+        return Response(content=result.archive, media_type=BUNDLE_MEDIA_TYPE,
+                        headers=_bundle_headers(result))
+
     # --- ops -------------------------------------------------------------
     @app.get("/health", response_model=HealthView, summary="Service health and capacity")
     async def health(request: Request) -> HealthView:
@@ -918,6 +1070,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             warnings.append(
                 f"the API is bound to {settings.host} with no API_TOKEN set; an uploaded HOCON "
                 f"can execute arbitrary Python on this host (see nsdeploy_service/README.md)"
+            )
+        # "*" is not a hole while a token is set — an unauthenticated caller still
+        # gets a 401. With no token it is, and in a way the check above does not
+        # cover: any page a user visits can drive this service from their browser,
+        # loopback included, because the browser reaches 127.0.0.1 for them.
+        if "*" in settings.cors_origins and not settings.api_token:
+            warnings.append(
+                "CORS_ORIGINS is '*' with no API_TOKEN set; any web page a user "
+                "visits can drive this service from their browser, including over "
+                "loopback. Set API_TOKEN, or name the origins that may call this."
             )
         # A deployed site is handed out as <scheme>://<host>:<port> unless a subdomain
         # template is set. Over https that is almost always unreachable: the platforms
@@ -1079,10 +1241,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return _settings_view()
 
     # --- UI ---------------------------------------------------------------
-    # Served same-origin: no CORS to configure, no second deployment unit, no token
+    # Served same-origin: no CORS needed for it, no second deployment unit, no token
     # to plumb across origins. It lives in its own top-level ui/ folder and talks to
     # this service only through the documented JSON API, so lifting it to a CDN or a
-    # separate origin later costs a CORS policy and a base URL — nothing structural.
+    # separate origin costs its origin in CORS_ORIGINS and a base URL in client.js —
+    # nothing structural.
     #
     # html=True makes /app/ serve index.html, which keeps the page's relative asset
     # paths (assets/js/main.js) resolving under /app/.
