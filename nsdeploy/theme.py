@@ -26,7 +26,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-PROMPT_VERSION = "12"
+PROMPT_VERSION = "13"
 CACHE_DIR = Path.home() / ".cache" / "nsdeploy" / "themes"
 DEFAULT_THEME_MODEL = "gpt-5.6"
 
@@ -172,9 +172,11 @@ def _valid_composed_layout(body: str) -> bool:
     if 'data-ns-layout="composed"' not in body:
         return True
     required = all(body.count(f'data-ns-slot="{slot}"') == 1 for slot in ("header", "chat", "agents"))
-    # Prompt v10 briefly emitted a fourth activity slot. Accept at most one so
-    # those generated themes remain valid; the runtime now hides the retired slot.
-    return required and body.count('data-ns-slot="activity"') <= 1
+    # Settings remains optional here so prompt-v12 cached/editable themes stay
+    # valid; prompt v13 requires exactly one. Prompt v10 briefly emitted activity.
+    return (required
+            and body.count('data-ns-slot="settings"') <= 1
+            and body.count('data-ns-slot="activity"') <= 1)
 
 
 # A validated color: #hex, rgb()/hsl(), or a bare CSS keyword. Nothing else.
@@ -330,7 +332,8 @@ _SYSTEM_PROMPT = (
     ".ns-msgs, .ns-msg, .ns-msg.user, .ns-msg.user.ns-steering-message, .ns-inputbar, "
     ".ns-inputbar[data-turn-active='true'], .ns-input, .ns-send, .ns-send-steering, .ns-agents, .ns-turn-status, "
     ".ns-turn-status-spinner, .ns-turn-status-text, .ns-graph, .ns-log, "
-    ".ns-widget, .ns-w-btn, .ns-presentation, .ns-rich. CRUSE responses may contain "
+    ".ns-settings, .ns-settings summary, .ns-settings-body, .ns-widget, .ns-w-btn, "
+    ".ns-presentation, .ns-rich. CRUSE responses may contain "
     "formatted reports, comparison tables, charts, visual HTML or optional forms; allow "
     "these varied response surfaces to read clearly in the assistant area. "
     "Give surfaces your borders/shadows/fills, bubbles their shape, "
@@ -344,19 +347,27 @@ _SYSTEM_PROMPT = (
     "gradients/shapes/shadows/emoji; NO @import, NO "
     "url() except data: or https: images.\n"
     "===BODY===\n"
-    "the HTML body contents. Include exactly one composed runtime root with these THREE "
+    "the HTML body contents. Include exactly one composed runtime root with these FOUR "
     "empty mount slots, each exactly once:\n"
     "<div id=\"app\" data-ns-layout=\"composed\">\n"
     "  <div data-ns-slot=\"header\"></div>\n"
     "  <main data-ns-slot=\"chat\"></main>\n"
     "  <aside data-ns-slot=\"agents\"></aside>\n"
+    "  <div data-ns-slot=\"settings\"></div>\n"
     "</div>\n"
     "This is a placement contract, NOT a required shape: add your own wrappers inside "
-    "#app, nest and position the three slots anywhere, and choose the relationship that "
+    "#app, position the four slots anywhere, and choose the relationship that "
     "best fits the domain. The chat is the primary work surface and must remain comfortably "
     "usable (roughly 360px minimum width and 480px minimum height). The agents slot may be "
     "an inline rail, a panel below the chat, a floating overlay, or a native CSS-styled "
-    "<details><summary>Agents working</summary>...slot...</details> pull-out. The runtime "
+    "<details><summary>Agents working</summary>...slot...</details> pull-out. The settings "
+    "slot contains the BYOK/model/router controls. YOU choose where and how it appears: "
+    "a quiet footer panel, a utility rail, or preferably a native disclosure such as "
+    "<details class='model-settings'><summary aria-label='Model settings'>⚙</summary>"
+    "<div data-ns-slot='settings'></div></details>. Put the empty settings slot inside "
+    "that wrapper; do not create settings fields yourself. Make the control discoverable "
+    "but secondary to chat. The runtime automatically opens it when an API key is required. "
+    "The runtime "
     "shows one transient .ns-turn-status line inside the chat while agents work, then removes "
     "it when the final answer appears. Style that line, its .ns-turn-status-spinner, and its "
     ".ns-turn-status-text as part of the conversation rather than as a separate activity log. "
@@ -370,7 +381,8 @@ _SYSTEM_PROMPT = (
     "screens, stack the surfaces or collapse the agents slot so the page never scrolls "
     "sideways. Do not force overflow:hidden on html, body, #app, the chat slot, or the "
     "agents slot; page scrolling and CRUSE forms must remain reachable. Keep every slot "
-    "EMPTY and do not build chat messages, inputs, agent cards, settings, or developer "
+    "EMPTY and do not nest one slot inside another. Do not build chat messages, inputs, "
+    "agent cards, settings fields, or developer "
     "tools yourself — the runtime inserts them. Use your own class names for wrappers; "
     "names beginning with ns- belong to the runtime. Plain presentational HTML only: "
     "NO <script>, NO on* handlers, NO <iframe>/<form>/<svg>.\n\n"
@@ -390,7 +402,7 @@ _SYSTEM_PROMPT = (
     "comfortable to read.\n"
     "Rules: self-contained (no external fonts/scripts/images); the body MUST contain "
     "exactly one #app with data-ns-layout=\"composed\" and exactly one empty header, chat, "
-    "and agents slot inside it."
+    "agents, and settings slot inside it."
 )
 
 
@@ -519,6 +531,14 @@ def propose_theme(plan, *, model: str, api_key: str, upstream: str, refresh: boo
         spec = ThemeSpec.coerce(
             _parse_sections(_chat(upstream, api_key, model, _SYSTEM_PROMPT, user_prompt))
         )
+        # ThemeSpec also loads older editable prompt-v12 layouts, where settings
+        # lived under chat. Fresh prompt-v13 output must honor the new placement
+        # contract so a generator omission cannot silently remove that choice.
+        if spec.body and spec.body.count('data-ns-slot="settings"') != 1:
+            print("   …theme: generated layout omitted the settings mount; using the default layout",
+                  flush=True)
+            spec.body = ""
+            spec.style = ""
     except Exception as exc:
         print(f"   …theme: LLM step failed ({str(exc)[:80]}); using the default look", flush=True)
         return ThemeSpec()

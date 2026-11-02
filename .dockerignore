@@ -16,10 +16,15 @@ tests
 nsdeploy_service/tests
 nsdeploy_service/nsdeploy_service.egg-info
 *.egg-info
-# .env is deliberately NOT excluded. This image is private and has no other
-# credential channel, so the file has to ship; envfile.py reads either the root copy
-# or nsdeploy_service/.env. The cost is that the key lives in an image layer and
-# stays recoverable from layer history even if a later layer removes it — so if this
-# image ever reaches a shared registry, rotate the key and move to container env
-# vars or NSDEPLOY_SERVICE_ENV_FILE on a mounted volume.
+build/
+dist/
+venv/
+.venv/
+**/node_modules/
+# No credentials in the build context. The Dockerfile does not copy .env any more, so
+# no key stays in an image layer. The service reads its settings from container env
+# vars, or from a file named by NSDEPLOY_SERVICE_ENV_FILE on a mounted volume.
+**/.env
+**/.env.*
 .DS_Store
+.idea/

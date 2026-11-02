@@ -1,0 +1,55 @@
+{
+  "brand": "Card Decision Desk",
+  "icon": "\u25a6",
+  "tagline": "Official terms. Clear comparisons. Confident choices.",
+  "hero": "Compare Bank of America consumer cards against the spending, fees, rewards, and financing terms that matter to you.",
+  "font": "Arial, Helvetica, sans-serif",
+  "radius": 14,
+  "colors": {
+    "primary": "#153B61",
+    "accent": "#B83C4B",
+    "bg": "#F3F1EC",
+    "bg_tint": "#E8EDF1",
+    "fg": "#172331",
+    "muted": "#5E6873",
+    "border": "#CBD2D8",
+    "msgbg": "#FCFBF8",
+    "panelbg": "#FFFFFF"
+  },
+  "welcome": {
+    "widget": {
+      "title": "Build your card brief",
+      "icon": "\ud83d\udcdd",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "goal": {
+            "type": "string",
+            "title": "Primary goal",
+            "description": "Examples: cash back, travel rewards, balance transfer, lower interest, or application help"
+          },
+          "spending": {
+            "type": "string",
+            "title": "Typical spending",
+            "description": "Share approximate monthly spending and your largest categories"
+          },
+          "preferences": {
+            "type": "string",
+            "title": "Fees and features",
+            "description": "Note annual-fee limits, foreign travel, intro APR needs, or other must-haves"
+          },
+          "rewards_status": {
+            "type": "string",
+            "title": "Preferred Rewards status",
+            "description": "If applicable, share your Bank of America Preferred Rewards tier"
+          }
+        },
+        "required": [
+          "goal"
+        ]
+      },
+      "submitLabel": "Start official comparison"
+    },
+    "message": "Use this optional brief for a tailored comparison, or simply tell us what you need in chat. You can add or correct details at any time."
+  }
+}

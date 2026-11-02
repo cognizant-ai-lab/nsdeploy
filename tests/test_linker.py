@@ -304,15 +304,9 @@ class LinkerTests(unittest.TestCase):
         self.assertTrue((out / "_headers").is_file())
         self.assertTrue((out / ".htaccess").is_file())
         self.assertTrue((out / "STATIC_HOSTING.md").is_file())
-        self.assertTrue((out / "portable_private_steward.hocon").is_file())
-        self.assertIn(
-            '"class": "nsdeploy.steward.PublicAgentNetworkGateway"',
-            (out / "portable_private_steward.hocon").read_text(),
-        )
-        self.assertIn(
-            "private steward can fetch and run",
-            (out / "STATIC_HOSTING.md").read_text(),
-        )
+        self.assertFalse((out / "portable_private_steward.hocon").exists())
+        self.assertNotIn("private steward", (out / "STATIC_HOSTING.md").read_text())
+        self.assertFalse((out.parent / "manifest.hocon").exists())
         index = (out / "index.html").read_text()
         self.assertIn('from "./runtime/index.js"', index)
         self.assertIn('href="./theme.css"', index)
@@ -323,6 +317,33 @@ class LinkerTests(unittest.TestCase):
         )
         self.assertEqual(mock_manifest["llm_router"]["base_url"], "browser://mock")
         self.assertTrue(mock_manifest["deployment"]["browser_mock"])
+
+    def test_static_bundle_removes_stale_private_stewards(self):
+        plan = DeploymentPlan(
+            network_name="portable",
+            config={"tools": [{"name": "front", "instructions": "Help."}]},
+            front_man="front",
+        )
+        out = self.root / "portable"
+        out.mkdir()
+        (out / "portable_private_steward.hocon").write_text("stale")
+        (out / "private-steward.hocon").write_text("legacy")
+        (out.parent / "manifest.hocon").write_text(
+            '{\n  "portable/portable_private_steward.hocon": true,\n}\n'
+        )
+        runtime = self.root / "runtime-source"
+        runtime.mkdir()
+        (runtime / "index.js").write_text("export const boot = () => {};\n")
+        (runtime / "sandbox-worker.js").write_text("// worker\n")
+
+        generate_site(
+            plan, out, "browser://mock", "https://api.example/v1", "",
+            cruse=False, static_bundle=True, runtime_dir=runtime,
+        )
+
+        self.assertFalse((out / "portable_private_steward.hocon").exists())
+        self.assertFalse((out / "private-steward.hocon").exists())
+        self.assertNotIn("portable_private_steward", (out.parent / "manifest.hocon").read_text())
 
     def test_private_steward_manifest_collects_multiple_bundles(self):
         root = self.root / "cailville"

@@ -54,19 +54,31 @@ REPORT_MARKERS = [
 # restyles a built bundle without a rebuild, and bundler.py builds a static bundle,
 # which is a build product with no process to supervise. Each import is at module
 # level, so a rename upstream stops the service at start-up rather than mid-request.
+# The last two entries are keyword arguments rather than imports: both are passed by
+# name, so a rename upstream is a TypeError on the first build, not at start-up.
 IN_PROCESS = [
     ("nsdeploy/generate.py", "def generate_site", "bundler generates the static bundle"),
     ("nsdeploy/generate.py", "def _theme_css", "themespec writes a build's own stylesheet"),
     ("nsdeploy/resolve.py", "def resolve_hocon", "bundler resolves the uploaded HOCON"),
     ("nsdeploy/resolve.py", "def build_plan", "bundler classifies the resolved config"),
-    ("nsdeploy/resolve.py", "include_python_tools",
-     "the switch that keeps tool autoinstall out of the API process"),
-    ("nsdeploy/resolve.py", "static_bundle", "generate_site's static-bundle mode"),
-    ("nsdeploy/theme.py", "def propose_theme", "bundler asks for an opt-in theme"),
-    ("nsdeploy/theme.py", "_COLOR_RE", "themespec accepts the colours a build accepts"),
-    ("nsdeploy/site_source.py", "def load_site_theme", "themespec reads the editable source"),
+    ("nsdeploy/resolve.py", "class DeploymentPlan", "the plan bundler reads front_man from"),
+    ("nsdeploy/studio.py", "class StudioSource", "the source type bundler selects"),
     ("nsdeploy/studio.py", "class GithubStudio", "bundler resolves includes from the repo"),
     ("nsdeploy/studio.py", "class LocalStudio", "bundler resolves includes from a checkout"),
+    ("nsdeploy/studio.py", "DEFAULT_REPO", "the repo a GithubStudio defaults to"),
+    ("nsdeploy/studio.py", "DEFAULT_REF", "the ref a GithubStudio defaults to"),
+    ("nsdeploy/theme.py", "def propose_theme", "bundler asks for an opt-in theme"),
+    ("nsdeploy/theme.py", "DEFAULT_THEME_MODEL", "the model propose_theme defaults to"),
+    ("nsdeploy/theme.py", "class ThemeSpec", "the spec both modules build and merge"),
+    ("nsdeploy/theme.py", "DEFAULT_COLORS", "themespec starts from the default look"),
+    ("nsdeploy/theme.py", "DEFAULT_FONT", "themespec starts from the default look"),
+    ("nsdeploy/theme.py", "_COLOR_RE", "themespec accepts the colours a build accepts"),
+    ("nsdeploy/site_source.py", "def load_site_theme", "themespec reads the editable source"),
+    ("nsdeploy/site_source.py", "def site_source_exists",
+     "themespec tests for an editable source"),
+    ("nsdeploy/resolve.py", "include_python_tools",
+     "the switch that keeps tool autoinstall out of the API process"),
+    ("nsdeploy/generate.py", "static_bundle", "generate_site's static-bundle mode"),
 ]
 
 # --- generated bundle contract ----------------------------------------------

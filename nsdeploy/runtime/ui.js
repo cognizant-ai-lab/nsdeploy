@@ -216,7 +216,36 @@ export function mountApp(root, { engine, trace, manifest }) {
   const net = engine.top?.network;
   const title = manifest?.networks?.[0]?.description || net?.name || "Agent network";
   const needsByok = !engine.mockLLM && (!engine.byokKey || engine.byokKey === "demo");
-  const setupMessage = "This site needs your LLM API key before it can answer. Open BYOK / router settings below, enter your key, then click Apply, save & reload. Your key stays in this browser and is sent only to the configured provider.";
+  const setupMessage = "This site needs your LLM API key before it can answer. Open BYOK / router settings, enter your key, then click Apply, save & reload. Your key stays in this browser and is sent only to the configured provider.";
+  const chatSlot = root.querySelector('[data-ns-slot="chat"]');
+  const agentsSlot = root.querySelector('[data-ns-slot="agents"]');
+  const activitySlot = root.querySelector('[data-ns-slot="activity"]');
+  const composed = Boolean(chatSlot && agentsSlot);
+  // Prompt v13 gives themes a dedicated settings mount. Older composed themes and
+  // the fixed shell have no such slot, so their settings stay beneath the chat.
+  const settingsSlot = composed ? root.querySelector('[data-ns-slot="settings"]') : null;
+  const settingsBodyHtml = `
+    <div class="ns-settings-body">
+      <label>Saved setup <select id="ns-profile"></select></label>
+      <label>Setup name <input id="ns-profile-name" placeholder="Local LLM, OpenAI, Anthropic router"></label>
+      <label>API key <input id="ns-key" type="password" placeholder="sk-… (kept in this browser only — enables a REAL LLM)"></label>
+      <label>Model <input id="ns-model" list="ns-model-options" placeholder="exact ID published by the upstream"></label>
+      <datalist id="ns-model-options"></datalist>
+      <label>Router base URL <input id="ns-router" placeholder="OpenAI-compatible /v1"></label>
+      <div id="ns-router-hint" class="ns-hint"></div>
+      <label class="ns-row-inline"><input type="checkbox" id="ns-lg"> Drive the LLM via LangChain.js</label>
+      <div class="ns-profile-actions">
+        <button id="ns-save-profile" class="ghost">Save setup</button>
+        <button id="ns-delete-profile" class="ghost">Delete setup</button>
+        <button id="ns-apply">Apply, save &amp; reload</button>
+      </div>
+      <div id="ns-profile-hint" class="ns-hint"></div>
+    </div>`;
+  const settingsHtml = `
+    <details class="ns-settings"${needsByok ? " open" : ""}>
+      <summary>⚙ BYOK / router settings</summary>
+      ${settingsBodyHtml}
+    </details>`;
 
   const headerHtml = `
     <div class="ns-header">
@@ -235,25 +264,7 @@ export function mountApp(root, { engine, trace, manifest }) {
       <div class="ns-msgs" id="ns-msgs">
         <div class="ns-msg bot">${escapeHtml(title)}\n\n${escapeHtml(needsByok ? setupMessage : "Ask me anything to see the web of agents in action.")}</div>
       </div>
-      <details class="ns-settings"${needsByok ? " open" : ""}>
-        <summary>⚙ BYOK / router settings</summary>
-        <div class="ns-settings-body">
-          <label>Saved setup <select id="ns-profile"></select></label>
-          <label>Setup name <input id="ns-profile-name" placeholder="Local LLM, OpenAI, Anthropic router"></label>
-          <label>API key <input id="ns-key" type="password" placeholder="sk-… (kept in this browser only — enables a REAL LLM)"></label>
-          <label>Model <input id="ns-model" list="ns-model-options" placeholder="exact ID published by the upstream"></label>
-          <datalist id="ns-model-options"></datalist>
-          <label>Router base URL <input id="ns-router" placeholder="OpenAI-compatible /v1"></label>
-          <div id="ns-router-hint" class="ns-hint"></div>
-          <label class="ns-row-inline"><input type="checkbox" id="ns-lg"> Drive the LLM via LangChain.js</label>
-          <div class="ns-profile-actions">
-            <button id="ns-save-profile" class="ghost">Save setup</button>
-            <button id="ns-delete-profile" class="ghost">Delete setup</button>
-            <button id="ns-apply">Apply, save &amp; reload</button>
-          </div>
-          <div id="ns-profile-hint" class="ns-hint"></div>
-        </div>
-      </details>
+      ${settingsSlot ? "" : settingsHtml}
       <div class="ns-inputbar" data-turn-active="false">
         <input id="ns-input" class="ns-input" placeholder="Type a request…" />
         <button id="ns-send" class="ns-send">Send</button>
@@ -280,10 +291,6 @@ export function mountApp(root, { engine, trace, manifest }) {
     </aside>`;
   const modalHtml = `<div class="ns-modal" id="ns-modal" hidden><div class="ns-modal-card" id="ns-modal-card"></div></div>`;
 
-  const chatSlot = root.querySelector('[data-ns-slot="chat"]');
-  const agentsSlot = root.querySelector('[data-ns-slot="agents"]');
-  const activitySlot = root.querySelector('[data-ns-slot="activity"]');
-  const composed = Boolean(chatSlot && agentsSlot);
   let app;
   if (composed) {
     let headerSlot = root.querySelector('[data-ns-slot="header"]');
@@ -298,6 +305,19 @@ export function mountApp(root, { engine, trace, manifest }) {
     headerSlot.innerHTML = headerHtml;
     chatSlot.innerHTML = chatHtml;
     agentsSlot.innerHTML = agentsHtml + devHtml;
+    if (settingsSlot) {
+      // A theme can wrap the empty slot in native <details>/<summary> to choose
+      // its own gear label and drawer placement. Otherwise the runtime supplies
+      // the accessible default disclosure component inside the chosen slot.
+      const disclosure = settingsSlot.closest("details");
+      if (disclosure && root.contains(disclosure)) {
+        disclosure.classList.add("ns-settings");
+        if (needsByok) disclosure.open = true;
+        settingsSlot.innerHTML = settingsBodyHtml;
+      } else {
+        settingsSlot.innerHTML = settingsHtml;
+      }
+    }
     if (activitySlot) {
       // Theme prompt v10 briefly exposed a separate activity rail. Keep those
       // themes valid, but retire the empty rail now that status lives in chat.
@@ -451,7 +471,7 @@ export function mountApp(root, { engine, trace, manifest }) {
         const receipts = await engine.submitActions(interaction);
         if (!receipts) return false;
         const bubble = addBubble(msgs, "bot", "");
-        bubble.textContent = receipts.map(r => `${r.action}: ${r.status}\n${JSON.stringify(r.result ?? r.error ?? "", null, 2)}`).join("\n\n");
+        bubble.textContent = receipts.map(r => `${r.action}: ${r.result?.businessOutcome === "unverified" ? "response received; business outcome unverified" : r.status}\n${JSON.stringify(r.result ?? r.error ?? "", null, 2)}`).join("\n\n");
         // Receipts are already in history; the next chat turn can interpret them.
         return true;
       } catch (error) { addBubble(msgs, "bot", error.message); return false; }

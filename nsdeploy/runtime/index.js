@@ -18,6 +18,8 @@ import { getSelectedByokProfile, resolveByokRouter } from "./byok.js";
 
 export async function boot(rootSelector = "#app", opts = {}) {
   const root = typeof rootSelector === "string" ? document.querySelector(rootSelector) : rootSelector;
+  if (!root) throw new Error("Agent widget mount not found.");
+  root.setAttribute("data-nsdeploy-ui", "");
   const trace = new TraceBus();
   const params = new URLSearchParams(location.search);
   // BYOK key handling: a real API key must NEVER live in the URL/query string -
@@ -57,7 +59,31 @@ export async function boot(rootSelector = "#app", opts = {}) {
     await engine.enableLangChain();
   }
   mountApp(root, { engine, trace, manifest });
+  {
+    const status = document.createElement("details");
+    status.className = "ns-action-status";
+    status.style.cssText = "flex:none;padding:8px 12px;font-size:12px;max-height:140px;overflow:auto";
+    const summary = document.createElement("summary");
+    const detail = document.createElement("p");
+    const update = () => {
+      const count = engine.actions.catalog({ base: engine.top.base, network: engine.top.network.name }).length;
+      summary.textContent = count ? `${count} website actions connected` : "No website actions connected";
+      detail.textContent = engine.actions.discoveryIssues.map(i => `${i.page}: ${i.reason}`).join(" ") || (count
+        ? "Actions run after you review and confirm them. Server responses appear as receipts."
+        : "This agent can collect information, but no website operations are connected.");
+    };
+    engine.actions.onChange = update;
+    update();
+    status.append(summary, detail); (root.querySelector(".ns-chat") || root).prepend(status);
+  }
   // expose for debugging / e2e tests
   if (typeof window !== "undefined") window.__nsweb = { engine, trace };
-  return { engine, trace, actions: { register: definition => engine.actions.register({ base: engine.top.base, network: engine.top.network.name }, definition) } };
+  return { engine, trace, actions: {
+    register: definition => {
+      const ref = engine.actions.register({ base: engine.top.base, network: engine.top.network.name }, definition);
+      engine.actions.onChange?.();
+      return ref;
+    },
+    refreshHostForms: () => engine.actions.hostForms?.refresh(),
+  } };
 }

@@ -1,0 +1,67 @@
+{
+  "brand": "Crumb & Crown",
+  "icon": "\ud83e\udd50",
+  "tagline": "Custom bakes, calmly ordered.",
+  "hero": "A warm bakery concierge that turns occasions, allergies, budgets, and pickup windows into bakery-ready orders.",
+  "font": "Georgia, 'Times New Roman', Times, serif",
+  "radius": 18,
+  "colors": {
+    "primary": "#7A3E24",
+    "accent": "#D96B45",
+    "bg": "#FFF8ED",
+    "bg_tint": "#F3E3CC",
+    "fg": "#35251B",
+    "muted": "#725B49",
+    "border": "#E6CDB0",
+    "msgbg": "#FFFDF8",
+    "panelbg": "#FFF8EE"
+  },
+  "welcome": {
+    "widget": {
+      "title": "Start your bakery order",
+      "icon": "\ud83e\udd50",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "occasion": {
+            "type": "string",
+            "title": "Occasion",
+            "description": "Birthday, wedding, classroom treat, office breakfast, or another event"
+          },
+          "date_time": {
+            "type": "string",
+            "title": "Needed date and time",
+            "description": "When you need pickup or delivery"
+          },
+          "guest_count": {
+            "type": "string",
+            "title": "Guest count",
+            "description": "How many people you want to serve"
+          },
+          "bakery_items": {
+            "type": "string",
+            "title": "Items in mind",
+            "description": "Cake, cupcakes, pastries, bread, flavors, design ideas, or inspiration"
+          },
+          "dietary_allergens": {
+            "type": "string",
+            "title": "Dietary needs or allergens",
+            "description": "Nut-free, gluten-free, dairy-free, vegan, kosher style, or cross-contact concerns"
+          },
+          "fulfillment": {
+            "type": "string",
+            "title": "Pickup or delivery",
+            "description": "Preferred pickup time or delivery address area"
+          }
+        },
+        "required": [
+          "occasion",
+          "date_time",
+          "guest_count"
+        ]
+      },
+      "submitLabel": "Plan my order"
+    },
+    "message": "Tell me what you are craving and I will shape the order into a bakery-ready plan."
+  }
+}
