@@ -1,20 +1,20 @@
 {
-  "brand": "KitchenAsty Table",
-  "icon": "\ud83c\udf7d\ufe0f",
-  "tagline": "Dinner decisions, served with certainty.",
-  "hero": "Explore the menu, perfect your cart, and approve every detail before KitchenAsty places the order.",
-  "font": "Georgia, 'Times New Roman', serif",
-  "radius": 14,
+  "brand": "Kitchenasty Order Desk",
+  "icon": "\ud83c\udf55",
+  "tagline": "Build it. Review it. Confirm it.",
+  "hero": "Craft every pizza, schedule delivery, and confirm the complete ticket before it reaches the oven.",
+  "font": "'Trebuchet MS', Arial, sans-serif",
+  "radius": 16,
   "colors": {
-    "primary": "#B6402C",
-    "accent": "#E1A22A",
-    "bg": "#F4EEE4",
+    "primary": "#B83A2E",
+    "accent": "#E8A72B",
+    "bg": "#F5F0E7",
     "bg_tint": "#E9DFD0",
-    "fg": "#29231F",
-    "muted": "#6F625B",
-    "border": "#D5C7B6",
-    "msgbg": "#FFFDF8",
-    "panelbg": "#FAF6EE"
+    "fg": "#251D19",
+    "muted": "#6D5B51",
+    "border": "#CDBEAE",
+    "msgbg": "#FFFCF7",
+    "panelbg": "#F8F3EA"
   },
   "welcome": null
 }

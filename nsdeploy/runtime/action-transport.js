@@ -1,5 +1,6 @@
 import { ActionRegistry, cloneData, validateData } from "./actions.js";
 import { registerFormActions, watchHostForms } from "./form-actions.js";
+import { loadDiscoveredActions } from "./discovered-actions.js";
 
 const protocol = "nsdeploy-actions-v1";
 export function sameOriginAsset(base, path) {
@@ -12,6 +13,7 @@ export async function loadActionModule(registry, scope, manifest, { bridge = fal
   if (new URL(scope.base).origin !== location.origin) throw new Error("Executable action adapters must run on their own origin.");
   if (manifest.actions.version !== 1) throw new Error("Unsupported action protocol.");
   const actions = { register: definition => registry.register(scope, definition) };
+  if (manifest.actions.catalog) await loadDiscoveredActions(actions, sameOriginAsset(scope.base, manifest.actions.catalog), manifest.actions.callerOrigins || []);
   for (const path of new Set([manifest.actions.module, ...(manifest.actions.modules || [])].filter(Boolean))) {
     const module = await import(sameOriginAsset(scope.base, path));
     if (typeof module.registerActions !== "function") throw new Error("Action modules must export registerActions.");
@@ -37,7 +39,7 @@ export function reviewActions(items, title = "Review actions") {
     dialog.style.cssText = "max-width:640px;width:85%;max-height:85vh;overflow:auto;border:1px solid #888;border-radius:12px;padding:24px;font:16px system-ui";
     const heading = document.createElement("h2"); heading.textContent = title;
     const details = document.createElement("pre"); details.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere";
-    details.textContent = items.map(i => `${i.action} — ${i.origin} (${i.effect})\n${JSON.stringify(i.arguments, null, 2)}`).join("\n\n");
+    details.textContent = items.map(i => `${i.action} — ${i.origin} (${i.effect})\n${i.description || ""}\n${JSON.stringify(i.arguments, null, 2)}`).join("\n\n");
     const yes = document.createElement("button"); yes.textContent = "Confirm actions";
     const no = document.createElement("button"); no.textContent = "Cancel";
     const finish = value => { dialog.remove(); resolve(value); };
@@ -207,7 +209,7 @@ export async function serveActionBridge() {
         validateData(entry.inputSchema, request.args);
         busy = true;
         try {
-          if (entry.effect !== "read" && !await reviewActions([{ action: entry.name, origin: location.origin, effect: entry.effect, arguments: request.args }], `Request from ${caller}`)) throw new Error("User declined; action not started.");
+          if (entry.effect !== "read" && !await reviewActions([{ action: entry.name, description: entry.description, origin: location.origin, effect: entry.effect, arguments: request.args }], `Request from ${caller}`)) throw new Error("User declined; action not started.");
           seen.add(request.requestId);
           const value = cloneData(await entry.execute(request.args, { requestId: request.requestId, callerOrigin: caller }));
           if (entry.outputSchema) validateData(entry.outputSchema, value, "result");

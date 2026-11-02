@@ -575,7 +575,7 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
                   runtime_dir: Optional[Path] = None,
                   actions_file: Optional[Path] = None,
                   action_pages=None, action_modules=None, action_caller_origins=None,
-                  action_host_page=False,
+                  action_host_page=False, discovered_actions=None,
                   mock_llm: bool = False) -> Dict[str, Any]:
     """Build the disposable static output from network data and editable site source."""
     theme = theme or ThemeSpec()
@@ -595,21 +595,25 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     # schemas through the bridge, never by importing foreign executable code.
     action_source = actions_file or (site_source_dir / "actions.js" if site_source_dir else None)
     from nsdeploy.form_actions import action_discovery_config
-    discovery = action_discovery_config(action_pages, action_modules, action_caller_origins, action_host_page)
+    discovery = action_discovery_config(action_pages, action_modules, action_caller_origins, action_host_page, bool(discovered_actions))
     if discovery:
         manifest["actions"] = {"version": 1, "bridge": "./action-bridge.html", **discovery}
+    if discovered_actions:
+        manifest["actions"]["catalog"] = "./discovered-actions.json"
+        (out_dir / "discovered-actions.json").write_text(json.dumps(discovered_actions, indent=2), encoding="utf-8")
     if action_source and action_source.is_file():
         manifest.setdefault("actions", {"version": 1, "bridge": "./action-bridge.html"})["module"] = "./actions.js"
         if action_source.resolve() != (out_dir / "actions.js").resolve():
             shutil.copyfile(action_source, out_dir / "actions.js")
     if "actions" in manifest:
         print("   browser actions: " + ("adapter; " if action_source and action_source.is_file() else "")
+              + (f"{sum(a.get('enabled') is True for a in discovered_actions['actions'])} discovered operation(s); " if discovered_actions else "")
               + f"{len(action_pages or [])} form page(s), {len(action_modules or [])} existing module(s); "
               + "capabilities checked on the owning origin at runtime")
         if action_host_page:
             print("   host-page forms: local only; embed the widget beside existing native forms. "
                   "Remote callers need --action-page routes or a registered module.")
-        if action_pages and not action_caller_origins:
+        if (action_pages or discovered_actions) and not action_caller_origins:
             print("   form actions: remote access disabled; use --action-caller-origin to allow a caller.")
         (out_dir / "action-bridge.html").write_text(
             '<!doctype html><html><head><meta charset="utf-8"><title>Review site action</title>'
@@ -618,7 +622,7 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
             '<script type="module" src="./runtime/action-bridge.js"></script></body></html>', encoding="utf-8")
     else:
         print("   browser actions: NONE configured. Chat/forms collect information only. "
-              "Use --action-page for existing routes, --action-host-page for an embedded widget, "
+              "Use --action-site for public external forms/APIs, --action-page for existing routes, --action-host-page for an embedded widget, "
               "or --actions/--action-module for JavaScript. --site-url does not identify an action source.")
 
     (out_dir / f"{plan.network_name}.network.json").write_text(
@@ -735,9 +739,12 @@ def _write_static_hosting_files(out_dir: Path, network_name: str, site_base: str
         "`mod_headers` and overrides are enabled. `_headers` paths are host-root-relative: "
         "merge them into the host's root configuration when deploying under a subpath; "
         "adjust the prefix if relocating the bundle. `.htaccess` stays beside the bundle.\n\n"
-        "For actions, this origin must also serve the real application and its backend. "
+        "For same-origin actions, this origin must also serve the real application and its backend. "
         "Use explicit --action-page routes, --action-host-page when embedding the widget, "
-        "or registered JavaScript modules. A themed agent page does not create business "
+        "or registered JavaScript modules. Build-time --action-site discovery can instead call "
+        "existing public external forms/APIs that already allow CORS from this agent origin. "
+        "Review discovered-actions.json; OPTIONS checks do not verify execution. External "
+        "requests omit credentials. A themed agent page does not create business "
         "capabilities. The host must allow approved callers to frame action-bridge.html "
         "(CSP frame-ancestors / X-Frame-Options); a user-opened popup is the fallback. "
         "Writes require the owning-site popup confirmation. Authenticated iframe reads "

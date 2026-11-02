@@ -601,7 +601,7 @@ class OrgNameLimitTest(unittest.TestCase):
     def test_the_api_token_shape_that_caused_this_is_refused(self):
         from nsdeploy_service.app import ORG_NAME_MAX
 
-        self.assertGreater(len("YOUR_API_TOKEN"),
+        self.assertGreater(len("0123456789abcdef" * 3),
                            ORG_NAME_MAX)
 
 
@@ -668,9 +668,9 @@ class OrgNameCharacterTest(unittest.TestCase):
         """
         from nsdeploy_service.app import ORG_NAME_MAX
 
-        token = "YOUR_API_TOKEN"
-        self.assertTrue(self._matches(token[:30]), "characters alone cannot catch this")
-        self.assertGreater(len(token), ORG_NAME_MAX, "but the length limit does")
+        pasted = "0123456789abcdef" * 3
+        self.assertTrue(self._matches(pasted[:30]), "characters alone cannot catch this")
+        self.assertGreater(len(pasted), ORG_NAME_MAX, "but the length limit does")
 
 
 class EngineCliContractTest(unittest.TestCase):

@@ -2,7 +2,7 @@
 from urllib.parse import urlsplit
 
 
-def action_discovery_config(pages=None, modules=None, callers=None, host_page=False):
+def action_discovery_config(pages=None, modules=None, callers=None, host_page=False, discovered=False):
     pages, modules, callers = list(pages or []), list(modules or []), list(callers or [])
     for path in pages + modules:
         # Origin-relative paths keep bundles portable and cannot point discovery
@@ -14,9 +14,9 @@ def action_discovery_config(pages=None, modules=None, callers=None, host_page=Fa
         url = urlsplit(caller)
         if url.scheme not in ("http", "https") or not url.netloc or url.username or url.password or url.path or url.query or url.fragment:
             raise ValueError("Action callers must be exact HTTP(S) origins without paths.")
-    if callers and not pages:
+    if callers and not pages and not discovered:
         raise ValueError("--action-caller-origin requires --action-page; JavaScript modules declare their own policy.")
-    if not pages and not modules and not host_page:
+    if not pages and not modules and not host_page and not discovered:
         return {}
     return {"pages": list(dict.fromkeys(pages)), "hostPage": bool(host_page), "modules": list(dict.fromkeys(modules)),
             "callerOrigins": list(dict.fromkeys(callers))}

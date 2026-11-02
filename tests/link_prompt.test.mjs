@@ -30,7 +30,7 @@ import assert from 'node:assert/strict';
 import { connectPromptFor, oneLiner, peerReference }
   from '../nsdeploy_service/ui/assets/js/components/linkPromptModal.js';
 
-const HOST = 'https://agentic-city.example.com';
+const HOST = 'https://agentic-city.test';
 const mk = (name, port, description) => ({
   id: name, name, url: `${HOST}:${port}`, network: { description },
 });

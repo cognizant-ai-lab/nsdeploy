@@ -1,40 +1,35 @@
 <div id="app" data-ns-layout="composed">
-  <div class="concierge-spread">
-    <section class="host-page" aria-labelledby="concierge-heading">
-      <p class="editorial-kicker">The host's desk · Reservations</p>
-      <div class="hero-copy">
-        <h1 id="concierge-heading">A table worth <em>anticipating.</em></h1>
-        <p>Tell us when, how many, and what would make the evening feel just right. We’ll handle the search and explain every next step.</p>
+  <section class="editorial-rail" aria-labelledby="concierge-heading">
+    <div class="rail-content">
+      <p class="rail-kicker">A test-service dining desk</p>
+      <h1 class="rail-title" id="concierge-heading">Your table,<em>considered.</em></h1>
+      <p class="rail-copy">From first request to final receipt, every detail is reviewed before anything is confirmed.</p>
+      <div class="service-ledger" aria-label="Concierge process">
+        <div class="ledger-item"><span class="ledger-no">01</span><span class="ledger-label">Request &amp; clarify</span></div>
+        <div class="ledger-item"><span class="ledger-no">02</span><span class="ledger-label">Validate details</span></div>
+        <div class="ledger-item"><span class="ledger-no">03</span><span class="ledger-label">Review together</span></div>
+        <div class="ledger-item"><span class="ledger-no">04</span><span class="ledger-label">Approve explicitly</span></div>
       </div>
-      <div class="service-note">
-        <strong>Thoughtful by design</strong>
-        <span>Only the details needed to arrange, find, or cancel your reservation are requested. Menu and dietary questions can be handed directly to the kitchen concierge.</span>
-      </div>
-    </section>
-
-    <section class="workspace" aria-label="Reservation concierge">
-      <article class="reservation-book">
-        <header class="book-head">
-          <p class="book-label">Concierge conversation</p>
-          <span class="book-date">Seating requests &amp; confirmations</span>
-        </header>
-        <div data-ns-slot="header"></div>
-        <div class="chat-mount">
-          <main data-ns-slot="chat"></main>
-        </div>
-        <details class="utility-fold">
-          <summary>Agents working behind the host stand</summary>
-          <aside data-ns-slot="agents"></aside>
-        </details>
-      </article>
-
-      <footer class="desk-footer">
-        <p>Availability is checked live. No booking is finalized without your confirmation.</p>
-        <details class="model-settings">
-          <summary aria-label="Model settings">⚙</summary>
-          <div data-ns-slot="settings"></div>
-        </details>
-      </footer>
-    </section>
-  </div>
+      <p class="rail-note">Test reservations only · Tool receipts are reported verbatim · Approval is always required</p>
+    </div>
+  </section>
+  <section class="work-surface" aria-label="OpenResto concierge workspace">
+    <div data-ns-slot="header"></div>
+    <div class="surface-intro">
+      <p>Describe a new booking, update, cancellation, or pizza order. The concierge will gather what is missing and pause for your approval before creating a test reservation record.</p>
+      <span class="service-mark">Concierge desk<br />Now receiving</span>
+    </div>
+    <main data-ns-slot="chat"></main>
+    <details class="agent-drawer" open="">
+      <summary>Agents working behind the pass</summary>
+      <aside data-ns-slot="agents"></aside>
+    </details>
+    <footer class="surface-footer">
+      <span>Careful coordination, clear review, no surprise confirmations.</span>
+      <details class="model-settings">
+        <summary aria-label="Model settings">⚙ Model settings</summary>
+        <div data-ns-slot="settings"></div>
+      </details>
+    </footer>
+  </section>
 </div>

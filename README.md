@@ -164,7 +164,9 @@ between hosts. Supplying `--site-url` publishes a canonical URL for link discove
 The static host only needs to serve files over HTTP(S). When a browser-hosted agent
 on another domain will load the network, its public manifest, network JSON and
 link/discovery JSON responses must include `Access-Control-Allow-Origin: *`.
-Action JavaScript, bridge pages and business endpoints do not need CORS. Remote
+Action JavaScript and bridge pages do not need CORS. Same-origin business endpoints
+do not need CORS either; an external API or form used via `--action-site` must
+already permit browser access from the agent site's origin. Remote
 actions run on their own origin through validated iframe/popup messages.
 The sandbox worker also needs the CSP shown in the generated `STATIC_HOSTING.md`.
 The included `_headers` and `.htaccess` cover hosts that support those standard
@@ -694,7 +696,11 @@ beside an embedded widget. No handwritten adapter is needed for those forms.
 There is no implicit discovery route: `--site-url` identifies the bundle location,
 not the business application. Builds without action sources explicitly report
 that chat/forms can only collect information.
-JavaScript-only applications can supply an `actions.js` adapter. nsDeploy copies it into the bundle,
+For a separately hosted public website, `--action-site URL` discovers native forms
+and linked JSON OpenAPI 3 descriptions at build time. It generates a declarative
+catalog for the generic executor; no `actions.js` is needed for supported operations.
+See the build-time discovery example below. JavaScript-only applications without a
+documented HTTP interface can supply an `actions.js` adapter. nsDeploy copies it into the bundle,
 publishes its bridge location in `agent-manifest.json`, and loads its public action
 descriptions/schemas into the agents' CRUSE context at runtime. Local actions run
 on the local page. Remote action code runs on its own site, never imported into
@@ -709,7 +715,8 @@ Example prompt (replace the restaurant workflow with your website's workflow):
 > Generate a valid neuro-SAN HOCON network for a restaurant concierge. Output
 > HOCON only. Design agents to understand the user's visit, collect missing
 > requirements, and propose a reservation request. Do not invent availability or
-> claim a reservation is complete without an execution receipt. The website uses
+> claim a reservation is complete without an execution receipt. Do not define or
+> reference demo_mode or instruct any agent to fabricate results. The website uses
 > nsDeploy and CRUSE. At runtime nsDeploy will supply the exact catalog of browser
 > actions, their input schemas and the CRUSE proposal format. These browser actions
 > are not HOCON tools: do not create coded tools, HTTP endpoints or tool references
@@ -728,6 +735,161 @@ schema or implementation. Existing HOCONs also work: the action protocol is inje
 at runtime, though domain instructions can improve how agents choose proposals.
 
 ### 2. Connect an existing website
+
+#### Discover a public site while bundling
+
+`--action-site URL` performs a bounded, read-only inspection of the supplied page
+and same-origin links explicitly resembling form or API documentation pages
+(six pages by default; `--action-max-pages 1` inspects only the supplied page).
+It reads native forms and JSON OpenAPI 3 descriptions. Use `--action-spec FILE_OR_URL`
+when documentation does not link a machine-readable specification. It does not run
+website JavaScript, guess private endpoints, log in, or submit forms to explore a site.
+
+Discovery writes `<site-dir>/discovered-actions.json`, including schemas, fixed
+destinations, source evidence, unsupported items and OPTIONS-based CORS checks.
+The first build stops with candidates disabled so the **publisher** can review
+them. Set selected `enabled` fields to `true`, or rerun with `--action-allow NAME`.
+For public test services, `--action-include-all` enables all supported candidates
+in that build. Authentication, credentials and unsupported interfaces remain excluded.
+The browser still requires execution confirmation for each proposed submission.
+
+Later builds automatically reuse the lock, even when `--action-site` is omitted.
+`--action-lock FILE` selects another lock. `--action-refresh --action-site URL`
+rediscovers and resets selections for review; retain `--action-spec` when applicable.
+The lock is editable source: keep it in version control after reviewing it.
+Keep `--action-caller-origin` on remote-capable builds; caller permission is a
+separate deployment setting and is not inferred from a HOCON link.
+
+Supported external forms are stateless, URL-encoded native GET/POST forms with
+named fields. Before submission the browser fetches the source again, checks its
+pinned form definition and validates the real HTML constraints. Changes stop the
+submission and require rediscovery. Forms with hidden state, login, uploads,
+inline handlers, named submit buttons or unsupported controls are reported as
+unsupported; use same-origin `--action-page` or a site-owned adapter for those.
+
+API discovery supports fixed HTTP(S) servers, scalar path/query fields, JSON object
+bodies with scalar fields, and explicit free-form JSON object fields. Free-form
+objects appear in CRUSE as JSON text, which the executor parses before sending.
+Only local specification references are resolved. Unsupported schema constraints,
+authentication and credential fields are reported rather than silently dropped.
+These are supported subsets, not a promise to discover every possible website action.
+
+All external requests omit cookies/credentials and reject redirects. Both the
+external form page and its submission response must permit CORS; API responses
+and preflight requests must permit it where needed. Build checks use OPTIONS only
+and are **not execution verification**. The iframe/popup bridge remains between
+the two agent sites; it cannot bypass restrictions on a third-party website.
+Receipts contain HTTP status and sanitized response data, with business acceptance
+left unverified for the agents to interpret. Errors may have unknown outcomes and
+are never retried automatically. A combined form is sequential, not transactional:
+one action can succeed while the next fails.
+
+#### Build the two hosted-service examples
+
+The example names are retained, but `kitchenasty_ordering_agent` uses the
+[httpbin pizza form](https://httpbin.org/forms/post), and `openresto_concierge`
+uses [RESTful API public test records](https://restful-api.dev/).
+Neither makes real restaurant orders or reservations. Use synthetic details only.
+RESTful API does not expose a specification linked from its documentation, so
+[`examples/actions/restful-api.openapi.json`](examples/actions/restful-api.openapi.json)
+is an nsDeploy-maintained description of its documented create, retrieve and delete
+operations. It is declarative data, not executable adapter code.
+
+From the repository root, with your existing themes:
+
+```sh
+python -m nsdeploy examples/kitchenasty_ordering_agent.hocon \
+  --static-bundle --theme \
+  --out ./dist/kitchenasty_ordering_agent \
+  --site-url http://agent-a.evolution.ml/kitchenasty_ordering_agent \
+  --action-site https://httpbin.org/forms/post \
+  --action-max-pages 1 --action-refresh --action-include-all \
+  --action-caller-origin http://cors.decisionai.ml
+
+python -m nsdeploy examples/openresto_concierge.hocon \
+  --static-bundle --theme \
+  --out ./dist/openresto_concierge \
+  --site-url http://cors.decisionai.ml/openresto_concierge \
+  --action-site https://restful-api.dev/ \
+  --action-spec examples/actions/restful-api.openapi.json \
+  --action-max-pages 1 --action-refresh --action-include-all
+```
+
+`--theme-refresh --theme-model ...` is optional if you want to regenerate the design;
+it is unrelated to actions. The commands above preserve the existing designs.
+Expect one pizza-form action and three record actions. Review each
+`discovered-actions.json`, `agent-manifest.json` and `STATIC_HOSTING.md` before
+publishing. A zero-action build fails instead of silently producing a chat-only demo.
+Use `--action-refresh` to rerun discovery after changing the source specification.
+
+Test each site in isolation first. Ask KitchenAsty to prepare one large cheese-and-onion
+pizza at 20:00 with `nsdeploy-test` in the comments, then confirm the browser action.
+Check the receipt's actual `data.form` echo. Ask OpenResto to create a synthetic record
+for four guests on 2026-11-14 at 19:00; check the returned server-assigned `id`.
+In the next turn ask it to retrieve that exact id and compare the stored values.
+
+The deployed example is available at
+`http://cors.decisionai.ml/openresto_concierge`; its remote KitchenAsty site is
+`http://agent-a.evolution.ml/kitchenasty_ordering_agent`. The KitchenAsty HOCON
+reference includes both the bundle path and the exported network name:
+`http://agent-a.evolution.ml/kitchenasty_ordering_agent/kitchenasty_ordering_agent`.
+The repeated name is intentional. The caller passed to `--action-caller-origin`
+is only the exact origin (`http://cors.decisionai.ml`), without a path.
+
+Then ask OpenResto:
+
+> Use only the exact website actions currently supplied by the runtime. Prepare
+> these two synthetic test operations: (1) create an OpenResto test reservation
+> record named `nsdeploy-e2e-2026-10-31` for 4 guests on November 14, 2026 at
+> 7:00 PM; no real restaurant, availability search, or contact information is
+> needed; and (2) ask the KitchenAsty network to submit one large pizza with cheese
+> and onion, delivery time 8:00 PM, and comments `nsdeploy cross-site test only`.
+> Present both operations as executable CRUSE browser actions using their exact
+> runtime references and field schemas. Do not merely summarize them or ask for
+> textual confirmation. Do not claim either operation succeeded until browser
+> execution receipts are returned.
+
+Authorize the remote network. The model may produce one consolidated widget or two
+action widgets in the same response. Review and confirm the OpenResto action. For
+KitchenAsty, verify `large`, `cheese`, `onion`, `20:00`, and the test comment in
+the generated form, submit it, approve the caller-side review, and confirm the
+owning-site popup.
+
+Successful end-to-end execution produces two independent receipts:
+
+- `.../openresto_concierge#post_objects_317fea20` reports HTTP 200 and a
+  server-assigned `data.id` from `https://api.restful-api.dev/objects`.
+- `.../kitchenasty_ordering_agent#post_forms_post_76079b9e` reports HTTP 200
+  from `https://httpbin.org/post`; `data.form` echoes the pizza fields. Its echoed
+  `Origin` is `http://agent-a.evolution.ml`, demonstrating that the remote action
+  ran in its owning site's bridge rather than being imitated by OpenResto.
+
+`state: "response_received"` proves that the browser received an HTTP response.
+`businessOutcome: "unverified"` is deliberate: a generic executor cannot infer
+that an arbitrary response means a reservation or order was accepted. Text claiming
+success is not verification. Use the returned record id with the registered GET
+action to verify the stored values, then use the registered DELETE action—with
+confirmation—to remove only that synthetic test record. Public test services can
+have outages and request limits; their HTTP errors must remain visible in receipts.
+
+The action runtime supports plain-HTTP static demos even when secure-context APIs
+such as `crypto.randomUUID()` and `crypto.subtle` are unavailable. Use HTTPS for
+real deployments: these pages accept a browser-local BYOK API key, and plain HTTP
+cannot protect the delivered JavaScript or key from network tampering.
+
+The deterministic integration test builds real static bundles and tests isolated
+and combined CRUSE submissions against a separate HTTP service that records every
+write, including CORS failures, changed forms, validation and record readback:
+
+```sh
+node tests/discovered-actions-browser.mjs
+```
+
+It requires Playwright and Chromium (`NSDEPLOY_PLAYWRIGHT_MODULE`, `NSDEPLOY_CHROME`
+and `NSDEPLOY_PYTHON` can select existing installations). It does not use an LLM;
+the hosted test above additionally checks your chosen model's action proposals.
+
+#### Discover forms on the application's own origin
 
 For an existing **native HTML form page**, publish the bundle on the application's
 origin and specify the real form route:
