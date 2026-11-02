@@ -1,11 +1,10 @@
 #!/bin/bash
 # Replace the running Agentic City container with a given image tag.
 #
-# Installed to /usr/local/bin/redeploy.sh on the demo VM and invoked by
-# scripts/deploy-vm.ps1 (step 4). Versioned here rather than typed into the VM,
-# because the copy on the host silently drifted from the runbook: the host-network
-# switch below existed only as an ad-hoc edit, which is exactly how the `-p` form
-# survived three engine drops that could not work with it.
+# Installed to /usr/local/bin/redeploy.sh on the demo VM. Versioned here rather
+# than typed into the VM, because the copy on the host silently drifted from the
+# runbook: the host-network switch below existed only as an ad-hoc edit, which is
+# exactly how the `-p` form survived three engine drops that could not work with it.
 #
 # WHY --network host AND NOT -p
 #
@@ -23,16 +22,16 @@
 #
 # The cost is network isolation: the container shares the host's namespace, so it
 # can bind any host port and reach host-loopback services. Accepted here because
-# this host already executes arbitrary uploaded Python by design — see
-# docs/vm-deployment-proposal.md §A7. It also means NSDEPLOY_SERVICE_HOST must be
-# 127.0.0.1, or the API would bind the VM's public-facing interface directly.
+# this host already executes arbitrary uploaded Python by design. It also
+# means NSDEPLOY_SERVICE_HOST must be 127.0.0.1, or the API would bind the VM's
+# public-facing interface directly.
 #
 # Ports are therefore NOT published. nginx is the only public listener and reaches
 # both the API (9000) and every site port over loopback.
 set -e
 
 TAG=${1:-latest}
-IMG=registry.example.com/agentic-city:$TAG
+IMG=${REGISTRY:-registry.example.com}/agentic-city:$TAG
 
 docker pull "$IMG"
 docker container stop agentic-city 2>/dev/null || true
