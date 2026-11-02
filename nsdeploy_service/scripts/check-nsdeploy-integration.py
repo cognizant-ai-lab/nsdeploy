@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Verify this service still works against the nsdeploy it has been dropped into.
 
-`nsdeploy_service/` is self-contained: it imports nothing from nsdeploy and requires
-no patches to it, so upgrading nsdeploy is "replace everything, drop this folder
-back in". What survives is the contract of driving nsdeploy as a CLI, and two parts
-of that fail *silently*:
+`nsdeploy_service/` needs no patches to nsdeploy, so upgrading it is "replace
+everything, drop this folder back in". What has to survive an upgrade is the contract
+between the two, which has three parts. Two of them fail *silently*:
 
 * the service scrapes nsdeploy's human-readable stdout for tool and agent names
   (`summarize_build`). A reworded section header empties those fields with no error
   — a network then shows 0 agents and no warnings while running perfectly;
 * it reads keys out of the generated bundle. A renamed key or file does the same.
+
+The third is the names `themespec.py` imports in process. Those fail loudly, as an
+ImportError at start-up, but they are listed here too so that an upgrade reports
+every break at once rather than one per restart.
 
 Run after every nsdeploy upgrade, from the nsdeploy root:
 
@@ -44,6 +47,23 @@ REPORT_MARKERS = [
     ("nsdeploy/resolve.py", "Missing tools", "missing_tools names"),
     ("nsdeploy/launcher.py", "External MCP (proxied):", "external_mcps URLs"),
     ("nsdeploy/resolve.py", "→", "bullet arrow separator"),
+]
+
+# --- names imported in process ----------------------------------------------
+# Deployments drive nsdeploy as a CLI. themespec.py does not: it restyles a built
+# bundle without a rebuild. Its imports are at module level, so a rename upstream
+# stops the service at start-up rather than mid-request.
+IN_PROCESS = [
+    ("nsdeploy/site_source.py", "def load_site_theme",
+     "themespec reads the editable source"),
+    ("nsdeploy/site_source.py", "def site_source_exists",
+     "themespec tests for an editable source"),
+    ("nsdeploy/theme.py", "class ThemeSpec", "the spec themespec merges into"),
+    ("nsdeploy/theme.py", "DEFAULT_COLORS", "themespec starts from the default look"),
+    ("nsdeploy/theme.py", "DEFAULT_FONT", "themespec starts from the default look"),
+    ("nsdeploy/theme.py", "_COLOR_RE", "themespec accepts the colours a build accepts"),
+    ("nsdeploy/generate.py", "def _theme_css",
+     "themespec writes a build's own stylesheet"),
 ]
 
 # --- generated bundle contract ----------------------------------------------
@@ -135,6 +155,8 @@ def main() -> int:
     problems += section("stdout markers scraped by summarize_build "
                         "(SILENT data loss if reworded)", REPORT_MARKERS)
     problems += section("Generated bundle contract", BUNDLE)
+    problems += section("Imported in process by themespec.py "
+                        "(ImportError at start-up if renamed)", IN_PROCESS)
     section("Optional — only for the port-per-deployment model", OPTIONAL, kind="warn")
 
     print()

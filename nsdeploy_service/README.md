@@ -11,9 +11,14 @@ a live site URL.**
 
 ## Install
 
-This folder is **self-contained and portable**. It imports nothing from nsdeploy and
-needs no patches to it — it drives nsdeploy as a CLI (`python -m nsdeploy`). To
+This folder is **self-contained and portable**. It needs no patches to nsdeploy. To
 upgrade nsdeploy: replace everything else, drop this folder back in.
+
+Deploying drives nsdeploy as a CLI (`python -m nsdeploy`), because a deployed site is
+a process that has to outlive the request. One module imports nsdeploy in process
+instead, and says why in its own header: `themespec.py`, which restyles a built
+bundle without a rebuild. It imports at module level, so an upstream rename is an
+ImportError at start-up rather than a failure during a request.
 
 ```
 <nsdeploy checkout>/

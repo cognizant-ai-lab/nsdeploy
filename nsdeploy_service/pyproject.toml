@@ -14,9 +14,14 @@
 # Editable is the natural mode for a drop-in folder: the files stay where they are,
 # so SERVICE_ROOT (and with it ui/ and _bootstrap/) resolves to this directory.
 #
-# nsdeploy is NOT a dependency here. The service imports nothing from it — it drives
-# it as a CLI (`python -m nsdeploy`) — so declaring it would create a version
+# nsdeploy is NOT a dependency here, so declaring it would create a version
 # constraint this project deliberately does not have.
+#
+# Deployments drive nsdeploy as a CLI (`python -m nsdeploy`) and import nothing.
+# One module does import it, in process and on purpose, and names the seam in its
+# own header: themespec.py, which restyles a built bundle without a rebuild. Its
+# imports are at module level, so an upstream rename is an ImportError at start-up
+# rather than a failure during a request.
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
