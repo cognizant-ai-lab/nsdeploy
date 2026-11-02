@@ -133,8 +133,8 @@ Preview that bundle with any ordinary static server:
 python -m http.server 8080 --directory ./dist/travel
 ```
 
-Then open <http://127.0.0.1:8080/>. To publish a canonical identity for links and
-private stewards, include the final webroot URL when building:
+Then open <http://127.0.0.1:8080/>. To publish a canonical identity for links,
+include the final webroot URL when building:
 
 ```bash
 python -m nsdeploy examples/link_demo_travel_agency.hocon \
@@ -149,20 +149,6 @@ After uploading `./dist/travel/` as that webroot, the public network URL is:
 https://agents.example.com/travel/link_demo_travel_agency
 ```
 
-A generated private steward calls the static network with the equivalent coded-tool
-arguments:
-
-```json
-{
-  "site_url": "https://agents.example.com/travel/link_demo_travel_agency",
-  "request": "Find me a flight from San Francisco to New York next Friday."
-}
-```
-
-The steward fetches `agent-manifest.json` and the selected network JSON, then runs
-the network privately. Its LLM key is sent only to the steward's configured LLM
-upstream, never to the static host.
-
 The output includes the browser runtime, a browser-native deterministic mock,
 relative page assets, browser-local unresolved links, and optional `_headers` /
 `.htaccess` hosting configuration. Python coded tools are intentionally omitted.
@@ -170,19 +156,22 @@ External MCP servers are contacted directly and therefore must permit browser CO
 Real BYOK calls go directly to the OpenAI-compatible router selected in settings;
 that router must likewise permit browser CORS. The public MCP facade is marked
 unavailable because accepting inbound MCP calls requires an application server.
-The generated private steward remains usable: it downloads the public network JSON
-and runs it in the private Neuro-SAN environment, so the static host needs no MCP
-facade or other server-side process.
+Static bundles do not include a private-steward HOCON; that operator-side Neuro-SAN
+configuration is generated only for application-hosted deployments.
 
 When `--site-url` is omitted, the static bundle is origin-neutral and can be moved
 between hosts. Supplying `--site-url` publishes a canonical URL for link discovery.
 The static host only needs to serve files over HTTP(S). When a browser-hosted agent
-on another domain will load the network, responses must include
-`Access-Control-Allow-Origin: *`; server-side private stewards do not require CORS.
+on another domain will load the network, its public manifest, network JSON and
+link/discovery JSON responses must include `Access-Control-Allow-Origin: *`.
+Action JavaScript, bridge pages and business endpoints do not need CORS. Remote
+actions run on their own origin through validated iframe/popup messages.
 The sandbox worker also needs the CSP shown in the generated `STATIC_HOSTING.md`.
 The included `_headers` and `.htaccess` cover hosts that support those standard
 configuration formats. Hosts that ignore both files need the equivalent headers
-configured in their control panel.
+configured in their control panel. For subpath deployments, merge `_headers` into
+the host's root configuration; its paths include the `--site-url` path prefix.
+If relocating a bundle, adjust that prefix. `.htaccess` remains in the bundle directory.
 
 ## Cailville multi-site demo
 
@@ -489,8 +478,9 @@ additions from the private-steward manifest.
    removes any assumption of a local neuro-san server—tools are reached over MCP or
    by loading a public agent network into the browser.
 5. **Generate** `index.html` + `theme.css` + `site.js` + `agent-manifest.json` +
-   `<network>.network.json` + `agent-mcp.json` + `<network>_private_steward.hocon` +
-   `theme.json` from the editable site source and network.
+   `<network>.network.json` + `agent-mcp.json` + `theme.json` from the editable site
+   source and network. Application-hosted deployments also generate
+   `<network>_private_steward.hocon`; static bundles do not.
 6. **Serve** one static origin (site + the `neuro-san-web` runtime, with the
    sandbox-worker CSP), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
    local-MCP proxy at `/_mcp/<i>/mcp`, an external-MCP proxy at
@@ -504,8 +494,10 @@ additions from the private-steward manifest.
 
 ## Private stewards and open-web reachability
 
-Every generated public site includes `<network>_private_steward.hocon`. It is a standard
-Neuro-SAN network for the site's operator, backed by the reusable
+Application-hosted deployments include `<network>_private_steward.hocon`. Static
+bundles omit it because it is operator-side Neuro-SAN configuration, not a browser
+or static-host asset. The file is a standard Neuro-SAN network for the site's
+operator, backed by the reusable
 `nsdeploy.steward.PublicAgentNetworkGateway` coded tool. The gateway accepts any
 public nsDeploy network URL, downloads `agent-manifest.json` and the selected
 `<network>.network.json`, validates that they contain data-only agents, and runs the
@@ -696,7 +688,13 @@ parents can merge the fields and action bindings into one final form. Nothing is
 executed while agents reason or while a widget renders. Submitting a widget shows
 a runtime-owned review of the actual actions, destination origins and arguments.
 
-Each site supplies an `actions.js` adapter. nsDeploy copies it into the bundle,
+For native HTML forms, supply `--action-page /booking` to discover an existing
+same-origin application route, or `--action-host-page` to discover native forms
+beside an embedded widget. No handwritten adapter is needed for those forms.
+There is no implicit discovery route: `--site-url` identifies the bundle location,
+not the business application. Builds without action sources explicitly report
+that chat/forms can only collect information.
+JavaScript-only applications can supply an `actions.js` adapter. nsDeploy copies it into the bundle,
 publishes its bridge location in `agent-manifest.json`, and loads its public action
 descriptions/schemas into the agents' CRUSE context at runtime. Local actions run
 on the local page. Remote action code runs on its own site, never imported into
@@ -729,7 +727,113 @@ delegate restaurant questions to it. Bind that leaf to the deployed venue using
 schema or implementation. Existing HOCONs also work: the action protocol is injected
 at runtime, though domain instructions can improve how agents choose proposals.
 
-### 2. Add the site's action adapter
+### 2. Connect an existing website
+
+For an existing **native HTML form page**, publish the bundle on the application's
+origin and specify the real form route:
+
+```sh
+python -m nsdeploy examples/openresto_concierge.hocon --static-bundle \
+  --site-url https://restaurant.example/agents/openresto \
+  --action-page /booking \
+  --out .nsdeploy/restaurant-agents
+```
+
+Repeat `--action-page` for other existing routes. No pages are guessed from
+`--site-url`. `--no-action-discovery` explicitly disables form discovery and cannot
+be combined with form discovery flags; registered modules remain available.
+Publish the generated directory at `/agents/openresto/` **on the existing application's
+origin**. The original application and its backend must already exist there.
+Generating a themed agent page from a HOCON does not install OpenResto/KitchenAsty,
+create their menus or reservation databases, or grant access to another website.
+
+Repeat `--action-page` for additional pages. For the remote KitchenAsty build,
+also add `--action-caller-origin https://your-openresto-origin.example` to allow
+OpenResto to use its discovered forms. This is separate from `--link` (which
+connects the networks) and from permission to contact a network. Use exact origins,
+including the port during local testing. Discovery runs on the owning origin in
+both local and remote cases; hidden fields and cookies never enter the catalog.
+
+The runtime reads named fields, choices and constraints; refreshes hidden fields
+such as CSRF tokens before executing; validates the populated form; and sends its
+native GET/POST request after review. It supports URL-encoded and multipart forms,
+radio buttons, checkboxes, selects, and submit-button values/overrides. All forms
+default to write actions; site owners can mark a genuinely read-only form with
+`data-nsdeploy-effect="read"`. `data-nsdeploy-ignore` excludes a form.
+
+The page shows how many actions connected and explains skipped forms. A form
+without an explicit action, sensitive/file controls, or inline JavaScript is
+skipped. Discovery reads server-rendered HTML and does not run page scripts;
+scripts on configured routes are not run. For native forms rendered into the
+visible host page, use the embedding option below. JavaScript event handlers
+require explicit registration.
+Redirect-dependent workflows need an adapter. See [limits and receipts](docs/actions.md#automatic-native-form-discovery).
+
+For an existing JavaScript module that exports `registerActions`, use
+`--action-module /js/restaurant-actions.js`; it stays on its owning site and is
+loaded by both the local page and remote bridge. Arbitrary JavaScript functions
+cannot reliably be inferred from HOCON or DOM names. Use the adapter below when
+the application does not already expose this registration interface.
+
+To embed in an existing page, build with `--action-host-page`, then add a dedicated
+mount beside the site's existing forms (do not replace the application page with
+the generated `index.html`):
+
+```html
+<div id="agent-widget"></div>
+<script type="module">
+  import { boot } from "/agents/openresto/runtime/index.js";
+  const agent = await boot("#agent-widget", {
+    originUrl: location.origin + "/agents/openresto",
+    sandboxWorkerUrl: "/agents/openresto/runtime/sandbox-worker.js"
+  });
+  // If your app changes control properties without DOM mutations:
+  // agent.actions.refreshHostForms();
+</script>
+```
+
+Host discovery observes native forms added or changed in the live document,
+excludes agent UI, and preserves the user's draft when submitting a detached copy.
+It uses native endpoints, without invoking JavaScript submit listeners. Only enable
+it for forms whose native endpoints work independently of those listeners.
+Host forms are local-only. To expose the same capability remotely, additionally
+configure `--action-page` for its server-rendered route or register a module that
+works in the bridge's fresh document. `--action-caller-origin` permits only
+configured route forms; modules declare their own caller policy.
+
+For the OpenResto/KitchenAsty deployment, keep your theme/model/output flags and add
+the actual application routes to each build. Add
+`--action-caller-origin https://agent-b.decisionai.ml` to KitchenAsty if OpenResto
+is hosted on that origin. These agent domains must also host their corresponding
+real applications and backends. An unrelated original website cannot be inspected
+or operated just by naming it in HOCON. The routes must be taken from your actual
+installation; `/booking` above is illustrative.
+
+After submission, a native form receipt contains `outcome: "response_received"`
+and `businessOutcome: "unverified"`, plus the HTTP status and response evidence.
+HTTP 200 alone is not a booking confirmation: validate returned business IDs or
+check the application's records. No automatic retries occur. After a read receipt,
+send a follow-up such as “Use the returned results to propose the next step.”
+
+To test the full form path without any adapter or model key:
+
+```sh
+node tests/form-actions-browser.mjs
+```
+
+This starts two temporary local sites and verifies real HTTP submissions from one
+combined CRUSE widget, local/remote confirmation, fresh CSRF values and cookies,
+cancellation, field validation, receipts and missing-integration diagnostics.
+It requires Playwright/Chromium (or the `NSDEPLOY_PLAYWRIGHT_MODULE` and
+`NSDEPLOY_CHROME` overrides described below). These are test sites, not the actual
+OpenResto or KitchenAsty applications.
+
+For ANDe, keep ordinary agent definitions and add: “Do not include demo_mode or
+instructions to fabricate data. Browser capabilities will be supplied at runtime.
+When the catalog is empty, report missing integration explicitly. A server response
+is evidence to interpret, not automatic proof that a booking or order succeeded.”
+
+### 2a. JavaScript applications: add the site's action adapter
 
 Place `actions.js` in the editable site directory, or pass `--actions FILE`:
 
@@ -886,10 +990,12 @@ curl http://localhost:12434/engines/v1/models
 The LLM authors the page's **CSS + HTML composition**, but it's treated as untrusted
 and **strictly sanitized**: only safe presentational tags/attributes survive (no
 `<script>`, `on*` handlers, `<iframe>`/`<form>`/`<svg>`; CSS stripped of `@import`,
-`expression()`, unsafe `url()`). A generated layout places three empty runtime mounts
-inside `#app`: the compact header, the primary chat, and agent activity. This lets the
-designer choose an inline rail, stacked panel, overlay, or native `<details>` pull-out
-instead of inheriting one fixed split. The runtime fills those mounts and protects page
+`expression()`, unsafe `url()`). A generated layout places four empty runtime mounts
+inside `#app`: the compact header, the primary chat, agent activity, and BYOK/router
+settings. The designer chooses whether settings live under a gear disclosure, in a
+utility rail, footer, or another suitable location, as well as whether agents use an
+inline rail, stacked panel, overlay, or native `<details>` pull-out. The runtime fills
+those mounts and protects page
 scrolling and CRUSE form reachability. Older cached themes with one empty `#app` keep
 the legacy resizable split layout. On any problem (no key, error, invalid/unsafe output,
 missing or incomplete mounts), nsdeploy **falls back to the default template**, so a
@@ -908,9 +1014,10 @@ sites/<network>/
 
 Use `--site-dir DIR` to put it elsewhere. Normal deploys read these files and never
 overwrite them; `.nsdeploy/<source-dir>/<network>/` remains disposable build output.
-The containing `.nsdeploy/<source-dir>/manifest.hocon` is regenerated to list every
-generated private steward in that bundle group. Set `AGENT_MANIFEST_FILE` directly to
-that file when running the standard Neuro-SAN server. A normal
+For application-hosted deployments, the containing
+`.nsdeploy/<source-dir>/manifest.hocon` is regenerated to list every generated
+private steward in that bundle group. Set `AGENT_MANIFEST_FILE` directly to that
+file when running the standard Neuro-SAN server. A normal
 `--theme` run also uses an existing package instead of calling the model again. The
 LLM result is therefore a starting point: edit the source package and redeploy. The
 generated `site.js` exports an optional `customize({ root, runtime })` hook, and any

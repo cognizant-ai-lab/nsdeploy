@@ -1,0 +1,40 @@
+<div id="app" data-ns-layout="composed">
+  <div class="concierge-spread">
+    <section class="host-page" aria-labelledby="concierge-heading">
+      <p class="editorial-kicker">The host's desk · Reservations</p>
+      <div class="hero-copy">
+        <h1 id="concierge-heading">A table worth <em>anticipating.</em></h1>
+        <p>Tell us when, how many, and what would make the evening feel just right. We’ll handle the search and explain every next step.</p>
+      </div>
+      <div class="service-note">
+        <strong>Thoughtful by design</strong>
+        <span>Only the details needed to arrange, find, or cancel your reservation are requested. Menu and dietary questions can be handed directly to the kitchen concierge.</span>
+      </div>
+    </section>
+
+    <section class="workspace" aria-label="Reservation concierge">
+      <article class="reservation-book">
+        <header class="book-head">
+          <p class="book-label">Concierge conversation</p>
+          <span class="book-date">Seating requests &amp; confirmations</span>
+        </header>
+        <div data-ns-slot="header"></div>
+        <div class="chat-mount">
+          <main data-ns-slot="chat"></main>
+        </div>
+        <details class="utility-fold">
+          <summary>Agents working behind the host stand</summary>
+          <aside data-ns-slot="agents"></aside>
+        </details>
+      </article>
+
+      <footer class="desk-footer">
+        <p>Availability is checked live. No booking is finalized without your confirmation.</p>
+        <details class="model-settings">
+          <summary aria-label="Model settings">⚙</summary>
+          <div data-ns-slot="settings"></div>
+        </details>
+      </footer>
+    </section>
+  </div>
+</div>

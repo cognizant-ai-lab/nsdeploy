@@ -1,0 +1,64 @@
+<div id="app" data-ns-layout="composed">
+  <section class="ledger-shell" aria-label="Credit card matching workspace">
+    <header class="identity-rail">
+      <p class="rail-kicker">Personal card-fit dossier · No sensitive data needed</p>
+      <h1 class="rail-title">Your spending has a shape.<br />Find the card built around it.</h1>
+      <p class="rail-note">Compare rewards, fees, protections, and practical tradeoffs through one clear brief. Broad credit bands are enough—we never need account numbers or government IDs.</p>
+      <div class="rail-index">Profile → issuer review → ranked shortlist → next steps</div>
+    </header>
+
+    <section class="workspace">
+      <div class="runtime-head">
+        <div data-ns-slot="header"></div>
+      </div>
+
+      <div class="dossier-grid">
+        <section class="chat-column" aria-label="Card matching conversation">
+          <div class="chat-frame">
+            <main data-ns-slot="chat"></main>
+          </div>
+        </section>
+
+        <aside class="review-rail" aria-label="Matching methodology">
+          <section class="score-card">
+            <p class="score-label">Fit review</p>
+            <h2>More than a rewards rate.</h2>
+            <p>Recommendations are weighed against the costs and benefits that matter in everyday use.</p>
+            <ol class="criteria">
+              <li>Spending alignment</li>
+              <li>Fee tolerance</li>
+              <li>Reward utility</li>
+              <li>Protection value</li>
+              <li>Credit-band fit</li>
+            </ol>
+          </section>
+
+          <details class="agent-drawer">
+            <summary>Agents working</summary>
+            <aside data-ns-slot="agents"></aside>
+          </details>
+        </aside>
+      </div>
+
+      <section class="trust-strip" aria-label="Service principles">
+        <div class="trust-item">
+          <div class="trust-number">01</div>
+          <p class="trust-copy">A focused intake turns your priorities into a consistent comparison profile.</p>
+        </div>
+        <div class="trust-item">
+          <div class="trust-number">02</div>
+          <p class="trust-copy">Issuer options are reviewed side by side instead of in isolation.</p>
+        </div>
+        <div class="trust-item">
+          <div class="trust-number">03</div>
+          <p class="trust-copy">Final results explain tradeoffs without promising approval or fixed offers.</p>
+        </div>
+      </section>
+
+      <footer class="page-foot">
+        <span>Card terms and offers can change. Confirm current details with the issuer before applying.</span>
+        <span>Educational matching · Not financial advice</span>
+      </footer>
+    </section>
+  </section>
+</div>

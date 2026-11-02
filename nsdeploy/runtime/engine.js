@@ -170,6 +170,8 @@ export class Engine {
       const loadActions = typeof location !== "undefined" && new URL(base).origin !== location.origin
         ? registerRemoteActions : loadActionModule;
       await loadActions(this.actions, { base, network: network.name }, manifest);
+      this.trace.note("action_catalog", { count: this.actions.catalog({ base, network: network.name }).length,
+        issues: this.actions.discoveryIssues });
       this.mockLLM = llm.mock; // true when using the deterministic mock router
       this.byokRouter = manifest.llm_router?.byok_router || ""; // real-LLM proxy for BYOK keys
       this.trace.end(span, {

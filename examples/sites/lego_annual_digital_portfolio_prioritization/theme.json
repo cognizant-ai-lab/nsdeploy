@@ -1,0 +1,55 @@
+{
+  "brand": "Brick Portfolio Board",
+  "icon": "\ud83e\uddf1",
+  "tagline": "Prioritize, sequence, govern the annual build.",
+  "hero": "A brick-built command board for shaping the annual digital portfolio from raw demand to steerco-ready decisions.",
+  "font": "Arial, Helvetica, sans-serif",
+  "radius": 16,
+  "colors": {
+    "primary": "#D7262E",
+    "accent": "#F2B705",
+    "bg": "#F7F3E8",
+    "bg_tint": "#FFF9E8",
+    "fg": "#1F2530",
+    "muted": "#656B76",
+    "border": "#D8CDB5",
+    "msgbg": "#FFFDF6",
+    "panelbg": "#FFFFFF"
+  },
+  "welcome": {
+    "widget": {
+      "title": "Portfolio cycle intake",
+      "icon": "\ud83e\uddf1",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "planningYear": {
+            "type": "string",
+            "title": "Planning year",
+            "description": "Which annual portfolio cycle should be prioritized"
+          },
+          "budgetConstraint": {
+            "type": "string",
+            "title": "Budget or capacity guardrail",
+            "description": "Known budget, team capacity, or must-stay-within constraint"
+          },
+          "decisionForum": {
+            "type": "string",
+            "title": "Decision forum",
+            "description": "Steerco, ELT, portfolio board or approval body"
+          },
+          "initiativeSource": {
+            "type": "string",
+            "title": "Initiative submissions",
+            "description": "Where the initiative list or demand register lives"
+          }
+        },
+        "required": [
+          "planningYear"
+        ]
+      },
+      "submitLabel": "Build the cycle"
+    },
+    "message": "Start the annual prioritization cycle by sharing the planning context. I will organize intake, scoring, scenarios, roadmap and governance artifacts."
+  }
+}
