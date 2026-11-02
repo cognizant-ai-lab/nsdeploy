@@ -1,0 +1,1828 @@
+<!doctype html>
+<html lang="en" data-pv-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deployed site UI — preview</title>
+<meta name="description" content="Static design preview of the deployed agent-network chat UI. Not served by the service.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700;800&display=swap">
+
+<!--
+  ============================================================================
+  PREVIEW ONLY — a proposal for the deployed site's chat UI.
+
+  This file is a design artifact, not part of the running service. Nothing
+  imports it and nothing serves it: the live console is nsdeploy_service/ui/
+  and the deployed sites' UI is nsdeploy/runtime/ui.js. Open this file
+  directly in a browser (no server needed).
+
+  HOW IT IS BUILT SO IT CAN BE PORTED CHEAPLY
+  ·  Every surface uses the class names the runtime already emits — .ns-app,
+     .ns-header, .ns-chat, .ns-msgs, .ns-msg, .ns-inputbar, .ns-agents,
+     .ns-anode, .ns-widget, .ns-consent, .ns-modal, .ns-menuitem … — so
+     adopting this is largely replacing BASE_CSS in nsdeploy/runtime/ui.js.
+  ·  Every colour, radius and face comes from the same --ns-* custom
+     properties a deployed site already sets (see _palette_vars in
+     nsdeploy/generate.py). No hardcoded hues, so an LLM-authored theme
+     recolours this exactly as it recolours the current UI.
+  ·  Where the design needs markup the runtime does not emit yet, the element
+     is tagged data-new="..." and listed in the PORTING NOTES comment at the
+     bottom of this file. Those are the only JS changes required.
+
+  Anything prefixed .pv- / #pv is preview scaffolding (the state switcher in
+  the corner). It is not part of the design and gets deleted on the way in.
+  ============================================================================
+-->
+
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   1. TOKENS — identical names and default values to a real deployed site
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --ns-font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+             "Helvetica Neue", Arial, sans-serif;
+  --ns-bg: #f4f4f2;
+  --ns-bg-tint: #f0f0ed;
+  --ns-fg: #0b0b0b;
+  --ns-muted: #77766f;
+  --ns-border: #dcdcd6;
+  --ns-primary: #2f5fe0;
+  --ns-accent: #1f47bd;
+  --ns-msgbg: #fcfcfb;
+  --ns-panelbg: #fcfcfb;
+  --ns-surface: #fcfcfb;
+  --ns-surface-2: #f4f4f2;
+  --ns-brand-grad: linear-gradient(120deg, #2f5fe0, #1f47bd);
+  --ns-bevel: rgba(255, 255, 255, 0.75);
+  --ns-dot: color-mix(in srgb, #0b0b0b 10%, transparent);
+  /* Bounded to a 70% mix toward --ns-accent rather than running all the way
+     to it: the bubble's own ink is chosen against --ns-primary, and the far
+     stop has to stay in that luminance band. Measured white-on-far-stop
+     6.06:1 here, and black-on-far-stop 4.58:1 in dark — the unbounded
+     gradient this replaces measured 3.59:1 in dark. See PORTING NOTES. */
+  --ns-user-bg: linear-gradient(140deg, var(--ns-primary),
+                color-mix(in srgb, var(--ns-primary) 70%, var(--ns-accent)));
+  --ns-user-fg: #ffffff;
+  --ns-ring: color-mix(in srgb, #2f5fe0 38%, transparent);
+  --ns-radius: 16px;
+}
+/* The console's own dark palette — what a default (unthemed) site gets today. */
+html[data-pv-theme="dark"] {
+  --ns-bg: #121211;
+  --ns-bg-tint: #0e0e0d;
+  --ns-fg: #ffffff;
+  --ns-muted: #94938a;
+  --ns-border: #32322e;
+  --ns-primary: #4c7cf0;
+  --ns-accent: #2f5fe0;
+  --ns-msgbg: #1a1a19;
+  --ns-panelbg: #1a1a19;
+  --ns-surface: #1a1a19;
+  --ns-surface-2: #121211;
+  --ns-brand-grad: linear-gradient(120deg, #4c7cf0, #2f5fe0);
+  --ns-bevel: rgba(255, 255, 255, 0.055);
+  --ns-dot: color-mix(in srgb, #ffffff 16%, transparent);
+  --ns-user-bg: linear-gradient(140deg, var(--ns-primary),
+                color-mix(in srgb, var(--ns-primary) 70%, var(--ns-accent)));
+  --ns-user-fg: #0b0b0b;
+  --ns-ring: color-mix(in srgb, #4c7cf0 38%, transparent);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   2. PAGE — the generated shell's backdrop, unchanged: one restrained glow
+      over a fine dot grid, anchored to the viewport so it cannot slide out
+      from behind the panels.
+   ═══════════════════════════════════════════════════════════════════════════ */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: var(--ns-font);
+  color: var(--ns-fg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background:
+    radial-gradient(1250px 640px at 50% -24%,
+      color-mix(in srgb, var(--ns-primary) 20%, transparent) 0%, transparent 72%),
+    radial-gradient(var(--ns-dot) 1px, transparent 1px),
+    radial-gradient(var(--ns-dot) 1px, transparent 1px),
+    var(--ns-bg);
+  background-size: auto, 32px 32px, 32px 32px, auto;
+  background-position: 50% 0, 0 0, 16px 16px, 0 0;
+  background-attachment: fixed, fixed, fixed, fixed;
+}
+::selection { background: color-mix(in srgb, var(--ns-primary) 22%, transparent); }
+:is(button, input, select, textarea, summary, a):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ns-ring);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   3. APP SHELL — same grid contract as the runtime: header spans, chat left,
+      rail right, splitter between. Structural properties are unchanged.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.ns-app {
+  display: grid;
+  grid-template-columns: minmax(300px, var(--ns-mainw, 1fr)) 8px minmax(220px, var(--ns-railw, 340px));
+  grid-template-rows: auto 1fr;
+  column-gap: 8px;
+  row-gap: 14px;
+  height: 100dvh;
+  min-height: 0;
+  padding: 16px 18px 18px;
+}
+.ns-main { grid-column: 1; grid-row: 2; min-height: 0; min-width: 0; display: flex; justify-content: center; }
+.ns-main > .ns-chat { flex: 1 1 auto; width: 100%; max-width: 1100px; min-width: 0; min-height: 0; }
+.ns-split {
+  grid-column: 2; grid-row: 2; align-self: stretch; width: 8px; justify-self: center;
+  border-radius: 6px; background: var(--ns-border); opacity: 0.4; cursor: col-resize;
+  transition: opacity 0.15s, background 0.15s;
+}
+.ns-split:hover { opacity: 1; background: var(--ns-primary); }
+
+/* Glass surfaces, derived from the theme's own colours. */
+.ns-app {
+  --ns-glass: color-mix(in srgb, var(--ns-surface) 92%, transparent);
+  --ns-glass-line: color-mix(in srgb, var(--ns-primary) 10%, var(--ns-border));
+  --ns-lift: 0 1px 0 var(--ns-bevel) inset, 0 24px 54px -28px rgba(8, 10, 20, 0.34);
+  /* Small print gets a stronger muted step, mixed toward the foreground.
+     Measured: the theme's own --ns-muted is 4.44:1 on the card surface in the
+     default light palette — fine for a 13px hint, under AA for the 11px author
+     line and timeline this design adds. Mixing 22% of --ns-fg in takes it past
+     4.5:1 and, because both ends are theme tokens, it stays in palette under
+     any theme (including dark, where it moves the other way). */
+  --ns-muted-strong: color-mix(in srgb, var(--ns-muted) 78%, var(--ns-fg));
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4. HEADER — brand, live status, and the top menu (BYOK / Focus / Developer)
+   ═══════════════════════════════════════════════════════════════════════════ */
+.ns-header {
+  position: relative;
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 4px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ns-border) 60%, transparent);
+}
+.ns-header::after {
+  content: "";
+  position: absolute; inset: auto 0 -1px 0; height: 2px;
+  background: linear-gradient(90deg, var(--ns-primary), var(--ns-accent) 60%, transparent);
+  opacity: 0.55; pointer-events: none;
+}
+/* NEW: a brand lockup — gradient mark + name + one-line tagline. The runtime
+   renders the name alone today, which reads as a page title rather than a
+   product. The mark is CSS, so no asset is needed. */
+.ns-brandlock { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.ns-brandmark {
+  display: grid; place-items: center;
+  width: 38px; height: 38px; flex: none;
+  border-radius: 12px;
+  background: var(--ns-brand-grad);
+  color: var(--ns-user-fg);
+  font-size: 19px; line-height: 1;
+  box-shadow: 0 10px 22px -10px color-mix(in srgb, var(--ns-primary) 75%, transparent),
+              0 1px 0 rgba(255, 255, 255, 0.35) inset;
+}
+.ns-brandtext { min-width: 0; }
+.ns-title {
+  font-weight: 800; font-size: 20px; letter-spacing: -0.03em; line-height: 1.15;
+  background: var(--ns-brand-grad);
+  background-clip: text; -webkit-background-clip: text;
+  color: transparent; -webkit-text-fill-color: transparent;
+  padding-right: 2px;
+}
+.ns-tagline {
+  margin: 1px 0 0; font-size: 12px; color: var(--ns-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.ns-llmbadge {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 650;
+  padding: 5px 11px; border-radius: 999px;
+  border: 1px solid transparent;
+  /* Shrinkable: the model id can be long ("claude-sonnet-4-5-20250929") and on
+     a phone the header has ~380px for brand + badge. Truncating keeps the dot
+     and the first words, which carry the meaning; the title attribute has the
+     rest. Without this the badge pushes the row past the viewport. */
+  min-width: 0; flex: 0 1 auto;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ns-llmbadge::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%;
+  background: currentColor; flex: none;
+}
+.ns-llmbadge.real    { background: color-mix(in srgb, #16a34a 12%, var(--ns-surface)); color: #15803d; border-color: color-mix(in srgb, #16a34a 34%, transparent); }
+.ns-llmbadge.mock    { background: color-mix(in srgb, #f59e0b 14%, var(--ns-surface)); color: #b45309; border-color: color-mix(in srgb, #f59e0b 42%, transparent); }
+.ns-llmbadge.pending { background: color-mix(in srgb, #38bdf8 14%, var(--ns-surface)); color: #0369a1; border-color: color-mix(in srgb, #38bdf8 42%, transparent); }
+.ns-llmbadge.error   { background: color-mix(in srgb, #ef4444 14%, var(--ns-surface)); color: #b91c1c; border-color: color-mix(in srgb, #ef4444 42%, transparent); }
+html[data-pv-theme="dark"] .ns-llmbadge.real    { color: #4ade80; }
+html[data-pv-theme="dark"] .ns-llmbadge.mock    { color: #fbbf24; }
+html[data-pv-theme="dark"] .ns-llmbadge.pending { color: #7dd3fc; }
+html[data-pv-theme="dark"] .ns-llmbadge.error   { color: #fca5a5; }
+
+.ns-menu { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 0 1 auto; }
+.ns-mlabel { white-space: nowrap; }
+.ns-menuitem {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: inherit; font-size: 12.5px; font-weight: 650;
+  padding: 7px 13px; border-radius: 999px;
+  border: 1px solid var(--ns-border);
+  background: color-mix(in srgb, var(--ns-surface) 70%, transparent);
+  color: var(--ns-muted); cursor: pointer;
+  transition: border-color 0.16s, color 0.16s, background 0.16s, transform 0.16s;
+}
+.ns-menuitem:hover { border-color: var(--ns-primary); color: var(--ns-primary); transform: translateY(-1px); }
+.ns-menuitem.on {
+  background: var(--ns-fg); color: var(--ns-surface); border-color: var(--ns-fg);
+}
+.ns-menuitem svg { width: 14px; height: 14px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   5. CHAT CARD — transcript + composer, one continuous surface
+   ═══════════════════════════════════════════════════════════════════════════ */
+.ns-chat {
+  position: relative;
+  display: flex; flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--ns-glass-line);
+  border-radius: 26px;
+  overflow: hidden;
+  background:
+    linear-gradient(110deg, var(--ns-primary), var(--ns-accent)) no-repeat top / 100% 2px,
+    color-mix(in srgb, var(--ns-surface) 96%, transparent);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: var(--ns-lift);
+}
+
+.ns-msgs {
+  flex: 1; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  padding: 26px 24px 8px;
+  display: flex; flex-direction: column;
+  gap: 4px;
+  scroll-behavior: smooth;
+}
+/* `display: flex` above out-specifies the browser's own `[hidden]` rule, so
+   hiding a transcript needs saying explicitly. The runtime already carries the
+   same guard for .ns-modal[hidden]. */
+.ns-msgs[hidden] { display: none; }
+
+/* ── message groups ────────────────────────────────────────────────────────
+   NEW: consecutive messages from one speaker are grouped under a single
+   author line (avatar + name + time). Today every bubble is an anonymous
+   grey rectangle, so a ten-agent network reads as one faceless voice — the
+   author line is where "a web of agents worked on this" becomes visible.
+   `.ns-msg` keeps its exact class and role; the group wrapper is additive. */
+.ns-turn { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
+.ns-turn:first-child { margin-top: 0; }
+.ns-turn--user { align-items: flex-end; }
+
+.ns-author { display: flex; align-items: center; gap: 8px; padding-left: 2px; }
+.ns-avatar {
+  display: grid; place-items: center;
+  width: 26px; height: 26px; flex: none;
+  border-radius: 9px; font-size: 14px; line-height: 1;
+  background: color-mix(in srgb, var(--ns-primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ns-primary) 18%, transparent);
+}
+.ns-author__name { font-size: 12.5px; font-weight: 700; letter-spacing: -0.01em; }
+.ns-author__role { font-size: 11.5px; color: var(--ns-muted-strong); }
+.ns-author__time { font-size: 11px; color: var(--ns-muted-strong); font-variant-numeric: tabular-nums; }
+.ns-author__sep { color: color-mix(in srgb, var(--ns-muted) 55%, transparent); }
+
+/* ── bubbles ─────────────────────────────────────────────────────────────── */
+.ns-msg {
+  position: relative;
+  max-width: min(84%, 72ch);
+  padding: 13px 16px;
+  border-radius: var(--ns-radius);
+  white-space: pre-wrap;
+  line-height: 1.62;
+  font-size: 15px;
+}
+.ns-msg.bot {
+  align-self: flex-start;
+  background: var(--ns-msgbg);
+  border: 1px solid var(--ns-border);
+  border-bottom-left-radius: 7px;
+  box-shadow: 0 1px 0 var(--ns-bevel) inset, 0 10px 24px -22px rgba(8, 10, 20, 0.5);
+}
+.ns-msg.user {
+  align-self: flex-end;
+  background: var(--ns-user-bg);
+  color: var(--ns-user-fg);
+  border-bottom-right-radius: 7px;
+  box-shadow: 0 12px 28px -14px color-mix(in srgb, var(--ns-primary) 70%, transparent);
+}
+.ns-turn--user .ns-msg + .ns-msg,
+.ns-turn .ns-msg + .ns-msg { margin-top: 4px; }
+
+/* NEW: copy affordance. A concierge answer is something people paste into an
+   email, and selecting 400 words of pre-wrap text with a mouse is miserable. */
+.ns-msgact {
+  position: absolute; top: 6px; right: 6px;
+  display: grid; place-items: center;
+  width: 26px; height: 26px;
+  border: 1px solid var(--ns-border); border-radius: 8px;
+  background: color-mix(in srgb, var(--ns-surface) 88%, transparent);
+  color: var(--ns-muted); cursor: pointer;
+  opacity: 0; transform: translateY(-2px);
+  transition: opacity 0.14s, transform 0.14s, color 0.14s, border-color 0.14s;
+}
+.ns-msg:hover .ns-msgact, .ns-msgact:focus-visible { opacity: 1; transform: none; }
+.ns-msgact:hover { color: var(--ns-primary); border-color: var(--ns-primary); }
+.ns-msgact svg { width: 13px; height: 13px; }
+
+/* ── feedback + sources ────────────────────────────────────────────────────
+   NEW. A trust row under every finished answer — was this useful, and what
+   did the agent check before saying it. Shown always, not on hover: a
+   customer watching a demo will not think to hover to discover it exists. */
+.ns-msgfoot {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 3px 5px 0; font-size: 11.5px; color: var(--ns-muted-strong);
+}
+.ns-turn--user .ns-msgfoot { justify-content: flex-end; }
+.ns-fbbtn {
+  display: grid; place-items: center;
+  width: 24px; height: 24px; flex: none; border-radius: 7px;
+  border: 1px solid transparent; background: none;
+  color: var(--ns-muted); cursor: pointer; font-size: 13px; line-height: 1;
+  transition: background 0.14s, border-color 0.14s, color 0.14s, transform 0.14s;
+}
+.ns-fbbtn:hover { background: var(--ns-surface-2); border-color: var(--ns-border); transform: translateY(-1px); }
+.ns-fbbtn[aria-pressed="true"] {
+  color: var(--ns-primary); background: color-mix(in srgb, var(--ns-primary) 10%, transparent);
+  border-color: color-mix(in srgb, var(--ns-primary) 40%, transparent);
+}
+.ns-fbbtn[data-fb="down"][aria-pressed="true"] {
+  color: #dc2626; background: color-mix(in srgb, #dc2626 10%, transparent);
+  border-color: color-mix(in srgb, #dc2626 40%, transparent);
+}
+.ns-ghostbtn.small { font-size: 11.5px; padding: 5px 11px; }
+.ns-msgfoot__sep { color: color-mix(in srgb, var(--ns-muted) 55%, transparent); }
+.ns-msgfoot__spacer { flex: 1; }
+.ns-msgfoot__sources { display: inline-flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ns-srclink {
+  font: inherit; font-weight: 650; padding: 0; border: 0; background: none;
+  color: var(--ns-primary); cursor: pointer; text-underline-offset: 2px;
+}
+.ns-srclink:hover { text-decoration: underline; }
+.ns-fbthanks { color: #15803d; font-weight: 650; animation: ns-rise 0.2s ease-out; }
+
+/* ── error / failure state ─────────────────────────────────────────────────
+   NEW. A ten-agent network will have a leg fail sometimes, and the one thing
+   worse than that is showing nothing when it does. Styled as information,
+   not alarm — the rest of the plan is fine, only this one hop is not. */
+.ns-msg.ns-error {
+  display: flex; gap: 12px; align-items: flex-start;
+  border-color: color-mix(in srgb, #ef4444 32%, var(--ns-border));
+  background: color-mix(in srgb, #ef4444 6%, var(--ns-msgbg));
+}
+.ns-error__icon {
+  display: grid; place-items: center; flex: none;
+  width: 30px; height: 30px; border-radius: 10px;
+  color: #dc2626; background: color-mix(in srgb, #ef4444 14%, transparent);
+  border: 1px solid color-mix(in srgb, #ef4444 26%, transparent);
+}
+.ns-error__icon svg { width: 16px; height: 16px; }
+.ns-msg.ns-error p { margin: 0 0 4px; }
+.ns-msg.ns-error p:last-child { margin-bottom: 0; }
+.ns-error__sub { color: var(--ns-muted-strong); font-size: 13.5px; }
+html[data-pv-theme="dark"] .ns-error__icon { color: #fca5a5; }
+
+/* ── rich answer formatting ───────────────────────────────────────────────
+   NEW. Agents write lists, headings, prices and code; `white-space: pre-wrap`
+   on a flat string is the whole of today's formatting. These rules are the
+   styling half — `.ns-md` is set on a bubble whose text has been rendered as
+   markup rather than plain text (see PORTING NOTES: this needs a renderer,
+   and until there is one the bubble stays plain and nothing regresses). */
+.ns-md { white-space: normal; }
+.ns-md > :first-child { margin-top: 0; }
+.ns-md > :last-child { margin-bottom: 0; }
+.ns-md h4 {
+  margin: 16px 0 7px; font-size: 13px; font-weight: 750;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--ns-muted);
+}
+.ns-md p { margin: 0 0 10px; }
+.ns-md ul, .ns-md ol { margin: 0 0 10px; padding-left: 20px; }
+.ns-md li { margin: 3px 0; }
+.ns-md li::marker { color: var(--ns-primary); }
+.ns-md strong { font-weight: 700; }
+.ns-md code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.86em; padding: 0.12em 0.4em; border-radius: 6px;
+  background: color-mix(in srgb, var(--ns-fg) 7%, transparent);
+}
+.ns-md pre {
+  margin: 0 0 10px; padding: 12px 14px; border-radius: 12px; overflow: auto;
+  background: color-mix(in srgb, var(--ns-fg) 5%, transparent);
+  border: 1px solid var(--ns-border);
+  font: 12.5px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.ns-md pre code { background: none; padding: 0; }
+.ns-md table { width: 100%; border-collapse: collapse; margin: 0 0 10px; font-size: 13.5px; }
+.ns-md th, .ns-md td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--ns-border); }
+.ns-md th { color: var(--ns-muted); font-size: 12px; font-weight: 650; }
+.ns-md td:last-child, .ns-md th:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.ns-md a { color: var(--ns-primary); text-underline-offset: 2px; }
+
+/* ── hero / empty state ───────────────────────────────────────────────────
+   Kept as :only-child so it costs no DOM and reverts the instant a second
+   message exists — but given a real welcome: mark, name, pitch, and starter
+   prompts. An empty transcript is the first thing every visitor sees. */
+.ns-hero {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; padding: 30px 18px; text-align: center;
+}
+.ns-hero__mark {
+  display: grid; place-items: center;
+  width: 66px; height: 66px; border-radius: 21px; margin-bottom: 20px;
+  font-size: 30px; line-height: 1; color: var(--ns-user-fg);
+  background: var(--ns-brand-grad);
+  box-shadow: 0 22px 44px -16px color-mix(in srgb, var(--ns-primary) 75%, transparent),
+              0 1px 0 rgba(255, 255, 255, 0.45) inset;
+}
+.ns-hero__title { margin: 0; font-size: 26px; font-weight: 750; letter-spacing: -0.03em; }
+.ns-hero__sub {
+  margin: 10px 0 0; max-width: 42ch;
+  font-size: 15px; line-height: 1.6; color: var(--ns-muted);
+}
+/* NEW: starter prompts. "Ask me anything" is not an answer to "what can this
+   thing do?" — four concrete openers are, and they come from the network's
+   own manifest, so every site suggests its own. */
+.ns-starters { display: flex; flex-wrap: wrap; gap: 9px; justify-content: center; margin-top: 26px; max-width: 54ch; }
+.ns-starter {
+  font-family: inherit; font-size: 13.5px; font-weight: 550; text-align: left;
+  padding: 10px 15px; border-radius: 999px;
+  border: 1px solid var(--ns-border);
+  background: color-mix(in srgb, var(--ns-surface) 75%, transparent);
+  color: var(--ns-fg); cursor: pointer;
+  transition: border-color 0.16s, background 0.16s, transform 0.16s, box-shadow 0.16s;
+}
+.ns-starter:hover {
+  border-color: var(--ns-primary);
+  background: var(--ns-surface);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 22px -14px color-mix(in srgb, var(--ns-primary) 55%, transparent);
+}
+
+/* ── working indicator ────────────────────────────────────────────────────
+   NEW. Today the rail says "Thinking…" and the transcript shows nothing, so
+   the surface you are watching is the one with no feedback on it. */
+.ns-thinking {
+  align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 11px;
+  padding: 12px 16px;
+  border: 1px solid var(--ns-border); border-radius: var(--ns-radius);
+  border-bottom-left-radius: 7px;
+  background: var(--ns-msgbg);
+  font-size: 13.5px; color: var(--ns-muted);
+}
+.ns-dots { display: inline-flex; gap: 4px; }
+.ns-dots i {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ns-primary); opacity: 0.35;
+  animation: ns-bounce 1.15s ease-in-out infinite;
+}
+.ns-dots i:nth-child(2) { animation-delay: 0.14s; }
+.ns-dots i:nth-child(3) { animation-delay: 0.28s; }
+@keyframes ns-bounce {
+  0%, 100% { transform: translateY(0); opacity: 0.35; }
+  40%      { transform: translateY(-4px); opacity: 1; }
+}
+
+/* ── composer ─────────────────────────────────────────────────────────────
+   The bar floats on the transcript: a scrim that fades up into the messages
+   rather than a hairline fencing them off. */
+.ns-inputbar {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 18px 16px;
+  background: linear-gradient(to top,
+    color-mix(in srgb, var(--ns-surface) 97%, transparent) 58%, transparent);
+}
+.ns-composer {
+  display: flex; align-items: flex-end; gap: 9px;
+  padding: 7px 7px 7px 17px;
+  border: 1px solid color-mix(in srgb, var(--ns-primary) 16%, var(--ns-border));
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--ns-surface) 96%, transparent);
+  box-shadow: 0 1px 0 var(--ns-bevel) inset, 0 10px 26px -20px rgba(8, 10, 20, 0.45);
+  transition: border-color 0.16s, box-shadow 0.16s;
+}
+.ns-composer:focus-within {
+  border-color: var(--ns-primary);
+  box-shadow: 0 0 0 4px var(--ns-ring), 0 10px 26px -20px rgba(8, 10, 20, 0.45);
+}
+/* NEW: a textarea, not an input. A trip brief or a policy question is several
+   lines long, and a single-line field hides everything but the tail of it. */
+.ns-composer textarea {
+  flex: 1; min-width: 0;
+  border: 0; outline: none; resize: none;
+  background: none; color: inherit;
+  font-family: inherit; font-size: 15px; line-height: 1.55;
+  padding: 9px 0; max-height: 8.5em;
+}
+.ns-composer textarea::placeholder { color: var(--ns-muted); }
+.ns-send {
+  display: grid; place-items: center;
+  width: 40px; height: 40px; flex: none;
+  border: 0; border-radius: 50%;
+  background: var(--ns-user-bg); color: var(--ns-user-fg);
+  cursor: pointer;
+  box-shadow: 0 10px 22px -10px color-mix(in srgb, var(--ns-primary) 85%, transparent);
+  transition: filter 0.16s, transform 0.16s;
+}
+.ns-send:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.ns-send:active { transform: translateY(0); }
+.ns-send:disabled { opacity: 0.45; cursor: default; box-shadow: none; transform: none; }
+.ns-send svg { width: 17px; height: 17px; }
+.ns-ghostbtn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: inherit; font-size: 12.5px; font-weight: 600;
+  padding: 9px 13px; border-radius: 999px;
+  border: 1px solid var(--ns-border); background: none;
+  color: var(--ns-muted); cursor: pointer;
+  transition: color 0.16s, border-color 0.16s;
+}
+.ns-ghostbtn:hover { color: var(--ns-primary); border-color: var(--ns-primary); }
+.ns-ghostbtn svg { width: 13px; height: 13px; }
+.ns-composerfoot {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 4px; font-size: 11.5px; color: var(--ns-muted-strong);
+}
+.ns-composerfoot kbd {
+  font-family: inherit; font-size: 10.5px; font-weight: 650;
+  padding: 1px 5px; border-radius: 5px;
+  border: 1px solid var(--ns-border);
+  background: color-mix(in srgb, var(--ns-fg) 5%, transparent);
+}
+.ns-composerfoot__spacer { flex: 1; }
+
+/* NEW: jump-to-latest, shown when the transcript is scrolled away from the
+   bottom. Long answers plus a form below them is exactly when people lose the
+   end of the conversation. */
+.ns-jump {
+  position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%);
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: inherit; font-size: 12px; font-weight: 650;
+  padding: 8px 14px; border-radius: 999px;
+  border: 1px solid var(--ns-border);
+  background: color-mix(in srgb, var(--ns-surface) 94%, transparent);
+  backdrop-filter: blur(8px);
+  color: var(--ns-fg); cursor: pointer;
+  box-shadow: 0 12px 26px -14px rgba(8, 10, 20, 0.5);
+}
+.ns-jump svg { width: 13px; height: 13px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6. CRUSE WIDGETS — the forms and choices a visitor actually fills in
+   ═══════════════════════════════════════════════════════════════════════════ */
+.ns-widget {
+  align-self: flex-start;
+  width: min(100%, 34rem);
+  border: 1px solid color-mix(in srgb, var(--w, var(--ns-primary)) 22%, var(--ns-border));
+  border-top: 3px solid var(--w, var(--ns-primary));
+  border-radius: 18px;
+  padding: 18px;
+  background: color-mix(in srgb, var(--ns-surface) 97%, transparent);
+  display: flex; flex-direction: column; gap: 12px;
+  box-shadow: 0 1px 0 var(--ns-bevel) inset, 0 16px 36px -22px rgba(8, 10, 20, 0.34);
+}
+.ns-w-head { display: flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
+.ns-w-icon { font-size: 19px; }
+.ns-w-desc { font-size: 13px; color: var(--ns-muted); line-height: 1.5; }
+.ns-w-form { display: flex; flex-direction: column; gap: 13px; }
+.ns-w-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
+.ns-w-row { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.ns-w-label { font-size: 13px; font-weight: 650; }
+.ns-w-fdesc { font-size: 11.5px; color: var(--ns-muted-strong); }
+.ns-w-row input, .ns-w-row select, .ns-w-row textarea {
+  width: 100%; padding: 10px 12px;
+  border: 1px solid var(--ns-border); border-radius: 11px;
+  font-size: 14px; font-family: inherit; color: inherit;
+  background: var(--ns-surface-2);
+  transition: border-color 0.16s, background 0.16s, box-shadow 0.16s;
+}
+.ns-w-row input:focus, .ns-w-row select:focus, .ns-w-row textarea:focus {
+  border-color: var(--ns-primary); background: var(--ns-surface);
+}
+/* NEW: segmented control for a small set of options — three radio circles in
+   a row is a form, this is a choice. */
+.ns-w-seg {
+  /* align-self, because .ns-w-row is a stretch column: without it the track
+     runs the full width of the card and the options sit in a sea of pill. */
+  display: inline-flex; align-self: flex-start;
+  padding: 3px; gap: 3px;
+  border: 1px solid var(--ns-border); border-radius: 999px;
+  background: var(--ns-surface-2);
+}
+.ns-w-seg button {
+  font-family: inherit; font-size: 13px; font-weight: 600;
+  padding: 7px 14px; border: 0; border-radius: 999px;
+  background: none; color: var(--ns-muted); cursor: pointer;
+  transition: background 0.16s, color 0.16s;
+}
+.ns-w-seg button[aria-pressed="true"] {
+  background: var(--ns-surface); color: var(--ns-fg);
+  box-shadow: 0 1px 2px rgba(8, 10, 20, 0.14);
+}
+.ns-w-actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin-top: 3px; }
+.ns-w-btn {
+  font-family: inherit; font-size: 14px; font-weight: 650;
+  padding: 11px 21px; border: 0; border-radius: 999px;
+  background: var(--w, var(--ns-user-bg)); color: var(--ns-user-fg); cursor: pointer;
+  box-shadow: 0 10px 20px -12px color-mix(in srgb, var(--ns-primary) 70%, transparent);
+  transition: filter 0.16s, transform 0.16s;
+}
+.ns-w-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.ns-w-btn.ghost {
+  background: none; color: var(--ns-muted);
+  border: 1px solid var(--ns-border); box-shadow: none;
+}
+.ns-w-btn.ghost:hover { filter: none; color: var(--ns-primary); border-color: var(--ns-primary); }
+.ns-w-choices { display: flex; flex-direction: column; gap: 9px; }
+.ns-w-choice {
+  display: flex; align-items: center; gap: 12px; text-align: left;
+  padding: 13px 15px; border: 1px solid var(--ns-border); border-radius: 14px;
+  background: var(--ns-surface-2); color: inherit; font-family: inherit; cursor: pointer;
+  transition: border-color 0.16s, background 0.16s, transform 0.16s, box-shadow 0.16s;
+}
+.ns-w-choice:hover {
+  border-color: var(--ns-primary); background: var(--ns-surface);
+  transform: translateY(-1px); box-shadow: 0 10px 22px -14px rgba(15, 18, 34, 0.32);
+}
+.ns-w-choice__body { flex: 1; min-width: 0; }
+.ns-w-ctitle { font-weight: 650; font-size: 14px; }
+.ns-w-csub { font-size: 12px; color: var(--ns-muted); margin-top: 1px; }
+.ns-w-cmeta { font-size: 14px; font-weight: 700; color: var(--ns-primary); font-variant-numeric: tabular-nums; }
+
+/* ── consent ──────────────────────────────────────────────────────────────
+   A cross-network call-out is the one moment this UI asks for trust, so it
+   gets its own treatment rather than a yellow box. */
+.ns-consent {
+  align-self: flex-start; width: min(100%, 34rem);
+  padding: 16px 18px; border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--ns-primary) 28%, var(--ns-border));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ns-primary) 7%, transparent), transparent 60%),
+    var(--ns-surface);
+  box-shadow: 0 1px 0 var(--ns-bevel) inset, 0 16px 36px -24px rgba(8, 10, 20, 0.34);
+}
+.ns-consent__head { display: flex; align-items: flex-start; gap: 11px; }
+.ns-consent__lock {
+  display: grid; place-items: center; width: 30px; height: 30px; flex: none;
+  border-radius: 10px; color: var(--ns-primary);
+  background: color-mix(in srgb, var(--ns-primary) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ns-primary) 20%, transparent);
+}
+.ns-consent__lock svg { width: 15px; height: 15px; }
+.ns-consent-title { font-size: 14.5px; font-weight: 700; letter-spacing: -0.01em; }
+.ns-consent-sub {
+  font-size: 12px; color: var(--ns-muted-strong); margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.ns-consent-req {
+  margin: 12px 0 0; padding: 10px 12px;
+  border-left: 2px solid color-mix(in srgb, var(--ns-primary) 40%, transparent);
+  background: var(--ns-surface-2); border-radius: 0 10px 10px 0;
+  font-size: 13px; font-style: italic; color: var(--ns-muted);
+}
+.ns-consent__meta { display: flex; gap: 14px; margin-top: 12px; font-size: 12px; color: var(--ns-muted); }
+.ns-consent__meta b { color: var(--ns-fg); font-variant-numeric: tabular-nums; }
+.ns-consent-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 15px; }
+.ns-consent-actions button {
+  font-family: inherit; font-size: 13.5px; font-weight: 650;
+  padding: 10px 18px; border: 0; border-radius: 999px;
+  background: var(--ns-user-bg); color: var(--ns-user-fg); cursor: pointer;
+}
+.ns-consent-actions button.ghost {
+  background: none; color: var(--ns-muted); border: 1px solid var(--ns-border);
+}
+.ns-consent-actions button.ghost:hover { color: var(--ns-primary); border-color: var(--ns-primary); }
+.ns-consent-done { font-weight: 700; color: #15803d; font-size: 13.5px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   7. AGENTS RAIL — who is working for you, and what they just did
+   ═══════════════════════════════════════════════════════════════════════════ */
+.ns-agents {
+  grid-column: 3; grid-row: 2;
+  display: flex; flex-direction: column; gap: 12px;
+  min-height: 0; min-width: 0; overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--ns-glass-line); border-radius: 22px;
+  background: var(--ns-glass);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  box-shadow: var(--ns-lift);
+}
+.ns-agents h3 {
+  margin: 0; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--ns-muted);
+}
+.ns-status {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 13px; color: var(--ns-fg);
+  padding: 10px 12px; border-radius: 12px;
+  background: var(--ns-surface-2); border: 1px solid var(--ns-border);
+}
+.ns-status__dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: color-mix(in srgb, var(--ns-muted) 55%, transparent);
+}
+.ns-status.busy .ns-status__dot {
+  background: var(--ns-primary);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--ns-primary) 60%, transparent);
+  animation: ns-ping 1.5s ease-out infinite;
+}
+.ns-status.done .ns-status__dot { background: #16a34a; }
+@keyframes ns-ping {
+  to { box-shadow: 0 0 0 9px transparent; }
+}
+
+.ns-anode {
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; gap: 11px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--ns-surface) 60%, var(--ns-border));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--ns-surface) 92%, transparent);
+  cursor: pointer;
+  transition: border-color 0.16s, box-shadow 0.16s, transform 0.16s;
+}
+.ns-anode + .ns-anode { margin-top: 8px; }
+.ns-anode:hover {
+  border-color: var(--ns-primary); transform: translateY(-1px);
+  box-shadow: 0 10px 22px -12px color-mix(in srgb, var(--ns-primary) 45%, transparent);
+}
+.ns-aicon {
+  display: grid; place-items: center;
+  width: 32px; height: 32px; flex: none;
+  border-radius: 11px; font-size: 16px; line-height: 1;
+  background: color-mix(in srgb, var(--ns-primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ns-primary) 16%, transparent);
+}
+.ns-ameta { flex: 1; min-width: 0; }
+.ns-aname { font-weight: 650; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ns-arole { font-size: 11px; color: var(--ns-muted-strong); }
+.ns-adot {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  background: color-mix(in srgb, var(--ns-muted) 45%, transparent);
+}
+.ns-anode.active { border-color: var(--ns-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ns-primary) 12%, transparent); }
+.ns-anode.active .ns-adot { background: var(--ns-primary); animation: ns-pulse 1s ease-in-out infinite; }
+.ns-anode.done .ns-adot { background: #16a34a; }
+@keyframes ns-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+/* A thin indeterminate sweep along the top of the working agent's card —
+   the same "this one is live" signal as the pulsing dot, at a glance. */
+.ns-anode.active::after {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--ns-primary), transparent);
+  animation: ns-sweepx 1.6s linear infinite;
+}
+@keyframes ns-sweepx {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+
+/* ── connection graph ──────────────────────────────────────────────────────
+   NEW. The flat list above only said who exists; it never showed that the
+   Concierge calls Flight Search, which in turn calls out to Iberia — the
+   actual shape of "a network of agents worked on this". Built as a simple
+   rooted tree (one trunk, branching stubs) rather than the developer graph's
+   free-form boxes, so it reads at a glance without any technical vocabulary. */
+.ns-flowhead { margin: 6px 0 2px; }
+.ns-flow { display: flex; flex-direction: column; }
+.ns-fchildren {
+  display: flex; flex-direction: column; gap: 10px;
+  margin: 10px 0 0 15px; padding-left: 20px;
+  border-left: 2px solid var(--ns-border);
+}
+.ns-fbranch { position: relative; }
+.ns-fbranch .ns-fnode { margin: 0; }
+.ns-fbranch .ns-fchildren { margin-left: 15px; }
+.ns-fbranch::before {
+  content: ""; position: absolute; left: -20px; top: 21px;
+  width: 20px; height: 2px; background: var(--ns-border);
+}
+.ns-fbranch.done::before { background: color-mix(in srgb, #16a34a 55%, var(--ns-border)); }
+/* The active hop gets a moving highlight along its connector — the same
+   "data is flowing here right now" signal as the card's own sweep, but on
+   the wire between two agents rather than on the agent itself. */
+.ns-fbranch.active::before {
+  background: linear-gradient(90deg, var(--ns-primary), color-mix(in srgb, var(--ns-primary) 25%, transparent) 50%, var(--ns-primary));
+  background-size: 200% 100%;
+  animation: ns-flowpulse 1.3s linear infinite;
+}
+@keyframes ns-flowpulse {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+
+/* NEW: the activity timeline. The rail says who is working; this says what
+   they did, in words, without turning on the developer trace. */
+.ns-timeline { display: flex; flex-direction: column; gap: 0; margin-top: 2px; }
+.ns-tlrow {
+  position: relative; display: flex; gap: 10px;
+  padding: 7px 0 7px 4px; font-size: 12px; color: var(--ns-muted-strong);
+}
+.ns-tlrow::before {
+  content: ""; position: absolute; left: 7px; top: 20px; bottom: -2px;
+  width: 1px; background: var(--ns-border);
+}
+.ns-tlrow:last-child::before { display: none; }
+.ns-tlmark {
+  width: 15px; height: 15px; flex: none; margin-top: 1px;
+  display: grid; place-items: center;
+  border-radius: 50%; background: var(--ns-surface);
+  border: 1.5px solid var(--ns-border);
+  position: relative; z-index: 1;
+}
+.ns-tlrow.done .ns-tlmark { border-color: #16a34a; color: #16a34a; }
+.ns-tlrow.done .ns-tlmark::after { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.ns-tlrow.live .ns-tlmark { border-color: var(--ns-primary); }
+.ns-tlrow.live .ns-tlmark::after {
+  content: ""; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--ns-primary); animation: ns-pulse 1s ease-in-out infinite;
+}
+.ns-tltext { flex: 1; min-width: 0; line-height: 1.5; }
+.ns-tltext b { color: var(--ns-fg); font-weight: 650; }
+
+/* ── developer panel ──────────────────────────────────────────────────────── */
+.ns-dev {
+  grid-column: 3; grid-row: 2; display: none; flex-direction: column; gap: 12px;
+  min-height: 0; min-width: 0; overflow: auto;
+}
+.ns-app[data-dev="true"] .ns-agents { display: none; }
+.ns-app[data-dev="true"] .ns-dev { display: flex; }
+.ns-graph, .ns-log {
+  padding: 14px; border: 1px solid var(--ns-glass-line); border-radius: 18px;
+  background: var(--ns-glass); backdrop-filter: blur(20px);
+  box-shadow: var(--ns-lift);
+}
+.ns-log { flex: 1; min-height: 0; overflow: auto; }
+.ns-graph h3, .ns-log h3 {
+  margin: 0 0 10px; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--ns-muted);
+}
+.ns-tree, .ns-tchildren { list-style: none; margin: 0; padding: 0; }
+.ns-tchildren { margin-left: 11px; padding-left: 16px; border-left: 1.5px solid var(--ns-border); }
+.ns-tbox {
+  display: inline-flex; align-items: center; gap: 7px; margin: 3px 0;
+  padding: 6px 11px; border: 1px solid var(--ns-border); border-radius: 10px;
+  background: var(--ns-surface);
+  font: 12px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.ns-tbox.root { font-weight: 700; border-color: var(--ns-primary); }
+.ns-tdot { width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--ns-muted) 45%, transparent); }
+.ns-row {
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  border-left: 3px solid color-mix(in srgb, var(--ns-muted) 40%, transparent);
+  padding: 6px 10px; margin: 5px 0; border-radius: 0 8px 8px 0;
+  background: var(--ns-surface-2);
+}
+.ns-row .ns-tag { font-weight: 700; margin-right: 6px; }
+.ns-row .ns-meta { color: var(--ns-muted); }
+.ns-row.k-agent { border-left-color: var(--ns-primary); }
+.ns-row.k-model { border-left-color: #0891b2; }
+.ns-row.k-tool  { border-left-color: #16a34a; }
+.ns-row.k-mcp   { border-left-color: #0d9488; }
+.ns-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.ns-pill {
+  font-size: 11px; font-weight: 650; padding: 3px 9px; border-radius: 999px;
+  background: color-mix(in srgb, var(--ns-primary) 12%, transparent); color: var(--ns-primary);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   8. FOCUS MODE + MODAL
+   ═══════════════════════════════════════════════════════════════════════════ */
+.ns-app[data-focus="true"] :is(.ns-agents, .ns-dev, .ns-split) { display: none; }
+.ns-app[data-focus="true"] { grid-template-columns: minmax(300px, 1fr); }
+.ns-app[data-focus="true"] .ns-main > .ns-chat { max-width: 1240px; }
+
+.ns-modal {
+  position: fixed; inset: 0; z-index: 50;
+  display: grid; place-items: center; padding: 20px;
+  background: rgba(8, 10, 18, 0.55);
+  backdrop-filter: blur(4px);
+}
+.ns-modal[hidden] { display: none; }
+.ns-modal-card {
+  width: min(520px, 100%); max-height: 84vh; overflow: auto;
+  padding: 22px; border-radius: 22px;
+  background: var(--ns-surface); color: var(--ns-fg);
+  border: 1px solid var(--ns-border);
+  box-shadow: 0 34px 74px -22px rgba(8, 10, 18, 0.6);
+}
+.ns-modal__head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 4px; }
+.ns-modal__head h4 { margin: 0; font-size: 17px; letter-spacing: -0.015em; }
+.ns-modal__head p { margin: 4px 0 0; font-size: 12.5px; color: var(--ns-muted); line-height: 1.5; }
+.ns-modal-close {
+  margin-left: auto; flex: none;
+  display: grid; place-items: center; width: 30px; height: 30px;
+  border: 1px solid var(--ns-border); border-radius: 9px;
+  background: none; color: var(--ns-muted); cursor: pointer; font-size: 17px; line-height: 1;
+}
+.ns-modal-close:hover { color: var(--ns-fg); border-color: var(--ns-fg); }
+.ns-settings-body { display: flex; flex-direction: column; gap: 11px; padding-top: 16px; }
+.ns-settings-body label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 650; color: var(--ns-muted); }
+.ns-settings-body input, .ns-settings-body select {
+  padding: 10px 12px; border: 1px solid var(--ns-border); border-radius: 11px;
+  font-size: 13.5px; font-family: inherit; font-weight: 400; color: inherit;
+  background: var(--ns-surface-2);
+}
+.ns-settings-body input:focus, .ns-settings-body select:focus { border-color: var(--ns-primary); background: var(--ns-surface); }
+.ns-row-inline { flex-direction: row !important; align-items: center; gap: 8px !important; }
+.ns-hint { font-size: 11.5px; color: var(--ns-muted-strong); font-weight: 400; line-height: 1.5; }
+.ns-hint.warn { color: #b45309; font-weight: 600; }
+.ns-profile-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
+.ns-settings-body button {
+  font-family: inherit; font-size: 13px; font-weight: 650;
+  padding: 10px 17px; border: 0; border-radius: 999px;
+  background: var(--ns-user-bg); color: var(--ns-user-fg); cursor: pointer;
+}
+.ns-settings-body button.ghost {
+  background: none; color: var(--ns-muted); border: 1px solid var(--ns-border);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   9. SCROLLBARS, MOTION, RESPONSIVE
+   ═══════════════════════════════════════════════════════════════════════════ */
+:is(.ns-msgs, .ns-agents, .ns-log, .ns-dev, .ns-modal-card) {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ns-muted) 45%, transparent) transparent;
+}
+:is(.ns-msgs, .ns-agents, .ns-log, .ns-dev, .ns-modal-card)::-webkit-scrollbar { width: 10px; height: 10px; }
+:is(.ns-msgs, .ns-agents, .ns-log, .ns-dev, .ns-modal-card)::-webkit-scrollbar-track { background: transparent; }
+:is(.ns-msgs, .ns-agents, .ns-log, .ns-dev, .ns-modal-card)::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ns-muted) 38%, transparent);
+  border-radius: 999px; border: 3px solid transparent; background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ns-turn, .ns-widget, .ns-consent, .ns-thinking {
+    animation: ns-rise 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  @keyframes ns-rise { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ns-msgs { scroll-behavior: auto; }
+  .ns-dots i, .ns-anode.active::after, .ns-fbranch.active::before, .ns-status.busy .ns-status__dot { animation: none; }
+  .ns-anode:hover, .ns-starter:hover, .ns-w-choice:hover, .ns-send:hover { transform: none; }
+}
+
+/* The rail button only exists on narrow screens, where the rail is a sheet.
+   Declared BEFORE the media query that turns it on: both rules are one class
+   deep, so whichever comes last wins regardless of the query — with this rule
+   below the query the button stayed hidden at every width. */
+.ns-railbtn { display: none; }
+
+/* Narrow: one column, rail as a sheet over the chat rather than a squeezed
+   sliver beside it. The runtime's splitter is meaningless here, so it goes. */
+@media (max-width: 900px) {
+  .ns-app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    padding: 12px;
+    row-gap: 10px;
+  }
+  .ns-split { display: none; }
+  .ns-agents, .ns-dev {
+    position: fixed; z-index: 40;
+    inset: auto 12px 12px 12px; max-height: 62dvh;
+    transform: translateY(calc(100% + 16px));
+    transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .ns-app[data-sheet="true"] :is(.ns-agents, .ns-dev) { transform: none; }
+  .ns-app[data-dev="true"] .ns-dev { display: flex; }
+  .ns-railbtn { display: inline-flex; }
+  .ns-tagline { display: none; }
+  /* Icon-only menu: four labelled pills do not fit a phone header, and
+     wrapping them onto a second row costs a line of chat. The label is
+     only visually hidden, so each button keeps its accessible name. */
+  .ns-mlabel {
+    position: absolute; width: 1px; height: 1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+  .ns-menuitem { padding: 9px; }
+  .ns-menuitem svg { width: 15px; height: 15px; }
+  .ns-msgs { padding: 18px 14px 6px; }
+  .ns-msg { max-width: 92%; }
+  .ns-hero__title { font-size: 21px; }
+  .ns-starters { max-width: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   10. PREVIEW SCAFFOLDING — .pv-* / #pv. NOT part of the design; delete on
+       the way into the runtime.
+   ═══════════════════════════════════════════════════════════════════════════ */
+#pv {
+  position: fixed; z-index: 90; right: 14px; bottom: 14px;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; width: 232px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(14, 16, 22, 0.93);
+  backdrop-filter: blur(10px);
+  color: #f3f4f6;
+  font: 12px/1.4 var(--ns-font);
+  box-shadow: 0 24px 54px -18px rgba(0, 0, 0, 0.7);
+}
+#pv[data-collapsed="true"] > :not(.pv-bar) { display: none; }
+#pv[data-collapsed="true"] { width: auto; }
+.pv-bar { display: flex; align-items: center; gap: 8px; }
+.pv-bar strong { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.75; }
+.pv-bar button {
+  margin-left: auto; background: none; border: 0; color: inherit;
+  cursor: pointer; font: inherit; opacity: 0.7; padding: 2px 4px;
+}
+.pv-label { font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase; opacity: 0.55; margin-top: 4px; }
+.pv-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.pv-row button {
+  font: 600 11.5px/1 var(--ns-font);
+  padding: 7px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.07); color: #e5e7eb;
+}
+.pv-row button:hover { background: rgba(255, 255, 255, 0.14); }
+.pv-row button[aria-pressed="true"] { background: #f9fafb; color: #111827; border-color: #f9fafb; }
+.pv-note { font-size: 10.5px; opacity: 0.6; line-height: 1.45; }
+</style>
+</head>
+
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     THE DESIGN. Same element/class structure the runtime emits, so this
+     maps onto mountApp() in nsdeploy/runtime/ui.js.
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="ns-app" id="app" data-dev="false" data-focus="false" data-sheet="false">
+
+  <!-- ── header ───────────────────────────────────────────────────────── -->
+  <div class="ns-header">
+    <div class="ns-brandlock" data-new="brand lockup: mark + name + tagline">
+      <span class="ns-brandmark" aria-hidden="true">🧭</span>
+      <div class="ns-brandtext">
+        <div class="ns-title">Travel Concierge</div>
+        <p class="ns-tagline">Ten agents, one itinerary · travel.acme.example</p>
+      </div>
+    </div>
+
+    <div class="ns-llmbadge real" title="Verified response from gpt-4o-mini.">
+      real LLM · gpt-4o-mini
+    </div>
+
+    <nav class="ns-menu" aria-label="Assistant options">
+      <button type="button" class="ns-menuitem ns-railbtn" id="m-rail" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        <span class="ns-mlabel">Agents</span>
+      </button>
+      <button type="button" class="ns-menuitem" id="m-byok" aria-haspopup="dialog" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4M18 5l2 2M15 8l2 2"/></svg>
+        <span class="ns-mlabel">BYOK</span>
+      </button>
+      <button type="button" class="ns-menuitem" id="m-focus" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 3H5a2 2 0 0 0-2 2v4M15 3h4a2 2 0 0 1 2 2v4M9 21H5a2 2 0 0 1-2-2v-4M15 21h4a2 2 0 0 0 2-2v-4"/></svg>
+        <span class="ns-mlabel">Focus</span>
+      </button>
+      <button type="button" class="ns-menuitem" id="m-dev" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6 3 12l5 6M16 6l5 6-5 6"/></svg>
+        <span class="ns-mlabel">Developer</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ── chat ─────────────────────────────────────────────────────────── -->
+  <main class="ns-main">
+    <div class="ns-chat">
+
+      <!-- STATE: empty ------------------------------------------------- -->
+      <div class="ns-msgs" id="msgs-empty">
+        <div class="ns-hero">
+          <div class="ns-hero__mark" aria-hidden="true">🧭</div>
+          <h2 class="ns-hero__title">Where would you like to go?</h2>
+          <p class="ns-hero__sub">
+            Tell me the trip in your own words. I will plan it with a team of
+            ten agents — flights, stays, budget and a day-by-day itinerary.
+          </p>
+          <div class="ns-starters" data-new="starter prompts from manifest.welcome.starters">
+            <button class="ns-starter">Three days in Lisbon, mid-range</button>
+            <button class="ns-starter">Family trip, two kids, school holidays</button>
+            <button class="ns-starter">Cheapest week in Japan this spring</button>
+            <button class="ns-starter">What can you actually book?</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- STATE: conversation ------------------------------------------ -->
+      <div class="ns-msgs" id="msgs-chat" hidden>
+        <div class="ns-turn ns-turn--user">
+          <div class="ns-msg user">Plan 3 days in Lisbon in May for two, mid-range budget. We like food and walking.</div>
+        </div>
+
+        <div class="ns-turn">
+          <div class="ns-author" data-new="author line: avatar + agent name + time">
+            <span class="ns-avatar" aria-hidden="true">🧭</span>
+            <span class="ns-author__name">Travel Concierge</span>
+            <span class="ns-author__sep">·</span>
+            <span class="ns-author__role">front-man</span>
+            <span class="ns-author__sep">·</span>
+            <span class="ns-author__time">10:24</span>
+          </div>
+          <div class="ns-msg bot ns-md">
+            <button class="ns-msgact" title="Copy this answer" aria-label="Copy this answer">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>
+            </button>
+            <p>Three days, walkable, food-led. Here is the shape of it — say the word and I will price flights.</p>
+            <h4>Day by day</h4>
+            <ul>
+              <li><strong>Fri</strong> — Alfama on foot, sunset at Miradouro das Portas do Sol, dinner in Mouraria.</li>
+              <li><strong>Sat</strong> — Time Out Market late morning, tram 28 east, Belém for the afternoon.</li>
+              <li><strong>Sun</strong> — Príncipe Real brunch, LX Factory, early evening fado in Bairro Alto.</li>
+            </ul>
+            <h4>Budget, two people</h4>
+            <table>
+              <thead><tr><th>Item</th><th>Estimate</th></tr></thead>
+              <tbody>
+                <tr><td>Flights (return, EU short-haul)</td><td>€310</td></tr>
+                <tr><td>Hotel, 3 nights, mid-range</td><td>€420</td></tr>
+                <tr><td>Food and transport</td><td>€260</td></tr>
+                <tr><td><strong>Total</strong></td><td><strong>€990</strong></td></tr>
+              </tbody>
+            </table>
+            <p>The May figures are seasonal averages, not live fares — I will confirm both before anything is held.</p>
+          </div>
+          <div class="ns-msgfoot" data-new="feedback + sources row">
+            <button type="button" class="ns-fbbtn" data-fb="up" aria-pressed="false" aria-label="Good response">👍</button>
+            <button type="button" class="ns-fbbtn" data-fb="down" aria-pressed="false" aria-label="Poor response">👎</button>
+            <span class="ns-msgfoot__sep">·</span>
+            <button type="button" class="ns-ghostbtn small">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 2.6-6.3M3 4v5h5"/></svg>
+              Regenerate
+            </button>
+            <span class="ns-msgfoot__spacer"></span>
+            <span class="ns-msgfoot__sources">Sources <button type="button" class="ns-srclink">Numbeo</button>, <button type="button" class="ns-srclink">Booking.com</button></span>
+          </div>
+        </div>
+
+        <div class="ns-turn">
+          <div class="ns-author">
+            <span class="ns-avatar" aria-hidden="true">🏨</span>
+            <span class="ns-author__name">Accommodation Search Agent</span>
+            <span class="ns-author__sep">·</span>
+            <span class="ns-author__time">10:24</span>
+          </div>
+          <!-- CRUSE widget: the form an agent actually asked for -->
+          <div class="ns-widget" style="--w: var(--ns-primary)">
+            <div class="ns-w-head"><span class="ns-w-icon">🏨</span> Pick a base for the three nights</div>
+            <p class="ns-w-desc">All three are walkable to Alfama and under your nightly cap.</p>
+            <div class="ns-w-choices">
+              <button class="ns-w-choice">
+                <span class="ns-w-icon">🥇</span>
+                <span class="ns-w-choice__body">
+                  <span class="ns-w-ctitle">Casa Chiado</span>
+                  <span class="ns-w-csub">Chiado · 8 min walk to Alfama · breakfast included</span>
+                </span>
+                <span class="ns-w-cmeta">€140/n</span>
+              </button>
+              <button class="ns-w-choice">
+                <span class="ns-w-icon">🏛️</span>
+                <span class="ns-w-choice__body">
+                  <span class="ns-w-ctitle">Alfama Rooftop Rooms</span>
+                  <span class="ns-w-csub">Alfama · river view · steep street</span>
+                </span>
+                <span class="ns-w-cmeta">€125/n</span>
+              </button>
+              <button class="ns-w-choice">
+                <span class="ns-w-icon">🌿</span>
+                <span class="ns-w-choice__body">
+                  <span class="ns-w-ctitle">Príncipe Real Garden Flat</span>
+                  <span class="ns-w-csub">Príncipe Real · kitchen · 15 min walk</span>
+                </span>
+                <span class="ns-w-cmeta">€118/n</span>
+              </button>
+            </div>
+            <div class="ns-w-actions">
+              <button class="ns-w-btn ghost">Show me more</button>
+              <span class="ns-hint">Nothing is booked until you confirm.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STATE: working ---------------------------------------------- -->
+      <div class="ns-msgs" id="msgs-working" hidden>
+        <div class="ns-turn ns-turn--user">
+          <div class="ns-msg user">Can you check what the airline can actually hold for us?</div>
+        </div>
+        <div class="ns-turn">
+          <div class="ns-author">
+            <span class="ns-avatar" aria-hidden="true">✈️</span>
+            <span class="ns-author__name">Flight Search Agent</span>
+            <span class="ns-author__sep">·</span>
+            <span class="ns-author__time">10:26</span>
+          </div>
+          <div class="ns-thinking" data-new="in-transcript working indicator">
+            <span class="ns-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>Checking fares with the airline network…</span>
+          </div>
+        </div>
+        <button class="ns-jump" data-new="jump-to-latest button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+          Jump to latest
+        </button>
+      </div>
+
+      <!-- STATE: intake form ------------------------------------------ -->
+      <div class="ns-msgs" id="msgs-form" hidden>
+        <div class="ns-turn">
+          <div class="ns-author">
+            <span class="ns-avatar" aria-hidden="true">🧭</span>
+            <span class="ns-author__name">Traveler Intake Agent</span>
+            <span class="ns-author__sep">·</span>
+            <span class="ns-author__time">10:21</span>
+          </div>
+          <div class="ns-widget" style="--w: var(--ns-primary)">
+            <div class="ns-w-head"><span class="ns-w-icon">📝</span> A few details and I will start planning</div>
+            <p class="ns-w-desc">Everything here is optional — type a request instead if you prefer.</p>
+            <div class="ns-w-form">
+              <div class="ns-w-grid">
+                <div class="ns-w-row">
+                  <label class="ns-w-label" for="f-dest">Destination</label>
+                  <input id="f-dest" type="text" placeholder="Lisbon">
+                </div>
+                <div class="ns-w-row">
+                  <label class="ns-w-label" for="f-when">Travelling</label>
+                  <input id="f-when" type="text" placeholder="Mid-May, 3 nights">
+                </div>
+              </div>
+              <div class="ns-w-row">
+                <span class="ns-w-label">Budget</span>
+                <span class="ns-w-fdesc">Per person, excluding flights.</span>
+                <div class="ns-w-seg" role="group" aria-label="Budget" data-new="segmented control">
+                  <button type="button" aria-pressed="false">Frugal</button>
+                  <button type="button" aria-pressed="true">Mid-range</button>
+                  <button type="button" aria-pressed="false">No limit</button>
+                </div>
+              </div>
+              <div class="ns-w-row">
+                <label class="ns-w-label" for="f-notes">Anything I should know?</label>
+                <textarea id="f-notes" rows="2" placeholder="We like food and walking; no early starts."></textarea>
+              </div>
+              <div class="ns-w-actions">
+                <button class="ns-w-btn">Start planning</button>
+                <button class="ns-w-btn ghost">Skip</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STATE: consent ---------------------------------------------- -->
+      <div class="ns-msgs" id="msgs-consent" hidden>
+        <div class="ns-turn ns-turn--user">
+          <div class="ns-msg user">Yes, please price the flights.</div>
+        </div>
+        <div class="ns-turn">
+          <div class="ns-author">
+            <span class="ns-avatar" aria-hidden="true">✈️</span>
+            <span class="ns-author__name">Flight Search Agent</span>
+            <span class="ns-author__sep">·</span>
+            <span class="ns-author__time">10:27</span>
+          </div>
+          <div class="ns-consent">
+            <div class="ns-consent__head">
+              <span class="ns-consent__lock" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+              </span>
+              <div>
+                <div class="ns-consent-title">Contact <b>Iberia Partner Network</b> on your behalf?</div>
+                <div class="ns-consent-sub">flights.iberia-partner.example</div>
+              </div>
+            </div>
+            <p class="ns-consent-req">“Return, LIS–LHR, 15–18 May, two adults, mid-range fare classes.”</p>
+            <div class="ns-consent__meta">
+              <span>Estimated <b>~4,200 tokens</b></span>
+              <span>Cost <b>~$0.02</b></span>
+            </div>
+            <div class="ns-consent-actions">
+              <button type="button">Allow once</button>
+              <button type="button">Always allow</button>
+              <button type="button" class="ghost">Decline</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STATE: error --------------------------------------------------- -->
+      <div class="ns-msgs" id="msgs-error" hidden>
+        <div class="ns-turn ns-turn--user">
+          <div class="ns-msg user">Can you also check trains from Porto to Lisbon?</div>
+        </div>
+        <div class="ns-turn">
+          <div class="ns-author">
+            <span class="ns-avatar" aria-hidden="true">🚆</span>
+            <span class="ns-author__name">Rail Search Agent</span>
+            <span class="ns-author__sep">·</span>
+            <span class="ns-author__time">10:29</span>
+          </div>
+          <div class="ns-msg bot ns-error" data-new="graceful error state">
+            <span class="ns-error__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
+            </span>
+            <div>
+              <p><strong>Couldn't reach the rail network.</strong> CP's booking service timed out after 8 seconds.</p>
+              <p class="ns-error__sub">The rest of your itinerary is unaffected. I can try again, or skip trains and keep the flight plan.</p>
+            </div>
+          </div>
+          <div class="ns-msgfoot">
+            <button type="button" class="ns-ghostbtn small" id="err-retry">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 2.6-6.3M3 4v5h5"/></svg>
+              Try again
+            </button>
+            <button type="button" class="ns-ghostbtn small">Skip trains</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- composer (shared by every state) ---------------------------- -->
+      <div class="ns-inputbar">
+        <div class="ns-composer">
+          <textarea id="ns-input" rows="1" placeholder="Describe your trip, or ask me anything…"></textarea>
+          <button class="ns-ghostbtn" id="ns-newchat" title="Clear this conversation">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            New
+          </button>
+          <button class="ns-send" id="ns-send" aria-label="Send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12 20 4l-8 16-2-6-6-2Z"/></svg>
+          </button>
+        </div>
+        <div class="ns-composerfoot">
+          <span><kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line</span>
+          <span class="ns-composerfoot__spacer"></span>
+          <span>Ten agents · answers can be wrong, check anything that matters</span>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <div class="ns-split" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize"></div>
+
+  <!-- ── agents rail ──────────────────────────────────────────────────── -->
+  <aside class="ns-agents">
+    <h3>Agents working for you</h3>
+    <div class="ns-status busy">
+      <span class="ns-status__dot" aria-hidden="true"></span>
+      <span>Checking fares with the airline network…</span>
+    </div>
+
+    <h3 class="ns-flowhead" style="margin-top:6px">How they're connected</h3>
+    <div class="ns-flow" data-new="live multi-agent connection graph — who called whom to build this answer">
+      <div class="ns-anode ns-fnode done">
+        <span class="ns-aicon" aria-hidden="true">🧭</span>
+        <div class="ns-ameta">
+          <div class="ns-aname">Travel Concierge</div>
+          <div class="ns-arole">orchestrator</div>
+        </div>
+        <span class="ns-adot" title="done"></span>
+      </div>
+      <div class="ns-fchildren">
+        <div class="ns-fbranch done">
+          <div class="ns-anode ns-fnode done">
+            <span class="ns-aicon" aria-hidden="true">🏨</span>
+            <div class="ns-ameta">
+              <div class="ns-aname">Accommodation Search</div>
+              <div class="ns-arole">sub-agent</div>
+            </div>
+            <span class="ns-adot" title="done"></span>
+          </div>
+        </div>
+        <div class="ns-fbranch active">
+          <div class="ns-anode ns-fnode active">
+            <span class="ns-aicon" aria-hidden="true">✈️</span>
+            <div class="ns-ameta">
+              <div class="ns-aname">Flight Search</div>
+              <div class="ns-arole">sub-agent</div>
+            </div>
+            <span class="ns-adot" title="working"></span>
+          </div>
+          <div class="ns-fchildren">
+            <div class="ns-fbranch active">
+              <div class="ns-anode ns-fnode active">
+                <span class="ns-aicon" aria-hidden="true">🤝</span>
+                <div class="ns-ameta">
+                  <div class="ns-aname">Iberia Partner Network</div>
+                  <div class="ns-arole">external partner · A2A</div>
+                </div>
+                <span class="ns-adot" title="working"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="ns-fbranch">
+          <div class="ns-anode ns-fnode">
+            <span class="ns-aicon" aria-hidden="true">🌐</span>
+            <div class="ns-ameta">
+              <div class="ns-aname">Destination Service</div>
+              <div class="ns-arole">hosted MCP server</div>
+            </div>
+            <span class="ns-adot" title="idle"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:6px" class="ns-tlhead">What has happened</h3>
+    <div class="ns-timeline" data-new="plain-language activity timeline">
+      <div class="ns-tlrow done">
+        <span class="ns-tlmark" aria-hidden="true"></span>
+        <span class="ns-tltext"><b>Travel Concierge</b> read your request and planned three days.</span>
+      </div>
+      <div class="ns-tlrow done">
+        <span class="ns-tlmark" aria-hidden="true"></span>
+        <span class="ns-tltext"><b>Accommodation Search</b> found three places under your cap.</span>
+      </div>
+      <div class="ns-tlrow live">
+        <span class="ns-tlmark" aria-hidden="true"></span>
+        <span class="ns-tltext">You allowed contact with <b>Iberia Partner Network</b> — pricing now.</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── developer panel ──────────────────────────────────────────────── -->
+  <aside class="ns-dev">
+    <div class="ns-graph">
+      <h3>Agent graph &amp; origins</h3>
+      <ul class="ns-tree">
+        <li>
+          <span class="ns-tbox root">travel_concierge_orchestrator <span class="ns-tdot"></span></span>
+          <ul class="ns-tchildren">
+            <li><span class="ns-tbox">traveler_intake_agent <span class="ns-tdot"></span></span></li>
+            <li>
+              <span class="ns-tbox">trip_planning_coordinator <span class="ns-tdot"></span></span>
+              <ul class="ns-tchildren">
+                <li><span class="ns-tbox">destination_research_wikimedia_agent <span class="ns-tdot"></span></span></li>
+                <li><span class="ns-tbox">budgeting_and_tradeoffs_agent <span class="ns-tdot"></span></span></li>
+              </ul>
+            </li>
+            <li><span class="ns-tbox">booking_search_coordinator <span class="ns-tdot"></span></span></li>
+            <li><span class="ns-tbox">final_concierge_response_agent <span class="ns-tdot"></span></span></li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+    <div class="ns-log">
+      <div class="ns-toolbar">
+        <h3 style="margin:0">Execution log</h3>
+        <span class="ns-pill">34 events</span>
+        <button class="ns-ghostbtn" style="margin-left:auto">Export JSON</button>
+      </div>
+      <div class="ns-row k-agent"><span class="ns-tag">AGENT</span>travel_concierge_orchestrator <span class="ns-meta">· 1.9s</span></div>
+      <div class="ns-row k-model"><span class="ns-tag">LLM</span>gpt-4o-mini <span class="ns-meta">· 812 tok · 1.2s</span></div>
+      <div class="ns-row k-tool"><span class="ns-tag">TOOL</span>ddgs_search <span class="ns-meta">· 4 results</span></div>
+      <div class="ns-row k-mcp"><span class="ns-tag">MCP</span>tools/call · destination_lookup <span class="ns-meta">· 240ms</span></div>
+      <div class="ns-row k-agent"><span class="ns-tag">AGENT</span>booking_search_coordinator <span class="ns-meta">· running</span></div>
+    </div>
+  </aside>
+</div>
+
+<!-- ── BYOK dialog ────────────────────────────────────────────────────── -->
+<div class="ns-modal" id="byok" hidden>
+  <div class="ns-modal-card" role="dialog" aria-modal="true" aria-label="BYOK and router settings">
+    <div class="ns-modal__head">
+      <div>
+        <h4>Bring your own model</h4>
+        <p>Your key is kept in this browser and sent only to the router you name here.</p>
+      </div>
+      <button class="ns-modal-close" id="byok-close" aria-label="Close">×</button>
+    </div>
+    <div class="ns-settings-body">
+      <label>Saved setup
+        <select><option>Local LLM (qwen2.5:7b)</option><option>OpenAI (gpt-4o-mini)</option><option>Custom / unsaved</option></select>
+      </label>
+      <label>Setup name <input type="text" value="OpenAI" placeholder="Local LLM, OpenAI, Anthropic router"></label>
+      <label>API key <input type="password" placeholder="sk-… (kept in this browser only)"></label>
+      <label>Model <input type="text" value="gpt-4o-mini" placeholder="exact ID published by the upstream"></label>
+      <label>Router base URL <input type="text" value="https://api.openai.com/v1" placeholder="OpenAI-compatible /v1"></label>
+      <p class="ns-hint">Real LLM router. Your key is sent only here — a CORS pass-through to your provider.</p>
+      <label class="ns-row-inline"><input type="checkbox"> Drive the LLM via LangChain.js</label>
+      <div class="ns-profile-actions">
+        <button class="ghost">Save setup</button>
+        <button class="ghost">Delete setup</button>
+        <button>Apply &amp; reload</button>
+      </div>
+      <p class="ns-hint">Saved setups stay in this browser and follow you across agent networks.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     PREVIEW SCAFFOLDING — delete when porting
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div id="pv" data-collapsed="false">
+  <div class="pv-bar">
+    <strong>Preview</strong>
+    <button type="button" id="pv-toggle" aria-label="Collapse">▾</button>
+  </div>
+  <div class="pv-label">Transcript state</div>
+  <div class="pv-row" id="pv-states">
+    <button type="button" data-state="empty" aria-pressed="true">Welcome</button>
+    <button type="button" data-state="chat">Answer</button>
+    <button type="button" data-state="working">Working</button>
+    <button type="button" data-state="form">Form</button>
+    <button type="button" data-state="consent">Consent</button>
+    <button type="button" data-state="error">Error</button>
+  </div>
+  <div class="pv-label">Appearance</div>
+  <div class="pv-row">
+    <button type="button" id="pv-theme">Dark</button>
+    <button type="button" id="pv-byok">BYOK dialog</button>
+  </div>
+  <div class="pv-label">Layout</div>
+  <div class="pv-row">
+    <button type="button" id="pv-focus" aria-pressed="false">Focus</button>
+    <button type="button" id="pv-dev" aria-pressed="false">Developer</button>
+  </div>
+  <p class="pv-note">
+    Static mockup — nothing here talks to a model. Resize the window below
+    900px to see the rail become a sheet.
+  </p>
+</div>
+
+<script>
+/* Preview scaffolding only: swaps which sample transcript is shown and flips
+   the same data-* attributes the real runtime flips. No product logic here. */
+(() => {
+  const app = document.getElementById('app');
+  const states = ['empty', 'chat', 'working', 'form', 'consent', 'error'];
+
+  /* The rail describes the same moment as the transcript. Kept in step here so
+     the mockup is coherent to look at — in the runtime both already come from
+     the one trace bus, so this is preview bookkeeping, not a design element.
+     Each status array is [Concierge, Accommodation, Flight Search, Iberia,
+     Destination] — one entry per node in the connection graph below, in
+     document order — so a hop and the node at its far end always agree. */
+  const RAIL = {
+    empty:   { cls: '',     text: 'Ready when you are.',
+               status: ['idle', 'idle', 'idle', 'idle', 'idle'] },
+    chat:    { cls: 'done', text: 'Done — your itinerary is on the left.',
+               status: ['done', 'done', 'idle', 'idle', 'idle'] },
+    working: { cls: 'busy', text: 'Checking fares with the airline network…',
+               status: ['done', 'done', 'active', 'idle', 'idle'] },
+    form:    { cls: '',     text: 'Waiting for your trip details…',
+               status: ['idle', 'idle', 'idle', 'idle', 'idle'] },
+    consent: { cls: 'busy', text: 'Waiting for your OK to contact Iberia…',
+               status: ['done', 'done', 'active', 'active', 'idle'] },
+    error:   { cls: '',     text: 'Rail network timed out — everything else is fine.',
+               status: ['done', 'done', 'done', 'done', 'idle'] },
+  };
+  const status = document.querySelector('.ns-status');
+  const statusText = status.querySelector('span:last-child');
+  const nodes = [...document.querySelectorAll('.ns-fnode')];
+  // Branch i is the connector feeding nodes[i + 1] (the root has no incoming
+  // hop), so a branch and the node at its far end always share one status.
+  const branches = [...document.querySelectorAll('.ns-fbranch')];
+  const timeline = document.querySelector('.ns-timeline');
+
+  const show = (name) => {
+    if (!states.includes(name)) name = 'empty';
+    states.forEach((s) => { document.getElementById('msgs-' + s).hidden = s !== name; });
+    document.querySelectorAll('#pv-states button').forEach((b) =>
+      b.setAttribute('aria-pressed', String(b.dataset.state === name)));
+
+    const r = RAIL[name];
+    status.className = 'ns-status ' + r.cls;
+    statusText.textContent = r.text;
+    nodes.forEach((n, i) => {
+      n.classList.toggle('active', r.status[i] === 'active');
+      n.classList.toggle('done', r.status[i] === 'done');
+    });
+    branches.forEach((b, i) => {
+      const s = r.status[i + 1];
+      b.classList.toggle('active', s === 'active');
+      b.classList.toggle('done', s === 'done');
+    });
+    // Nothing has happened yet on a fresh page or at intake, so the timeline
+    // and its heading stay out of the way rather than showing an empty rule —
+    // or, worse, describing work that has not started.
+    const empty = name === 'empty' || name === 'form';
+    timeline.hidden = empty;
+    document.querySelector('.ns-tlhead').hidden = empty;
+    if (history.replaceState) history.replaceState(null, '', '#' + name);
+  };
+  document.getElementById('pv-states').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-state]');
+    if (b) show(b.dataset.state);
+  });
+  // Deep-linkable: #chat, #working, #form, #consent — handy for review.
+  show(location.hash.slice(1) || 'empty');
+  window.addEventListener('hashchange', () => show(location.hash.slice(1)));
+
+  const pressToggle = (btn, apply) => btn.addEventListener('click', () => {
+    const on = btn.getAttribute('aria-pressed') !== 'true';
+    btn.setAttribute('aria-pressed', String(on));
+    apply(on);
+  });
+  // Focus and Developer are mutually exclusive, exactly as in the runtime:
+  // Focus reclaims the column the trace is drawn in.
+  const mFocus = document.getElementById('m-focus');
+  const mDev = document.getElementById('m-dev');
+  const setFocus = (on) => {
+    app.dataset.focus = String(on);
+    mFocus.classList.toggle('on', on);
+    mFocus.setAttribute('aria-pressed', String(on));
+    if (on) setDev(false);
+  };
+  const setDev = (on) => {
+    app.dataset.dev = String(on);
+    mDev.classList.toggle('on', on);
+    mDev.setAttribute('aria-pressed', String(on));
+    document.getElementById('pv-dev').setAttribute('aria-pressed', String(on));
+    if (on) {
+      app.dataset.focus = 'false';
+      mFocus.classList.remove('on');
+      mFocus.setAttribute('aria-pressed', 'false');
+      document.getElementById('pv-focus').setAttribute('aria-pressed', 'false');
+    }
+  };
+  mFocus.addEventListener('click', () => setFocus(app.dataset.focus !== 'true'));
+  mDev.addEventListener('click', () => setDev(app.dataset.dev !== 'true'));
+  pressToggle(document.getElementById('pv-focus'), setFocus);
+  pressToggle(document.getElementById('pv-dev'), setDev);
+
+  const byok = document.getElementById('byok');
+  const openByok = () => { byok.hidden = false; };
+  const closeByok = () => { byok.hidden = true; };
+  document.getElementById('m-byok').addEventListener('click', openByok);
+  document.getElementById('pv-byok').addEventListener('click', openByok);
+  document.getElementById('byok-close').addEventListener('click', closeByok);
+  byok.addEventListener('click', (e) => { if (e.target === byok) closeByok(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeByok(); });
+
+  // Narrow-screen rail sheet.
+  document.getElementById('m-rail').addEventListener('click', () => {
+    app.dataset.sheet = String(app.dataset.sheet !== 'true');
+  });
+
+  // Segmented controls and starter chips, so the mockup responds to a click.
+  document.querySelectorAll('.ns-w-seg').forEach((seg) => {
+    seg.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      seg.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    });
+  });
+  // Feedback thumbs: mutually exclusive per message, with a brief acknowledgement
+  // so a click reads as "recorded" rather than vanishing into the toolbar.
+  document.querySelectorAll('.ns-fbbtn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const group = btn.closest('.ns-msgfoot');
+      const wasPressed = btn.getAttribute('aria-pressed') === 'true';
+      group.querySelectorAll('.ns-fbbtn').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+      btn.setAttribute('aria-pressed', String(!wasPressed));
+      let thanks = group.querySelector('.ns-fbthanks');
+      if (!wasPressed) {
+        if (!thanks) {
+          thanks = document.createElement('span');
+          thanks.className = 'ns-fbthanks';
+          group.insertBefore(thanks, group.querySelector('.ns-msgfoot__spacer'));
+        }
+        thanks.textContent = 'Thanks for the feedback';
+      } else if (thanks) {
+        thanks.remove();
+      }
+    });
+  });
+  document.getElementById('err-retry')?.addEventListener('click', (e) => {
+    const btn = e.currentTarget;
+    const label = btn.lastChild;
+    btn.disabled = true;
+    label.textContent = ' Retrying…';
+    setTimeout(() => { btn.disabled = false; label.textContent = ' Try again'; }, 1100);
+  });
+  document.querySelectorAll('.ns-starter').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const input = document.getElementById('ns-input');
+      input.value = chip.textContent.trim();
+      input.focus();
+    });
+  });
+
+  /* The composer grows with its content, capped by CSS max-height. Sized on
+     load and on resize too, not just on input: a one-row textarea whose
+     placeholder wraps shows a scrollbar until something measures it, which is
+     exactly what happens on a phone. The placeholder itself gets shorter down
+     there — the long one needs two lines before a single character is typed. */
+  const input = document.getElementById('ns-input');
+  const grow = () => { input.style.height = 'auto'; input.style.height = input.scrollHeight + 'px'; };
+  const fitPlaceholder = () => {
+    input.placeholder = window.innerWidth < 560
+      ? 'Describe your trip…'
+      : 'Describe your trip, or ask me anything…';
+  };
+  input.addEventListener('input', grow);
+  window.addEventListener('resize', () => { fitPlaceholder(); grow(); });
+  fitPlaceholder();
+  grow();
+
+  const theme = document.getElementById('pv-theme');
+  theme.addEventListener('click', () => {
+    const dark = document.documentElement.dataset.pvTheme === 'dark';
+    document.documentElement.dataset.pvTheme = dark ? 'light' : 'dark';
+    theme.textContent = dark ? 'Dark' : 'Light';
+  });
+
+  // On a phone-width window the panel would cover the thing being previewed,
+  // so it starts collapsed there.
+  const pv = document.getElementById('pv');
+  if (window.matchMedia('(max-width: 900px)').matches) {
+    pv.dataset.collapsed = 'true';
+    document.getElementById('pv-toggle').textContent = '▸';
+  }
+  document.getElementById('pv-toggle').addEventListener('click', () => {
+    const c = pv.dataset.collapsed === 'true';
+    pv.dataset.collapsed = String(!c);
+    document.getElementById('pv-toggle').textContent = c ? '▾' : '▸';
+  });
+})();
+</script>
+
+<!--
+  ============================================================================
+  PORTING NOTES — what adopting this costs
+
+  CSS ONLY (no JS change). Everything below already has the markup it needs in
+  nsdeploy/runtime/ui.js; it is a BASE_CSS replacement:
+    · chat card, transcript, bubbles, composer scrim, hero empty state
+    · agents rail, agent cards + working sweep, status chip
+    · CRUSE widget surfaces, inputs, choice rows, buttons
+    · consent card, BYOK dialog, developer graph/log, focus mode, scrollbars
+    · dark palette — already emitted by _palette_vars; this only reads it
+
+  NEEDS MARKUP (small, additive changes to mountApp). Each is tagged
+  data-new="..." above:
+    1. Brand lockup — wrap the title in .ns-brandlock with a .ns-brandmark
+       (theme.icon) and .ns-tagline (theme.tagline). Both already exist in
+       ThemeSpec and are currently unused on the page.
+    2. Author line — group consecutive messages into .ns-turn and emit
+       .ns-author (avatar + agent name + time). The trace bus already knows
+       which agent produced each answer, so this is plumbing, not new data.
+    3. Working indicator — render .ns-thinking in the transcript while a turn
+       is in flight; remove it when the first delta arrives.
+    4. Starter prompts — .ns-starter chips from a new optional
+       manifest.welcome.starters[] (theme.py already authors welcome widgets,
+       so the LLM can author these too). Absent → hero renders without them.
+    5. Composer textarea — swap <input> for <textarea rows="1"> plus the
+       auto-grow listener and Enter/Shift+Enter handling (Enter currently
+       sends from a single-line input).
+    6. Copy button — .ns-msgact on assistant bubbles.
+    7. Jump-to-latest — .ns-jump shown on a scroll listener when the
+       transcript is away from the bottom.
+    8. Narrow-screen rail sheet — the .ns-railbtn menu item toggling
+       data-sheet on the app root.
+    9. Segmented control — for CRUSE `radio` fields with <= 4 options; the
+       existing radio rendering stays as the fallback.
+   10. Rich answer formatting — .ns-md needs a small, safe markdown renderer
+       (headings/lists/bold/code/tables/links only, escaped first). Until one
+       exists the bubble stays plain text and nothing regresses.
+   11. Feedback + sources row — .ns-msgfoot under a finished bot answer: two
+       thumbs (mutually exclusive, acknowledged inline), a Regenerate action,
+       and the sources the agent actually used. Needs the trace bus to report
+       which tool/MCP calls backed an answer, and an endpoint for the vote;
+       until wired, the row can render with the sources span omitted.
+   12. Error state — .ns-msg.ns-error for a failed tool/agent call: what
+       broke, that the rest of the plan is unaffected, and Try again / Skip
+       actions. This is the one state most demos never show a customer, and
+       the one a real ten-agent network will hit first.
+
+  ONE BUG FOUND WHILE BUILDING THIS (fix belongs in generate.py, not here):
+    `--ns-user-bg` is emitted by _palette_vars as
+    `linear-gradient(140deg, primary, accent)`, and the bubble's ink comes from
+    `on_primary` — which is chosen against `primary` alone. In the DARK default
+    that ink is black (correct: white on the brighter dark accent is only
+    3.85:1), but the gradient's far stop is the DEEPER `accent`, where black
+    measures 3.59:1. So the tail of every user bubble in dark mode is under AA
+    today. Bounding the far stop to a 70% mix toward accent fixes it — 4.58:1
+    dark, 6.06:1 light — and keeps the tonal shift the palette intends. This
+    preview declares the bounded form; the real change is one line in
+    _palette_vars. `.ns-msg.user` must keep reading `var(--ns-user-bg)` so a
+    theme that sets its own bubble still wins.
+
+  NOT CHANGED, deliberately:
+    · Every structural property the theming contract pins (display, position,
+      grid placement, overflow, min-*) is untouched, so LLM-authored themes
+      keep working. Composed themes mount the same three slots.
+    · The technical execution trace stays technical — raw HOCON keys in
+      monospace, because that panel is for whoever is about to edit the file.
+  ============================================================================
+-->
+</body>
+</html>
