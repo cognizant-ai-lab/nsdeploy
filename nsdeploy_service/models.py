@@ -512,6 +512,11 @@ class LogView(BaseModel):
 class HealthView(BaseModel):
     status: str
     version: str
+    build: str = Field(
+        default="",
+        description="the image build this service runs (NSDEPLOY_SERVICE_BUILD_VERSION, "
+                    "set at image build time); falls back to `version`.",
+    )
     ui_version: str = Field(
         default="",
         description="the `?v=N` the served console pins its assets to. A console "

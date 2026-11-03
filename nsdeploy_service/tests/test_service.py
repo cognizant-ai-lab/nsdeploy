@@ -202,6 +202,19 @@ class UiVersionTest(unittest.TestCase):
         with TestClient(create_app(settings)) as client:
             self.assertEqual(client.get("/health").json()["ui_version"], "42")
 
+    def test_health_reports_the_build(self):
+        from fastapi.testclient import TestClient
+
+        from nsdeploy_service import __version__
+        from nsdeploy_service.app import create_app
+
+        self._write('<link href="a.css?v=42">')
+        for build, expected in (("1.2.3", "1.2.3"), ("", __version__)):
+            settings = Settings(work_root=self.ui / "work", ui_dir=self.ui,
+                                port_start=8730, port_end=8739, build_version=build)
+            with TestClient(create_app(settings)) as client:
+                self.assertEqual(client.get("/health").json()["build"], expected)
+
 
 class ReportParsingTest(unittest.TestCase):
     def test_extracts_names_per_section(self):

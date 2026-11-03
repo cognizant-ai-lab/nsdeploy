@@ -202,6 +202,9 @@ class Settings:
     relations_llm: bool = False
     relations_model: str = "gpt-4o"
 
+    # --- build identity, shown in the console header ---
+    build_version: str = ""          # empty = fall back to the package version
+
     # --- access control ---
     api_token: str = ""              # empty = open (fine on loopback only)
 
@@ -257,6 +260,7 @@ class Settings:
                                                default.relations_max_per_network),
             relations_llm=_env_bool("RELATIONS_LLM", default.relations_llm),
             relations_model=_env("RELATIONS_MODEL", default.relations_model),
+            build_version=_env("BUILD_VERSION", default.build_version),
             api_token=_env("API_TOKEN", default.api_token),
             tls_terminated_externally=_env_bool("TLS_TERMINATED_EXTERNALLY",
                                                 default.tls_terminated_externally),

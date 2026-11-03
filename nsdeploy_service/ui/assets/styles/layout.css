@@ -125,6 +125,12 @@ body[data-view="deploy"] .content > .wrap { max-width: 76rem; }
   .brand:hover .brand__mark { transform: none; }
 }
 .topbar__spacer { flex: 1; }
+.topbar__build {
+  color: var(--brand-ink-muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.topbar__build strong { color: var(--brand-ink); font-weight: 600; }
 .topbar .btn--icon { color: var(--brand-ink-muted); }
 .topbar .btn--icon:hover { background: rgb(255 255 255 / 0.12); color: var(--brand-ink); }
 

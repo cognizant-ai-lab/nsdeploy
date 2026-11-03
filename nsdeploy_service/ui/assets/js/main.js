@@ -170,8 +170,8 @@ async function refreshHealth() {
     checkForUpdate(health.ui_version);
     const counts = health.deployments || {};
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+    $('#build-strong').textContent = health.build || health.version;
     const parts = [
-      `v${esc(health.version)}`,
       `${counts.ready || 0} live of ${total} record${total === 1 ? '' : 's'}`,
       `ports ${esc(health.port_pool.range)}`,
     ];
