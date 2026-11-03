@@ -335,6 +335,7 @@ everything (see [config.py](nsdeploy_service/config.py)).
 | `RELATIONS_MAX_PER_NETWORK` | `4` | most inferred relations suggested per network |
 | `RELATIONS_LLM` | `off` | let `GET /relations?strategy=llm` ask a model; needs `OPENAI_API_KEY` |
 | `RELATIONS_MODEL` | `gpt-4o` | model used when `RELATIONS_LLM` is on |
+| `BUILD_VERSION` | *(empty)* | build shown in the console header; the Dockerfile sets it from the `NSDEPLOY_SERVICE_BUILD_VERSION` build arg, and it falls back to the package version |
 | `API_TOKEN` | *(empty)* | when set, every route except `/health` needs `Authorization: Bearer …` |
 | `ENV_FILE` | `<repo root>/.env` | where credentials are read from and `POST /settings` writes; put it on a volume in a container, or saved settings are lost on restart |
 

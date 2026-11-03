@@ -13,6 +13,10 @@ COPY examples ./examples
 
 RUN pip install --no-cache-dir -e . && pip install --no-cache-dir -e ./nsdeploy_service
 
+# Shown as "Build:" in the console header, like neuro-san-ui's NEXT_PUBLIC_NEURO_SAN_UI_VERSION.
+ARG NSDEPLOY_SERVICE_BUILD_VERSION=""
+ENV NSDEPLOY_SERVICE_BUILD_VERSION=${NSDEPLOY_SERVICE_BUILD_VERSION}
+
 # No .env is baked in: credentials and settings come from container env vars, or
 # NSDEPLOY_SERVICE_ENV_FILE pointing at a mounted file.
 
