@@ -1108,6 +1108,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return HealthView(
             status="ok",
             version=__version__,
+            build=settings.build_version or __version__,
             # Read per request rather than cached at startup: during development the
             # files change under a running service, which is exactly when a stale
             # console is most likely and most confusing.

@@ -339,6 +339,7 @@ everything (see [config.py](nsdeploy_service/config.py)).
 | `RELATIONS_LLM` | `off` | let `GET /relations?strategy=llm` ask a model; needs `OPENAI_API_KEY` |
 | `RELATIONS_MODEL` | `gpt-4o` | model used when `RELATIONS_LLM` is on |
 | `MAX_CONCURRENT_BUNDLE_BUILDS` | `4` | bounds `POST /bundles`, separately from deployments so a bundle never queues behind a cold build |
+| `BUILD_VERSION` | *(empty)* | build shown in the console header; the Dockerfile sets it from the `NSDEPLOY_SERVICE_BUILD_VERSION` build arg, and it falls back to the package version |
 | `API_TOKEN` | *(empty)* | when set, every route except `/health` needs `Authorization: Bearer …` |
 | `CORS_ORIGINS` | *(empty)* | comma-separated origins allowed to call this API from a browser on another host, e.g. `https://app.example.com,http://127.0.0.1:5173`. Empty sends no CORS headers at all. Each entry is `scheme://host[:port]` with no path; `*` allows any origin and is only safe with `API_TOKEN` set |
 | `ENV_FILE` | `<repo root>/.env` | where credentials are read from and `POST /settings` writes; put it on a volume in a container, or saved settings are lost on restart |
