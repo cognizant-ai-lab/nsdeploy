@@ -1,0 +1,35 @@
+# Asks cognizant-ai-lab/wwaw-deploy to build this commit and deploy it to
+# Agentic City dev and prod (see wwaw-deploy .github/workflows/build-push.yml).
+
+name: Dispatch to wwaw-deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    if: ${{ github.repository == 'cognizant-ai-lab/nsdeploy' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create installation token for wwaw-deploy
+        id: app
+        # v2.1.4
+        uses: actions/create-github-app-token@67018539274d69449ef7c02e8e71183d1719ab42
+        with:
+          app-id: ${{ vars.DEPLOY_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          owner: cognizant-ai-lab
+          repositories: wwaw-deploy
+
+      - name: Dispatch agentic_city_build
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          gh api repos/cognizant-ai-lab/wwaw-deploy/dispatches \
+            --field event_type=agentic_city_build \
+            --field "client_payload[sha]=${GITHUB_SHA}" \
+            --field "client_payload[source_repo]=${GITHUB_REPOSITORY}"
