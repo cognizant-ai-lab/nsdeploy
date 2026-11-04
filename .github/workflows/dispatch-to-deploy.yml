@@ -1,5 +1,6 @@
-# Asks cognizant-ai-lab/wwaw-deploy to build this commit and deploy it to
-# Agentic City dev and prod (see wwaw-deploy .github/workflows/build-push.yml).
+# Asks cognizant-ai-lab/wwaw-deploy to build this commit and set its tag for Agentic City
+# dev and prod (see wwaw-deploy .github/workflows/build-push.yml). ArgoCD syncs dev
+# automatically; prod waits for a manual sync.
 
 name: Dispatch to wwaw-deploy
 
