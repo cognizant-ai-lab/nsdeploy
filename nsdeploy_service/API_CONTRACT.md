@@ -589,7 +589,66 @@ Reported per build in `X-Bundle-Warnings`:
 * **The public MCP facade is unavailable.** Private stewards fall back to fetch-and-run.
 * **External MCP servers are called straight from the browser** and must allow CORS.
 
-### 4a.7 Limits
+### 4a.7 `GET /deployments/{id}/bundle` — a bundle for a deployed network
+
+Takes a `deployment_id` from `POST /deployments` and answers with the same archive and
+the same headers as `POST /bundles`, plus `Cache-Control: no-store`.
+
+```
+GET /deployments/7f3c1a2b9d04/bundle?site_url=https://shop.example.com
+Authorization: Bearer <token>
+```
+
+| Query | Default | Notes |
+| --- | --- | --- |
+| `site_url` | *(empty)* | where the client will host the bundle; see §4a.4. **Never defaults to the deployment's own URL**, which is this service's loopback port and would be useless anywhere a bundle is hosted |
+| `upstream` | the deployment's own | BYOK upstream for this bundle only |
+
+There is nothing else to pass. The network name, the BYOK upstream, the CRUSE setting
+and the look all come from the deployment, so the bundle matches the site that is
+already running.
+
+**`ready` and `stopped` deployments can both be bundled.** A network does not stop
+being worth packaging when its process is torn down: the HOCON and the editable
+source outlive the site, so taking a deployment down and then wanting it as a static
+site is an ordinary order of events. Status gates the request but is not an input to
+the build, so one deployment gives the same archive before and after it is stopped.
+
+Note that `stopped` does not prove a deployment ever served. A build that was still
+running when this service was restarted is reconciled to `stopped` at start-up, and
+so is one deleted while it was building. Such a record bundles like any other — the
+HOCON is there — but it has never been proved to work, and `ready_at` on
+`GET /deployments/{id}` is `null` when that is the case.
+
+**This is a rebuild, not an export.** A deployed site is generated for a server:
+absolute asset paths, a live MCP facade, tool URLs on its own origin, and a
+`links_endpoint`. A static bundle has none of those, so the served tree cannot be
+repacked. The HOCON the deployment was created from is resolved and generated again
+with the static-bundle switch on. Two consequences: `include` lines are re-fetched, so
+a bundle can differ from the running site if upstream has moved since the deploy; and
+a deployment that is `ready` can still answer `400` here if its HOCON no longer
+resolves.
+
+**The look is inherited, never re-asked.** The theme comes from the deployment's
+editable source (`site-source/theme.json`), which is what its next build would use and
+what `POST /deployments/{id}/theme-spec` writes to. The built site is the fallback, the
+default look is the floor, and each fallback is reported in `X-Bundle-Warnings`. No
+model is called, so this endpoint stays as fast as `POST /bundles`.
+
+Statuses:
+
+| Code | When |
+| --- | --- |
+| `200` | the archive |
+| `404` | no deployment with that id |
+| `409` | the deployment is `queued`, `building` or `failed`. The first two have produced no site yet and the third tried and could not, so none of them has anything finished to offer |
+| `410` | the record is there but its HOCON is not on disk — a `WORK_ROOT` that moved between runs, or a work dir removed by hand. Gone rather than Not Found, because the deployment is real and it is its source which is missing |
+| `400` | the HOCON no longer resolves, or the network has no front man |
+
+The deployment is **read only**. Nothing is written to its work directory, its record
+is untouched, and its status does not change.
+
+### 4a.8 Limits
 
 `MAX_HOCON_BYTES` applies, and is checked before a build slot is taken.
 `MAX_CONCURRENT_BUNDLE_BUILDS` (default 4) bounds how many run at once — a separate
