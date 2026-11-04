@@ -8,17 +8,18 @@ import os
 import tarfile
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from nsdeploy.generate import generate_site
 from nsdeploy.resolve import DeploymentPlan, build_plan, resolve_hocon
 from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio, StudioSource
 from nsdeploy.theme import DEFAULT_THEME_MODEL, ThemeSpec, propose_theme
 
+from nsdeploy_service import themespec
 from nsdeploy_service.bundle_error import BundleError
 from nsdeploy_service.bundle_result import BundleResult
 from nsdeploy_service.config import Settings
-from nsdeploy_service.models import BundleOptions
+from nsdeploy_service.models import BundleOptions, DeployOptions
 from nsdeploy_service.supervisor import DeploymentError, safe_network_name
 
 
@@ -46,6 +47,12 @@ class Bundler:
 
     The one in-process import that was already here, `themespec`, sets the
     precedent: core is a vendored library, and a named seam is cheaper than a copy.
+
+    A bundle is built either from an uploaded HOCON or from a deployment which is
+    already serving one. The second is a REBUILD, not an export: a deployed site is
+    generated for a server, and `static_bundle=True` changes the asset paths, the
+    MCP facade, the tool URLs and the linking metadata, so the served tree cannot
+    be repacked. Only the deployment's own choices are replayed.
     """
 
     # A static bundle has no server behind it, so the mock LLM answers in the
@@ -120,8 +127,86 @@ class Bundler:
             result = self.build_in(Path(scratch), name, text, options)
         return result
 
-    def build_in(self, work: Path, name: str, text: str,
-                 options: BundleOptions) -> BundleResult:
+    async def build_from_deployment(self, row: Dict[str, Any],
+                                    options: BundleOptions) -> BundleResult:
+        """
+        Build one bundle from a deployment, without blocking the event loop.
+
+        :param row: The persisted deployment record.
+        :param options: The build options, from `deployment_options`.
+        :return: The finished bundle.
+        :raises BundleError: If the deployment cannot produce a bundle.
+        """
+        # Read before a slot is taken, so a record whose files are gone is refused
+        # at once instead of queueing behind other people's builds.
+        text: str = self.read_deployment_hocon(row)
+        result: Optional[BundleResult] = None
+        async with self.slots:
+            result = await asyncio.to_thread(self.build_deployment_now, row, text, options)
+        return result
+
+    def build_deployment_now(self, row: Dict[str, Any], text: str,
+                             options: BundleOptions) -> BundleResult:
+        """
+        Resolve, generate and pack one deployment's bundle. Blocking.
+
+        :param row: The persisted deployment record.
+        :param text: The HOCON the deployment was created from.
+        :param options: The build options, from `deployment_options`.
+        :return: The finished bundle.
+        :raises BundleError: If the deployment cannot produce a bundle.
+        """
+        name: str = self.safe_name(row.get("name"))
+        work_dir: Path = Path(row.get("work_dir") or "")
+        result: Optional[BundleResult] = None
+        with tempfile.TemporaryDirectory(prefix="nsdeploy-bundle-") as scratch:
+            result = self.build_in(Path(scratch), name, text, options,
+                                   deployment_work=work_dir)
+        return result
+
+    def read_deployment_hocon(self, row: Dict[str, Any]) -> str:
+        """
+        Read the HOCON a deployment was created from.
+
+        :param row: The persisted deployment record.
+        :return: The HOCON as text.
+        :raises BundleError: If the record names no readable HOCON.
+        """
+        named: str = row.get("hocon_path") or ""
+        if not named:
+            raise BundleError("this deployment's record names no HOCON file")
+        data: bytes = b""
+        try:
+            data = Path(named).read_bytes()
+        except OSError as exception:
+            raise BundleError(
+                f"this deployment's HOCON cannot be read: {exception}") from exception
+        return self.read_hocon(data)
+
+    @staticmethod
+    def deployment_options(row: Dict[str, Any], site_url: Optional[str],
+                           upstream: Optional[str]) -> BundleOptions:
+        """
+        The build options for a bundle which must match a deployment.
+
+        The deployment's own choices are replayed from its record, so the network is
+        resolved and generated the way supervisor.py built the site. Only the hosting
+        origin is new, because a bundle is served from somewhere this service cannot
+        know. Theming is never asked for: the look comes from the deployment.
+
+        :param row: The persisted deployment record.
+        :param site_url: Where the client will host this bundle, if stated.
+        :param upstream: A BYOK upstream for this bundle only, if stated.
+        :return: The options for this build.
+        """
+        stored: Dict[str, Any] = row.get("options") or {}
+        deployed: DeployOptions = DeployOptions(**stored)
+        return BundleOptions(name=row.get("name"), site_url=site_url,
+                             upstream=upstream or deployed.upstream,
+                             cruse=deployed.cruse, theme=False)
+
+    def build_in(self, work: Path, name: str, text: str, options: BundleOptions,
+                 deployment_work: Optional[Path] = None) -> BundleResult:
         """
         Build one bundle inside a scratch directory.
 
@@ -129,6 +214,10 @@ class Bundler:
         :param name: The validated network name.
         :param text: The agent network HOCON.
         :param options: The per-request overrides for this build.
+        :param deployment_work: The work directory of the deployment this bundle
+                                must match, or None for an uploaded HOCON. When it
+                                is given the look is taken from the deployment and
+                                no model is asked.
         :return: The finished bundle.
         :raises BundleError: If the network cannot be resolved or has no front man.
         """
@@ -153,7 +242,16 @@ class Bundler:
                 "this network has no front-man agent (an agent with `instructions` "
                 "and no class/toolbox), so the generated page has nothing to talk to")
         warnings: List[str] = []
-        theme: Optional[ThemeSpec] = self.make_theme(plan, options, warnings)
+        theme: Optional[ThemeSpec] = None
+        site_source: Optional[Path] = None
+        if deployment_work is None:
+            theme = self.make_theme(plan, options, warnings)
+        else:
+            # Read only. generate_site takes assets/, actions.js and site.js from
+            # here; seed_site_source is the only writer and lives in nsdeploy's
+            # __main__, so a bundle cannot disturb the deployment it describes.
+            site_source = self.source_dir(deployment_work)
+            theme = self.inherit_theme(deployment_work, warnings)
         out_dir: Path = work / "bundle"
         # Empty is allowed and means a bundle addressed relative to wherever it is
         # served, which only works at a domain root. A client that hosts the bundle
@@ -163,9 +261,52 @@ class Bundler:
         byok_router: str = (options.upstream or self.settings.upstream).rstrip("/")
         cruse: bool = self.settings.cruse if options.cruse is None else options.cruse
         generate_site(plan, out_dir, self.MOCK_ROUTER, byok_router, site_base,
-                      cruse=cruse, theme=theme, static_bundle=True)
+                      cruse=cruse, theme=theme, site_source_dir=site_source,
+                      static_bundle=True)
         warnings.extend(self.describe_limits(plan))
+        if deployment_work is not None:
+            warnings.append(
+                "this bundle is rebuilt from the deployment's HOCON, so anything "
+                "which needs the deployment's own server — the public MCP facade "
+                "and every hosted Python tool — works there and not here")
         return self.pack(name, out_dir, warnings)
+
+    @staticmethod
+    def source_dir(deployment_work: Path) -> Path:
+        """
+        The editable site source of a deployment.
+
+        :param deployment_work: The deployment's work directory.
+        :return: The site-source directory, as supervisor.py lays it out.
+        """
+        paths: Tuple[Path, Path] = themespec.site_paths(deployment_work)
+        return paths[1]
+
+    @staticmethod
+    def inherit_theme(deployment_work: Path,
+                      warnings: List[str]) -> Optional[ThemeSpec]:
+        """
+        The look a deployment has now, for a bundle which must match it.
+
+        No model is asked. `themespec.read_spec` prefers the editable source,
+        which is what the deployment's next build would use and what a token edit
+        writes to, and falls back to the built site and then to the default look.
+
+        :param deployment_work: The deployment's work directory.
+        :param warnings: Collects the reason a fallback look was used.
+        :return: The deployment's theme, or None for the default look.
+        """
+        spec: Optional[ThemeSpec] = None
+        source: str = ""
+        spec, source = themespec.read_spec(deployment_work)
+        if source == "default":
+            warnings.append("this deployment has no theme on disk, so the bundle "
+                            "carries the default look")
+            return None
+        if source != "site-source":
+            warnings.append("the deployment's editable source could not be read, "
+                            "so the look is taken from its built site instead")
+        return spec
 
     def make_theme(self, plan: DeploymentPlan, options: BundleOptions,
                    warnings: List[str]) -> Optional[ThemeSpec]:

@@ -195,6 +195,7 @@ before it can serve. Expect **~20s warm**, considerably longer on a cold cache.
 | `DELETE` | `/deployments/{id}?purge=false` | kill the process tree, free the port; `purge=true` also drops the record, and is refused while the deployment is live |
 | `POST` | `/bundles` | multipart upload (`file`, plus optional `name`, `site_url`, `upstream`, `theme`, `theme_model`, `theme_refresh`, `theme_prompt`, `cruse`) → `200 application/gzip`. Builds a static bundle and returns it in the same request; nothing is kept |
 | `POST` | `/bundles/raw?name=…` | same, with the HOCON as the raw request body |
+| `GET` | `/deployments/{id}/bundle?site_url=…` | `200 application/gzip`. Rebuilds a `ready` or `stopped` deployment as a static bundle, inheriting its name, upstream, CRUSE setting and look; `409` while `queued`, `building` or `failed`, `410` if its HOCON is gone |
 | `GET` | `/health` | capacity, environment, warnings, console `ui_version` — unauthenticated for probes |
 
 Statuses: `queued` → `building` → `ready`, or `failed` / `stopped`.

@@ -1006,6 +1006,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                                                          "format": "binary"}}},
               "description": "the bundle, as a gzipped tar with the files at its root"},
     }
+    # Which deployments can be bundled. A network does not stop being worth
+    # packaging when its process is torn down: the HOCON and the editable source
+    # outlive the site, so taking a deployment down and then wanting it as a
+    # static site is an ordinary order of events, not a mistake.
+    #
+    # The three left out have nothing finished to offer. `queued` and `building`
+    # have not produced a site yet, and `failed` tried and could not.
+    BUNDLE_STATUSES = (DeploymentStatus.READY, DeploymentStatus.STOPPED)
 
     @app.post("/bundles", dependencies=AUTH, response_class=Response,
               responses=BUNDLE_RESPONSES,
@@ -1060,6 +1068,57 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         result = await bundler_of(request).build(await request.body(), options)
         return Response(content=result.archive, media_type=BUNDLE_MEDIA_TYPE,
                         headers=_bundle_headers(result))
+
+    # A bundle for a network which is already deployed. Filed under /deployments
+    # because it names one, but a bundle all the same: nothing is written, nothing
+    # is recorded, and the deployment it describes is untouched.
+    #
+    # This REBUILDS from the deployment's own HOCON rather than exporting the site
+    # it is serving. A deployed site is generated for a server — absolute asset
+    # paths, a live MCP facade, tool URLs on its own origin, a links endpoint — and
+    # static_bundle=True changes every one of those, so the served tree cannot be
+    # repacked into a bundle. What is replayed is the deployment's own choices.
+    @app.get("/deployments/{deployment_id}/bundle", dependencies=AUTH,
+             response_class=Response, responses=BUNDLE_RESPONSES,
+             summary="Build a static bundle from a ready deployment and return it")
+    async def build_deployment_bundle(
+        request: Request,
+        deployment_id: str,
+        site_url: Annotated[Optional[str], Query(
+            description="where the client will host this bundle; baked into the "
+                        "manifest and cannot be changed afterwards. Empty addresses "
+                        "the bundle relative to wherever it is served, which only "
+                        "works at a domain root. Never defaults to the deployment's "
+                        "own URL, which is this service's loopback port")] = None,
+        upstream: Annotated[Optional[str], Query(
+            description="BYOK upstream for this bundle only; defaults to the "
+                        "deployment's own")] = None,
+    ) -> Response:
+        row = find_row(request, deployment_id)
+        status = DeploymentStatus(row.get("status"))
+        if status not in BUNDLE_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{row.get('name')} is {status.value}; a bundle is built "
+                       f"from a ready or a stopped deployment")
+        hocon_path = Path(row.get("hocon_path") or "")
+        if not hocon_path.is_file():
+            # The record outlived its files: a WORK_ROOT that moved between runs, or
+            # a work dir removed by hand. Gone rather than Not Found, because the
+            # deployment is real and it is its source which is missing.
+            raise HTTPException(
+                status_code=410,
+                detail=f"the HOCON for {row.get('name')} is no longer on disk at "
+                       f"{hocon_path}, so this deployment cannot be rebuilt")
+        options = Bundler.deployment_options(row, site_url, upstream)
+        result = await bundler_of(request).build_from_deployment(row, options)
+        headers = _bundle_headers(result)
+        # Built fresh on every call and kept nowhere, so nothing may hold a copy.
+        # A GET is cacheable by default, and the deployment's look can change under
+        # it at any time through POST /deployments/{id}/theme-spec.
+        headers["Cache-Control"] = "no-store"
+        return Response(content=result.archive, media_type=BUNDLE_MEDIA_TYPE,
+                        headers=headers)
 
     # --- ops -------------------------------------------------------------
     @app.get("/health", response_model=HealthView, summary="Service health and capacity")
