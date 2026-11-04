@@ -18,10 +18,14 @@
 # constraint this project deliberately does not have.
 #
 # Deployments drive nsdeploy as a CLI (`python -m nsdeploy`) and import nothing.
-# One module does import it, in process and on purpose, and names the seam in its
-# own header: themespec.py, which restyles a built bundle without a rebuild. Its
-# imports are at module level, so an upstream rename is an ImportError at start-up
-# rather than a failure during a request.
+# Two modules do import it, in process and on purpose, and both name the seam in
+# their own header:
+#
+#   themespec.py  restyles a built bundle without a rebuild
+#   bundler.py    builds a static bundle, which has no process to supervise
+#
+# Every such import is at module level, so an upstream rename is an ImportError at
+# start-up rather than a failure during a request.
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

@@ -11,7 +11,8 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
+from urllib.parse import urlsplit
 
 ENV_PREFIX = "NSDEPLOY_SERVICE_"
 
@@ -65,6 +66,14 @@ def _env_bool(name: str, default: bool) -> bool:
     if not raw:
         return default
     return raw not in ("0", "false", "no", "off")
+
+
+def _env_list(name: str, default: List[str]) -> List[str]:
+    """A comma-separated setting. Empty entries are dropped, not kept as ''."""
+    raw = _env(name)
+    if not raw:
+        return list(default)
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 @dataclass
@@ -174,6 +183,17 @@ class Settings:
     # __main__ turns into `theme or ThemeSpec()`. More concurrent calls hitting a rate
     # limit costs plainer styling on some networks, not a failed deployment.
     max_concurrent_builds: int = 4
+    # How many static bundle builds may run at once. A separate bound from the one
+    # above, and not the same semaphore, for two reasons: a deployment holds its slot
+    # for the whole build *and* the readiness poll (up to BUILD_TIMEOUT_SECONDS), so
+    # sharing would queue a two-second bundle behind a cold deployment; and a bundle
+    # build runs in this process rather than a child, so what it contends for is this
+    # process's thread pool.
+    #
+    # 4 to match: the work is dominated by resolving includes, which waits on the
+    # network, and POST /bundles answers on the open connection, so a deep queue is
+    # felt as a timeout rather than as a wait.
+    max_concurrent_bundle_builds: int = 4
     build_timeout_seconds: int = 600
     # Deployments are long-lived by design: an org's URL stays up until someone stops
     # it. Set a non-zero TTL only for demo/ephemeral installations.
@@ -207,6 +227,29 @@ class Settings:
 
     # --- access control ---
     api_token: str = ""              # empty = open (fine on loopback only)
+
+    # Origins allowed to call this API from a browser on another host. Empty — the
+    # default — installs no CORS middleware at all, so the service answers exactly as
+    # it did before: no CORS headers, and a cross-origin page cannot read a response.
+    #
+    # Needed because the console is served same-origin but other clients are not. A
+    # browser app in a separate deployment that builds a bundle here (POST /bundles)
+    # is refused by the browser, not by this service, unless its origin is listed.
+    #
+    # An entry is an origin and nothing else: scheme, host and optional port, with no
+    # path and no trailing slash, because that is exactly what a browser puts in the
+    # Origin header and the match is literal. validate() refuses anything else rather
+    # than letting a silent non-match look like a server fault.
+    #
+    # "*" is accepted and means any origin. It is not a hole on its own — API_TOKEN
+    # still gates every route — but with no token set it lets any page a user visits
+    # drive this service from their browser, including over loopback, so /health
+    # warns about that combination.
+    #
+    # Credentials are deliberately NOT allowed (see app.py): this API authenticates
+    # with a bearer header, never a cookie, so there is nothing for a browser to
+    # attach automatically and no reason to let it.
+    cors_origins: List[str] = field(default_factory=list)
 
     # --- deployment environment ---
     # `/health` warns that https site URLs cannot resolve when the scheme is https and
@@ -250,6 +293,8 @@ class Settings:
             autopublish=_env_bool("AUTOPUBLISH", default.autopublish),
             max_deployments=_env_int("MAX_DEPLOYMENTS", default.max_deployments),
             max_concurrent_builds=_env_int("MAX_CONCURRENT_BUILDS", default.max_concurrent_builds),
+            max_concurrent_bundle_builds=_env_int("MAX_CONCURRENT_BUNDLE_BUILDS",
+                                                  default.max_concurrent_bundle_builds),
             build_timeout_seconds=_env_int("BUILD_TIMEOUT_SECONDS", default.build_timeout_seconds),
             ttl_seconds=_env_int("TTL_SECONDS", default.ttl_seconds),
             reap_interval_seconds=_env_int("REAP_INTERVAL_SECONDS", default.reap_interval_seconds),
@@ -262,6 +307,7 @@ class Settings:
             relations_model=_env("RELATIONS_MODEL", default.relations_model),
             build_version=_env("BUILD_VERSION", default.build_version),
             api_token=_env("API_TOKEN", default.api_token),
+            cors_origins=_env_list("CORS_ORIGINS", default.cors_origins),
             tls_terminated_externally=_env_bool("TLS_TERMINATED_EXTERNALLY",
                                                 default.tls_terminated_externally),
         )
@@ -279,6 +325,9 @@ class Settings:
             )
         if self.max_concurrent_builds < 1:
             raise ValueError("MAX_CONCURRENT_BUILDS must be >= 1")
+        if self.max_concurrent_bundle_builds < 1:
+            raise ValueError("MAX_CONCURRENT_BUNDLE_BUILDS must be >= 1")
+        self._validate_cors_origins()
         if self.map_refresh_seconds < 5:
             raise ValueError("MAP_REFRESH_SECONDS must be >= 5")
         if self.port_start <= self.port <= self.port_end:
@@ -286,6 +335,53 @@ class Settings:
                 f"the service port ({self.port}) must not sit inside the deployment "
                 f"port pool ({self.port_start}-{self.port_end})"
             )
+
+    def _validate_cors_origins(self) -> None:
+        """Refuse a CORS entry no browser could ever match.
+
+        CORSMiddleware compares the Origin header literally, and a browser sends only
+        scheme://host[:port] in it. So an entry carrying a path, a wildcard host or
+        no scheme matches nothing — and the symptom is a blocked request that reads
+        like a fault in this service. Say it at start-up instead.
+        """
+        if "*" in self.cors_origins and len(self.cors_origins) > 1:
+            raise ValueError(
+                "CORS_ORIGINS lists '*' alongside named origins; '*' already allows "
+                "every origin, so keep one or the other"
+            )
+        # Each entry, because one unusable line should not be found a request at a time.
+        for origin in self.cors_origins:
+            if origin != "*":
+                self._validate_cors_origin(origin)
+
+    @staticmethod
+    def _validate_cors_origin(origin: str) -> None:
+        parts = urlsplit(origin.rstrip("/"))
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            raise ValueError(
+                f"CORS_ORIGINS entry {origin!r} is not an origin; write it as "
+                f"http://host[:port] or https://host[:port]"
+            )
+        if parts.path or parts.query or parts.fragment:
+            raise ValueError(
+                f"CORS_ORIGINS entry {origin!r} carries a path, query or fragment. A "
+                f"browser sends only scheme://host[:port] as the Origin, so an entry "
+                f"with more than that can never match"
+            )
+        if "@" in parts.netloc or "*" in parts.netloc:
+            raise ValueError(
+                f"CORS_ORIGINS entry {origin!r} is not a literal origin; a wildcard "
+                f"host or embedded credentials are never matched"
+            )
+
+    def cors_allowed_origins(self) -> List[str]:
+        """The configured origins, spelled the way a browser sends them."""
+        allowed: List[str] = []
+        # A trailing slash is the usual way to write this and would never match, so
+        # it is removed rather than refused.
+        for origin in self.cors_origins:
+            allowed.append(origin.rstrip("/"))
+        return allowed
 
     def database_path(self) -> Path:
         return self.db_path or (self.work_root / "service.db")

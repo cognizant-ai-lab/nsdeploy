@@ -78,6 +78,63 @@ class DeployOptions(BaseModel):
     )
 
 
+class BundleOptions(BaseModel):
+    """Per-request overrides for one static bundle build.
+
+    Deliberately not DeployOptions. A bundle has no organization, no TTL and no
+    place on the map, because nothing about it is kept: it is built, handed over and
+    forgotten. The fields it does share are the ones that change what nsdeploy
+    generates.
+    """
+
+    name: Optional[str] = Field(
+        default=None,
+        description="network name; defaults to the uploaded filename stem. Becomes the "
+                    "HOCON filename, so nsdeploy derives the network name from it, and "
+                    "names the returned archive.",
+    )
+    site_url: Optional[str] = Field(
+        default=None,
+        description="the origin the client will host this bundle on. Baked into the "
+                    "manifest, the .well-known document and the generated steward "
+                    "HOCON, so it cannot be changed after the build. Omit it for a "
+                    "bundle addressed relative to wherever it is served, which works "
+                    "only at a domain root.",
+    )
+    upstream: Optional[str] = Field(
+        default=None,
+        description="the LLM endpoint the generated page calls with the reader's own "
+                    "key. A static bundle has no server to proxy it, so this is "
+                    "called straight from the browser and must allow CORS.",
+    )
+    theme: bool = Field(
+        default=False,
+        description="run LLM theming for this bundle. Off unless asked for, even when "
+                    "the service-wide THEME setting is on: theming adds 30-90 seconds "
+                    "to a request which answers on the open connection. Needs "
+                    "OPENAI_API_KEY in the service environment; without one the "
+                    "default look is used and a warning is reported.",
+    )
+    theme_model: Optional[str] = Field(
+        default=None, description="model used when theme is on",
+    )
+    theme_refresh: bool = Field(
+        default=False,
+        description="re-ask the model rather than reusing a cached answer for this "
+                    "network; meaningless unless theme is also on",
+    )
+    theme_prompt: Optional[str] = Field(
+        default=None, max_length=4000,
+        description="extra design instructions folded into the theming prompt; "
+                    "meaningless unless theme is also on",
+    )
+    cruse: Optional[bool] = Field(
+        default=None,
+        description="inject the CRUSE generative-UI directive into agents; defaults to "
+                    "the service-wide setting",
+    )
+
+
 # ── organization names ───────────────────────────────────────────────────────
 # Defined here rather than in app.py because three places need the same rule and the
 # first version of this lived in only one of them: the two upload endpoints were

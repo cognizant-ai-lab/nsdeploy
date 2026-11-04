@@ -10,9 +10,9 @@ between the two, which has three parts. Two of them fail *silently*:
   — a network then shows 0 agents and no warnings while running perfectly;
 * it reads keys out of the generated bundle. A renamed key or file does the same.
 
-The third is the names `themespec.py` imports in process. Those fail loudly, as an
-ImportError at start-up, but they are listed here too so that an upgrade reports
-every break at once rather than one per restart.
+The third is the names `themespec.py` and `bundler.py` import in process. Those fail
+loudly, as an ImportError at start-up, but they are listed here too so that an
+upgrade reports every break at once rather than one per restart.
 
 Run after every nsdeploy upgrade, from the nsdeploy root:
 
@@ -50,20 +50,35 @@ REPORT_MARKERS = [
 ]
 
 # --- names imported in process ----------------------------------------------
-# Deployments drive nsdeploy as a CLI. themespec.py does not: it restyles a built
-# bundle without a rebuild. Its imports are at module level, so a rename upstream
-# stops the service at start-up rather than mid-request.
+# Deployments drive nsdeploy as a CLI. These two modules do not: themespec.py
+# restyles a built bundle without a rebuild, and bundler.py builds a static bundle,
+# which is a build product with no process to supervise. Each import is at module
+# level, so a rename upstream stops the service at start-up rather than mid-request.
+# The last two entries are keyword arguments rather than imports: both are passed by
+# name, so a rename upstream is a TypeError on the first build, not at start-up.
 IN_PROCESS = [
-    ("nsdeploy/site_source.py", "def load_site_theme",
-     "themespec reads the editable source"),
-    ("nsdeploy/site_source.py", "def site_source_exists",
-     "themespec tests for an editable source"),
-    ("nsdeploy/theme.py", "class ThemeSpec", "the spec themespec merges into"),
+    ("nsdeploy/generate.py", "def generate_site", "bundler generates the static bundle"),
+    ("nsdeploy/generate.py", "def _theme_css", "themespec writes a build's own stylesheet"),
+    ("nsdeploy/resolve.py", "def resolve_hocon", "bundler resolves the uploaded HOCON"),
+    ("nsdeploy/resolve.py", "def build_plan", "bundler classifies the resolved config"),
+    ("nsdeploy/resolve.py", "class DeploymentPlan", "the plan bundler reads front_man from"),
+    ("nsdeploy/studio.py", "class StudioSource", "the source type bundler selects"),
+    ("nsdeploy/studio.py", "class GithubStudio", "bundler resolves includes from the repo"),
+    ("nsdeploy/studio.py", "class LocalStudio", "bundler resolves includes from a checkout"),
+    ("nsdeploy/studio.py", "DEFAULT_REPO", "the repo a GithubStudio defaults to"),
+    ("nsdeploy/studio.py", "DEFAULT_REF", "the ref a GithubStudio defaults to"),
+    ("nsdeploy/theme.py", "def propose_theme", "bundler asks for an opt-in theme"),
+    ("nsdeploy/theme.py", "DEFAULT_THEME_MODEL", "the model propose_theme defaults to"),
+    ("nsdeploy/theme.py", "class ThemeSpec", "the spec both modules build and merge"),
     ("nsdeploy/theme.py", "DEFAULT_COLORS", "themespec starts from the default look"),
     ("nsdeploy/theme.py", "DEFAULT_FONT", "themespec starts from the default look"),
     ("nsdeploy/theme.py", "_COLOR_RE", "themespec accepts the colours a build accepts"),
-    ("nsdeploy/generate.py", "def _theme_css",
-     "themespec writes a build's own stylesheet"),
+    ("nsdeploy/site_source.py", "def load_site_theme", "themespec reads the editable source"),
+    ("nsdeploy/site_source.py", "def site_source_exists",
+     "themespec tests for an editable source"),
+    ("nsdeploy/resolve.py", "include_python_tools",
+     "the switch that keeps tool autoinstall out of the API process"),
+    ("nsdeploy/generate.py", "static_bundle", "generate_site's static-bundle mode"),
 ]
 
 # --- generated bundle contract ----------------------------------------------
@@ -155,7 +170,7 @@ def main() -> int:
     problems += section("stdout markers scraped by summarize_build "
                         "(SILENT data loss if reworded)", REPORT_MARKERS)
     problems += section("Generated bundle contract", BUNDLE)
-    problems += section("Imported in process by themespec.py "
+    problems += section("Imported in process by themespec.py and bundler.py "
                         "(ImportError at start-up if renamed)", IN_PROCESS)
     section("Optional — only for the port-per-deployment model", OPTIONAL, kind="warn")
 

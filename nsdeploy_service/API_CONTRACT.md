@@ -26,6 +26,40 @@ The UI's assets are served unauthenticated (they are static files and carry no d
 but every call it makes is gated. On a `401` it prompts for the token once and keeps it
 in `sessionStorage` for the tab.
 
+### Cross-origin callers (CORS)
+
+Off by default. With `CORS_ORIGINS` empty the service sends no `Access-Control-*`
+headers at all, which is right for the console: it is served from this same origin
+(§9), so nothing cross-origin is involved.
+
+Set `CORS_ORIGINS` to a comma-separated list for a client served from somewhere else —
+a browser app in another deployment that calls `POST /bundles`, for example.
+
+| Setting | Behaviour |
+| --- | --- |
+| `CORS_ORIGINS` unset (default) | no CORS headers; a cross-origin page cannot read any response |
+| `CORS_ORIGINS=https://app.example.com` | that origin may call every route |
+| `CORS_ORIGINS=*` | any origin may call every route — **only safe with `API_TOKEN` set**, and `/health` warns when it is not |
+
+Each entry is an origin and nothing else: `scheme://host[:port]`, no path, no wildcard
+host. That is literally what a browser puts in the `Origin` header and the match is
+exact, so anything else can never fire; the service refuses it at start-up rather than
+letting it look like a server fault later. A trailing `/` is tolerated and stripped.
+
+**Credentials are never allowed.** This API authenticates with a bearer header, never a
+cookie, so there is nothing for a browser to attach on its own. `Authorization` and
+`Content-Type` are the accepted request headers, and preflights are cached for 600s.
+
+**A `401` still carries the CORS headers**, so a cross-origin client can read it and
+prompt for a token — the same flow the console uses.
+
+Only these response headers are readable cross-origin; a browser hides every other one:
+
+```
+Location  Content-Disposition  X-Bundle-Name  X-Bundle-Files
+X-Bundle-Unpacked-Bytes  X-Bundle-Sha256  X-Bundle-Warnings
+```
+
 ### Surfaces
 
 | Path | What |
@@ -448,6 +482,118 @@ run settled to `stopped` at boot because their processes did not survive a resta
 (§2). It is deliberately *not* in `warnings` — a one-time event reported as an ongoing
 condition gets re-raised by every poll forever. The actionable surface for those records
 is the directory, where each carries the reason and a **Restart** button (§4.7).
+
+---
+
+## 4a. Static bundle endpoints
+
+A **static bundle** is a self-contained folder of files — `index.html`, the shared
+runtime, the network JSON and the manifests — that runs the network in the browser with
+no server behind it. It is a build product, not a deployment: no port, no process, no
+place on the map, no record. Nothing a bundle request produces is kept, and nothing
+about it appears in `GET /deployments`, `/directory` or `/graph`.
+
+So these endpoints are **synchronous**. There is no `202`, no id to poll and no
+lifecycle: one request in, the archive out. A build is typically a few seconds, because
+a static bundle loads no Python toolbox; the slow part is resolving `include` lines,
+which may reach GitHub on a cold cache.
+
+### 4a.1 `POST /bundles` — build and return (multipart)
+
+`multipart/form-data`, same shape as §4.1.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `file` | yes | the agent-network `.hocon` |
+| `name` | no | network name; defaults to the uploaded filename stem. Names the archive. |
+| `site_url` | no | the origin the client will host the bundle on |
+| `upstream` | no | LLM endpoint the page calls with the reader's own key |
+| `theme` | no | run LLM theming; **off by default** (see below) |
+| `theme_model` | no | model used when `theme` is on |
+| `theme_refresh` | no | re-ask the model rather than reuse a cached answer |
+| `theme_prompt` | no | extra design instructions, 4000 characters maximum |
+| `cruse` | no | inject the CRUSE generative-UI directive; defaults to the service setting |
+
+`200` → `application/gzip`, body is the bundle. `400` with a `detail` for anything the
+caller can correct: an empty, oversized, non-UTF-8 or unparseable HOCON, a name that is
+not a plain identifier, or a network with no front-man agent.
+
+**The archive has the files at its root**, so unpacking it into a directory puts
+`index.html` at that directory's root. That is exactly what `bundle_host` validates, and
+it means no reader needs `--strip-components`.
+
+```bash
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+     -F file=@corner_shop.hocon \
+     -F site_url=https://shop.example.com \
+     -D headers.txt \
+     http://127.0.0.1:8000/bundles -o corner_shop.tar.gz
+mkdir -p site && tar -xzf corner_shop.tar.gz -C site   # site/index.html
+```
+
+### 4a.2 `POST /bundles/raw` — build and return (raw body)
+
+The HOCON is the whole request body; every field above is a query parameter, and `name`
+is required because there is no filename to fall back on. Identical output: the same
+HOCON and the same options give byte-identical archives on both routes.
+
+### 4a.3 Response headers
+
+The body is the bundle, so everything else the build reported travels beside it.
+
+| Header | Notes |
+| --- | --- |
+| `Content-Disposition` | `attachment; filename="<name>.tar.gz"` |
+| `X-Bundle-Name` | the validated network name |
+| `X-Bundle-Files` | how many files are in the archive |
+| `X-Bundle-Unpacked-Bytes` | their total size unpacked |
+| `X-Bundle-Sha256` | digest of the archive |
+| `X-Bundle-Warnings` | JSON array; absent when there are none |
+
+Fetching from another origin, a browser hides all of these unless the server names them
+— it does, but only when `CORS_ORIGINS` is set (§1).
+
+`X-Bundle-Sha256` is an **identity, not a receipt**. The packer flattens ownership, mode
+and timestamps, so one network always packs to one set of bytes: a client can compare
+the digest against what it already holds to tell a changed bundle from a re-sent one.
+The warning list is trimmed if it would exceed a proxy's header limit, and the last
+entry then says how many are missing.
+
+### 4a.4 `site_url` is baked in
+
+A static bundle is built **for a particular origin**. `site_url` is written into
+`agent-manifest.json`, `.well-known/nsdeploy-agent.json` and the generated steward
+HOCON, and it cannot be changed afterwards without rebuilding. Omitting it builds a
+bundle addressed relative to wherever it is served, which works only at a domain root.
+
+A client that relays the bundle to a separate web server must therefore send **that
+server's** public URL, not its own.
+
+### 4a.5 Theming is opt-in here
+
+Unlike a deployment, a bundle is **not** themed just because the service-wide `THEME`
+setting is on. Theming calls a model and adds 30-90 seconds; a deployment hides that
+behind its `202`, but this endpoint answers on the open connection, so a service-wide
+default would make every bundle request a long one. Send `theme=true` to ask for it.
+
+With `theme=true` but no `OPENAI_API_KEY` in the service environment, the build still
+succeeds with the default look and says so in `X-Bundle-Warnings`. The same is true if
+the model is unreachable or returns a layout the sanitizer refuses.
+
+### 4a.6 What a static bundle cannot carry
+
+Reported per build in `X-Bundle-Warnings`:
+
+* **Python coded tools are omitted.** They need a host process, which a bundle has none
+  of. The agents that referenced them are generated without them.
+* **The public MCP facade is unavailable.** Private stewards fall back to fetch-and-run.
+* **External MCP servers are called straight from the browser** and must allow CORS.
+
+### 4a.7 Limits
+
+`MAX_HOCON_BYTES` applies, and is checked before a build slot is taken.
+`MAX_CONCURRENT_BUNDLE_BUILDS` (default 4) bounds how many run at once — a separate
+bound from `MAX_CONCURRENT_BUILDS`, so a bundle never queues behind a cold deployment.
 
 ---
 
