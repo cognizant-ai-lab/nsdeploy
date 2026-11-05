@@ -1,4 +1,6 @@
 import json
+import socket
+import socketserver
 import tempfile
 import threading
 import unittest
@@ -44,6 +46,23 @@ class _BackendHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0) or 0)
         self._reply(self.rfile.read(length))
+
+
+class _SplittingBackendHandler(socketserver.StreamRequestHandler):
+    """Backend that tries to smuggle extra headers and a second response through the gateway."""
+
+    def handle(self):
+        while self.rfile.readline() not in (b"\r\n", b"\n", b""):
+            pass
+        self.wfile.write(
+            b"HTTP/1.1 200 OK\rSet-Cookie: reason=injected\r\n"
+            b"X-Folded: first\r\n second\r\n"
+            b"X-Ctl: bad\x00value\r\n"
+            b"X-Safe: kept\r\n"
+            b"Content-Length: 2\r\n"
+            b"\r\n"
+            b"ok"
+        )
 
 
 class GatewayTests(unittest.TestCase):
@@ -115,6 +134,32 @@ class GatewayTests(unittest.TestCase):
             ), timeout=5)
         self.assertEqual(context.exception.code, 404)
         context.exception.close()
+
+    def test_gateway_does_not_relay_cr_lf_from_backend_response(self):
+        backend = self._server(_SplittingBackendHandler)
+        routes = parse_routes([f"alpha=http://127.0.0.1:{backend.server_port}"])
+        gateway = self._server(make_gateway_handler("agents.test", routes))
+
+        with socket.create_connection(("127.0.0.1", gateway.server_port), timeout=5) as sock:
+            sock.sendall(
+                b"GET / HTTP/1.1\r\nHost: alpha.agents.test\r\nConnection: close\r\n\r\n"
+            )
+            raw = b""
+            while chunk := sock.recv(65536):
+                raw += chunk
+
+        head, _, body = raw.partition(b"\r\n\r\n")
+        lines = head.split(b"\r\n")
+        self.assertEqual(lines[0], b"HTTP/1.1 200 OK")
+        self.assertEqual(body, b"ok")
+        for line in lines:
+            self.assertNotIn(b"\r", line)
+            self.assertNotIn(b"\n", line)
+            self.assertNotIn(b"\x00", line)
+        self.assertNotIn(b"Set-Cookie: reason=injected", head)
+        self.assertIn(b"X-Folded: first second", lines)
+        self.assertIn(b"X-Safe: kept", lines)
+        self.assertFalse(any(line.startswith(b"X-Ctl:") for line in lines))
 
     def test_cailville_links_and_steward_directory_use_subdomains(self):
         community = {
