@@ -25,11 +25,6 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.parse import urlsplit
 
-try:
-    import fcntl  # POSIX-only module
-except ImportError:  # pragma: no cover - Windows has no fcntl.
-    fcntl = None
-
 from nsdeploy.byok import BYOK_AUTH_HEADER
 from nsdeploy.byok import BYOK_MODEL_HEADER
 from nsdeploy.commerce.steward import add_to_private_network
@@ -37,6 +32,13 @@ from nsdeploy.form_actions import action_discovery_config
 from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.site_source import DEFAULT_SITE_JS
 from nsdeploy.theme import ThemeSpec
+
+# fcntl exists only on POSIX. It locks the shared steward manifest across concurrent deployments in
+# write_private_steward_manifest(); without it, as on Windows, the manifest is written unlocked.
+try:
+    import fcntl  # POSIX-only module
+except ImportError:  # pragma: no cover - Windows has no fcntl.
+    fcntl = None
 
 
 DEFAULT_PRIVATE_STEWARD_MAX_EXECUTION_SECONDS = 3600
