@@ -236,60 +236,6 @@
       }
     },
     {
-      "id": "hospital_patient_facing_system",
-      "name": "Cailville Hospital Care Hub",
-      "description": "Patient-facing hospital access, triage, scheduling, portal, billing, transport coordination, and care-plan support.",
-      "kind": "Patient services",
-      "type": "civic",
-      "icon": "hospital",
-      "port": 8088,
-      "hocon": "/Users/754339/Downloads/hospital_patient_facing_system.hocon",
-      "site_dir": "/Users/754339/Downloads/sites/hospital_patient_facing_system",
-      "base": false,
-      "position": {
-        "x": 76,
-        "y": 57,
-        "mx": 25,
-        "my_px": 1390
-      }
-    },
-    {
-      "id": "cailville_public_bank_system",
-      "name": "Cailville Public Bank",
-      "description": "Bank portal concierge for accounts, cards, fraud, disputes, loans, business banking, compliance, fees, and financial education.",
-      "kind": "Banking services",
-      "type": "business",
-      "icon": "banknote",
-      "port": 8089,
-      "hocon": "/Users/754339/Downloads/cailville_public_bank_system.hocon",
-      "site_dir": "/Users/754339/Downloads/sites/cailville_public_bank_system",
-      "base": false,
-      "position": {
-        "x": 22,
-        "y": 88,
-        "mx": 73,
-        "my_px": 1500
-      }
-    },
-    {
-      "id": "cailville_bakery_concierge",
-      "name": "Cailville Bakery Concierge",
-      "description": "Bakery customer triage for menu, allergens, preorders, catering, hours, policies, and local partnership requests.",
-      "kind": "Bakery concierge",
-      "type": "business",
-      "icon": "utensils",
-      "port": 8090,
-      "hocon": "/Users/754339/Downloads/cailville_bakery_concierge.hocon",
-      "site_dir": "/Users/754339/Downloads/sites/cailville_bakery_concierge",
-      "base": false,
-      "position": {
-        "x": 67,
-        "y": 88,
-        "mx": 25,
-        "my_px": 1610
-      }
-    },
-    {
       "id": "commerce_arbiter",
       "name": "Cailville Commerce Arbiter",
       "description": "Independent negotiation for private stewards, sealed bids, and simulated settlement",
@@ -301,39 +247,177 @@
       "site_dir": "sites/commerce_arbiter",
       "base": true,
       "position": {
-        "x": 13,
-        "y": 35,
+        "x": 76,
+        "y": 57,
         "mx": 25,
-        "my_px": 1830
-      }
-    },
-    {
-      "id": "small_town_cafe_consumer_system",
-      "name": "Cailville Cafe Concierge",
-      "description": "Cafe concierge for menu, dietary info, reservations, orders, catering, gift cards, promos, refunds, feedback, and status updates.",
-      "kind": "Cafe concierge",
-      "type": "business",
-      "icon": "utensils",
-      "port": 8104,
-      "hocon": "/Users/754339/Downloads/small_town_cafe_consumer_system.hocon",
-      "site_dir": "/Users/754339/Downloads/sites/small_town_cafe_consumer_system",
-      "base": false,
-      "position": {
-        "x": 91,
-        "y": 88,
-        "mx": 73,
-        "my_px": 1720
+        "my_px": 1390
       }
     }
   ],
   "relationships": [
+    [
+      "harbor_guide",
+      "greenbank_farm"
+    ],
+    [
+      "harbor_guide",
+      "salt_house_restaurant"
+    ],
+    [
+      "harbor_guide",
+      "seabreeze_inn"
+    ],
+    [
+      "harbor_guide",
+      "harbor_wheels_cooperative"
+    ],
+    [
+      "rivera_household",
+      "harbor_guide"
+    ],
+    [
+      "rivera_household",
+      "neighbor_exchange"
+    ],
+    [
+      "rivera_household",
+      "harbor_town_hall"
+    ],
+    [
+      "rivera_household",
+      "deneman_place"
+    ],
+    [
+      "rivera_household",
+      "butterpink_family"
+    ],
+    [
+      "deneman_place",
+      "harbor_guide"
+    ],
+    [
+      "deneman_place",
+      "neighbor_exchange"
+    ],
+    [
+      "deneman_place",
+      "harbor_town_hall"
+    ],
+    [
+      "deneman_place",
+      "rivera_household"
+    ],
+    [
+      "butterpink_family",
+      "harbor_guide"
+    ],
+    [
+      "butterpink_family",
+      "neighbor_exchange"
+    ],
+    [
+      "butterpink_family",
+      "harbor_town_hall"
+    ],
+    [
+      "butterpink_family",
+      "rivera_household"
+    ],
+    [
+      "main_street_exchange",
+      "tide_and_table_fishery"
+    ],
+    [
+      "main_street_exchange",
+      "greenbank_farm"
+    ],
+    [
+      "main_street_exchange",
+      "salt_house_restaurant"
+    ],
+    [
+      "main_street_exchange",
+      "seabreeze_inn"
+    ],
+    [
+      "main_street_exchange",
+      "harbor_wheels_cooperative"
+    ],
+    [
+      "main_street_exchange",
+      "fix_and_found"
+    ],
+    [
+      "neighbor_exchange",
+      "rivera_household"
+    ],
+    [
+      "neighbor_exchange",
+      "deneman_place"
+    ],
+    [
+      "neighbor_exchange",
+      "butterpink_family"
+    ],
+    [
+      "tide_and_table_fishery",
+      "main_street_exchange"
+    ],
+    [
+      "tide_and_table_fishery",
+      "harbor_town_hall"
+    ],
+    [
+      "tide_and_table_fishery",
+      "salt_house_restaurant"
+    ],
+    [
+      "tide_and_table_fishery",
+      "seabreeze_inn"
+    ],
+    [
+      "greenbank_farm",
+      "main_street_exchange"
+    ],
+    [
+      "greenbank_farm",
+      "harbor_town_hall"
+    ],
+    [
+      "greenbank_farm",
+      "salt_house_restaurant"
+    ],
+    [
+      "greenbank_farm",
+      "seabreeze_inn"
+    ],
+    [
+      "salt_house_restaurant",
+      "main_street_exchange"
+    ],
+    [
+      "salt_house_restaurant",
+      "harbor_town_hall"
+    ],
+    [
+      "salt_house_restaurant",
+      "greenbank_farm"
+    ],
+    [
+      "salt_house_restaurant",
+      "tide_and_table_fishery"
+    ],
+    [
+      "seabreeze_inn",
+      "main_street_exchange"
+    ],
     [
       "seabreeze_inn",
       "harbor_town_hall"
     ],
     [
       "seabreeze_inn",
-      "main_street_exchange"
+      "greenbank_farm"
     ],
     [
       "seabreeze_inn",
@@ -348,337 +432,72 @@
       "fix_and_found"
     ],
     [
-      "seabreeze_inn",
+      "harbor_wheels_cooperative",
+      "main_street_exchange"
+    ],
+    [
+      "harbor_wheels_cooperative",
+      "harbor_town_hall"
+    ],
+    [
+      "harbor_wheels_cooperative",
+      "fix_and_found"
+    ],
+    [
+      "fix_and_found",
+      "main_street_exchange"
+    ],
+    [
+      "fix_and_found",
+      "harbor_town_hall"
+    ],
+    [
+      "harbor_town_hall",
+      "harbor_guide"
+    ],
+    [
+      "harbor_town_hall",
+      "main_street_exchange"
+    ],
+    [
+      "harbor_town_hall",
+      "neighbor_exchange"
+    ],
+    [
+      "harbor_town_hall",
+      "tide_and_table_fishery"
+    ],
+    [
+      "harbor_town_hall",
       "greenbank_farm"
     ],
     [
-      "seabreeze_inn",
-      "cailville_bakery_concierge"
+      "harbor_town_hall",
+      "salt_house_restaurant"
+    ],
+    [
+      "harbor_town_hall",
+      "seabreeze_inn"
+    ],
+    [
+      "harbor_town_hall",
+      "harbor_wheels_cooperative"
+    ],
+    [
+      "harbor_town_hall",
+      "fix_and_found"
     ],
     [
       "seabreeze_inn",
       "commerce_arbiter"
     ],
     [
-      "seabreeze_inn",
-      "small_town_cafe_consumer_system"
-    ],
-    [
-      "harbor_guide",
-      "seabreeze_inn"
-    ],
-    [
-      "harbor_guide",
-      "salt_house_restaurant"
-    ],
-    [
-      "harbor_guide",
-      "harbor_wheels_cooperative"
-    ],
-    [
-      "harbor_guide",
-      "greenbank_farm"
-    ],
-    [
-      "harbor_guide",
-      "cailville_bakery_concierge"
-    ],
-    [
-      "harbor_guide",
-      "small_town_cafe_consumer_system"
-    ],
-    [
-      "rivera_household",
-      "harbor_guide"
-    ],
-    [
-      "rivera_household",
-      "deneman_place"
-    ],
-    [
-      "rivera_household",
-      "butterpink_family"
-    ],
-    [
-      "rivera_household",
-      "neighbor_exchange"
-    ],
-    [
-      "rivera_household",
-      "harbor_town_hall"
-    ],
-    [
-      "rivera_household",
-      "hospital_patient_facing_system"
-    ],
-    [
-      "deneman_place",
-      "harbor_guide"
-    ],
-    [
-      "deneman_place",
-      "rivera_household"
-    ],
-    [
-      "deneman_place",
-      "neighbor_exchange"
-    ],
-    [
-      "deneman_place",
-      "harbor_town_hall"
-    ],
-    [
-      "deneman_place",
-      "hospital_patient_facing_system"
-    ],
-    [
-      "butterpink_family",
-      "harbor_guide"
-    ],
-    [
-      "butterpink_family",
-      "rivera_household"
-    ],
-    [
-      "butterpink_family",
-      "neighbor_exchange"
-    ],
-    [
-      "butterpink_family",
-      "harbor_town_hall"
-    ],
-    [
-      "butterpink_family",
-      "hospital_patient_facing_system"
-    ],
-    [
-      "neighbor_exchange",
-      "rivera_household"
-    ],
-    [
-      "neighbor_exchange",
-      "deneman_place"
-    ],
-    [
-      "neighbor_exchange",
-      "butterpink_family"
-    ],
-    [
-      "neighbor_exchange",
-      "cailville_public_bank_system"
-    ],
-    [
-      "harbor_town_hall",
-      "seabreeze_inn"
-    ],
-    [
-      "harbor_town_hall",
-      "harbor_guide"
-    ],
-    [
-      "harbor_town_hall",
-      "neighbor_exchange"
-    ],
-    [
-      "harbor_town_hall",
-      "main_street_exchange"
-    ],
-    [
-      "harbor_town_hall",
-      "salt_house_restaurant"
-    ],
-    [
-      "harbor_town_hall",
-      "tide_and_table_fishery"
-    ],
-    [
-      "harbor_town_hall",
-      "harbor_wheels_cooperative"
-    ],
-    [
-      "harbor_town_hall",
-      "fix_and_found"
-    ],
-    [
-      "harbor_town_hall",
-      "greenbank_farm"
-    ],
-    [
-      "harbor_town_hall",
-      "cailville_public_bank_system"
-    ],
-    [
-      "main_street_exchange",
-      "seabreeze_inn"
-    ],
-    [
-      "main_street_exchange",
-      "salt_house_restaurant"
-    ],
-    [
-      "main_street_exchange",
-      "tide_and_table_fishery"
-    ],
-    [
-      "main_street_exchange",
-      "harbor_wheels_cooperative"
-    ],
-    [
-      "main_street_exchange",
-      "fix_and_found"
-    ],
-    [
-      "main_street_exchange",
-      "greenbank_farm"
-    ],
-    [
-      "main_street_exchange",
-      "cailville_public_bank_system"
-    ],
-    [
-      "main_street_exchange",
-      "cailville_bakery_concierge"
-    ],
-    [
-      "main_street_exchange",
-      "small_town_cafe_consumer_system"
-    ],
-    [
-      "salt_house_restaurant",
-      "harbor_town_hall"
-    ],
-    [
-      "salt_house_restaurant",
-      "main_street_exchange"
-    ],
-    [
-      "salt_house_restaurant",
-      "tide_and_table_fishery"
-    ],
-    [
-      "salt_house_restaurant",
-      "greenbank_farm"
-    ],
-    [
-      "tide_and_table_fishery",
-      "seabreeze_inn"
-    ],
-    [
-      "tide_and_table_fishery",
-      "harbor_town_hall"
-    ],
-    [
-      "tide_and_table_fishery",
-      "main_street_exchange"
-    ],
-    [
-      "tide_and_table_fishery",
-      "salt_house_restaurant"
-    ],
-    [
-      "harbor_wheels_cooperative",
-      "harbor_town_hall"
-    ],
-    [
-      "harbor_wheels_cooperative",
-      "main_street_exchange"
-    ],
-    [
-      "harbor_wheels_cooperative",
-      "fix_and_found"
-    ],
-    [
-      "fix_and_found",
-      "harbor_town_hall"
-    ],
-    [
-      "fix_and_found",
-      "main_street_exchange"
-    ],
-    [
-      "greenbank_farm",
-      "seabreeze_inn"
-    ],
-    [
-      "greenbank_farm",
-      "harbor_town_hall"
-    ],
-    [
-      "greenbank_farm",
-      "main_street_exchange"
-    ],
-    [
-      "greenbank_farm",
-      "salt_house_restaurant"
-    ],
-    [
-      "hospital_patient_facing_system",
-      "seabreeze_inn"
-    ],
-    [
-      "hospital_patient_facing_system",
-      "harbor_guide"
-    ],
-    [
-      "hospital_patient_facing_system",
-      "harbor_town_hall"
-    ],
-    [
-      "hospital_patient_facing_system",
-      "harbor_wheels_cooperative"
-    ],
-    [
-      "cailville_public_bank_system",
-      "neighbor_exchange"
-    ],
-    [
-      "cailville_public_bank_system",
-      "harbor_town_hall"
-    ],
-    [
-      "cailville_public_bank_system",
-      "main_street_exchange"
-    ],
-    [
-      "cailville_bakery_concierge",
-      "harbor_town_hall"
-    ],
-    [
-      "cailville_bakery_concierge",
-      "main_street_exchange"
-    ],
-    [
-      "cailville_bakery_concierge",
-      "salt_house_restaurant"
-    ],
-    [
-      "cailville_bakery_concierge",
-      "harbor_wheels_cooperative"
-    ],
-    [
-      "cailville_bakery_concierge",
-      "greenbank_farm"
-    ],
-    [
       "commerce_arbiter",
       "seabreeze_inn"
     ],
     [
-      "small_town_cafe_consumer_system",
-      "main_street_exchange"
-    ],
-    [
-      "small_town_cafe_consumer_system",
-      "harbor_wheels_cooperative"
-    ],
-    [
-      "small_town_cafe_consumer_system",
-      "greenbank_farm"
-    ],
-    [
-      "small_town_cafe_consumer_system",
-      "cailville_public_bank_system"
-    ],
-    ["butterpink_family", "commerce_arbiter"]
+      "butterpink_family",
+      "commerce_arbiter"
+    ]
   ]
 }
