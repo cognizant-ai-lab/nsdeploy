@@ -1,0 +1,15 @@
+# nsdeploy runtime dependencies. This is the single source of truth:
+# pyproject.toml reads this file, so `pip install -e .`, `pip install -r requirements.txt`
+# and `uv sync` all install the same set.
+#
+# Keep entries plain PEP 508, one per line. setuptools parses this file itself, so no
+# -e/-r lines, no --hash options, no inline comments, no backslash continuations.
+
+# HOCON resolution (also a neuro-san dependency).
+pyhocon>=0.3.59
+# FastMCP + ASGI server for hosting coded tools as MCP servers.
+mcp>=1.0.0
+uvicorn>=0.30
+starlette>=0.40
+# The CodedTool base class that studio coded tools subclass.
+neuro-san>=0.5
