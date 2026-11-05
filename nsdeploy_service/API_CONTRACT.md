@@ -1,4 +1,4 @@
-﻿# Agentic City — API contract
+# Agentic City — API contract
 
 Base URL (local): `http://127.0.0.1:9100`
 Machine-readable schema: `GET /openapi.json` · interactive: `GET /docs`
@@ -10,10 +10,12 @@ second precision** (`2026-09-22T20:29:19+00:00`). All times are server-generated
 
 ## 1. Authentication
 
+<!-- pyml disable md013 -->
 | Condition | Behaviour |
 | --- | --- |
 | `API_TOKEN` unset (default) | every route is open — intended for loopback only |
 | `API_TOKEN` set | `Authorization: Bearer <token>` required on all routes **except** `GET /health` and the UI's static assets |
+<!-- pyml enable md013 -->
 
 Failure: `401` `{"detail": "a valid bearer token is required"}` — returned both for a
 missing header and a wrong token (no distinction, by design).
@@ -35,11 +37,13 @@ headers at all, which is right for the console: it is served from this same orig
 Set `CORS_ORIGINS` to a comma-separated list for a client served from somewhere else —
 a browser app in another deployment that calls `POST /bundles`, for example.
 
+<!-- pyml disable md013 -->
 | Setting | Behaviour |
 | --- | --- |
 | `CORS_ORIGINS` unset (default) | no CORS headers; a cross-origin page cannot read any response |
 | `CORS_ORIGINS=https://app.example.com` | that origin may call every route |
 | `CORS_ORIGINS=*` | any origin may call every route — **only safe with `API_TOKEN` set**, and `/health` warns when it is not |
+<!-- pyml enable md013 -->
 
 Each entry is an origin and nothing else: `scheme://host[:port]`, no path, no wildcard
 host. That is literally what a browser puts in the `Origin` header and the match is
@@ -55,7 +59,7 @@ prompt for a token — the same flow the console uses.
 
 Only these response headers are readable cross-origin; a browser hides every other one:
 
-```
+```text
 Location  Content-Disposition  X-Bundle-Name  X-Bundle-Files
 X-Bundle-Unpacked-Bytes  X-Bundle-Sha256  X-Bundle-Warnings
 ```
@@ -73,7 +77,7 @@ X-Bundle-Unpacked-Bytes  X-Bundle-Sha256  X-Bundle-Warnings
 
 ## 2. Resource lifecycle
 
-```
+```text
 POST /deployments ──▶ queued ──▶ building ──▶ ready
                          │           │          │
                          └───────────┴──▶ failed│   (build error / timeout / crash)
@@ -133,17 +137,19 @@ isolation needs the login mechanism, not this model.
 | `GET` | `/orgs/{id}/deployments` | same shape as `GET /deployments` |
 
 Names are unique **case- and whitespace-insensitively** — `Acme`, `acme`, and
-`  ACME  ` collide. `name` is required, ≤120 chars; `address` ≤500; `contact` ≤200.
+a padded `ACME` collide. `name` is required, ≤120 chars; `address` ≤500; `contact` ≤200.
 
 `OrgView`: `id`, `name`, `address`, `contact`, `created_at`, `deployment_count`,
 `live_count` (queued + building + ready).
 
 A deployment can name its organization two ways, and `POST /deployments` accepts both:
 
+<!-- pyml disable md013 -->
 | Field | Behaviour |
 | --- | --- |
 | `org_id` | must already exist; `400` if not. Takes precedence over `org_name` |
 | `org_name` | **get-or-create**: matched case- and whitespace-insensitively against existing organizations, created on first use. `400` if the name is unusable (blank after trimming falls back rather than creating a nameless org) |
+<!-- pyml enable md013 -->
 
 `org_name` is what the console sends, so an operator types their organization once
 instead of creating a profile and then picking its id. An unknown `org_id` is an error
@@ -247,6 +253,7 @@ default 120). It is advice, not a rule — a client may poll at its own cadence.
 
 `Content-Type: multipart/form-data`
 
+<!-- pyml disable md013 -->
 | Field | Type | Required | Default | Notes |
 | --- | --- | --- | --- | --- |
 | `file` | file | **yes** | — | the agent-network `.hocon`; UTF-8, non-empty, ≤ `MAX_HOCON_BYTES` (512 KiB) |
@@ -259,6 +266,7 @@ default 120). It is advice, not a rule — a client may poll at its own cadence.
 | `theme_prompt` | string, ≤ 4000 chars | no | service `THEME_PROMPT` (empty) | extra design instructions folded into the theming prompt (nsdeploy's own `--theme-prompt`); only meaningful with `theme=true` |
 | `cruse` | bool | no | `true` | inject the CRUSE generative-UI directive; `false` passes `--no-cruse` |
 | `ttl_seconds` | int ≥ 0 | no | service `TTL_SECONDS` (`0`) | `0` means never expire — the default, since deployments are long-lived |
+<!-- pyml enable md013 -->
 
 **`202 Accepted`** + `Location: /deployments/{id}` + a `DeploymentView` in status `queued`.
 The response is returned **before** the build starts — poll or call `/wait`. With
@@ -405,6 +413,7 @@ off disk per request, so the next page load serves the new look.
 
 `GET` answers the current look and what can be done with it:
 
+<!-- pyml disable md013 -->
 | Field | Type | Notes |
 | --- | --- | --- |
 | `current` | ThemeTokens | the values in effect |
@@ -413,16 +422,19 @@ off disk per request, so the next page load serves the new look.
 | `has_custom_layout` | bool | a model-authored layout is in place. Editing tokens keeps it; a generic preview will not show it |
 | `built` | bool | a built bundle exists, so an edit can take effect without rebuilding |
 | `live` | bool | the site is running, so an edit shows on its next page load |
+<!-- pyml enable md013 -->
 
 `POST` takes a `ThemeTokens` body. Every field is optional; `None` means "leave this
 one alone".
 
+<!-- pyml disable md013 -->
 | Field | Type | Notes |
 | --- | --- | --- |
 | `brand` / `icon` / `tagline` / `hero` | string | ≤ 60 / 8 / 120 / 280 chars. Empty means "unset", and the build's own derivation (brand from the network name, description from the agent's) is left in place rather than blanked |
 | `font` | string | CSS font stack, ≤ 120 chars. Normalized — a stack without a generic family gains `, system-ui, sans-serif` |
 | `radius` | int | 0–28 px; outside that range is `422` |
 | `colors` | object | any subset of `primary`, `accent`, `bg`, `bg_tint`, `fg`, `muted`, `border`, `msgbg`, `panelbg`. `#hex`, `rgb()`/`hsl()`, or a CSS keyword |
+<!-- pyml enable md013 -->
 
 **`200 OK`** → `{current, applied_live}`. Not `202` and not a `DeploymentView`: no
 relaunch is queued and the record does not change, so there is nothing to poll.
@@ -584,25 +596,27 @@ the model is unreachable or returns a layout the sanitizer refuses.
 
 Reported per build in `X-Bundle-Warnings`:
 
-* **Python coded tools are omitted.** They need a host process, which a bundle has none
+- **Python coded tools are omitted.** They need a host process, which a bundle has none
   of. The agents that referenced them are generated without them.
-* **The public MCP facade is unavailable.** Private stewards fall back to fetch-and-run.
-* **External MCP servers are called straight from the browser** and must allow CORS.
+- **The public MCP facade is unavailable.** Private stewards fall back to fetch-and-run.
+- **External MCP servers are called straight from the browser** and must allow CORS.
 
 ### 4a.7 `GET /deployments/{id}/bundle` — a bundle for a deployed network
 
 Takes a `deployment_id` from `POST /deployments` and answers with the same archive and
 the same headers as `POST /bundles`, plus `Cache-Control: no-store`.
 
-```
+```text
 GET /deployments/7f3c1a2b9d04/bundle?site_url=https://shop.example.com
 Authorization: Bearer <token>
 ```
 
+<!-- pyml disable md013 -->
 | Query | Default | Notes |
 | --- | --- | --- |
 | `site_url` | *(empty)* | where the client will host the bundle; see §4a.4. **Never defaults to the deployment's own URL**, which is this service's loopback port and would be useless anywhere a bundle is hosted |
 | `upstream` | the deployment's own | BYOK upstream for this bundle only |
+<!-- pyml enable md013 -->
 
 There is nothing else to pass. The network name, the BYOK upstream, the CRUSE setting
 and the look all come from the deployment, so the bundle matches the site that is
@@ -637,6 +651,7 @@ model is called, so this endpoint stays as fast as `POST /bundles`.
 
 Statuses:
 
+<!-- pyml disable md013 -->
 | Code | When |
 | --- | --- |
 | `200` | the archive |
@@ -644,6 +659,7 @@ Statuses:
 | `409` | the deployment is `queued`, `building` or `failed`. The first two have produced no site yet and the third tried and could not, so none of them has anything finished to offer |
 | `410` | the record is there but its HOCON is not on disk — a `WORK_ROOT` that moved between runs, or a work dir removed by hand. Gone rather than Not Found, because the deployment is real and it is its source which is missing |
 | `400` | the HOCON no longer resolves, or the network has no front man |
+<!-- pyml enable md013 -->
 
 The deployment is **read only**. Nothing is written to its work directory, its record
 is untouched, and its status does not change.
@@ -660,6 +676,7 @@ bound from `MAX_CONCURRENT_BUILDS`, so a bundle never queues behind a cold deplo
 
 ### 5.1 `DeploymentView`
 
+<!-- pyml disable md013 -->
 | Field | Type | Notes |
 | --- | --- | --- |
 | `id` | string | 12 hex chars; the only identifier clients should persist |
@@ -678,6 +695,7 @@ bound from `MAX_CONCURRENT_BUILDS`, so a bundle never queues behind a cold deplo
 | `endpoints` | object | `{}` unless `ready` (see §4.2) |
 | `network` | object \| null | null until `ready` (see §4.3) |
 | `warnings` | string[] | non-fatal findings (see §4.4) |
+<!-- pyml enable md013 -->
 
 ### 5.2 `endpoints` (populated when `ready`)
 
@@ -716,14 +734,15 @@ The service never holds an LLM key; real completions always carry the caller's o
 
 Present on a **successful** deployment to flag silent degradation. Never a failure.
 
-1. *"N tool reference(s) could not be resolved and were dropped…"*
-2. *"N agent(s) run in demo_mode and fabricate plausible answers…"*
-3. *"N unlinked agent-network reference(s)…"*
+1. "N tool reference(s) could not be resolved and were dropped…"
+2. "N agent(s) run in demo_mode and fabricate plausible answers…"
+3. "N unlinked agent-network reference(s)…"
 
 ---
 
 ## 6. Validation & errors
 
+<!-- pyml disable md013 -->
 | Code | Body | When |
 | --- | --- | --- |
 | `202` | `DeploymentView` | deployment accepted |
@@ -734,6 +753,7 @@ Present on a **successful** deployment to flag silent degradation. Never a failu
 | `409` | `{"detail": "<message>"}` | conflicts with existing state: duplicate org name, or deleting an org that still owns records |
 | `422` | `{"detail": [{"type","loc","msg","input"}, …]}` | FastAPI schema validation (missing `file`, `tail` out of range, …) |
 | `504` | `DeploymentView` | `/wait` timed out — still in progress, not an error |
+<!-- pyml enable md013 -->
 
 `400` cases, each with an explanatory `detail`:
 
@@ -812,7 +832,7 @@ These are contract-visible consequences of moving off localhost — see
 A modular, build-step-free frontend in the top-level [`ui/`](ui/) folder, served
 same-origin at `/app/`.
 
-```
+```text
 ui/
   index.html
   assets/styles/   tokens · base · layout · components
@@ -1004,5 +1024,3 @@ Accessibility notes that constrain the markup: deployment status is always rende
 **glyph + word**, never colour alone, because the status palette's `good` and `critical`
 measure ΔE 4.1 under deuteranopia; and dark mode uses separately chosen steps rather than
 an inverted light palette.
-
-
