@@ -54,24 +54,10 @@ Rules for coding agents in nsdeploy. Follow them and make sure the checks in §6
 - Keep all code comments brief, written in Standard Technical English.
 - Add code comments for every for loop.
 - Add type hints for every looping variable
-
-  ```text
-  """
-  <summary of what the method does>
-
-  :param <name>: <description>
-  :param <name>: <description>
-  :return: <description>
-  """
-  ```
-
-  One `:param` line per parameter, in order, using its exact name. Omit `:return:` only when the method returns
-  `None`. Add `:raises <ExceptionType>: <description>` after `:return:` if the method can raise something worth
-  documenting.
 - Mark overridden methods with `@override` (`from typing_extensions import override`). Comment the non-obvious:
   threading/lifecycle behavior and the reason behind a design decision — not what a line already says.
 - For simple constructions and assignments, try to keep them on a single line < 120 characters.
-  ** Never ** try to do this for if statements, for loops, or any other control flow statements.
+  **Never** try to do this for if statements, for loops, or any other control flow statements.
 
 ## 3. Testing
 

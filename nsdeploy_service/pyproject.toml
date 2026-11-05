@@ -34,6 +34,9 @@ build-backend = "setuptools.build_meta"
 name = "nsdeploy-service"
 version = "0.1.0"
 description = "Agentic City — expose nsdeploy as an HTTP deployment service: POST an agent-network HOCON, get back a live site URL."
+# This license name comes from doc recommendation here
+# https://packaging.python.org/en/latest/guides/licensing-examples-and-user-scenarios/
+license = "Apache-2.0"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.110",
