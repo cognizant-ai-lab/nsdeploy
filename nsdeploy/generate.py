@@ -18,10 +18,21 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse, urlsplit
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
-from nsdeploy.byok import BYOK_AUTH_HEADER, BYOK_MODEL_HEADER
+try:
+    import fcntl  # POSIX-only module
+except ImportError:  # pragma: no cover - Windows has no fcntl.
+    fcntl = None
+
+from nsdeploy.byok import BYOK_AUTH_HEADER
+from nsdeploy.byok import BYOK_MODEL_HEADER
+from nsdeploy.commerce.steward import add_to_private_network
 from nsdeploy.form_actions import action_discovery_config
 from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.site_source import DEFAULT_SITE_JS
@@ -368,8 +379,6 @@ The site URL is checked against the local deny policy; MCP is a legacy fallback.
         json.dumps(gateway_parameters, indent=8),
     )
     if (plan.config.get("private_commerce") or {}).get("steward") == "butterpink_family":
-        # Late import: the steward module pulls in neuro_san, which plain site generation does not need.
-        from nsdeploy.commerce.steward import add_to_private_network  # pylint: disable=import-outside-toplevel
         result = json.dumps(add_to_private_network(json.loads(result)), indent=2) + "\n"
     return result
 
@@ -388,10 +397,6 @@ def write_private_steward_manifest(
     manifest_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = manifest_dir / "manifest.hocon"
     active = set(active_networks) if active_networks is not None else None
-    try:
-        import fcntl  # pylint: disable=import-outside-toplevel  # POSIX-only module
-    except ImportError:  # pragma: no cover - Windows has no fcntl.
-        fcntl = None
     with manifest_path.open("a+", encoding="utf-8") as handle:
         if fcntl:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)

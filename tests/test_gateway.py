@@ -6,21 +6,18 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-from nsdeploy.cailville import (
-    augment_config,
-    public_site_directory,
-    write_runtime_link_files,
-)
+from nsdeploy.cailville import augment_config
+from nsdeploy.cailville import public_site_directory
+from nsdeploy.cailville import write_runtime_link_files
 from nsdeploy.linker import load_link_file
-from nsdeploy.gateway import (
-    make_gateway_handler,
-    network_slug,
-    parse_routes,
-    public_origin,
-)
+from nsdeploy.gateway import make_gateway_handler
+from nsdeploy.gateway import network_slug
+from nsdeploy.gateway import parse_routes
+from nsdeploy.gateway import public_origin
 
 
 class _BackendHandler(BaseHTTPRequestHandler):

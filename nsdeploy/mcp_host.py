@@ -21,7 +21,18 @@ import importlib
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
+from typing import Dict
+
+import uvicorn
+from mcp.server.fastmcp import FastMCP
+from starlette.middleware.cors import CORSMiddleware
+
+# Optional so the host still runs tools when neuro_san is absent.
+try:
+    from neuro_san.interfaces.coded_tool import CodedTool
+except ImportError:
+    CodedTool = None
 
 _JSON_TO_PY = {"string": "str", "integer": "int", "number": "float",
                "boolean": "bool", "array": "list", "object": "dict"}
@@ -32,10 +43,8 @@ def _make_tool_function(coded: Any, parameters: Dict[str, Any]):  # pylint: disa
     so FastMCP advertises a correct inputSchema, and which forwards to the coded tool.
     """
     try:
-        # Imported lazily so the host still runs tools when neuro_san is absent.
-        from neuro_san.interfaces.coded_tool import CodedTool  # pylint: disable=import-outside-toplevel
         use_async = type(coded).async_invoke is not CodedTool.async_invoke
-    # Any import or attribute failure falls back to duck typing on the tool instance.
+    # Any attribute failure, including an absent neuro_san, falls back to duck typing on the tool instance.
     except Exception:  # pylint: disable=broad-exception-caught
         use_async = hasattr(coded, "async_invoke") and not hasattr(coded, "invoke")
 
@@ -78,8 +87,6 @@ def main() -> int:
         sys.path.insert(0, studio_root)
 
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
-    # Server dependencies load only in the hosting subprocess.
-    from mcp.server.fastmcp import FastMCP  # pylint: disable=import-outside-toplevel
 
     module = importlib.import_module(spec["module"])
     tool_class = getattr(module, spec["class_name"])
@@ -93,8 +100,6 @@ def main() -> int:
 
     # The browser calls this MCP server cross-origin (different port from the site),
     # so it must send CORS headers and expose the MCP session header to JS.
-    import uvicorn  # pylint: disable=import-outside-toplevel
-    from starlette.middleware.cors import CORSMiddleware  # pylint: disable=import-outside-toplevel
 
     app = mcp.streamable_http_app()
     app.add_middleware(

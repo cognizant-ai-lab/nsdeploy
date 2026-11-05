@@ -22,7 +22,10 @@ from nsdeploy_service.app import create_app
 from nsdeploy_service.config import Settings
 from nsdeploy_service.models import DeployOptions
 from nsdeploy_service.store import Store
-from nsdeploy_service.supervisor import DeploymentError, Supervisor, is_publishable, publish_refusal
+from nsdeploy_service.supervisor import DeploymentError
+from nsdeploy_service.supervisor import Supervisor
+from nsdeploy_service.supervisor import is_publishable
+from nsdeploy_service.supervisor import publish_refusal
 
 
 class PublishStateTest(unittest.TestCase):

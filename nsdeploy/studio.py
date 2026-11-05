@@ -19,7 +19,8 @@ import json
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import List, Optional
+from typing import List
+from typing import Optional
 
 RAW_URL = "https://raw.githubusercontent.com/{repo}/{ref}/{path}"
 TREE_URL = "https://api.github.com/repos/{repo}/git/trees/{ref}?recursive=1"

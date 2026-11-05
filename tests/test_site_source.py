@@ -3,7 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nsdeploy.site_source import load_site_theme, seed_site_source, site_source_exists
+from nsdeploy.site_source import load_site_theme
+from nsdeploy.site_source import seed_site_source
+from nsdeploy.site_source import site_source_exists
 from nsdeploy.theme import ThemeSpec
 
 

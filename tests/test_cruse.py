@@ -2,7 +2,8 @@ import json
 import re
 import unittest
 
-from nsdeploy.generate import CRUSE_DIRECTIVE, rewrite_config
+from nsdeploy.generate import CRUSE_DIRECTIVE
+from nsdeploy.generate import rewrite_config
 from nsdeploy.resolve import DeploymentPlan
 
 

@@ -10,14 +10,17 @@ import json
 import tempfile
 import threading
 import unittest
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from nsdeploy_service.app import create_app
-from nsdeploy_service.config import Settings, sanitize_label, slugify
+from nsdeploy_service.config import Settings
+from nsdeploy_service.config import sanitize_label
+from nsdeploy_service.config import slugify
 from nsdeploy_service.siteproxy import site_hostname
 
 PUBLIC_HOST = "agents.example.com"

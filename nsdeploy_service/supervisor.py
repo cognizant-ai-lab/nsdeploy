@@ -28,25 +28,36 @@ import threading
 import urllib.error
 import urllib.request
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Tuple
 
-from nsdeploy_service.config import REPO_ROOT, SERVICE_ROOT, Settings
-from nsdeploy_service.layout import is_on_grid, next_position
-from nsdeploy_service.models import (
-    AgentGraphEdge,
-    AgentGraphNode,
-    DeploymentStatus,
-    DeployOptions,
-    NetworkLink,
-    NetworkSummary,
-    SUMMARY_SCHEMA_VERSION,
-)
-from nsdeploy_service.ports import PortPool, PortPoolExhausted
+from nsdeploy_service.config import REPO_ROOT
+from nsdeploy_service.config import SERVICE_ROOT
+from nsdeploy_service.config import Settings
+from nsdeploy_service.layout import is_on_grid
+from nsdeploy_service.layout import next_position
+from nsdeploy_service.models import AgentGraphEdge
+from nsdeploy_service.models import AgentGraphNode
+from nsdeploy_service.models import DeploymentStatus
+from nsdeploy_service.models import DeployOptions
+from nsdeploy_service.models import NetworkLink
+from nsdeploy_service.models import NetworkSummary
+from nsdeploy_service.models import SUMMARY_SCHEMA_VERSION
+from nsdeploy_service.ports import PortPool
+from nsdeploy_service.ports import PortPoolExhausted
 from nsdeploy_service.shared_byok import sync_shared_byok
-from nsdeploy_service.store import UNATTRIBUTED_NAME, Store, StoreError
+from nsdeploy_service.store import UNATTRIBUTED_NAME
+from nsdeploy_service.store import Store
+from nsdeploy_service.store import StoreError
 
 IS_WINDOWS = sys.platform == "win32"
 READINESS_POLL_SECONDS = 0.5
