@@ -6,7 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 WORKDIR /app
 
-COPY pyproject.toml ./
+# pyproject.toml reads its dependencies from requirements.txt; without that file setuptools
+# only warns and builds a wheel that declares no dependencies, so copy both.
+COPY pyproject.toml requirements.txt ./
 COPY nsdeploy ./nsdeploy
 COPY nsdeploy_service ./nsdeploy_service
 COPY examples ./examples

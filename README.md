@@ -23,7 +23,7 @@ building; the resulting webroot has no Python or nsDeploy runtime dependency.
 ## Install & run
 
 ```bash
-pip install "mcp>=1.0.0" uvicorn starlette pyhocon neuro-san
+pip install -r requirements.txt    # or `uv sync` if you use uv; pyproject.toml reads the same file
 
 # Tools are pulled from GitHub automatically — no --studio needed:
 python -m nsdeploy examples/travel_agent_system.hocon --port 8080
