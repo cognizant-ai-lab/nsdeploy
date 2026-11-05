@@ -1,0 +1,6 @@
+[flake8]
+max-line-length = 120
+exclude =
+    node_modules,
+    # Vendored upstream snapshot pinned by sha256 in tests/test_commerce.py; must stay byte-identical.
+    nsdeploy/commerce/arbiter.py,
