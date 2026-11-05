@@ -31,6 +31,7 @@ import { connectPromptFor, oneLiner, peerReference }
   from '../nsdeploy_service/ui/assets/js/components/linkPromptModal.js';
 
 const HOST = 'https://agentic-city.test';
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const mk = (name, port, description) => ({
   id: name, name, url: `${HOST}:${port}`, network: { description },
 });
@@ -220,7 +221,7 @@ test('a peer with no description still gets a usable bullet', () => {
   const p = promptFor(bare);
   assert.match(p, /^- For mystery_network, use:$/m);   // no double space, no stray comma
   assert.doesNotMatch(p, /mystery_network {2}/);
-  assert.match(p, new RegExp(`^${HOST.replace(/[.:/]/g, '\\$&')}:8104/mystery_network$`, 'm'));
+  assert.match(p, new RegExp(`^${escapeRegExp(HOST)}:8104/mystery_network$`, 'm'));
 });
 
 test('oneLiner flattens and cuts without stranding a half word', () => {
