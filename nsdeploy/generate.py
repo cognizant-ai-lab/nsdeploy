@@ -635,9 +635,14 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
         if action_source.resolve() != (out_dir / "actions.js").resolve():
             shutil.copyfile(action_source, out_dir / "actions.js")
     if "actions" in manifest:
+        enabled_count: int = 0
+        action: Dict[str, Any]
+        # Count the discovered operations that are explicitly enabled.
+        for action in (discovered_actions or {}).get("actions", []):
+            if action.get("enabled") is True:
+                enabled_count += 1
         print("   browser actions: " + ("adapter; " if action_source and action_source.is_file() else "")
-              + (f"{sum(a.get('enabled') is True for a in discovered_actions['actions'])} discovered operation(s); "
-                 if discovered_actions else "")
+              + (f"{enabled_count} discovered operation(s); " if discovered_actions else "")
               + f"{len(action_pages or [])} form page(s), {len(action_modules or [])} existing module(s); "
               + "capabilities checked on the owning origin at runtime")
         if action_host_page:
