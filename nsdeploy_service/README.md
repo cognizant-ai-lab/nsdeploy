@@ -21,7 +21,7 @@ bundle without a rebuild, and `bundler.py`, which builds a static bundle — a b
 product with nothing to supervise. Both import at module level, so an upstream rename
 is an ImportError at start-up rather than a failure during a request.
 
-```
+```text
 <nsdeploy checkout>/
   nsdeploy/              <- upstream, untouched
   pyproject.toml         <- upstream, untouched
@@ -47,9 +47,9 @@ connection 5s, everything else ~1s.
 
 Two things make it quicker:
 
-* **Install [uv](https://docs.astral.sh/uv/).** Bootstrap uses it automatically when
+- **Install [uv](https://docs.astral.sh/uv/).** Bootstrap uses it automatically when
   it is on PATH, and it resolves the same tree several times faster.
-* **On a re-run, skip what you have already proved:**
+- **On a re-run, skip what you have already proved:**
   `python nsdeploy_service/bootstrap.py --skip-install --skip-tests` — about 7s.
   Bootstrap says so itself when a run passes 90s, and warns when both packages
   already point at this checkout (pip still spends ~35s each re-resolving nothing).
@@ -147,7 +147,7 @@ the same model [`cailville/launch_all.sh`](cailville/launch_all.sh) already uses
 13-site demo. The service is a port allocator, process supervisor, and status API around
 the existing CLI; `nsdeploy` itself is unmodified.
 
-```
+```text
 POST /deployments
   ├─ validate name + size, reserve a port from the pool, write <work>/<id>/<name>.hocon
   ├─ spawn: python -m nsdeploy <hocon> --port <p> --site-url <url> --out … --site-dir …
@@ -175,6 +175,7 @@ before it can serve. Expect **~20s warm**, considerably longer on a cold cache.
 
 ## API
 
+<!-- pyml disable md013 -->
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `POST` | `/orgs` | create an organization profile (`name` unique, plus `address`, `contact`) |
@@ -196,6 +197,7 @@ before it can serve. Expect **~20s warm**, considerably longer on a cold cache.
 | `POST` | `/bundles/raw?name=…` | same, with the HOCON as the raw request body |
 | `GET` | `/deployments/{id}/bundle?site_url=…` | `200 application/gzip`. Rebuilds a `ready` or `stopped` deployment as a static bundle, inheriting its name, upstream, CRUSE setting and look; `409` while `queued`, `building` or `failed`, `410` if its HOCON is gone |
 | `GET` | `/health` | capacity, environment, warnings, console `ui_version` — unauthenticated for probes |
+<!-- pyml enable md013 -->
 
 Statuses: `queued` → `building` → `ready`, or `failed` / `stopped`.
 Full request/response contract: **[API_CONTRACT.md](API_CONTRACT.md)**.
@@ -315,6 +317,7 @@ it routes through that site's `/byok/v1` to `--upstream`. The service never hold
 Flags on `python -m nsdeploy_service`, or `NSDEPLOY_SERVICE_*` environment variables for
 everything (see [config.py](nsdeploy_service/config.py)).
 
+<!-- pyml disable md013 -->
 | Setting | Default | Notes |
 | --- | --- | --- |
 | `HOST` / `PORT` | `127.0.0.1` / `9000` | the API's own listener |
@@ -343,6 +346,7 @@ everything (see [config.py](nsdeploy_service/config.py)).
 | `API_TOKEN` | *(empty)* | when set, every route except `/health` needs `Authorization: Bearer …` |
 | `CORS_ORIGINS` | *(empty)* | comma-separated origins allowed to call this API from a browser on another host, e.g. `https://app.example.com,http://127.0.0.1:5173`. Empty sends no CORS headers at all. Each entry is `scheme://host[:port]` with no path; `*` allows any origin and is only safe with `API_TOKEN` set |
 | `ENV_FILE` | `<repo root>/.env` | where credentials are read from and `POST /settings` writes; put it on a volume in a container, or saved settings are lost on restart |
+<!-- pyml enable md013 -->
 
 **Deployments are long-lived and records are persisted.** Organizations, deployment
 records, the uploaded HOCON, and the options chosen for it all persist, so the directory
@@ -388,8 +392,8 @@ configuration would produce such a URL.
 
 Use a host where the **whole port range is reachable**:
 
-* an **Azure VM / VMSS** with an NSG opening the API port and the pool, or
-* **Azure Container Instances**, which can expose a list of ports — narrow the pool
+- an **Azure VM / VMSS** with an NSG opening the API port and the pool, or
+- **Azure Container Instances**, which can expose a list of ports — narrow the pool
   to match (`PORT_START=8100`, `PORT_END=8109`, `MAX_DEPLOYMENTS=10`).
 
 ```bash

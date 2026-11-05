@@ -184,6 +184,7 @@ export may be async, but registration should not perform mutations or require
 login; discovery can happen in an iframe without first-party cookies. Runtime
 capability descriptions should not contain user data or secrets.
 
+<!-- pyml disable md013 -->
 | Field | Meaning |
 | --- | --- |
 | `name` | Unique within this network; starts with a letter, then letters/digits/underscores/hyphens; maximum 80 characters. |
@@ -195,6 +196,7 @@ capability descriptions should not contain user data or secrets.
 | `callerOrigins` | Exact permitted caller origins; defaults to `[]`, which denies all remote callers. `"*"` explicitly allows all callers; it does not waive confirmation. |
 | `timeoutMs` | Default 180000; range 100–300000. Timeout means outcome unknown, not rolled back. |
 | `execute(args, context)` | Returns JSON-serializable result; throws on failure. `context.requestId` is stable for that submission and `context.signal` supports cancellation for local requests. Bridge handlers also receive `callerOrigin`. |
+<!-- pyml enable md013 -->
 
 All final widget submissions receive runtime review, including reads. Remote writes
 add confirmation on their own origin; callers cannot bypass it by sending a

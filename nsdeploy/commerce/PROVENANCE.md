@@ -1,7 +1,6 @@
 # Commerce arbiter provenance
 
-`arbiter.py` is an unmodified copy of `commerce_demo/arbiter.py` from
-https://github.com/babakatwork/agent-commerce-demo at commit
+`arbiter.py` is an unmodified copy of `commerce_demo/arbiter.py` from commit
 `47fe668ff19c23cf1294685ef122d8ca9fad63e1` (Apache 2.0).
 The upstream license and notice are included as `LICENSE.txt` and `UPSTREAM_NOTICE`.
 

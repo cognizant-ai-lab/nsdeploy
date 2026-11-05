@@ -15,6 +15,7 @@ Search [existing issues](../../issues) to see if your question has already been 
 ### Ask a Question
 
 If you can't find an answer, open a new issue with:
+
 - A clear description of your problem
 - What you've already tried
 - Relevant code snippets or error messages
@@ -22,7 +23,8 @@ If you can't find an answer, open a new issue with:
 
 ### Response Time
 
-This is an open-source project maintained by volunteers. Response times may vary, but we'll do our best to help when we can.
+This is an open-source project maintained by volunteers. Response times may vary, but we'll do our best to help
+when we can.
 
 ## Reporting Bugs
 
@@ -35,4 +37,3 @@ Commercial support is not currently available for this project.
 ---
 
 Thank you for using this project!
-
