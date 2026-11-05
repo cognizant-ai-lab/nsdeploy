@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 import uvicorn
 
@@ -19,6 +20,12 @@ from nsdeploy_service.envfile import load_into_environ
 
 
 def main(argv: list[str] | None = None) -> int:
+    """
+    Parse command-line flags, build the service settings and run the uvicorn server.
+
+    :param argv: Command-line arguments, or None to read sys.argv.
+    :return: The process exit code.
+    """
     defaults = Settings()
     ap = argparse.ArgumentParser(prog="nsdeploy_service", description=__doc__)
     ap.add_argument("--host", default=None, help=f"API bind address (default {defaults.host})")
@@ -65,7 +72,6 @@ def main(argv: list[str] | None = None) -> int:
         if value is not None:
             setattr(settings, attr, value)
     if args.work_root:
-        from pathlib import Path
         settings.work_root = Path(args.work_root).resolve()
     if args.theme:
         settings.theme = True

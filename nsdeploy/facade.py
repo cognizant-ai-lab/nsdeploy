@@ -39,6 +39,9 @@ MAX_PUBLISHED_NETWORK_BYTES = 2 * 1024 * 1024
 
 @dataclass
 class PublishedNetwork:
+    """
+    A validated public network fetched from a deployed nsDeploy site.
+    """
     site_base: str
     network: str
     front_man: str
@@ -46,6 +49,11 @@ class PublishedNetwork:
 
     @property
     def key(self) -> str:
+        """
+        Return the case-insensitive identity of this network.
+
+        :return: The "<site_base>::<network>" key in lowercase.
+        """
         return f"{self.site_base}::{self.network}".lower()
 
 
@@ -63,6 +71,7 @@ def _published_target(site_url: str) -> Tuple[str, str]:
     return site_base, requested
 
 
+# pylint: disable-next=too-many-locals,too-many-branches  # sequential validation of the published payload
 async def load_published_network(site_url: str) -> PublishedNetwork:
     """Fetch and validate one public network without executing publisher code."""
     site_base, requested = _published_target(site_url)
@@ -181,7 +190,7 @@ def _unpack_context(request: str) -> Tuple[str, set[str], int]:
     return clean_request, visited, remaining
 
 
-class NetworkRunner:
+class NetworkRunner:  # pylint: disable=too-many-instance-attributes
     """Run published network data for a private steward or public MCP caller.
 
     The public facade deliberately has no server-owned LLM credential. Private
@@ -190,6 +199,7 @@ class NetworkRunner:
     public facade process.
     """
 
+    # pylint: disable-next=too-many-arguments  # keyword-only options
     def __init__(self, config: Dict[str, Any], site_base: str, upstream: str, max_steps: int = 8,
                  *, credentials: Optional[ByokCredentials] = None,
                  public_network_mode: str = "mcp", network_name: str = "",
@@ -221,6 +231,18 @@ class NetworkRunner:
                                credentials: Optional[ByokCredentials] = None,
                                denied_origins: Optional[set[str]] = None,
                                max_steps: int = 8) -> Tuple["NetworkRunner", PublishedNetwork]:
+        """
+        Fetch a public network and build a runner for it.
+
+        :param site_url: The public site or network URL.
+        :param upstream: The LLM endpoint base URL.
+        :param credentials: The caller BYOK credentials, or None to use the request context.
+        :param denied_origins: Origins the private web policy refuses.
+        :param max_steps: The maximum LLM steps per agent.
+        :return: The runner and the published network it runs.
+        :raises PermissionError: If the site origin is denied.
+        :raises ValueError: If the site URL or published network is invalid.
+        """
         denied = {
             origin for origin in (_site_key(item) for item in (denied_origins or set())) if origin
         }
@@ -240,6 +262,13 @@ class NetworkRunner:
         return self.credentials or current_byok_credentials()
 
     async def run(self, request: str, front_man: str) -> str:
+        """
+        Run a request through the network starting at its front-man agent.
+
+        :param request: The caller request, optionally carrying packed public context.
+        :param front_man: The name of the front-man agent.
+        :return: The network's final text answer or an error message.
+        """
         if front_man not in self.agents:
             return "Error: the deployed network has no front-man agent."
         credentials = self._active_credentials()
@@ -255,7 +284,7 @@ class NetworkRunner:
         budget = {"remaining": remaining_calls}
         return await self._run_agent(front_man, clean_request, 0, visited_sites, budget)
 
-    async def _run_agent(self, name: str, request: str, depth: int,
+    async def _run_agent(self, name: str, request: str, depth: int,  # pylint: disable=too-many-locals
                          visited_sites: set[str], budget: Dict[str, int]) -> str:
         if depth > 5:
             return "The public network reached its delegation depth limit."
@@ -346,8 +375,9 @@ class NetworkRunner:
         if endpoint in self.mcp_cache:
             return self.mcp_cache[endpoint]
         try:
-            from mcp import ClientSession
-            from mcp.client.streamable_http import streamable_http_client
+            # Deferred so importing the runner does not load the MCP client stack.
+            from mcp import ClientSession  # pylint: disable=import-outside-toplevel
+            from mcp.client.streamable_http import streamable_http_client  # pylint: disable=import-outside-toplevel
 
             async with asyncio.timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS):
                 async with httpx.AsyncClient(
@@ -368,11 +398,14 @@ class NetworkRunner:
                               "kind": "mcp", "endpoint": endpoint, "remote_name": tool.name})
             self.mcp_cache[endpoint] = items
             return items
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught; an unreachable server contributes no tools
             self.mcp_cache[endpoint] = []
             return []
 
-    async def _call_tool(self, name: str, arguments: Dict[str, Any], tools: List[Dict[str, Any]],
+    # One dispatcher per tool kind.
+    # pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+    async def _call_tool(self, name: str, arguments: Dict[str, Any],  # pylint: disable=too-many-return-statements
+                         tools: List[Dict[str, Any]],
                          depth: int, visited_sites: set[str], budget: Dict[str, int]) -> str:
         spec = next((item for item in tools if item["name"] == name), None)
         if not spec:
@@ -395,12 +428,12 @@ class NetworkRunner:
                 budget["remaining"] -= 1
                 next_visited = set(visited_sites)
                 next_visited.add(published.key)
-                return await child._run_agent(
+                return await child._run_agent(  # pylint: disable=protected-access; same class
                     published.front_man, _text(request), depth + 1, next_visited, budget,
                 )
             except PermissionError as exc:
                 return f"Public network denied: {exc}"
-            except Exception as exc:
+            except Exception as exc:  # pylint: disable=broad-exception-caught; tool returns any failure as text
                 return f"Public network call failed: {exc}"
         target_site = _site_key(spec.get("endpoint", ""))
         if spec.get("remote_name") == "invoke_network":
@@ -417,8 +450,9 @@ class NetworkRunner:
                     _text(arguments["request"]), next_visited, budget["remaining"]
                 )
         try:
-            from mcp import ClientSession
-            from mcp.client.streamable_http import streamable_http_client
+            # Deferred so importing the runner does not load the MCP client stack.
+            from mcp import ClientSession  # pylint: disable=import-outside-toplevel
+            from mcp.client.streamable_http import streamable_http_client  # pylint: disable=import-outside-toplevel
 
             async with asyncio.timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS):
                 client_headers = (
@@ -441,9 +475,10 @@ class NetworkRunner:
         except TimeoutError:
             return (f"MCP tool call timed out after {PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS} seconds: "
                     f"{spec.get('endpoint', '')}")
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught; tool returns any failure as text
             return f"MCP tool call failed: {exc}"
 
+    # pylint: disable-next=too-many-locals
     async def _complete(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Dict[str, Any]:
         if self.upstream.startswith("mock://"):
             called = {item.get("name") for item in messages if item.get("role") == "tool"}
@@ -460,7 +495,7 @@ class NetworkRunner:
                 }]}}
             results = [_text(item.get("content", "")) for item in messages if item.get("role") == "tool"]
             return {"message": {"role": "assistant", "content":
-                                 "(facade mock) " + " ".join(results)[:4000]}}
+                                "(facade mock) " + " ".join(results)[:4000]}}
         credentials = self._active_credentials()
         if not credentials or not credentials.available:
             return {"message": {"role": "assistant", "content":
@@ -469,8 +504,9 @@ class NetworkRunner:
                 "messages": messages, "stream": False}
         if tools:
             body["tools"] = [{"type": "function", "function": {"name": item["name"],
-                          "description": item.get("description", item["name"]),
-                          "parameters": item.get("parameters") or {"type": "object"}}} for item in tools]
+                                                               "description": item.get("description", item["name"]),
+                                                               "parameters": item.get("parameters")
+                                                               or {"type": "object"}}} for item in tools]
         headers = {
             "Content-Type": "application/json",
             "Authorization": credentials.authorization,
@@ -494,9 +530,10 @@ class NetworkRunner:
 
 
 async def _serve(config: Dict[str, Any], site_base: str, upstream: str, port: int, front_man: str):
-    from mcp.server.fastmcp import FastMCP
-    import uvicorn
-    from starlette.middleware.cors import CORSMiddleware
+    # Deferred so the runner can be imported without the MCP server stack.
+    from mcp.server.fastmcp import FastMCP  # pylint: disable=import-outside-toplevel
+    import uvicorn  # pylint: disable=import-outside-toplevel
+    from starlette.middleware.cors import CORSMiddleware  # pylint: disable=import-outside-toplevel
 
     runner = NetworkRunner(config, site_base, upstream)
     mcp = FastMCP("nsdeploy-public-facade", port=port)
@@ -504,7 +541,8 @@ async def _serve(config: Dict[str, Any], site_base: str, upstream: str, port: in
     async def invoke_network(request: str) -> str:
         return await runner.run(request, front_man)
 
-    mcp.tool(name="invoke_network", description="Invoke this public agent network on behalf of a caller.")(invoke_network)
+    mcp.tool(name="invoke_network",
+             description="Invoke this public agent network on behalf of a caller.")(invoke_network)
     app = mcp.streamable_http_app()
     app.add_middleware(ByokContextMiddleware)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
@@ -514,6 +552,11 @@ async def _serve(config: Dict[str, Any], site_base: str, upstream: str, port: in
 
 
 def main() -> int:
+    """
+    Run the public MCP facade from command-line arguments.
+
+    :return: The process exit code.
+    """
     parser = argparse.ArgumentParser(description="Run the nsDeploy public MCP facade.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--site-base", required=True)

@@ -40,10 +40,12 @@ class _BackendHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def do_GET(self):
+    def do_GET(self):  # pylint: disable=invalid-name; BaseHTTPRequestHandler API
+        """Echo a GET request."""
         self._reply()
 
-    def do_POST(self):
+    def do_POST(self):  # pylint: disable=invalid-name; BaseHTTPRequestHandler API
+        """Echo a POST request with its body."""
         length = int(self.headers.get("Content-Length", 0) or 0)
         self._reply(self.rfile.read(length))
 
@@ -66,6 +68,8 @@ class _SplittingBackendHandler(socketserver.StreamRequestHandler):
 
 
 class GatewayTests(unittest.TestCase):
+    """Tests for host-based routing and header sanitizing in the gateway."""
+
     def setUp(self):
         self.servers = []
 
@@ -82,6 +86,7 @@ class GatewayTests(unittest.TestCase):
         return server
 
     def test_dns_names_and_public_origins_are_stable(self):
+        """Check dns names and public origins are stable."""
         self.assertEqual(network_slug("Harbor_Town Hall"), "harbor-town-hall")
         self.assertEqual(
             public_origin("Harbor_Town Hall", "agents.example.com", scheme="https", port=443),
@@ -98,6 +103,7 @@ class GatewayTests(unittest.TestCase):
             ])
 
     def test_gateway_routes_get_and_post_by_host_on_one_port(self):
+        """Check gateway routes get and post by host on one port."""
         alpha = self._server(_BackendHandler, backend_name="alpha")
         beta = self._server(_BackendHandler, backend_name="beta")
         routes = parse_routes([
@@ -129,6 +135,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(result["body"], '{"hello":"world"}')
 
         with self.assertRaises(urllib.error.HTTPError) as context:
+            # pylint: disable-next=consider-using-with; raises HTTPError, closed below
             urllib.request.urlopen(urllib.request.Request(
                 base + "/", headers={"Host": "unknown.agents.test"},
             ), timeout=5)
@@ -136,6 +143,7 @@ class GatewayTests(unittest.TestCase):
         context.exception.close()
 
     def test_gateway_does_not_relay_cr_lf_from_backend_response(self):
+        """Check gateway does not relay cr lf from backend response."""
         backend = self._server(_SplittingBackendHandler)
         routes = parse_routes([f"alpha=http://127.0.0.1:{backend.server_port}"])
         gateway = self._server(make_gateway_handler("agents.test", routes))
@@ -162,6 +170,7 @@ class GatewayTests(unittest.TestCase):
         self.assertFalse(any(line.startswith(b"X-Ctl:") for line in lines))
 
     def test_cailville_links_and_steward_directory_use_subdomains(self):
+        """Check cailville links and steward directory use subdomains."""
         community = {
             "sites": [
                 {"id": "alpha_network", "port": 8091},
@@ -194,6 +203,7 @@ class GatewayTests(unittest.TestCase):
         )
 
     def test_cailville_subdomain_sidecars_are_generated_separately(self):
+        """Check cailville subdomain sidecars are generated separately."""
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             cailville = root / "cailville"

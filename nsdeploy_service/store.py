@@ -91,6 +91,12 @@ def _now_iso() -> str:
 
 
 def org_name_key(name: str) -> str:
+    """
+    Normalize an organization name for case- and whitespace-insensitive uniqueness.
+
+    :param name: The organization name.
+    :return: The normalized key.
+    """
     return " ".join(name.split()).casefold()
 
 
@@ -188,11 +194,23 @@ class Store:
             " WHERE published_at IS NULL")
 
     def close(self) -> None:
+        """
+        Close the database connection.
+        """
         with self._lock:
             self._conn.close()
 
     # --- organizations ----------------------------------------------------
     def create_org(self, name: str, address: str = "", contact: str = "") -> Dict[str, Any]:
+        """
+        Create an organization.
+
+        :param name: The organization name.
+        :param address: The organization address.
+        :param contact: The organization contact.
+        :return: The new organization row.
+        :raises StoreError: If the name is empty or already taken.
+        """
         clean = " ".join((name or "").split())
         if not clean:
             raise StoreError("organization name is required")
@@ -217,12 +235,24 @@ class Store:
         return dict(row)
 
     def get_org(self, org_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Look up an organization by id.
+
+        :param org_id: The organization id.
+        :return: The organization row, or None if it does not exist.
+        """
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM organizations WHERE id = ?", (org_id,)).fetchone()
         return dict(row) if row else None
 
     def find_org_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """
+        Look up an organization by its normalized name.
+
+        :param name: The organization name.
+        :return: The organization row, or None if no organization has that name.
+        """
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM organizations WHERE name_key = ?",
@@ -260,6 +290,14 @@ class Store:
         return [dict(row) for row in rows]
 
     def update_org(self, org_id: str, **fields: str) -> Optional[Dict[str, Any]]:
+        """
+        Update an organization's name, address or contact.
+
+        :param org_id: The organization id.
+        :param fields: The fields to change; None values and unknown keys are ignored.
+        :return: The updated organization row, or None if it does not exist.
+        :raises StoreError: If the new name is blank or already taken.
+        """
         allowed = {k: v for k, v in fields.items()
                    if k in ("name", "address", "contact") and v is not None}
         if not allowed:
@@ -333,6 +371,12 @@ class Store:
             self._conn.commit()
 
     def get_deployment(self, deployment_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Look up a deployment by id, including its organization name.
+
+        :param deployment_id: The deployment id.
+        :return: The decoded deployment row, or None if it does not exist.
+        """
         with self._lock:
             row = self._conn.execute(
                 """SELECT d.*, o.name AS org_name FROM deployments d
@@ -342,6 +386,13 @@ class Store:
 
     def list_deployments(self, org_id: Optional[str] = None,
                          status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        List deployments, optionally filtered by organization and status.
+
+        :param org_id: Restrict to this organization, if given.
+        :param status: Restrict to this status, if given.
+        :return: The decoded deployment rows.
+        """
         clauses, params = [], []
         if org_id:
             clauses.append("d.org_id = ?")
@@ -402,6 +453,11 @@ class Store:
             self._conn.commit()
 
     def deployments_without_position(self) -> List[str]:
+        """
+        List the ids of deployments that have no map position yet.
+
+        :return: The deployment ids.
+        """
         with self._lock:
             rows = self._conn.execute(
                 "SELECT id FROM deployments WHERE position_json IS NULL"
@@ -416,6 +472,11 @@ class Store:
         return bool(cursor.rowcount)
 
     def count_by_status(self) -> Dict[str, int]:
+        """
+        Count deployments per status.
+
+        :return: A mapping from status to deployment count.
+        """
         with self._lock:
             rows = self._conn.execute(
                 "SELECT status, COUNT(*) AS n FROM deployments GROUP BY status").fetchall()

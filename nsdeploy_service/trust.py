@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 # Set once per process; the value is also the "already done" flag.
-_installed: Optional[str] = None
+_installed: Optional[str] = None  # pylint: disable=invalid-name; mutable process state, not a constant
 
 
 def has_usable_store() -> bool:
@@ -71,6 +71,7 @@ def _install_python_default(bundle: str) -> None:
         return original(*args, **kwargs)
 
     ssl.create_default_context = create_default_context  # type: ignore[assignment]
+    # pylint: disable-next=protected-access  # urllib reads this private seam
     ssl._create_default_https_context = create_default_context  # type: ignore[assignment]
 
 
@@ -87,12 +88,12 @@ def _try_os_trust_store() -> Optional[str]:
     re-signed, so GitHub fetches succeeded and every LLM call failed.
     """
     try:
-        import truststore
+        import truststore  # pylint: disable=import-outside-toplevel; optional dependency
     except ImportError:
         return None
     try:
         truststore.inject_into_ssl()
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught; any failure falls back to certifi
         return None
     return "the operating system trust store"
 
@@ -100,7 +101,7 @@ def _try_os_trust_store() -> Optional[str]:
 def _try_certifi() -> Optional[str]:
     """Fall back to certifi's public roots. Enough for an un-inspected network."""
     try:
-        import certifi
+        import certifi  # pylint: disable=import-outside-toplevel; optional dependency
     except ImportError:
         return None
     bundle = certifi.where()
@@ -119,7 +120,7 @@ def ensure_ca_bundle() -> Optional[str]:
     here is inherited by a subprocess. That is deliberate: see the module docstring
     on `primp`.
     """
-    global _installed
+    global _installed  # pylint: disable=global-statement; process-wide idempotence flag
     if _installed:
         return _installed
     if os.environ.get("SSL_CERT_FILE") or os.environ.get("SSL_CERT_DIR"):

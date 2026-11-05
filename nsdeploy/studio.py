@@ -43,6 +43,12 @@ class StudioSource:
 
     @property
     def root(self) -> Path:
+        """
+        Return the local directory that holds the materialized studio files.
+
+        :return: The local root directory.
+        :raises NotImplementedError: Always; subclasses provide the root.
+        """
         raise NotImplementedError
 
     def ensure(self, rel_path: str) -> Optional[Path]:
@@ -50,6 +56,12 @@ class StudioSource:
         raise NotImplementedError
 
     def read(self, rel_path: str) -> Optional[str]:
+        """
+        Read a studio file as UTF-8 text.
+
+        :param rel_path: The file path relative to the studio root.
+        :return: The file contents, or None when the file is unavailable.
+        """
         path = self.ensure(rel_path)
         return path.read_text(encoding="utf-8") if path else None
 
@@ -60,6 +72,10 @@ class StudioSource:
 
 
 class LocalStudio(StudioSource):
+    """
+    Studio source backed by an existing local studio checkout.
+    """
+
     def __init__(self, path: str | Path):
         self._root = Path(path).resolve()
 
@@ -76,6 +92,10 @@ class LocalStudio(StudioSource):
 
 
 class GithubStudio(StudioSource):
+    """
+    Studio source that downloads files on demand from a GitHub repository into a local cache.
+    """
+
     def __init__(self, repo: str = DEFAULT_REPO, ref: str = DEFAULT_REF, cache_dir: Optional[Path] = None):
         self.repo = repo
         self.ref = ref

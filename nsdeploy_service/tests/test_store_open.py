@@ -10,12 +10,14 @@ from nsdeploy_service.store import Store
 
 
 class OpenTest(unittest.TestCase):
+    """Opens the store on filesystems that refuse WAL or are briefly held by another replica."""
     def setUp(self) -> None:
-        self._dir = tempfile.TemporaryDirectory()
+        self._dir = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up via addCleanup
         self.db = Path(self._dir.name) / "nested" / "service.db"
         self.addCleanup(self._dir.cleanup)
 
     def test_opens_normally(self) -> None:
+        """The store opens and creates the database file."""
         Store(self.db)
         self.assertTrue(self.db.exists())
 
@@ -35,6 +37,14 @@ class OpenTest(unittest.TestCase):
                 self._wrapped = wrapped
 
             def execute(self, sql, *args):
+                """
+                Records the statement and refuses WAL, delegating everything else.
+
+                :param sql: The SQL statement to execute.
+                :param args: Positional arguments passed through to the wrapped execute.
+                :return: The cursor from the wrapped connection.
+                :raises sqlite3.OperationalError: When the statement enables WAL.
+                """
                 seen.append(sql)
                 if sql == "PRAGMA journal_mode=WAL":
                     raise sqlite3.OperationalError("database is locked")

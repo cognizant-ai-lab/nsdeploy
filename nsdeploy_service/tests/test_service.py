@@ -1,8 +1,15 @@
 import json
+import re
+import socket
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
+from nsdeploy_service import __version__
 from nsdeploy_service.config import Settings
 from nsdeploy_service.models import DeploymentStatus, DeployOptions, NetworkSummary
 from nsdeploy_service.ports import PortPool, PortPoolExhausted
@@ -12,6 +19,7 @@ from nsdeploy_service.supervisor import (
     _error_excerpt,
     _parse_report,
     build_warnings,
+    engine_supports_host,
     safe_network_name,
     summarize_build,
 )
@@ -47,13 +55,16 @@ Agents:    10
 
 
 class SafeNetworkNameTest(unittest.TestCase):
+    """Validates and normalizes uploaded network names."""
     def test_accepts_plain_identifiers_and_strips_known_suffix(self):
+        """Plain identifiers pass and a known HOCON suffix is stripped."""
         self.assertEqual(safe_network_name("travel_agent_system"), "travel_agent_system")
         self.assertEqual(safe_network_name("travel_agent_system.hocon"), "travel_agent_system")
         self.assertEqual(safe_network_name("my-net.conf"), "my-net")
         self.assertEqual(safe_network_name("  spaced_out.hocon  "), "spaced_out")
 
     def test_strips_a_browsers_duplicate_download_marker(self):
+        """A browser's duplicate-download marker such as ' (1)' is stripped."""
         # Downloading a network's HOCON, editing it and uploading it again is a normal
         # round trip, and every browser names the second copy "thing (1).hocon".
         self.assertEqual(
@@ -68,6 +79,7 @@ class SafeNetworkNameTest(unittest.TestCase):
                          "travel_agent_system")
 
     def test_duplicate_marker_removal_does_not_loosen_the_rule(self):
+        """Stripping the duplicate marker does not accept otherwise invalid names."""
         # Only a trailing parenthesised integer goes; a space anywhere else, or a
         # marker that leaves nothing behind, is still an error rather than a rename.
         for bad in ("my network (1).hocon", "(1).hocon", "(1)", "net (1) extra.hocon",
@@ -77,6 +89,7 @@ class SafeNetworkNameTest(unittest.TestCase):
                     safe_network_name(bad)
 
     def test_rejects_traversal_rather_than_renaming(self):
+        """Path traversal attempts are rejected rather than renamed."""
         # The bug this guards: Path(x).stem quietly turned "../../evil" into "evil".
         for bad in ("../../evil", "..\\evil", "/etc/passwd", "a/b", "a\\b", ".."):
             with self.subTest(bad=bad):
@@ -84,6 +97,7 @@ class SafeNetworkNameTest(unittest.TestCase):
                     safe_network_name(bad)
 
     def test_rejects_empty_odd_and_overlong_names(self):
+        """Empty, malformed and overlong names are rejected."""
         for bad in ("", "   ", "my network", "-leading", "weird$name", "a" * 65, ".hocon"):
             with self.subTest(bad=bad):
                 with self.assertRaises(DeploymentError):
@@ -91,7 +105,9 @@ class SafeNetworkNameTest(unittest.TestCase):
 
 
 class PortPoolTest(unittest.TestCase):
+    """Reserves and releases deployment ports from a bounded range."""
     def test_reserves_distinct_ports_and_reuses_after_release(self):
+        """Reserved ports are distinct, and a released port is reused."""
         pool = PortPool(8300, 8302)
         first, second = pool.reserve(), pool.reserve()
         self.assertNotEqual(first, second)
@@ -100,14 +116,14 @@ class PortPoolTest(unittest.TestCase):
         self.assertEqual(pool.reserve(), first)
 
     def test_raises_when_exhausted(self):
+        """Reserving from an exhausted pool raises PortPoolExhausted."""
         pool = PortPool(8310, 8310)
         pool.reserve()
         with self.assertRaises(PortPoolExhausted):
             pool.reserve()
 
     def test_skips_ports_already_listening(self):
-        import socket
-
+        """A port that something already listens on is skipped."""
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as held:
             held.bind(("127.0.0.1", 0))
             held.listen(1)
@@ -116,30 +132,37 @@ class PortPoolTest(unittest.TestCase):
             self.assertEqual(pool.reserve(), busy + 1)
 
     def test_rejects_inverted_range(self):
+        """An inverted port range is rejected."""
         with self.assertRaises(ValueError):
             PortPool(8400, 8399)
 
 
 class SettingsTest(unittest.TestCase):
+    """Builds site URLs and validates the service settings."""
     def test_site_url_uses_port_form_by_default(self):
+        """The site URL uses the host:port form by default."""
         settings = Settings(public_host="127.0.0.1", port_start=8100, port_end=8199)
         self.assertEqual(settings.site_url("abc123", 8105), "http://127.0.0.1:8105")
 
     def test_site_url_uses_subdomain_form_when_templated(self):
+        """The site URL uses the subdomain form when a template is set."""
         settings = Settings(public_scheme="https", public_host="deploys.example.com",
                             subdomain_template="{id}")
         self.assertEqual(settings.site_url("abc123", 8105), "https://abc123.deploys.example.com")
 
     def test_rejects_service_port_inside_the_deployment_pool(self):
+        """A service port inside the deployment pool is rejected."""
         # Otherwise the API and a deployed site would fight over the same port.
         with self.assertRaises(ValueError):
             Settings(port=8150, port_start=8100, port_end=8199).validate()
 
     def test_rejects_capacity_larger_than_the_pool(self):
+        """A capacity larger than the port pool is rejected."""
         with self.assertRaises(ValueError):
             Settings(port_start=8100, port_end=8104, max_deployments=20).validate()
 
     def test_rejects_inverted_pool(self):
+        """An inverted port pool is rejected."""
         with self.assertRaises(ValueError):
             Settings(port_start=8200, port_end=8100).validate()
 
@@ -155,7 +178,7 @@ class UiVersionTest(unittest.TestCase):
     """
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.ui = Path(self._tmp.name)
 
     def tearDown(self):
@@ -165,6 +188,8 @@ class UiVersionTest(unittest.TestCase):
         (self.ui / "index.html").write_text(html, encoding="utf-8")
 
     def test_reads_the_pinned_version(self):
+        """The version pinned on the asset URLs is reported."""
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import read_ui_version
 
         self._write('<link href="a.css?v=18"><script src="b.js?v=18"></script>')
@@ -173,11 +198,14 @@ class UiVersionTest(unittest.TestCase):
     def test_no_index_html_reports_nothing(self):
         """'Cannot tell' must be distinguishable from a mismatch, or a console with
         no readable version would nag about an update on every poll."""
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import read_ui_version
 
         self.assertEqual(read_ui_version(self.ui), "")
 
     def test_unversioned_assets_report_nothing(self):
+        """Assets with no version pin report an empty version."""
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import read_ui_version
 
         self._write('<link href="a.css"><script src="b.js"></script>')
@@ -186,14 +214,15 @@ class UiVersionTest(unittest.TestCase):
     def test_disagreeing_versions_report_nothing(self):
         """A document that pins its assets to two different versions has no single
         answer, and guessing one would compare against the wrong thing."""
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import read_ui_version
 
         self._write('<link href="a.css?v=18"><script src="b.js?v=17"></script>')
         self.assertEqual(read_ui_version(self.ui), "")
 
     def test_health_reports_it(self):
-        from fastapi.testclient import TestClient
-
+        """/health reports the console's asset version."""
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import create_app
 
         self._write('<link href="a.css?v=42">')
@@ -203,9 +232,8 @@ class UiVersionTest(unittest.TestCase):
             self.assertEqual(client.get("/health").json()["ui_version"], "42")
 
     def test_health_reports_the_build(self):
-        from fastapi.testclient import TestClient
-
-        from nsdeploy_service import __version__
+        """/health reports the configured build, falling back to the package version."""
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import create_app
 
         self._write('<link href="a.css?v=42">')
@@ -217,7 +245,9 @@ class UiVersionTest(unittest.TestCase):
 
 
 class ReportParsingTest(unittest.TestCase):
+    """Extracts tool and agent names from the nsdeploy stdout report."""
     def test_extracts_names_per_section(self):
+        """Each report section yields its own list of names."""
         parsed = _parse_report(SAMPLE_REPORT)
         self.assertEqual(parsed["hostable_tools"], ["ddgs_search", "wikimedia_media_search"])
         self.assertEqual(parsed["missing_tools"], ["web_fetch", "webpage_rag"])
@@ -226,6 +256,7 @@ class ReportParsingTest(unittest.TestCase):
         self.assertEqual(parsed["external_mcps"], ["https://api.you.com/mcp?profile=free"])
 
     def test_does_not_leak_link_slot_bullets_into_other_sections(self):
+        """Link-slot bullets do not leak into the preceding section."""
         # Link-slot bullets sit under an unparsed header; a blank line must end the
         # previous section so they are not misattributed to "Missing tools".
         parsed = _parse_report(SAMPLE_REPORT)
@@ -233,13 +264,16 @@ class ReportParsingTest(unittest.TestCase):
             self.assertNotIn("flight_search_agent", parsed[key])
 
     def test_tolerates_output_with_no_recognisable_sections(self):
+        """Output with no recognizable sections yields empty lists."""
         parsed = _parse_report("nothing useful here\n")
         self.assertEqual(parsed["hostable_tools"], [])
         self.assertEqual(parsed["external_mcps"], [])
 
 
 class SummarizeBuildTest(unittest.TestCase):
+    """Summarizes a build from its bundle files and its report."""
     def test_reads_bundle_for_structure_and_log_for_names(self):
+        """Structure comes from the bundle and names come from the log."""
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
             (out / "agent-manifest.json").write_text(json.dumps({
@@ -262,6 +296,7 @@ class SummarizeBuildTest(unittest.TestCase):
         self.assertEqual(summary.hostable_tools, ["ddgs_search", "wikimedia_media_search"])
 
     def test_missing_bundle_files_yield_an_empty_summary_not_an_error(self):
+        """Missing bundle files yield an empty summary rather than an error."""
         with tempfile.TemporaryDirectory() as tmp:
             summary = summarize_build(Path(tmp), "absent", "")
         self.assertEqual(summary.front_man, "")
@@ -302,6 +337,7 @@ class SummarizeBuildTest(unittest.TestCase):
         )
 
     def test_a_front_man_with_no_description_is_empty_not_an_error(self):
+        """A front-man with no description yields an empty description."""
         # Also covers a front-man absent from `tools` entirely, which `next(..., "")`
         # has to absorb rather than raising StopIteration.
         with tempfile.TemporaryDirectory() as tmp:
@@ -320,7 +356,9 @@ class SummarizeBuildTest(unittest.TestCase):
 
 
 class WarningsTest(unittest.TestCase):
+    """Builds the user-facing warnings for a network summary."""
     def test_flags_dropped_tools_demo_agents_and_open_link_slots(self):
+        """Dropped tools, demo-mode agents and open link slots each produce a warning."""
         warnings = build_warnings(NetworkSummary(
             missing_tools=["web_fetch"],
             demo_mode_agents=["intake"],
@@ -332,16 +370,19 @@ class WarningsTest(unittest.TestCase):
         self.assertIn("flight_search_agent", warnings[2])
 
     def test_clean_network_has_no_warnings(self):
+        """A clean network produces no warnings."""
         self.assertEqual(build_warnings(NetworkSummary(front_man="x", agent_count=3)), [])
 
 
 class ErrorExcerptTest(unittest.TestCase):
+    """Extracts a short, readable error from a failed build's log."""
     def _log(self, tmp: str, text: str) -> Path:
         path = Path(tmp) / "nsdeploy.log"
         path.write_text(text, encoding="utf-8")
         return path
 
     def test_summarizes_a_hocon_parse_failure_instead_of_dumping_the_grammar(self):
+        """A HOCON parse failure is summarized instead of dumping the grammar."""
         noise = "pyparsing.exceptions.ParseSyntaxException: Expected " + "{'x' | 'y'} " * 400
         with tempfile.TemporaryDirectory() as tmp:
             path = self._log(tmp, f"{noise}\nfound end of text  (at char 1), (line:1, col:2)\n")
@@ -351,12 +392,14 @@ class ErrorExcerptTest(unittest.TestCase):
         self.assertLess(len(excerpt), 300)
 
     def test_prefers_nsdeploys_own_error_line(self):
+        """nsdeploy's own error line is preferred over other output."""
         with tempfile.TemporaryDirectory() as tmp:
             path = self._log(tmp, "▶ Resolving x\nerror: no front-man agent found.\n")
             excerpt = _error_excerpt(path, 1)
         self.assertIn("no front-man agent found.", excerpt)
 
     def test_falls_back_to_the_last_exception_line(self):
+        """The last exception line is used when nsdeploy reports no error line."""
         with tempfile.TemporaryDirectory() as tmp:
             path = self._log(tmp, "Traceback...\nRuntimeError: could not start MCP tool ddgs\n")
             excerpt = _error_excerpt(path, 3)
@@ -364,6 +407,7 @@ class ErrorExcerptTest(unittest.TestCase):
         self.assertIn("could not start MCP tool ddgs", excerpt)
 
     def test_reports_status_when_there_is_no_log(self):
+        """A missing log reports the exit status."""
         self.assertIn("status 9", _error_excerpt(Path("does-not-exist.log"), 9))
 
 
@@ -371,7 +415,7 @@ class SupervisorCreateTest(unittest.TestCase):
     """create() validates and reserves; it must not spawn anything."""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self._supervisors = []
 
     def tearDown(self):
@@ -389,6 +433,7 @@ class SupervisorCreateTest(unittest.TestCase):
         return supervisor
 
     def test_writes_the_hocon_and_reserves_a_port_without_starting_a_process(self):
+        """create() writes the HOCON and reserves a port without starting a process."""
         supervisor = self._supervisor()
         dep = supervisor.create(b'{"tools": []}', DeployOptions(name="demo.hocon"))
         self.assertEqual(dep.name, "demo")
@@ -400,12 +445,14 @@ class SupervisorCreateTest(unittest.TestCase):
         self.assertEqual(dep.url, f"http://127.0.0.1:{dep.port}")
 
     def test_endpoints_are_hidden_until_the_site_is_ready(self):
+        """Endpoints stay hidden until the site is ready."""
         dep = self._supervisor().create(b"x", DeployOptions(name="demo"))
         self.assertEqual(dep.endpoints(), {})
         dep.status = DeploymentStatus.READY
         self.assertEqual(dep.endpoints()["mcp_facade"], f"{dep.url}/mcp")
 
     def test_rejects_empty_oversized_and_non_utf8_uploads(self):
+        """Empty, oversized and non-UTF-8 uploads are rejected."""
         supervisor = self._supervisor(max_hocon_bytes=32)
         with self.assertRaises(DeploymentError):
             supervisor.create(b"   \n", DeployOptions(name="demo"))
@@ -415,6 +462,7 @@ class SupervisorCreateTest(unittest.TestCase):
             supervisor.create(b"\xff\xfe\x00bad", DeployOptions(name="demo"))
 
     def test_rejects_beyond_capacity_and_frees_nothing_reserved(self):
+        """Creation beyond capacity is rejected without freeing reserved ports."""
         supervisor = self._supervisor(max_deployments=2)
         for i in range(2):
             supervisor.create(b"x", DeployOptions(name=f"demo{i}"))
@@ -423,6 +471,7 @@ class SupervisorCreateTest(unittest.TestCase):
         self.assertEqual(len(supervisor.ports.reserved()), 2)
 
     def test_ttl_override_of_zero_means_no_expiry(self):
+        """A TTL override of zero means the deployment never expires."""
         supervisor = self._supervisor(ttl_seconds=3600)
         forever = supervisor.create(b"x", DeployOptions(name="forever", ttl_seconds=0))
         default = supervisor.create(b"x", DeployOptions(name="default"))
@@ -430,6 +479,7 @@ class SupervisorCreateTest(unittest.TestCase):
         self.assertIsNotNone(default.expires_at)
 
     def test_deployments_are_long_lived_by_default(self):
+        """Deployments have no expiry by default."""
         # Long-lived is the chosen product behaviour: an org's URL stays up until
         # somebody stops it, so the default TTL must be off.
         self.assertEqual(Settings().ttl_seconds, 0)
@@ -441,6 +491,7 @@ class SupervisorCreateTest(unittest.TestCase):
     # operator create a profile and then pick its id, so org_name is get-or-create.
 
     def test_org_name_creates_the_organization_on_first_use(self):
+        """An org_name creates the organization on first use."""
         supervisor = self._supervisor()
         dep = supervisor.create(b"x", DeployOptions(name="demo", org_name="Acme Logistics"))
         self.assertEqual(dep.org_name, "Acme Logistics")
@@ -458,6 +509,7 @@ class SupervisorCreateTest(unittest.TestCase):
             len([o for o in supervisor.store.list_orgs() if "ogistics" in o["name"]]), 1)
 
     def test_org_id_wins_over_org_name(self):
+        """An explicit org_id takes precedence over org_name."""
         supervisor = self._supervisor()
         existing = supervisor.store.create_org("Chosen Org")
         dep = supervisor.create(b"x", DeployOptions(
@@ -473,36 +525,41 @@ class SupervisorCreateTest(unittest.TestCase):
             supervisor.create(b"x", DeployOptions(name="demo", org_id="nope"))
 
     def test_an_unusable_org_name_is_bad_input_not_a_conflict(self):
+        """An unusable org_name is rejected as bad input."""
         supervisor = self._supervisor()
         with self.assertRaises(DeploymentError):
             supervisor.create(b"x", DeployOptions(name="demo", org_name="x" * 200))
 
     def test_neither_falls_back_to_the_unattributed_org(self):
+        """With neither org_id nor org_name, the unattributed organization is used."""
         supervisor = self._supervisor()
         dep = supervisor.create(b"x", DeployOptions(name="demo"))
         self.assertEqual(dep.org_id, supervisor.fallback_org["id"])
 
     def test_a_blank_org_name_falls_back_rather_than_creating_a_nameless_org(self):
+        """A blank org_name falls back to the unattributed organization."""
         supervisor = self._supervisor()
         dep = supervisor.create(b"x", DeployOptions(name="demo", org_name="   "))
         self.assertEqual(dep.org_id, supervisor.fallback_org["id"])
 
     def test_command_declares_the_site_url_that_will_be_returned(self):
+        """The command passes the same site URL and port that the caller receives."""
         # The origin is baked into the generated bundle, so --site-url must match
         # the URL handed to the caller or the site's own MCP URLs point elsewhere.
         supervisor = self._supervisor()
         dep = supervisor.create(b"x", DeployOptions(name="demo"))
-        cmd = supervisor._command(dep)
+        cmd = supervisor._command(dep)  # pylint: disable=protected-access; the test inspects internals
         self.assertEqual(cmd[cmd.index("--site-url") + 1], dep.url)
         self.assertEqual(cmd[cmd.index("--port") + 1], str(dep.port))
         self.assertNotIn("--theme", cmd)
 
     def test_per_deployment_options_override_service_defaults(self):
+        """Per-deployment options override the service defaults in the command."""
         supervisor = self._supervisor(upstream="https://default/v1")
         dep = supervisor.create(b"x", DeployOptions(
             name="demo", upstream="https://override/v1", theme=True,
             theme_model="gpt-5.5", cruse=False))
-        cmd = supervisor._command(dep)
+        cmd = supervisor._command(dep)  # pylint: disable=protected-access; the test inspects internals
         self.assertEqual(cmd[cmd.index("--upstream") + 1], "https://override/v1")
         self.assertEqual(cmd[cmd.index("--theme-model") + 1], "gpt-5.5")
         self.assertIn("--no-cruse", cmd)
@@ -526,17 +583,15 @@ class OrgNameLimitTest(unittest.TestCase):
     """
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
 
     def tearDown(self):
         self._tmp.cleanup()
 
     def _client(self):
-        from fastapi.testclient import TestClient
-
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import create_app
-        from nsdeploy_service.config import Settings
 
         return TestClient(create_app(
             Settings(work_root=self.root, port_start=8890, port_end=8899)))
@@ -550,6 +605,7 @@ class OrgNameLimitTest(unittest.TestCase):
         what actually changed, and reading it back exercises both paths without
         spawning a process.
         """
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import ORG_NAME_MAX
 
         with self._client() as client:
@@ -581,6 +637,8 @@ class OrgNameLimitTest(unittest.TestCase):
         self.assertEqual(max_length(org["schema"]), ORG_NAME_MAX)
 
     def test_a_name_past_the_limit_is_rejected(self):
+        """An org_name longer than the limit is rejected with 422."""
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import ORG_NAME_MAX
 
         with self._client() as client:
@@ -591,8 +649,10 @@ class OrgNameLimitTest(unittest.TestCase):
             self.assertEqual(response.status_code, 422, response.text)
 
     def test_the_raw_upload_path_is_bounded_too(self):
+        """The raw upload path bounds org_name as well."""
         # The one that would have been forgotten: /deployments/raw takes org_name as a
         # query parameter rather than a form field, so it needed its own limit.
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import ORG_NAME_MAX
 
         with self._client() as client:
@@ -602,8 +662,10 @@ class OrgNameLimitTest(unittest.TestCase):
             self.assertEqual(response.status_code, 422, response.text)
 
     def test_a_real_team_name_still_fits(self):
+        """Real team names fit within the limit."""
         # The limit is useless if it rejects the names people actually use. These are
         # drawn from what is deployed today plus a plausibly verbose one.
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import ORG_NAME_MAX
 
         for name in ("Icecream store", "Acme Logistics", "Team Phoenix",
@@ -612,6 +674,8 @@ class OrgNameLimitTest(unittest.TestCase):
                 self.assertLessEqual(len(name), ORG_NAME_MAX)
 
     def test_the_api_token_shape_that_caused_this_is_refused(self):
+        """A pasted API token is longer than the limit."""
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import ORG_NAME_MAX
 
         self.assertGreater(len("0123456789abcdef" * 3),
@@ -628,13 +692,13 @@ class OrgNameCharacterTest(unittest.TestCase):
     """
 
     def _matches(self, value):
-        import re
-
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import ORG_NAME_PATTERN
 
         return bool(re.match(ORG_NAME_PATTERN, value))
 
     def test_real_team_names_are_accepted(self):
+        """Real team names, including common punctuation, are accepted."""
         # Drawn from what is actually deployed, plus the punctuation that turns up in
         # company names. A rule that rejects "Smith, Jones & Co." is not usable.
         for name in ("Max Retail", "Icecream store", "Acme Logistics", "BOFA",
@@ -645,6 +709,7 @@ class OrgNameCharacterTest(unittest.TestCase):
                 self.assertTrue(self._matches(name), f"should accept {name!r}")
 
     def test_non_ascii_names_are_accepted(self):
+        """Non-ASCII team names are accepted."""
         # International event: an ASCII-only rule would refuse real team names.
         for name in ("Zürich Analytics", "北京团队",
                      "Equipe Numéro 1"):
@@ -652,12 +717,14 @@ class OrgNameCharacterTest(unittest.TestCase):
                 self.assertTrue(self._matches(name), f"should accept {name!r}")
 
     def test_markup_and_shell_characters_are_refused(self):
+        """Markup and shell metacharacters are refused."""
         for name in ("<script>alert(1)</script>", 'He said "hi"', "a`b", "a|b",
                      "a;b", "a$b", "a*b", "a=b", "a\b"):
             with self.subTest(name=name):
                 self.assertFalse(self._matches(name), f"should refuse {name!r}")
 
     def test_whitespace_and_control_characters_are_refused(self):
+        """Leading or trailing whitespace and control characters are refused."""
         # A name carrying a line break breaks every place it is listed.
         for name in ("", " ", "  Max Retail", "Max Retail  ", "a\nb", "a\tb",
                      "line1\r\nline2"):
@@ -665,11 +732,13 @@ class OrgNameCharacterTest(unittest.TestCase):
                 self.assertFalse(self._matches(name), f"should refuse {name!r}")
 
     def test_names_that_are_only_punctuation_are_refused(self):
+        """Names made only of punctuation are refused."""
         for name in ("....", "!!!", "@@@", "***", "-Max", "---"):
             with self.subTest(name=name):
                 self.assertFalse(self._matches(name), f"should refuse {name!r}")
 
     def test_a_pasted_url_is_refused(self):
+        """A pasted URL is refused."""
         self.assertFalse(self._matches("https://evil.example/x"))
 
     def test_length_not_characters_is_what_stops_a_pasted_token(self):
@@ -679,6 +748,7 @@ class OrgNameCharacterTest(unittest.TestCase):
         it and is not meant to. ORG_NAME_MAX is what does — and the token that caused
         all this was 48 characters.
         """
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import ORG_NAME_MAX
 
         pasted = "0123456789abcdef" * 3
@@ -722,12 +792,10 @@ class EngineCliContractTest(unittest.TestCase):
     OPTIONAL = ("--host",)
 
     def test_every_flag_the_supervisor_passes_exists(self):
-        import subprocess
-        import sys
-
+        """Every flag in REQUIRED appears in the installed nsdeploy's --help output."""
         result = subprocess.run(
             [sys.executable, "-m", "nsdeploy", "--help"],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, timeout=120, check=False)
         self.assertEqual(result.returncode, 0, result.stderr[:400])
         help_text = result.stdout + result.stderr
 
@@ -749,10 +817,6 @@ class EngineCliContractTest(unittest.TestCase):
         forwards to the container's interface instead, and every URL answers connection
         refused while the build reports `ready`.
         """
-        import sys
-
-        from nsdeploy_service.supervisor import engine_supports_host
-
         supported = engine_supports_host(sys.executable)
         launcher = (Path(__file__).resolve().parents[2]
                     / "nsdeploy" / "launcher.py").read_text(encoding="utf-8")
@@ -773,11 +837,6 @@ class EngineCliContractTest(unittest.TestCase):
         and every build failed with an opaque error. Now it is refused up front with
         the two ways out named — `--network host`, or SUBDOMAIN_TEMPLATE.
         """
-        import sys
-        from unittest import mock
-
-        from nsdeploy_service.supervisor import engine_supports_host
-
         if engine_supports_host(sys.executable):
             self.skipTest("this engine has --host; nothing to refuse")
 
@@ -788,7 +847,7 @@ class EngineCliContractTest(unittest.TestCase):
             try:
                 dep = supervisor.create(b"x", DeployOptions(name="needs_host"))
                 with self.assertRaises(DeploymentError) as caught:
-                    supervisor._command(dep)
+                    supervisor._command(dep)  # pylint: disable=protected-access; the test inspects internals
                 message = str(caught.exception)
                 self.assertIn("--host", message)
                 self.assertIn("network host", message)

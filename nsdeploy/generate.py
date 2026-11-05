@@ -15,12 +15,14 @@ import copy
 import html
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from nsdeploy.byok import BYOK_AUTH_HEADER, BYOK_MODEL_HEADER
+from nsdeploy.form_actions import action_discovery_config
 from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.site_source import DEFAULT_SITE_JS
 from nsdeploy.theme import ThemeSpec
@@ -67,19 +69,25 @@ quoted Response. Omit the block when chat alone is best. A composition can inclu
 several complementary components; do not repeat the same content in every channel.
 Keep stable, meaningful component IDs and form property keys across revisions.
 ```cruse-ui
-{"version":1,"components":[{"id":"availability","kind":"table","title":"Available options","columns":["Option","Availability"],"rows":[["Known option","Known availability"]]}]}
+{"version":1,"components":[{"id":"availability","kind":"table","title":"Available options",\
+"columns":["Option","Availability"],"rows":[["Known option","Known availability"]]}]}
 ```
 Supported component shapes (examples of structure, not factual data):
-{"id":"details","kind":"form","title":"…","schema":{"type":"object","properties":{"start_date":{"type":"string","format":"date","title":"Start date"}},"required":["start_date"]},"submitLabel":"Continue"}
+{"id":"details","kind":"form","title":"…",\
+"schema":{"type":"object","properties":{"start_date":{"type":"string","format":"date","title":"Start date"}},\
+"required":["start_date"]},"submitLabel":"Continue"}
 Field types: string, integer/number (minimum/maximum), boolean, string format date,
 enum dropdown, x-ui:{widget:textarea} or {widget:radio}, array with items.enum for
 multiple selections. Use default only for known values. Mark only essential fields required.
 {"id":"options","kind":"choice","title":"…","options":[{"title":"…","subtitle":"…","meta":"…","value":"stable-option-id"}]}
-{"id":"approval","kind":"confirm","title":"…","confirmLabel":"Yes","cancelLabel":"No","confirmText":"Explicit action being approved"}
+{"id":"approval","kind":"confirm","title":"…","confirmLabel":"Yes","cancelLabel":"No",\
+"confirmText":"Explicit action being approved"}
 {"id":"facts","kind":"info","title":"…","fields":{"Label":"Value"}}
-{"id":"report","kind":"report","title":"…","markdown":"## Findings\\n\\nStructured explanation with **emphasis**, lists and links."}
+{"id":"report","kind":"report","title":"…",\
+"markdown":"## Findings\\n\\nStructured explanation with **emphasis**, lists and links."}
 {"id":"comparison","kind":"table","title":"…","columns":["Label","Value"],"rows":[["A","Known value"]]}
-{"id":"trend","kind":"chart","title":"…","chartType":"bar","unit":"Units","labels":["A","B"],"series":[{"name":"Series","values":[10,20]}],"summary":"Text explanation of the actual data."}
+{"id":"trend","kind":"chart","title":"…","chartType":"bar","unit":"Units","labels":["A","B"],\
+"series":[{"name":"Series","values":[10,20]}],"summary":"Text explanation of the actual data."}
 Charts support bar or line, up to 8 series and 120 labels. Values must be finite numbers;
 each series must match labels. Include a useful summary. Chart data is also accessible as a table.
 {"id":"visual","kind":"html","title":"…","html":"<article><h2>Findings</h2><p>Context</p></article>"}
@@ -107,6 +115,7 @@ def _seed_default_model(config: Dict[str, Any]) -> None:
             return
 
 
+# pylint: disable-next=too-many-branches,unused-argument  # mcp_host kept for caller compatibility
 def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.0.1",
                    cruse: bool = True, static_bundle: bool = False) -> Dict[str, Any]:
     """Produce the deployed network config: agents only, with tool references mapped
@@ -272,8 +281,6 @@ def build_private_steward_hocon(
     turning the steward into a generated allow-list: public sites are web
     destinations, while the operator's environment owns the deny policy.
     """
-    import json as _json
-
     description = (plan.config.get("metadata", {}) or {}).get("description") or plan.network_name
     public_sites = {
         name: str(url).rstrip("/")
@@ -326,7 +333,8 @@ def build_private_steward_hocon(
     {
       "name": "private_steward",
       "function": {
-        "description": "Represent the site operator in the public agent web. Delegate public-site work through the MCP gateway."
+        "description": "Represent the site operator in the public agent web. \
+Delegate public-site work through the MCP gateway."
       },
       "instructions": %s,
       "tools": ["public_agent_mcp_gateway"]
@@ -334,7 +342,8 @@ def build_private_steward_hocon(
     {
       "name": "public_agent_mcp_gateway",
       "function": {
-        "description": "Fetch and run any trusted public nsDeploy agent network locally. The site URL is checked against the local deny policy; MCP is a legacy fallback.",
+        "description": "Fetch and run any trusted public nsDeploy agent network locally. \
+The site URL is checked against the local deny policy; MCP is a legacy fallback.",
         "parameters": %s
       },
       "class": "nsdeploy.steward.PublicAgentNetworkGateway"
@@ -343,8 +352,8 @@ def build_private_steward_hocon(
 }
 """ % (
         DEFAULT_PRIVATE_STEWARD_MAX_EXECUTION_SECONDS,
-        _json.dumps(metadata, indent=2),
-        _json.dumps(
+        json.dumps(metadata, indent=2),
+        json.dumps(
             "You are the private steward for the operator of the public network. "
             "You may fetch and run any public agent network by URL through public_agent_mcp_gateway. "
             "For known sites, use the exact URL in this directory:\n"
@@ -356,11 +365,12 @@ def build_private_steward_hocon(
             "Do not claim an action was completed unless the remote site returned a result. "
             "Ask for confirmation before irreversible actions.",
         ),
-        _json.dumps(gateway_parameters, indent=8),
+        json.dumps(gateway_parameters, indent=8),
     )
     if (plan.config.get("private_commerce") or {}).get("steward") == "butterpink_family":
-        from nsdeploy.commerce.steward import add_to_private_network
-        result = _json.dumps(add_to_private_network(_json.loads(result)), indent=2) + "\n"
+        # Late import: the steward module pulls in neuro_san, which plain site generation does not need.
+        from nsdeploy.commerce.steward import add_to_private_network  # pylint: disable=import-outside-toplevel
+        result = json.dumps(add_to_private_network(json.loads(result)), indent=2) + "\n"
     return result
 
 
@@ -379,7 +389,7 @@ def write_private_steward_manifest(
     manifest_path = manifest_dir / "manifest.hocon"
     active = set(active_networks) if active_networks is not None else None
     try:
-        import fcntl
+        import fcntl  # pylint: disable=import-outside-toplevel  # POSIX-only module
     except ImportError:  # pragma: no cover - Windows has no fcntl.
         fcntl = None
     with manifest_path.open("a+", encoding="utf-8") as handle:
@@ -411,10 +421,25 @@ def write_private_steward_manifest(
     return manifest_path
 
 
+# pylint: disable-next=too-many-arguments,too-many-positional-arguments,unused-argument  # stable caller signature
 def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
                    mock_router: str, byok_router: str, site_base: str, theme: ThemeSpec,
-                   mcp_host: str = "127.0.0.1", static_bundle: bool = False,
+                   mcp_host: str = "127.0.0.1", static_bundle: bool = False,  # pylint: disable=unused-argument
                    mock_llm: bool = False) -> Dict[str, Any]:
+    """
+    Build the agent-manifest.json document that the browser runtime and peer sites read.
+
+    :param plan: The resolved deployment plan.
+    :param network_config: The rewritten network config (unused; kept for caller compatibility).
+    :param mock_router: URL of the mock LLM router.
+    :param byok_router: URL of the BYOK LLM proxy.
+    :param site_base: Public base URL of the site.
+    :param theme: The site theme.
+    :param mcp_host: Host for local MCP servers (unused; kept for caller compatibility).
+    :param static_bundle: Whether the output is a static bundle without Python services.
+    :param mock_llm: Whether the site defaults to the mock LLM router.
+    :return: The manifest document.
+    """
     meta = plan.config.get("metadata", {}) or {}
     front_fn = next((a.get("function", {}) for a in plan.agents if a.get("name") == plan.front_man), {})
     description = theme.tagline or (front_fn.get("description") or meta.get("description") or plan.network_name).strip()
@@ -566,6 +591,9 @@ def _theme_css(theme: ThemeSpec) -> str:
             "#app{height:100vh;overflow:hidden}\n")
 
 
+# Single build entry point that writes every output file in one pass.
+# pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+# pylint: disable=too-many-statements
 def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_router: str,
                   site_base: str, mcp_host: str = "127.0.0.1", cruse: bool = True,
                   theme: Optional[ThemeSpec] = None,
@@ -594,20 +622,22 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     # Site-owned JavaScript is loaded only on its own origin. Peer callers learn
     # schemas through the bridge, never by importing foreign executable code.
     action_source = actions_file or (site_source_dir / "actions.js" if site_source_dir else None)
-    from nsdeploy.form_actions import action_discovery_config
-    discovery = action_discovery_config(action_pages, action_modules, action_caller_origins, action_host_page, bool(discovered_actions))
+    discovery = action_discovery_config(action_pages, action_modules, action_caller_origins, action_host_page,
+                                        bool(discovered_actions))
     if discovery:
         manifest["actions"] = {"version": 1, "bridge": "./action-bridge.html", **discovery}
     if discovered_actions:
         manifest["actions"]["catalog"] = "./discovered-actions.json"
-        (out_dir / "discovered-actions.json").write_text(json.dumps(discovered_actions, indent=2), encoding="utf-8")
+        (out_dir / "discovered-actions.json").write_text(json.dumps(discovered_actions, indent=2),
+                                                         encoding="utf-8")
     if action_source and action_source.is_file():
         manifest.setdefault("actions", {"version": 1, "bridge": "./action-bridge.html"})["module"] = "./actions.js"
         if action_source.resolve() != (out_dir / "actions.js").resolve():
             shutil.copyfile(action_source, out_dir / "actions.js")
     if "actions" in manifest:
         print("   browser actions: " + ("adapter; " if action_source and action_source.is_file() else "")
-              + (f"{sum(a.get('enabled') is True for a in discovered_actions['actions'])} discovered operation(s); " if discovered_actions else "")
+              + (f"{sum(a.get('enabled') is True for a in discovered_actions['actions'])} discovered operation(s); "
+                 if discovered_actions else "")
               + f"{len(action_pages or [])} form page(s), {len(action_modules or [])} existing module(s); "
               + "capabilities checked on the owning origin at runtime")
         if action_host_page:
@@ -622,7 +652,8 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
             '<script type="module" src="./runtime/action-bridge.js"></script></body></html>', encoding="utf-8")
     else:
         print("   browser actions: NONE configured. Chat/forms collect information only. "
-              "Use --action-site for public external forms/APIs, --action-page for existing routes, --action-host-page for an embedded widget, "
+              "Use --action-site for public external forms/APIs, --action-page for existing routes, "
+              "--action-host-page for an embedded widget, "
               "or --actions/--action-module for JavaScript. --site-url does not identify an action source.")
 
     (out_dir / f"{plan.network_name}.network.json").write_text(
@@ -675,8 +706,6 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     links_path.write_text(json.dumps(links_doc, indent=2), encoding="utf-8")
     index_html = _index_html(theme, _brand_display(plan, theme), static_bundle=static_bundle)
     if action_pages:
-        import re
-        from urllib.parse import urlsplit
         generated_path = urlsplit(site_base).path.rstrip("/")
         for page in action_pages:
             path = urlsplit(page).path.rstrip("/")
@@ -695,6 +724,8 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
         shutil.copytree(source_runtime, out_dir / "runtime", dirs_exist_ok=True)
         _write_static_hosting_files(out_dir, plan.network_name, site_base)
     return manifest
+# pylint: enable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+# pylint: enable=too-many-statements
 
 
 def _write_static_hosting_files(out_dir: Path, network_name: str, site_base: str = "") -> None:
@@ -704,8 +735,6 @@ def _write_static_hosting_files(out_dir: Path, network_name: str, site_base: str
     domain fetches the published agent files and to retain the coded-tool worker's
     hard CSP boundary.
     """
-    from urllib.parse import urlsplit
-    import re
     prefix = urlsplit(site_base).path.rstrip("/")
     public_files = ["agent-manifest.json", f"{network_name}.network.json", "links.json",
                     "agent-mcp.json", ".well-known/nsdeploy.json", ".well-known/nsdeploy-agent.json"]

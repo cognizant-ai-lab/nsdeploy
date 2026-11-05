@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # supervisor state machine kept in one module
 """Deployment supervisor: one `python -m nsdeploy` child process per network.
 
 Why a child process rather than calling nsdeploy.launcher.serve() in-process:
@@ -108,7 +109,7 @@ def safe_network_name(raw: str) -> str:
 
 
 @dataclass
-class Deployment:
+class Deployment:  # pylint: disable=too-many-instance-attributes; one field per persisted column
     """Server-side record for one deployed network."""
 
     id: str
@@ -147,10 +148,20 @@ class Deployment:
 
     @property
     def pid(self) -> Optional[int]:
+        """
+        Return the child process id while one is running.
+
+        :return: The pid, or None when no process is attached.
+        """
         return self.process.pid if self.process else None
 
     @property
     def is_live(self) -> bool:
+        """
+        Report whether the deployment is queued, building or ready.
+
+        :return: True for a live deployment.
+        """
         return self.status in (DeploymentStatus.QUEUED, DeploymentStatus.BUILDING,
                                DeploymentStatus.READY)
 
@@ -320,7 +331,7 @@ def engine_supports_host(python_exe: str) -> bool:
         result = subprocess.run(
             [python_exe, "-m", "nsdeploy", "--help"],
             capture_output=True, text=True, timeout=60,
-            cwd=str(REPO_ROOT),
+            cwd=str(REPO_ROOT), check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -350,6 +361,8 @@ def latest_run(text: str) -> str:
     """The slice of a deployment log belonging to the most recent run."""
     _, separator, tail = text.rpartition(RUN_SEPARATOR)
     return tail if separator else text
+
+
 # A HOCON syntax error surfaces as a multi-kilobyte pyparsing grammar dump. The only
 # parts worth reporting are the exception class and where the parser gave up.
 _PARSE_LOCATION_RE = re.compile(r"\(at char \d+\), \(line:(\d+), col:(\d+)\)")
@@ -479,6 +492,14 @@ def _inline_peers(network: Dict[str, Any]) -> List[NetworkLink]:
 
 
 def summarize_build(out_dir: Path, name: str, log_text: str) -> NetworkSummary:
+    """
+    Read the generated bundle and build log into a network summary.
+
+    :param out_dir: The nsdeploy output directory.
+    :param name: The network name.
+    :param log_text: The deployment log; only the most recent run is read.
+    :return: The network summary.
+    """
     summary = NetworkSummary()
     log_text = latest_run(log_text)
     try:
@@ -605,6 +626,12 @@ def network_topology(
 
 
 def build_warnings(summary: NetworkSummary) -> List[str]:
+    """
+    Turn the problems recorded in a summary into user-facing warnings.
+
+    :param summary: The network summary.
+    :return: The warning messages.
+    """
     warnings: List[str] = []
     if summary.missing_tools:
         warnings.append(
@@ -624,7 +651,7 @@ def build_warnings(summary: NetworkSummary) -> List[str]:
     return warnings
 
 
-class Supervisor:
+class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry, pool, locks and tasks
     """Owns the deployment registry, the port pool, and every child process."""
 
     def __init__(self, settings: Settings, store: Optional[Store] = None) -> None:
@@ -727,14 +754,30 @@ class Supervisor:
 
     # --- registry ---------------------------------------------------------
     def get(self, deployment_id: str) -> Optional[Deployment]:
+        """
+        Look up a deployment by id.
+
+        :param deployment_id: The deployment id.
+        :return: The deployment, or None if it is not registered.
+        """
         with self._lock:
             return self._deployments.get(deployment_id)
 
     def list(self) -> List[Deployment]:
+        """
+        List every registered deployment, newest first.
+
+        :return: The deployments.
+        """
         with self._lock:
             return sorted(self._deployments.values(), key=lambda d: d.created_at, reverse=True)
 
     def counts(self) -> Dict[str, int]:
+        """
+        Count registered deployments per status.
+
+        :return: A mapping from status value to count.
+        """
         counts = {status.value: 0 for status in DeploymentStatus}
         with self._lock:
             for dep in self._deployments.values():
@@ -830,8 +873,7 @@ class Supervisor:
             position=row.get("position") or next_position(
                 item.get("position") for item in self.store.list_deployments()),
             work_dir=work_dir,
-            log_path=Path(row["log_path"]) if row.get("log_path")
-                else work_dir / "nsdeploy.log",
+            log_path=Path(row["log_path"]) if row.get("log_path") else work_dir / "nsdeploy.log",
             hocon_path=hocon_path,
             out_dir=work_dir / "site",
             site_dir=work_dir / "site-source",
@@ -856,7 +898,7 @@ class Supervisor:
             self.store.set_published(deployment_id, dep.published_at)
         return dep
 
-    def create(self, hocon_bytes: bytes, options: DeployOptions) -> Deployment:
+    def create(self, hocon_bytes: bytes, options: DeployOptions) -> Deployment:  # pylint: disable=too-many-locals
         """Accept an upload, reserve a port, and write the work dir. Does not build."""
         if not hocon_bytes.strip():
             raise DeploymentError("the uploaded HOCON is empty")
@@ -1263,6 +1305,12 @@ class Supervisor:
         self._persist(dep)
 
     async def stop(self, dep: Deployment, reason: str = "stopped by request") -> None:
+        """
+        Stop a live deployment; does nothing if it is not live.
+
+        :param dep: The deployment.
+        :param reason: The reason recorded on the deployment.
+        """
         if not dep.is_live:
             return
         await asyncio.to_thread(self._teardown, dep, DeploymentStatus.STOPPED, reason)
@@ -1305,6 +1353,9 @@ class Supervisor:
         return await asyncio.to_thread(self.store.delete_deployment, deployment_id)
 
     async def shutdown(self) -> None:
+        """
+        Cancel background tasks, stop live deployments and close the store.
+        """
         for task in list(self._tasks):
             task.cancel()
         for dep in self.list():
@@ -1314,4 +1365,11 @@ class Supervisor:
         await asyncio.to_thread(self.store.close)
 
     def logs(self, dep: Deployment, limit: int) -> Tuple[List[str], bool]:
+        """
+        Return the tail of a deployment's log.
+
+        :param dep: The deployment.
+        :param limit: The maximum number of lines.
+        :return: The lines and whether the log was truncated.
+        """
         return _tail(dep.log_path, limit)
