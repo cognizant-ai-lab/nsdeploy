@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import http
 import http.client
 import json
 import re
@@ -16,6 +17,8 @@ _HOP_BY_HOP_HEADERS = {
     "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade",
 }
 _DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")  # RFC 9110 token
+_CTL_RE = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")  # control characters except HTAB
 
 
 def network_slug(network: str) -> str:
@@ -73,6 +76,27 @@ def parse_routes(values: Iterable[str]) -> Dict[str, str]:
     if not routes:
         raise ValueError("at least one --route is required")
     return routes
+
+
+def _safe_reason(status: int, reason: str | None) -> str:
+    """Return a backend reason phrase that cannot split the status line."""
+    if reason and not _CTL_RE.search(reason):
+        return reason
+    try:
+        return http.HTTPStatus(status).phrase
+    except ValueError:
+        return ""
+
+
+def _safe_header(name: str, value: str) -> tuple[str, str] | None:
+    """Return a CR/LF-free backend header, or None if it cannot be forwarded safely."""
+    if not _HEADER_NAME_RE.fullmatch(name):
+        return None
+    # Unfold obsolete line folding (RFC 9112 section 5.2) into a single space.
+    value = re.sub(r"\r?\n[ \t]+", " ", value).strip()
+    if _CTL_RE.search(value):
+        return None
+    return name, value
 
 
 def make_gateway_handler(base_domain: str, routes: Mapping[str, str]):
@@ -156,15 +180,19 @@ def make_gateway_handler(base_domain: str, routes: Mapping[str, str]):
             try:
                 connection.request(self.command, self.path, body=body, headers=headers)
                 response = connection.getresponse()
-                self.send_response(response.status, response.reason)
+                self.send_response(response.status,
+                                   _safe_reason(response.status, response.reason))
                 response_started = True
                 has_length = False
                 for name, value in response.getheaders():
                     lower = name.lower()
                     if lower in _HOP_BY_HOP_HEADERS:
                         continue
+                    safe = _safe_header(name, value)
+                    if safe is None:
+                        continue
                     has_length = has_length or lower == "content-length"
-                    self.send_header(name, value)
+                    self.send_header(*safe)
                 if not has_length:
                     self.send_header("Connection", "close")
                     self.close_connection = True
