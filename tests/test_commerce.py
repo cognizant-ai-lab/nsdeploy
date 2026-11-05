@@ -368,10 +368,10 @@ class CommerceDeploymentTests(unittest.TestCase):
             self.assertEqual(service.steward_key, from_plan(plan, root/'public', 'http://127.0.0.1:8105').steward_key)
 
     def test_map_keeps_arbiter_and_existing_private_nsflow_links(self):
-        from nsdeploy.cailville import choose_position
+        from nsdeploy.cailville import active_community_path, choose_position
         root = Path(__file__).parents[1] / 'cailville'
-        for filename in ('community.json', 'community.base.json'):
-            community = json.loads((root / filename).read_text())
+        for path in {root / 'community.base.json', active_community_path(root)}:
+            community = json.loads(path.read_text())
             self.assertIn(['butterpink_family', 'commerce_arbiter'], community['relationships'])
             self.assertIn(['seabreeze_inn', 'commerce_arbiter'], community['relationships'])
             self.assertGreater(choose_position(community['sites'])['my_px'],

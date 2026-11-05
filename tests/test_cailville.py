@@ -7,6 +7,7 @@ from pathlib import Path
 from nsdeploy.cailville import (
     DATA_END,
     DATA_START,
+    active_community_path,
     allocate_port,
     cailville_ports,
     commit_addition,
@@ -83,6 +84,12 @@ class CailvilleCommunityTests(unittest.TestCase):
         os.utime(old, (10, 10))
         os.utime(new, (20, 20))
         self.assertEqual(latest_download_hocon(downloads), new.resolve())
+
+    def test_active_community_falls_back_to_base_map(self):
+        self.assertEqual(active_community_path(self.cailville), self.cailville / "community.json")
+        (self.cailville / "community.json").unlink()
+        self.assertEqual(active_community_path(self.cailville), self.cailville / "community.base.json")
+        self.assertEqual(cailville_ports(self.cailville), [8097, 8098, 8103])
 
     def test_allocate_port_skips_base_and_prior_additions(self):
         community = json.loads((self.cailville / "community.json").read_text())

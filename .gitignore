@@ -1,5 +1,7 @@
 # generated deploy output
 .nsdeploy/
+# local Cailville map state; created from community.base.json on the first addition
+cailville/community.json
 
 # python
 __pycache__/
