@@ -37,7 +37,7 @@ description = "Agentic City — expose nsdeploy as an HTTP deployment service: P
 # This license name comes from doc recommendation here
 # https://packaging.python.org/en/latest/guides/licensing-examples-and-user-scenarios/
 license = "Apache-2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.30",
@@ -49,7 +49,7 @@ dependencies = [
     # which is the only thing that works behind a TLS-inspecting proxy — its root
     # is in the OS store and deliberately not in certifi's. certifi is the
     # fallback for an interpreter that ships no store at all.
-    "truststore>=0.9; python_version >= '3.10'",
+    "truststore>=0.9",
     "certifi",
 ]
 

@@ -158,8 +158,8 @@ def check_placement() -> bool:
                     "The supervisor runs `python -m nsdeploy` from this folder's parent, "
                     "which here is the package itself — every deployment would fail with "
                     "'No module named nsdeploy'.")
-    if sys.version_info < (3, 10):
-        good = fail(f"Python {sys.version.split()[0]}", "3.10 or newer is required.")
+    if sys.version_info < (3, 12):
+        good = fail(f"Python {sys.version.split()[0]}", "3.12 or newer is required.")
     else:
         ok(f"Python {sys.version.split()[0]}")
     return good
