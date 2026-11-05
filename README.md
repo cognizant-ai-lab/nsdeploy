@@ -232,9 +232,9 @@ to the manifest directory, for example
 and portable with the bundle directory. To run those stewards in a standard
 Neuro-SAN server, set `AGENT_MANIFEST_FILE` to that manifest.
 `launch_all.sh` also starts the private Neuro-SAN studio from
-`../neuro-san-studio`, a neuro-san-studio project next to this checkout (using
-the `neuro-san-studio` package installed in its virtualenv), points its
-`AGENT_MANIFEST_FILE` at this generated manifest, and opens nsFlow on port `4174`.
+`/Users/754339/projects/cailville-private` (using its installed
+`neuro-san-studio` package), points its `AGENT_MANIFEST_FILE` at this generated
+manifest, and opens nsFlow on port `4174`.
 It waits for both the Neuro-SAN HTTP server and nsFlow to be ready before opening
 the demo, avoiding an initial concierge connection race.
 Override the private project or ports with `NSDEPLOY_PRIVATE_STUDIO_DIR`,
