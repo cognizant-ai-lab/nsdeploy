@@ -6,6 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "nsdeploy"
 version = "0.1.0"
 description = "Deploy a neuro-san agent-network HOCON as a serverless website: resolve dependencies, host tools as MCP servers, generate a site, and serve it — no neuro-san server."
+# This license name comes from doc recommendation here
+# https://packaging.python.org/en/latest/guides/licensing-examples-and-user-scenarios/
+license = "Apache-2.0"
+license-files = ["LICENSE.txt"]
 requires-python = ">=3.10"
 # Runtime dependencies live in requirements.txt (see [tool.setuptools.dynamic] below), so
 # team members who do not use uv get the conventional `pip install -r requirements.txt`,
