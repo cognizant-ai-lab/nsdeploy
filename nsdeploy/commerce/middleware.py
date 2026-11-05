@@ -8,10 +8,10 @@ from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import AIMessage
 from langchain_core.messages import HumanMessage
 
-from .steward import TURN
-from .steward import PrivateTurn
-from .steward import binding_for
-from .steward import start_binding
+from nsdeploy.commerce.steward import TURN
+from nsdeploy.commerce.steward import PrivateTurn
+from nsdeploy.commerce.steward import binding_for
+from nsdeploy.commerce.steward import start_binding
 
 
 def confirms_booking(text):
