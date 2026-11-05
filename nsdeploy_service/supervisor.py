@@ -350,6 +350,8 @@ def latest_run(text: str) -> str:
     """The slice of a deployment log belonging to the most recent run."""
     _, separator, tail = text.rpartition(RUN_SEPARATOR)
     return tail if separator else text
+
+
 # A HOCON syntax error surfaces as a multi-kilobyte pyparsing grammar dump. The only
 # parts worth reporting are the exception class and where the parser gave up.
 _PARSE_LOCATION_RE = re.compile(r"\(at char \d+\), \(line:(\d+), col:(\d+)\)")
@@ -830,8 +832,7 @@ class Supervisor:
             position=row.get("position") or next_position(
                 item.get("position") for item in self.store.list_deployments()),
             work_dir=work_dir,
-            log_path=Path(row["log_path"]) if row.get("log_path")
-                else work_dir / "nsdeploy.log",
+            log_path=Path(row["log_path"]) if row.get("log_path") else work_dir / "nsdeploy.log",
             hocon_path=hocon_path,
             out_dir=work_dir / "site",
             site_dir=work_dir / "site-source",

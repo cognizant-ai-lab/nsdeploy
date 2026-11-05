@@ -602,7 +602,8 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     # schemas through the bridge, never by importing foreign executable code.
     action_source = actions_file or (site_source_dir / "actions.js" if site_source_dir else None)
     from nsdeploy.form_actions import action_discovery_config
-    discovery = action_discovery_config(action_pages, action_modules, action_caller_origins, action_host_page, bool(discovered_actions))
+    discovery = action_discovery_config(action_pages, action_modules, action_caller_origins, action_host_page,
+                                        bool(discovered_actions))
     if discovery:
         manifest["actions"] = {"version": 1, "bridge": "./action-bridge.html", **discovery}
     if discovered_actions:
@@ -613,8 +614,10 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
         if action_source.resolve() != (out_dir / "actions.js").resolve():
             shutil.copyfile(action_source, out_dir / "actions.js")
     if "actions" in manifest:
+        enabled_count = (sum(a.get('enabled') is True for a in discovered_actions['actions'])
+                         if discovered_actions else 0)
         print("   browser actions: " + ("adapter; " if action_source and action_source.is_file() else "")
-              + (f"{sum(a.get('enabled') is True for a in discovered_actions['actions'])} discovered operation(s); " if discovered_actions else "")
+              + (f"{enabled_count} discovered operation(s); " if discovered_actions else "")
               + f"{len(action_pages or [])} form page(s), {len(action_modules or [])} existing module(s); "
               + "capabilities checked on the owning origin at runtime")
         if action_host_page:
@@ -629,7 +632,8 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
             '<script type="module" src="./runtime/action-bridge.js"></script></body></html>', encoding="utf-8")
     else:
         print("   browser actions: NONE configured. Chat/forms collect information only. "
-              "Use --action-site for public external forms/APIs, --action-page for existing routes, --action-host-page for an embedded widget, "
+              "Use --action-site for public external forms/APIs, --action-page for existing routes, "
+              "--action-host-page for an embedded widget, "
               "or --actions/--action-module for JavaScript. --site-url does not identify an action source.")
 
     (out_dir / f"{plan.network_name}.network.json").write_text(

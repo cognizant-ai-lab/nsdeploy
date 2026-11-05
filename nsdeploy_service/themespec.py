@@ -63,6 +63,7 @@ def is_color(value: Any) -> bool:
     """
     return isinstance(value, str) and bool(_COLOR_RE.match(value.strip()))
 
+
 # Everything an operator may edit directly. `welcome` is deliberately absent:
 # it is a CRUSE intake form the model proposes, not a visual token, and it is
 # preserved rather than edited (see merge below).

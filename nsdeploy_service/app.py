@@ -1397,7 +1397,8 @@ a{color:var(--acc)}
   <input type="file" id="file" accept=".hocon,.conf,text/plain" required>
   <div class="row">
     <div><label for="name">name (optional)</label><input type="text" id="name" placeholder="from filename"></div>
-    <div><label for="ttl">ttl seconds (0 = never)</label><input type="number" id="ttl" min="0" placeholder="service default"></div>
+    <div><label for="ttl">ttl seconds (0 = never)</label><input type="number" id="ttl" min="0" \
+placeholder="service default"></div>
   </div>
   <button type="submit" id="go">Deploy</button>
 </fieldset>

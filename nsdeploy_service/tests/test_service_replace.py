@@ -96,7 +96,6 @@ class ReplaceOnReuploadTest(unittest.TestCase):
             name="store_returns_ops", org_name="Acme", theme_prompt="dark navy"))
         self.assertEqual(second.options.theme_prompt, "dark navy")
 
-
     def test_only_the_replacing_upload_reports_it(self):
         """`replaced` describes one request, not the network.
 

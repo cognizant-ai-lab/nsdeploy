@@ -19,15 +19,20 @@ class StaticHeaderTests(unittest.TestCase):
     def test_only_public_agent_data_has_static_cors(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for name in ("agent-manifest.json", "example.network.json", "links.json", "actions.js", "action-bridge.html", "sandbox-worker.js"):
+            names = ("agent-manifest.json", "example.network.json", "links.json", "actions.js", "action-bridge.html",
+                     "sandbox-worker.js")
+            for name in names:
                 (root / name).write_text("{}")
             server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(root, "", root, []))
             threading.Thread(target=server.serve_forever, daemon=True).start()
             try:
                 for path, cors in (("agent-manifest.json", True), ("example.network.json", True), ("links.json", True),
-                                   ("actions.js", False), ("action-bridge.html", False), ("runtime/sandbox-worker.js", False)):
-                    with urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/{path}", timeout=5) as response:
-                        self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), "*" if cors else None, path)
+                                   ("actions.js", False), ("action-bridge.html", False),
+                                   ("runtime/sandbox-worker.js", False)):
+                    url = f"http://127.0.0.1:{server.server_port}/{path}"
+                    with urllib.request.urlopen(url, timeout=5) as response:
+                        expected = "*" if cors else None
+                        self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), expected, path)
                         if path.endswith("sandbox-worker.js"):
                             self.assertIn("connect-src 'none'", response.headers["Content-Security-Policy"])
             finally:
@@ -158,18 +163,18 @@ class LauncherProxyTests(unittest.TestCase):
                 }, session_id="test-session-id")
                 self.assertEqual(listed.status, 200)
                 with urllib.request.urlopen(urllib.request.Request(
-                    url, method="GET", headers={
-                        "Accept": "text/event-stream",
-                        "Mcp-Session-Id": "test-session-id",
-                        "MCP-Protocol-Version": "2025-06-18",
-                    }), timeout=5) as response:
+                        url, method="GET", headers={
+                            "Accept": "text/event-stream",
+                            "Mcp-Session-Id": "test-session-id",
+                            "MCP-Protocol-Version": "2025-06-18",
+                        }), timeout=5) as response:
                     self.assertEqual(response.status, 200)
                     self.assertEqual(response.headers.get("Content-Type"), "text/event-stream")
                 with urllib.request.urlopen(urllib.request.Request(
-                    url, method="DELETE", headers={
-                        "Mcp-Session-Id": "test-session-id",
-                        "MCP-Protocol-Version": "2025-06-18",
-                    }), timeout=5) as response:
+                        url, method="DELETE", headers={
+                            "Mcp-Session-Id": "test-session-id",
+                            "MCP-Protocol-Version": "2025-06-18",
+                        }), timeout=5) as response:
                     self.assertEqual(response.status, 200)
                 self.assertEqual(_SessionMcpHandler.get_session_id, "test-session-id")
                 self.assertEqual(_SessionMcpHandler.delete_session_id, "test-session-id")
@@ -270,9 +275,11 @@ class ByokOnlyTests(unittest.TestCase):
         threading.Thread(target=proxy.serve_forever, daemon=True).start()
 
         def cleanup():
-            proxy.shutdown(); proxy.server_close()
+            proxy.shutdown()
+            proxy.server_close()
             if upstream:
-                upstream.shutdown(); upstream.server_close()
+                upstream.shutdown()
+                upstream.server_close()
             temp.cleanup()
         self.addCleanup(cleanup)
         return proxy.server_port
