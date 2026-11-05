@@ -15,6 +15,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
+from nsdeploy.cailville_map import CailvilleMap
 from nsdeploy.commerce.arbiter import Arbiter, CommerceError
 from nsdeploy.commerce.catalog import default_trip, public_catalog
 from nsdeploy.commerce.service import API, KEY_HEADER, CommerceSite, from_plan
@@ -368,9 +369,11 @@ class CommerceDeploymentTests(unittest.TestCase):
             self.assertEqual(service.steward_key, from_plan(plan, root/'public', 'http://127.0.0.1:8105').steward_key)
 
     def test_map_keeps_arbiter_and_existing_private_nsflow_links(self):
-        from nsdeploy.cailville import active_community_path, choose_position
+        from nsdeploy.cailville import choose_position
         root = Path(__file__).parents[1] / 'cailville'
-        for path in {root / 'community.base.json', active_community_path(root)}:
+        path: Path = None
+        # Check the checked-in base map and the active map, which is the base map until a site is added.
+        for path in [root / 'community.base.json', CailvilleMap.active_path(root)]:
             community = json.loads(path.read_text())
             self.assertIn(['butterpink_family', 'commerce_arbiter'], community['relationships'])
             self.assertIn(['seabreeze_inn', 'commerce_arbiter'], community['relationships'])

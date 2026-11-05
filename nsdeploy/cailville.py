@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
 
+from nsdeploy.cailville_map import CailvilleMap
 from nsdeploy.gateway import network_slug, public_origin
 from nsdeploy.linker import write_link_file
 from nsdeploy.resolve import resolve_hocon
@@ -54,12 +55,6 @@ def load_community(path: Path) -> Dict[str, Any]:
     return data
 
 
-def active_community_path(cailville_dir: Path) -> Path:
-    """Return the local active map, or the checked-in base map before any addition."""
-    active = cailville_dir / "community.json"
-    return active if active.is_file() else cailville_dir / "community.base.json"
-
-
 def site_origin(site: Dict[str, Any], *, base_domain: Optional[str] = None,
                 public_scheme: str = "http", public_port: Optional[int] = None) -> str:
     if base_domain:
@@ -80,7 +75,7 @@ def public_site_directory(community: Dict[str, Any], *, base_domain: Optional[st
 
 def cailville_ports(cailville_dir: Path, project_dir: Optional[Path] = None) -> List[int]:
     """Return active ports plus ports from prior generated Cailville bundles."""
-    community = load_community(active_community_path(cailville_dir))
+    community = load_community(CailvilleMap.active_path(cailville_dir))
     ports = [int(site["port"]) for site in community["sites"]]
     if project_dir is not None:
         bundle_root = project_dir / ".nsdeploy" / "cailville"
@@ -374,7 +369,7 @@ def plan_addition(config: Dict[str, Any], hocon_path: Path, *, port: Optional[in
                   studio: Optional[str] = None, repo: str = DEFAULT_REPO,
                   ref: str = DEFAULT_REF) -> CommunityDraft:
     cailville_dir = (cailville_dir or DEFAULT_CAILVILLE_DIR).resolve()
-    source_path = cailville_dir / "community.base.json" if base_map else active_community_path(cailville_dir)
+    source_path = cailville_dir / "community.base.json" if base_map else CailvilleMap.active_path(cailville_dir)
     community = copy.deepcopy(load_community(source_path))
     network = hocon_path.stem
     existing = next((site for site in community["sites"] if site["id"] == network), None)
@@ -487,7 +482,7 @@ def prepare_runtime_sources(cailville_dir: Path, project_dir: Path, *,
                             base_domain: Optional[str] = None,
                             public_scheme: str = "http",
                             public_port: Optional[int] = None) -> Dict[str, Path]:
-    community = load_community(active_community_path(cailville_dir))
+    community = load_community(CailvilleMap.active_path(cailville_dir))
     sites = {site["id"]: site for site in community["sites"]}
     added = {site_id for site_id, site in sites.items() if not site.get("base", False)}
     derived = set(added)
@@ -516,7 +511,7 @@ def write_steward_sites_file(cailville_dir: Path, project_dir: Path, *,
                              base_domain: Optional[str] = None,
                              public_scheme: str = "http",
                              public_port: Optional[int] = None) -> Path:
-    community = load_community(active_community_path(cailville_dir))
+    community = load_community(CailvilleMap.active_path(cailville_dir))
     destination = project_dir / ".nsdeploy" / "cailville" / "community-public-sites.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(
@@ -532,7 +527,7 @@ def write_steward_sites_file(cailville_dir: Path, project_dir: Path, *,
 def write_active_private_manifest(cailville_dir: Path, project_dir: Path) -> Path:
     from nsdeploy.generate import write_private_steward_manifest
 
-    community = load_community(active_community_path(cailville_dir))
+    community = load_community(CailvilleMap.active_path(cailville_dir))
     active = [site["id"] for site in community["sites"]]
     return write_private_steward_manifest(
         project_dir / ".nsdeploy" / "cailville", active_networks=active
@@ -543,7 +538,7 @@ def write_runtime_link_files(cailville_dir: Path, project_dir: Path, *,
                              base_domain: str, public_scheme: str = "http",
                              public_port: Optional[int] = None) -> Dict[str, Path]:
     """Write subdomain-aware sidecars without changing checked-in port sidecars."""
-    community = load_community(active_community_path(cailville_dir))
+    community = load_community(CailvilleMap.active_path(cailville_dir))
     sites = {site["id"]: site for site in community["sites"]}
     targets: Dict[str, List[str]] = {site_id: [] for site_id in sites}
     for source, target in community.get("relationships", []):
@@ -570,7 +565,7 @@ def emit_launch_rows(cailville_dir: Path, project_dir: Path, *,
                      base_domain: Optional[str] = None,
                      public_scheme: str = "http",
                      public_port: Optional[int] = None) -> None:
-    community = load_community(active_community_path(cailville_dir))
+    community = load_community(CailvilleMap.active_path(cailville_dir))
     runtime_sources = prepare_runtime_sources(
         cailville_dir, project_dir, base_domain=base_domain,
         public_scheme=public_scheme, public_port=public_port,
@@ -644,7 +639,8 @@ def run_cailville_command(argv: Optional[List[str]] = None) -> int:
         hocon = Path(args.hocon).expanduser().resolve() if args.hocon else latest_download_hocon()
         if not hocon.is_file():
             raise ValueError(f"HOCON not found: {hocon}")
-        current_path = cailville_dir / "community.base.json" if args.base_map else active_community_path(cailville_dir)
+        current_path = (cailville_dir / "community.base.json" if args.base_map
+                        else CailvilleMap.active_path(cailville_dir))
         community = load_community(current_path)
         existing = next((site for site in community["sites"] if site["id"] == hocon.stem), None)
         port = args.port if args.port is not None else (int(existing["port"]) if existing else allocate_port(community))
