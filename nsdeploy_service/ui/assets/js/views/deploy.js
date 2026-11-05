@@ -289,6 +289,9 @@ async function launch(root, onLaunched) {
   const uploadName = toUploadFilename(file.name);
   form.append('file', file, uploadName);
   form.append('org_name', org);
+  // Agentic City hosts browser-only bundles on its own /sites/{network_name}/ path. The
+  // port mode remains available to scripted API callers that need Python tools.
+  form.append('deployment_mode', 'static_bundle');
   if (deployDefaults.upstream) form.append('upstream', deployDefaults.upstream);
   if (deployDefaults.theme_model) form.append('theme_model', deployDefaults.theme_model);
   if ('theme' in deployDefaults) form.append('theme', String(deployDefaults.theme));

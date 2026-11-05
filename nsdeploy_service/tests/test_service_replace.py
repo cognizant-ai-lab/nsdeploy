@@ -51,12 +51,13 @@ class ReplaceOnReuploadTest(unittest.TestCase):
         self.assertIn("# edited", second.hocon_path.read_text(encoding="utf-8"),
                       "the replacement must build from the NEW upload")
 
-    def test_a_different_organization_is_a_different_network(self):
+    def test_same_name_in_a_different_organization_replaces_owner(self):
         mine = self._upload("store_returns_ops", "Acme")
         theirs = self._upload("store_returns_ops", "Globex")
-        self.assertEqual(len(self._rows()), 2)
-        self.assertNotEqual(theirs.id, mine.id)
-        self.assertNotEqual(theirs.port, mine.port)
+        self.assertEqual(len(self._rows()), 1)
+        self.assertEqual(theirs.id, mine.id)
+        self.assertEqual(theirs.port, mine.port)
+        self.assertEqual(theirs.org_name, "Globex")
 
     def test_a_different_name_is_a_different_network(self):
         self._upload("store_returns_ops", "Acme")

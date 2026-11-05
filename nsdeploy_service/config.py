@@ -417,3 +417,18 @@ class Settings:
             label = self.subdomain_label(deployment_id, port, name)
             return f"{self.public_scheme}://{label}.{self.public_host}"
         return f"{self.public_scheme}://{self.public_host}:{port}"
+
+    def static_site_url(self, network_name: str, request_base: str = "") -> str:
+        """Stable, human-readable URL for a bundle on the service listener.
+
+        Network names have passed ``safe_network_name`` before this is called, so
+        they contain only URL-safe identifier characters.  The opaque deployment
+        id remains the internal API and storage identity.
+        """
+        base = request_base.strip().rstrip("/")
+        if not base:
+            authority = self.public_host
+            if self.port not in (80, 443):
+                authority = f"{authority}:{self.port}"
+            base = f"{self.public_scheme}://{authority}"
+        return f"{base}/sites/{network_name}"

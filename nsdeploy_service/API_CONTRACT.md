@@ -85,9 +85,9 @@ POST /deployments ──▶ queued ──▶ building ──▶ ready
 
 | Status | `url` | `port` | Meaning |
 | --- | --- | --- | --- |
-| `queued` | `null` | reserved | accepted; waiting for a build slot (`MAX_CONCURRENT_BUILDS`) |
-| `building` | `null` | reserved | nsdeploy is resolving and generating; nothing listening yet |
-| `ready` | **set** | set | the site answered HTTP 200; `endpoints` and `network` populated |
+| `queued` | `null` | reserved for `port`; `null` for `static_bundle` | accepted; waiting for a build slot (`MAX_CONCURRENT_BUILDS`) |
+| `building` | `null` | reserved for `port`; `null` for `static_bundle` | nsdeploy is resolving and generating; nothing available yet |
+| `ready` | **set** | set for `port`; `null` for `static_bundle` | the site is available; `endpoints` and `network` populated |
 | `failed` | `null` | `null` | see `error`; port released |
 | `stopped` | `null` | `null` | torn down; port released |
 
@@ -99,9 +99,10 @@ with their `error` and logs intact, and either can be relaunched in place with
 `POST /deployments/{id}/restart` (§4.7) as long as the uploaded HOCON is still in the
 work directory. Nothing restarts automatically.
 
-**Records are persisted; processes are not.** Organizations and deployment records live
-in SQLite and survive a restart. The deployed sites do not — they are child processes of
-the service. On start-up every record still marked `queued`/`building`/`ready` is
+**Records and installed static bundles are persisted; child processes are not.**
+Organizations and deployment records live in SQLite. A ready `static_bundle` deployment
+continues to be served after a service restart. Port deployments do not — they are child
+processes of the service. On start-up their `queued`/`building`/`ready` records are
 reconciled to `stopped` with
 `error: "the deployment did not survive a service restart"`, its `url`/`port`/`pid`
 cleared, and its port released. The directory therefore never advertises a URL that
@@ -253,6 +254,7 @@ default 120). It is advice, not a rule — a client may poll at its own cadence.
 | `org_id` | string | no | `Unattributed` | owning organization by id; `400` if unknown. Wins over `org_name` |
 | `org_name` | string | no | — | owning organization by name, **created on first use** (§3); ignored when `org_id` is given |
 | `name` | string | no | `file`'s basename | becomes the HOCON filename stem, so nsdeploy derives the network name from it |
+| `deployment_mode` | `port` or `static_bundle` | no | `port` | `port` starts a dedicated nsdeploy process; `static_bundle` installs a browser-only site at `/sites/{network_name}/` on the service origin and reserves no deployment port. Uploading the same network name replaces the existing deployment. |
 | `upstream` | string | no | service `UPSTREAM` | the site's `/byok/v1` forwarding target |
 | `theme` | bool | no | service `THEME` (off) | deploy-time LLM theming; needs `OPENAI_API_KEY` in the *service* env and adds minutes |
 | `theme_model` | string | no | service `THEME_MODEL` | only meaningful with `theme=true` |
@@ -279,7 +281,7 @@ The HOCON is the **raw request body**; options move to the query string.
 | Param | Type | Required |
 | --- | --- | --- |
 | `name` | string | **yes** (no filename to fall back on) |
-| `org_id`, `org_name`, `upstream`, `theme`, `theme_model`, `cruse`, `ttl_seconds` | as above | no |
+| `deployment_mode`, `org_id`, `org_name`, `upstream`, `theme`, `theme_model`, `cruse`, `ttl_seconds` | as above | no |
 
 ```bash
 curl -X POST "http://127.0.0.1:9100/deployments/raw?name=my_net" \
@@ -835,7 +837,8 @@ both a destination and an action. Its users are not deploying
 software for a living, so the main path is one screen with two fields — organization
 name and a drop-zone — and one Launch button, then the map. Concretely:
 
-- The launch form sends only `file` and `org_name`. Everything else `POST /deployments`
+- The launch form sends `file`, `org_name`, and `deployment_mode=static_bundle`.
+  Everything else `POST /deployments`
   accepts comes from the service defaults, so there is nothing on screen to read past
   or get wrong. The API is unchanged; scripted callers still pass whatever they like.
 - The organization is free text backed by `org_name`'s get-or-create (§3), so a

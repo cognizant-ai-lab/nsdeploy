@@ -29,6 +29,13 @@ class DeploymentStatus(str, Enum):
     STOPPED = "stopped"
 
 
+class DeploymentMode(str, Enum):
+    """How the service makes a built network reachable."""
+
+    PORT = "port"
+    STATIC_BUNDLE = "static_bundle"
+
+
 class DeployOptions(BaseModel):
     """Per-deployment overrides for the service-wide nsdeploy defaults."""
 
@@ -36,6 +43,11 @@ class DeployOptions(BaseModel):
         default=None,
         description="network name; defaults to the uploaded filename stem. Becomes the "
                     "HOCON filename, so nsdeploy derives the network name from it.",
+    )
+    deployment_mode: DeploymentMode = Field(
+        default=DeploymentMode.PORT,
+        description="port starts a dedicated nsdeploy process; static_bundle installs "
+                    "a browser-only bundle below the deployment service's /sites path",
     )
     org_id: Optional[str] = Field(
         default=None,
@@ -274,6 +286,7 @@ class DeploymentView(BaseModel):
 
     id: str
     name: str
+    deployment_mode: DeploymentMode = DeploymentMode.PORT
     org_id: str = ""
     org_name: str = ""
     status: DeploymentStatus

@@ -31,12 +31,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 from nsdeploy_service.config import REPO_ROOT, SERVICE_ROOT, Settings
 from nsdeploy_service.layout import is_on_grid, next_position
 from nsdeploy_service.models import (
     AgentGraphEdge,
     AgentGraphNode,
+    BundleOptions,
+    DeploymentMode,
     DeploymentStatus,
     DeployOptions,
     NetworkLink,
@@ -46,6 +49,7 @@ from nsdeploy_service.models import (
 from nsdeploy_service.ports import PortPool, PortPoolExhausted
 from nsdeploy_service.shared_byok import sync_shared_byok
 from nsdeploy_service.store import UNATTRIBUTED_NAME, Store, StoreError
+from nsdeploy_service.static_sites import install_archive
 
 IS_WINDOWS = sys.platform == "win32"
 READINESS_POLL_SECONDS = 0.5
@@ -70,6 +74,19 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat(timespec="seconds") if value else None
 
 
+def _from_iso(value: Optional[str]) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(value) if value else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _url_origin(url: Optional[str]) -> str:
+    """Keep the configured/request origin while replacing a static site's path."""
+    parts = urlsplit(url or "")
+    return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""
+
+
 def safe_network_name(raw: str) -> str:
     """Validate a network name that will become a filename and a URL fragment.
 
@@ -90,8 +107,8 @@ def safe_network_name(raw: str) -> str:
     is as much an error as it ever was.
 
     Note the consequence, which is the wanted one: the marker being gone means an edited
-    re-upload carries the original name, so it *replaces* that organization's existing
-    deployment instead of standing up a near-duplicate beside it.
+    re-upload carries the original name, so it *replaces* the existing deployment
+    instead of standing up a near-duplicate beside it.
     """
     name = (raw or "").strip()
     for suffix in HOCON_SUFFIXES:
@@ -120,7 +137,7 @@ class Deployment:
     hocon_path: Path
     out_dir: Path
     site_dir: Path
-    port: int
+    port: Optional[int]
     url: str
     options: DeployOptions
     status: DeploymentStatus = DeploymentStatus.QUEUED
@@ -154,13 +171,20 @@ class Deployment:
         return self.status in (DeploymentStatus.QUEUED, DeploymentStatus.BUILDING,
                                DeploymentStatus.READY)
 
+    @property
+    def mode(self) -> DeploymentMode:
+        return self.options.deployment_mode
+
     def as_row(self) -> Dict[str, Any]:
         """Flatten into the persisted deployment record."""
         return {
             "id": self.id, "org_id": self.org_id, "name": self.name,
             "status": self.status.value,
-            "url": self.url if self.status is DeploymentStatus.READY else None,
-            "port": self.port if self.is_live else None,
+            # Static content survives a stopped state and restart uses the same URL.
+            # Port deployments keep the historical rule: advertise only while ready.
+            "url": (self.url if self.mode is DeploymentMode.STATIC_BUNDLE
+                    else self.url if self.status is DeploymentStatus.READY else None),
+            "port": self.port if self.is_live and self.port is not None else None,
             "created_at": _iso(self.created_at), "ready_at": _iso(self.ready_at),
             "stopped_at": _iso(self.stopped_at), "expires_at": _iso(self.expires_at),
             "error": self.error, "pid": self.pid,
@@ -178,13 +202,18 @@ class Deployment:
         if self.status is not DeploymentStatus.READY:
             return {}
         base = self.url.rstrip("/")
-        return {
+        common = {
             "site": f"{base}/",
+            "agent_manifest": f"{base}/agent-manifest.json",
+            "well_known": f"{base}/.well-known/nsdeploy-agent.json",
+        }
+        if self.mode is DeploymentMode.STATIC_BUNDLE:
+            return common
+        return {
+            **common,
             "mock_llm": f"{base}/v1/chat/completions",
             "byok_proxy": f"{base}/byok/v1/chat/completions",
             "mcp_facade": f"{base}/mcp",
-            "agent_manifest": f"{base}/agent-manifest.json",
-            "well_known": f"{base}/.well-known/nsdeploy-agent.json",
         }
 
 
@@ -627,23 +656,67 @@ def build_warnings(summary: NetworkSummary) -> List[str]:
 class Supervisor:
     """Owns the deployment registry, the port pool, and every child process."""
 
-    def __init__(self, settings: Settings, store: Optional[Store] = None) -> None:
+    def __init__(self, settings: Settings, store: Optional[Store] = None,
+                 bundler: Any = None) -> None:
         self.settings = settings
         self.ports = PortPool(settings.port_start, settings.port_end)
         self._deployments: Dict[str, Deployment] = {}
         self._lock = threading.Lock()
         self._build_slots = asyncio.Semaphore(settings.max_concurrent_builds)
         self._tasks: set[asyncio.Task] = set()
+        self.bundler = bundler
         settings.work_root.mkdir(parents=True, exist_ok=True)
         self.store = store or Store(settings.database_path())
         # Deployed sites are children of this process, so anything a previous run left
         # marked live is already dead. Settle those rows before serving the directory.
         self.orphaned = self.store.reconcile_orphans()
+        self.restored_static = self._restore_static_deployments()
         # Uploads without an org still belong in the directory.
         self.fallback_org = self.store.ensure_org(UNATTRIBUTED_NAME)
         self.backfilled_positions = self._backfill_positions()
         self.resummarized = self._repair_summaries()
         self.shared_byok_synced = self._sync_shared_byok_sites()
+
+    def _restore_static_deployments(self) -> List[str]:
+        """Rehydrate ready static sites; unlike child processes, they survive restart."""
+        restored: List[str] = []
+        for row in self.store.list_deployments(status=DeploymentStatus.READY.value):
+            try:
+                options = DeployOptions(**(row.get("options") or {}))
+            except (TypeError, ValueError):
+                continue
+            if options.deployment_mode is not DeploymentMode.STATIC_BUNDLE:
+                continue
+            out_dir = Path(row["work_dir"]) / "site"
+            if not bundle_ready(out_dir, row["name"]):
+                continue
+            network = row.get("network")
+            dep = Deployment(
+                id=row["id"], name=row["name"], org_id=row["org_id"],
+                org_name=row.get("org_name", ""), work_dir=Path(row["work_dir"]),
+                log_path=Path(row["log_path"]),
+                hocon_path=Path(row.get("hocon_path") or
+                                Path(row["work_dir"]) / f"{row['name']}.hocon"),
+                out_dir=out_dir, site_dir=Path(row["work_dir"]) / "site-source",
+                port=None, url=self.settings.static_site_url(
+                    row["name"], _url_origin(row.get("url"))),
+                options=options, status=DeploymentStatus.READY,
+                created_at=_from_iso(row.get("created_at")) or _now(),
+                ready_at=_from_iso(row.get("ready_at")),
+                expires_at=_from_iso(row.get("expires_at")),
+                network=NetworkSummary(**network) if isinstance(network, dict) else None,
+                warnings=row.get("warnings") or [], published_at=row.get("published_at"),
+                position=row.get("position"),
+            )
+            self._deployments[dep.id] = dep
+            # Migrate deployments created while static sites used /sites/{id}.
+            # The generated bundle is still valid at the new route because its
+            # browser assets use relative paths; persisting here also updates the
+            # map and API views immediately after a service restart.
+            if row.get("url") != dep.url:
+                self._persist(dep)
+            restored.append(dep.id)
+        return restored
 
     def _sync_shared_byok_sites(self) -> List[str]:
         """Apply the reversible browser behavior to already-generated sites."""
@@ -768,17 +841,19 @@ class Supervisor:
                 raise DeploymentError(str(exc)) from exc
         return self.fallback_org
 
-    def _existing_for(self, org_id: str, name: str) -> Optional[Dict[str, Any]]:
+    def _existing_for(self, name: str) -> Optional[Dict[str, Any]]:
         """The record this upload should replace, or None.
 
-        Matched on (organization, name). Existing installations may already hold
+        Matched globally on name. A public static site is addressed as
+        ``/sites/{network_name}``, so two organizations cannot own ambiguous URLs.
+        Existing installations may already hold
         several rows for one name — this feature is the thing that stops that
         happening, not a migration of what it already produced — so the choice has
         to be deterministic: a live one first (replacing a stopped record while a
         live copy of the same network keeps serving would be the surprising
         outcome), then the most recently created.
         """
-        rows = [row for row in self.store.list_deployments(org_id=org_id)
+        rows = [row for row in self.store.list_deployments()
                 if row.get("name") == name]
         if not rows:
             return None
@@ -788,7 +863,7 @@ class Supervisor:
         return rows[0]
 
     def _replace(self, row: Dict[str, Any], text: str, options: DeployOptions,
-                 org: Dict[str, Any]) -> Deployment:
+                 org: Dict[str, Any], static_base_url: str = "") -> Deployment:
         """Rebuild an existing network in place from a freshly uploaded HOCON.
 
         Keeps four things, each for its own reason:
@@ -816,10 +891,12 @@ class Supervisor:
             raise DeploymentError(
                 f"cannot write the replacement HOCON for {row['name']}: {exc}") from exc
 
-        try:
-            port = self.ports.reserve(preferred=row.get("port") or None)
-        except PortPoolExhausted as exc:
-            raise DeploymentError(str(exc)) from exc
+        port: Optional[int] = None
+        if options.deployment_mode is DeploymentMode.PORT:
+            try:
+                port = self.ports.reserve(preferred=row.get("port") or None)
+            except PortPoolExhausted as exc:
+                raise DeploymentError(str(exc)) from exc
 
         ttl = self.settings.ttl_seconds if options.ttl_seconds is None else options.ttl_seconds
         dep = Deployment(
@@ -836,7 +913,9 @@ class Supervisor:
             out_dir=work_dir / "site",
             site_dir=work_dir / "site-source",
             port=port,
-            url=self.settings.site_url(deployment_id, port, row["name"]),
+            url=(self.settings.static_site_url(row["name"], static_base_url)
+                 if options.deployment_mode is DeploymentMode.STATIC_BUNDLE
+                 else self.settings.site_url(deployment_id, port, row["name"])),
             # The NEW upload's options win: this is a fresh deploy of the same
             # network, not a restart replaying what was chosen last time.
             options=options,
@@ -856,8 +935,9 @@ class Supervisor:
             self.store.set_published(deployment_id, dep.published_at)
         return dep
 
-    def create(self, hocon_bytes: bytes, options: DeployOptions) -> Deployment:
-        """Accept an upload, reserve a port, and write the work dir. Does not build."""
+    def create(self, hocon_bytes: bytes, options: DeployOptions,
+               static_base_url: str = "") -> Deployment:
+        """Accept an upload and prepare its persistent deployment record."""
         if not hocon_bytes.strip():
             raise DeploymentError("the uploaded HOCON is empty")
         if len(hocon_bytes) > self.settings.max_hocon_bytes:
@@ -872,18 +952,18 @@ class Supervisor:
         name = safe_network_name(options.name or "network")
         org = self._resolve_org(options)
 
-        # Re-uploading the same network for the same organization replaces it rather
-        # than standing up a second copy. The identity is (organization, network
-        # name) because the name IS the HOCON's filename stem — two uploads of
+        # Re-uploading the same network name replaces it rather than standing up a
+        # second copy. The name is global because it is also the public URL key. It
+        # is the HOCON's filename stem — two uploads of
         # `store_returns_ops.hocon` are two revisions of one network, not two
         # networks, and treating them as two filled the port pool with duplicates
         # that all answered the same thing.
         #
         # Deliberately not keyed on the HOCON's *contents*: an edited file is still
         # the same network, and that is exactly the case this has to cover.
-        replacing = self._existing_for(org["id"], name)
+        replacing = self._existing_for(name)
         if replacing is not None:
-            return self._replace(replacing, text, options, org)
+            return self._replace(replacing, text, options, org, static_base_url)
 
         with self._lock:
             live = sum(1 for dep in self._deployments.values() if dep.is_live)
@@ -899,10 +979,12 @@ class Supervisor:
                 f"no longer needed (or to raise the limit), then try again."
             )
 
-        try:
-            port = self.ports.reserve()
-        except PortPoolExhausted as exc:
-            raise DeploymentError(str(exc)) from exc
+        port: Optional[int] = None
+        if options.deployment_mode is DeploymentMode.PORT:
+            try:
+                port = self.ports.reserve()
+            except PortPoolExhausted as exc:
+                raise DeploymentError(str(exc)) from exc
 
         deployment_id = uuid.uuid4().hex[:12]
         try:
@@ -926,12 +1008,15 @@ class Supervisor:
                 out_dir=work_dir / "site",
                 site_dir=work_dir / "site-source",
                 port=port,
-                url=self.settings.site_url(deployment_id, port, name),
+                url=(self.settings.static_site_url(name, static_base_url)
+                     if options.deployment_mode is DeploymentMode.STATIC_BUNDLE
+                     else self.settings.site_url(deployment_id, port, name)),
                 options=options,
                 expires_at=_now() + timedelta(seconds=ttl) if ttl else None,
             )
         except OSError as exc:
-            self.ports.release(port)
+            if port is not None:
+                self.ports.release(port)
             raise DeploymentError(f"cannot prepare the deployment work dir: {exc}") from exc
 
         with self._lock:
@@ -1004,7 +1089,9 @@ class Supervisor:
         if overrides:
             options = options.model_copy(update=overrides)
 
-        port = self.ports.reserve(preferred=row.get("port") or None)
+        port: Optional[int] = None
+        if options.deployment_mode is DeploymentMode.PORT:
+            port = self.ports.reserve(preferred=row.get("port") or None)
         try:
             work_dir = Path(row["work_dir"])
             ttl = self.settings.ttl_seconds if options.ttl_seconds is None else options.ttl_seconds
@@ -1023,7 +1110,10 @@ class Supervisor:
                 site_dir=work_dir / "site-source",
                 port=port,
                 # Same label as the original build, so a restart keeps its hostname.
-                url=self.settings.site_url(deployment_id, port, row["name"]),
+                url=(self.settings.static_site_url(
+                        row["name"], _url_origin(row.get("url")))
+                     if options.deployment_mode is DeploymentMode.STATIC_BUNDLE
+                     else self.settings.site_url(deployment_id, port, row["name"])),
                 options=options,
                 created_at=_now(),
                 expires_at=_now() + timedelta(seconds=ttl) if ttl else None,
@@ -1032,7 +1122,8 @@ class Supervisor:
                 published_at=row.get("published_at"),
             )
         except (OSError, ValueError) as exc:
-            self.ports.release(port)
+            if port is not None:
+                self.ports.release(port)
             raise DeploymentError(f"cannot prepare the restart: {exc}") from exc
 
         with self._lock:
@@ -1074,6 +1165,8 @@ class Supervisor:
 
     # --- build ------------------------------------------------------------
     def _command(self, dep: Deployment) -> List[str]:
+        if dep.port is None:
+            raise DeploymentError("a port deployment has no reserved port")
         s = self.settings
         opts = dep.options
         cmd = [
@@ -1183,6 +1276,9 @@ class Supervisor:
                 return  # cancelled while queued
             dep.status = DeploymentStatus.BUILDING
             self._persist(dep)
+            if dep.mode is DeploymentMode.STATIC_BUNDLE:
+                await self._build_static(dep)
+                return
             try:
                 dep.process = await asyncio.to_thread(self._spawn, dep)
             except OSError as exc:
@@ -1194,6 +1290,58 @@ class Supervisor:
             except asyncio.CancelledError:
                 self._teardown(dep, DeploymentStatus.STOPPED, "service shutting down")
                 raise
+
+    def _static_bundle_options(self, dep: Deployment) -> BundleOptions:
+        """Translate deployment defaults into the existing static-bundle contract."""
+        opts = dep.options
+        settings = self.settings
+        theme = settings.theme if opts.theme is None else opts.theme
+        return BundleOptions(
+            name=dep.name,
+            site_url=dep.url,
+            upstream=opts.upstream or settings.upstream,
+            theme=theme,
+            theme_model=opts.theme_model or settings.theme_model or None,
+            theme_refresh=(settings.theme_refresh if opts.theme_refresh is None
+                           else opts.theme_refresh),
+            theme_prompt=(settings.theme_prompt if opts.theme_prompt is None
+                          else opts.theme_prompt),
+            cruse=settings.cruse if opts.cruse is None else opts.cruse,
+        )
+
+    async def _build_static(self, dep: Deployment) -> None:
+        """Build, persist and publish a browser-only bundle on the service origin."""
+        try:
+            if self.bundler is None:
+                # Delayed import avoids the module-level Bundler -> supervisor seam.
+                from nsdeploy_service.bundler import Bundler
+                self.bundler = Bundler(self.settings)
+            with dep.log_path.open("a", encoding="utf-8") as log:
+                log.write(f"Building static bundle for {dep.name}\n")
+            result = await self.bundler.build(
+                dep.hocon_path.read_bytes(), self._static_bundle_options(dep))
+            await asyncio.to_thread(install_archive, result.archive, dep.out_dir)
+            if dep.status is not DeploymentStatus.BUILDING:
+                return
+            log_text = dep.log_path.read_text(encoding="utf-8", errors="replace")
+            dep.network = summarize_build(dep.out_dir, dep.name, log_text)
+            dep.warnings = list(dict.fromkeys([
+                *build_warnings(dep.network), *result.warnings,
+            ]))
+            with dep.log_path.open("a", encoding="utf-8") as log:
+                log.write(
+                    f"Installed {result.files} files at {dep.url}/ "
+                    f"(sha256 {result.sha256})\n")
+            dep.ready_at = _now()
+            dep.status = DeploymentStatus.READY
+            self._persist(dep)
+        except asyncio.CancelledError:
+            self._teardown(dep, DeploymentStatus.STOPPED, "service shutting down")
+            raise
+        except Exception as exc:
+            # Bundler deliberately converts user-fixable build problems to its own
+            # exception type; all failures become the deployment's normal failed state.
+            self._fail(dep, f"static bundle build failed: {exc}")
 
     async def _await_ready(self, dep: Deployment) -> None:
         """Poll until the site answers, the child dies, or the build times out."""
@@ -1232,7 +1380,7 @@ class Supervisor:
         if not self._site_is_ready_to_summarize(dep):
             return False
         host = probe_host(self.settings.deploy_host)
-        if not _port_listening(host, dep.port):
+        if dep.port is None or not _port_listening(host, dep.port):
             return False
         return _served_network_name(dep.port, host) == dep.name
 
@@ -1255,7 +1403,8 @@ class Supervisor:
                   reason: Optional[str] = None) -> None:
         if dep.process is not None:
             _terminate_tree(dep.process)
-        self.ports.release(dep.port)
+        if dep.port is not None:
+            self.ports.release(dep.port)
         dep.status = status
         dep.stopped_at = _now()
         if reason and not dep.error:
@@ -1274,8 +1423,8 @@ class Supervisor:
         for dep in self.list():
             if not dep.is_live:
                 continue
-            if dep.status is DeploymentStatus.READY and dep.process \
-                    and dep.process.poll() is not None:
+            if (dep.mode is DeploymentMode.PORT and dep.status is DeploymentStatus.READY
+                    and dep.process and dep.process.poll() is not None):
                 await asyncio.to_thread(
                     self._fail, dep,
                     f"the deployed site exited unexpectedly with status {dep.process.returncode}",
@@ -1308,7 +1457,11 @@ class Supervisor:
         for task in list(self._tasks):
             task.cancel()
         for dep in self.list():
-            if dep.is_live:
+            # A ready static deployment is persistent content, not a child process.
+            # Leave its row ready so the next service process serves the same URL.
+            if dep.is_live and not (
+                    dep.mode is DeploymentMode.STATIC_BUNDLE
+                    and dep.status is DeploymentStatus.READY):
                 await asyncio.to_thread(
                     self._teardown, dep, DeploymentStatus.STOPPED, "service shutdown")
         await asyncio.to_thread(self.store.close)

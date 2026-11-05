@@ -119,9 +119,11 @@ site, so there is no pin that could carry that message.
 > and an open tab compares it with its own and offers a **Reload to update** bar. If
 > the console ever seems not to respond to a click, hard-reload it first (Ctrl+Shift+R).
 
-Everything else `POST /deployments` accepts (network name, TTL, BYOK upstream, CRUSE,
-theming) comes from the service defaults rather than the screen — the API still takes
-all of it for scripted callers. Stop, restart and remove live in the
+The console sends `deployment_mode=static_bundle`, so launched networks are installed
+below `/sites/{network_name}/` on Agentic City's own origin and the map opens that URL without a
+per-network port. Everything else `POST /deployments` accepts (network name, TTL, BYOK
+upstream, CRUSE, theming) comes from the service defaults rather than the screen — the
+API still takes all of it for scripted callers. Stop, restart and remove live in the
 Manage-deployments view, off the main path but one click away in the footer.
 
 The map shows every organization and re-polls on the cadence the server advertises
@@ -142,10 +144,12 @@ curl -s "http://127.0.0.1:9100/deployments/$id/wait?timeout=400" | jq '{status, 
 
 ## How it works
 
-One deployment is **one supervised `python -m nsdeploy` child process on its own port** —
-the same model [`cailville/launch_all.sh`](cailville/launch_all.sh) already uses to run the
-13-site demo. The service is a port allocator, process supervisor, and status API around
-the existing CLI; `nsdeploy` itself is unmodified.
+The console uses persistent **static-bundle deployments**: the service builds through
+`Bundler`, safely installs the archive under the deployment work directory, and serves it
+at `/sites/{network_name}/` on the service's single port. Uploading the same network
+name replaces that deployment in place. Scripted callers can still request the
+legacy `port` mode, which supervises one `python -m nsdeploy` child process on its own
+port. `nsdeploy` itself is unmodified in both modes.
 
 ```
 POST /deployments

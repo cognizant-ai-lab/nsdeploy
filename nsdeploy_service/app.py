@@ -29,7 +29,7 @@ from typing import Annotated, List, Optional
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from nsdeploy_service import PRODUCT_NAME, __version__
@@ -43,6 +43,7 @@ from nsdeploy_service.models import (
     ORG_NAME_PATTERN,
     AgentGraphView,
     BundleOptions,
+    DeploymentMode,
     DeploymentList,
     DeploymentStatus,
     DeploymentView,
@@ -75,6 +76,7 @@ from nsdeploy_service.relations import (
     suggest_relations,
 )
 from nsdeploy_service.siteproxy import SiteProxy
+from nsdeploy_service.static_sites import public_file
 from nsdeploy_service.store import StoreError
 from nsdeploy_service.supervisor import (
     Deployment,
@@ -175,6 +177,7 @@ def _view(dep: Deployment) -> DeploymentView:
     return DeploymentView(
         id=dep.id,
         name=dep.name,
+        deployment_mode=dep.mode,
         org_id=dep.org_id,
         org_name=dep.org_name,
         status=dep.status,
@@ -212,20 +215,27 @@ def _row_view(row: dict, settings: Settings) -> DeploymentView:
     status = DeploymentStatus(row["status"])
     url = row.get("url")
     endpoints: dict = {}
+    options = row.get("options") or {}
+    try:
+        deployment_mode = DeploymentMode(options.get("deployment_mode", "port"))
+    except ValueError:
+        deployment_mode = DeploymentMode.PORT
     if status is DeploymentStatus.READY and url:
         base = url.rstrip("/")
         endpoints = {
             "site": f"{base}/",
-            "mock_llm": f"{base}/v1/chat/completions",
-            "byok_proxy": f"{base}/byok/v1/chat/completions",
-            "mcp_facade": f"{base}/mcp",
             "agent_manifest": f"{base}/agent-manifest.json",
             "well_known": f"{base}/.well-known/nsdeploy-agent.json",
         }
+        if deployment_mode is DeploymentMode.PORT:
+            endpoints.update({
+                "mock_llm": f"{base}/v1/chat/completions",
+                "byok_proxy": f"{base}/byok/v1/chat/completions",
+                "mcp_facade": f"{base}/mcp",
+            })
     network = row.get("network")
-    options = row.get("options") or {}
     return DeploymentView(
-        id=row["id"], name=row["name"],
+        id=row["id"], name=row["name"], deployment_mode=deployment_mode,
         org_id=row["org_id"], org_name=row.get("org_name", ""),
         status=status, url=url, port=row.get("port"),
         created_at=row["created_at"], ready_at=row.get("ready_at"),
@@ -362,9 +372,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         # Built inside the loop so the build semaphore binds to the right one.
         app.state.settings = settings
-        app.state.supervisor = Supervisor(settings)
-        # Same reason as the Supervisor: its semaphore binds to this loop.
+        # Both semaphores are created inside the serving loop. Persistent static
+        # deployments reuse this one Bundler rather than constructing a second pool.
         app.state.bundler = Bundler(settings)
+        app.state.supervisor = Supervisor(settings, bundler=app.state.bundler)
         if app.state.supervisor.orphaned:
             print(f"reconciled {len(app.state.supervisor.orphaned)} deployment record(s) "
                   f"left live by a previous run", file=sys.stderr)
@@ -478,7 +489,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # --- create ----------------------------------------------------------
     async def _accept(request: Request, hocon: bytes, options: DeployOptions) -> DeploymentView:
         supervisor = supervisor_of(request)
-        dep = supervisor.create(hocon, options)
+        dep = supervisor.create(hocon, options, str(request.base_url).rstrip("/"))
         supervisor.start(dep)
         return _view(dep)
 
@@ -503,6 +514,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                         "when org_id is given. Letters, digits and & ' ( ) . , - / + # "
                         f"only, {ORG_NAME_MAX} characters maximum")] = None,
         name: Annotated[Optional[str], Form()] = None,
+        deployment_mode: Annotated[DeploymentMode, Form()] = DeploymentMode.PORT,
         upstream: Annotated[Optional[str], Form()] = None,
         theme: Annotated[Optional[bool], Form()] = None,
         theme_model: Annotated[Optional[str], Form()] = None,
@@ -518,6 +530,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             (file.filename or "network").replace("\\", "/")).name
         options = DeployOptions(
             name=candidate, org_id=org_id, org_name=org_name,
+            deployment_mode=deployment_mode,
             upstream=upstream, theme=theme, theme_model=theme_model,
             theme_refresh=theme_refresh, theme_prompt=theme_prompt,
             cruse=cruse, ttl_seconds=ttl_seconds,
@@ -532,6 +545,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         request: Request,
         response: Response,
         name: Annotated[str, Query(description="network name (becomes the HOCON filename stem)")],
+        deployment_mode: Annotated[DeploymentMode, Query()] = DeploymentMode.PORT,
         org_id: Annotated[Optional[str], Query()] = None,
         org_name: Annotated[Optional[str], Query(
             max_length=ORG_NAME_MAX, pattern=ORG_NAME_PATTERN,
@@ -545,6 +559,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         ttl_seconds: Annotated[Optional[int], Query(ge=0)] = None,
     ) -> DeploymentView:
         options = DeployOptions(name=name, org_id=org_id, org_name=org_name,
+                                deployment_mode=deployment_mode,
                                 upstream=upstream, theme=theme,
                                 theme_model=theme_model, cruse=cruse,
                                 ttl_seconds=ttl_seconds)
@@ -994,6 +1009,46 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if purge:
             await supervisor.forget(deployment_id)
         return view
+
+    # --- persistent static deployment sites -----------------------------
+    @app.get("/sites/{site_name}", include_in_schema=False)
+    async def static_site_slash(site_name: str) -> RedirectResponse:
+        return RedirectResponse(url=f"/sites/{site_name}/", status_code=307)
+
+    @app.get("/sites/{site_name}/{asset_path:path}", include_in_schema=False)
+    async def static_site(request: Request, site_name: str,
+                          asset_path: str = "") -> Response:
+        """Serve one installed static deployment without consuming another port."""
+        store = supervisor_of(request).store
+        row = store.find_deployment_by_name(site_name)
+        if row is None:
+            # Compatibility for bookmarks created while static sites used opaque ids.
+            row = store.get_deployment(site_name)
+        if row is None or row.get("status") != DeploymentStatus.READY.value:
+            raise HTTPException(status_code=404, detail="static deployment is not available")
+        options = row.get("options") or {}
+        if options.get("deployment_mode") != DeploymentMode.STATIC_BUNDLE.value:
+            raise HTTPException(status_code=404, detail="deployment is not a static bundle")
+        root = Path(row["work_dir"]) / "site"
+        file_path = public_file(root, asset_path)
+        if file_path is None:
+            raise HTTPException(status_code=404, detail="static site file not found")
+
+        relative = file_path.relative_to(root.resolve()).as_posix()
+        headers = {"Cache-Control": "no-cache"}
+        public_data = {
+            "agent-manifest.json", f"{row['name']}.network.json", "links.json",
+            "agent-mcp.json", ".well-known/nsdeploy.json",
+            ".well-known/nsdeploy-agent.json",
+        }
+        if relative in public_data:
+            headers["Access-Control-Allow-Origin"] = "*"
+        if relative == "runtime/sandbox-worker.js":
+            headers["Content-Security-Policy"] = (
+                "default-src 'none'; script-src blob:; connect-src 'none'; "
+                "worker-src 'none'"
+            )
+        return FileResponse(file_path, headers=headers)
 
     # --- static bundles --------------------------------------------------
     # A separate resource from a deployment, because a static bundle is a build

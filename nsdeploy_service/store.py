@@ -340,6 +340,21 @@ class Store:
                     WHERE d.id = ?""", (deployment_id,)).fetchone()
         return self._decode(row) if row else None
 
+    def find_deployment_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Return the newest deployment with an exact network name.
+
+        Names are globally unique for new uploads. Choosing the newest row keeps
+        lookup deterministic for databases created before that rule existed.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT d.*, o.name AS org_name FROM deployments d
+                     JOIN organizations o ON o.id = d.org_id
+                    WHERE d.name = ?
+                    ORDER BY d.created_at DESC, d.id DESC
+                    LIMIT 1""", (name,)).fetchone()
+        return self._decode(row) if row else None
+
     def list_deployments(self, org_id: Optional[str] = None,
                          status: Optional[str] = None) -> List[Dict[str, Any]]:
         clauses, params = [], []
@@ -424,24 +439,37 @@ class Store:
     def reconcile_orphans(self) -> List[str]:
         """Settle records left mid-flight by a previous run.
 
-        Deployed sites are children of the service process, so a restart has already
-        killed them. Any row still claiming queued/building/ready is stale and must not
-        keep advertising a URL that answers nothing.
+        Port deployments are children of the service process, so a restart has already
+        killed them. Ready static bundles are files served by this process and survive
+        a restart; only an interrupted queued/building static build is stale.
         """
         placeholders = ",".join("?" * len(LIVE_STATUSES))
         now = _now_iso()
         with self._lock:
             rows = self._conn.execute(
-                f"SELECT id FROM deployments WHERE status IN ({placeholders})",
+                f"SELECT id, status, options_json FROM deployments "
+                f"WHERE status IN ({placeholders})",
                 LIVE_STATUSES).fetchall()
-            orphans = [row["id"] for row in rows]
+            orphans = []
+            for row in rows:
+                try:
+                    options = json.loads(row["options_json"] or "{}")
+                except ValueError:
+                    options = {}
+                persistent_static = (
+                    row["status"] == "ready"
+                    and options.get("deployment_mode") == "static_bundle"
+                )
+                if not persistent_static:
+                    orphans.append(row["id"])
             if orphans:
+                marks = ",".join("?" * len(orphans))
                 self._conn.execute(
                     f"""UPDATE deployments
                            SET status='stopped', url=NULL, port=NULL, pid=NULL,
                                stopped_at=?, error=COALESCE(NULLIF(error,''), ?)
-                         WHERE status IN ({placeholders})""",
-                    (now, RESTART_REASON, *LIVE_STATUSES))
+                         WHERE id IN ({marks})""",
+                    (now, RESTART_REASON, *orphans))
                 self._conn.commit()
         return orphans
 
