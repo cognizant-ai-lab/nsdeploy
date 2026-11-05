@@ -460,7 +460,7 @@ class NetworkRunner:
                 }]}}
             results = [_text(item.get("content", "")) for item in messages if item.get("role") == "tool"]
             return {"message": {"role": "assistant", "content":
-                                 "(facade mock) " + " ".join(results)[:4000]}}
+                                "(facade mock) " + " ".join(results)[:4000]}}
         credentials = self._active_credentials()
         if not credentials or not credentials.available:
             return {"message": {"role": "assistant", "content":
@@ -468,9 +468,10 @@ class NetworkRunner:
         body = {"model": credentials.model or self.model,
                 "messages": messages, "stream": False}
         if tools:
-            body["tools"] = [{"type": "function", "function": {"name": item["name"],
-                          "description": item.get("description", item["name"]),
-                          "parameters": item.get("parameters") or {"type": "object"}}} for item in tools]
+            body["tools"] = [{"type": "function", "function": {
+                "name": item["name"],
+                "description": item.get("description", item["name"]),
+                "parameters": item.get("parameters") or {"type": "object"}}} for item in tools]
         headers = {
             "Content-Type": "application/json",
             "Authorization": credentials.authorization,
@@ -504,7 +505,8 @@ async def _serve(config: Dict[str, Any], site_base: str, upstream: str, port: in
     async def invoke_network(request: str) -> str:
         return await runner.run(request, front_man)
 
-    mcp.tool(name="invoke_network", description="Invoke this public agent network on behalf of a caller.")(invoke_network)
+    mcp.tool(name="invoke_network",
+             description="Invoke this public agent network on behalf of a caller.")(invoke_network)
     app = mcp.streamable_http_app()
     app.add_middleware(ByokContextMiddleware)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],

@@ -67,27 +67,34 @@ class ButterpinkCommerceGateway(CodedTool):
             fields.add("offer_id")
         try:
             if operation not in ("negotiate", "status", "approve", "cancel") or set(args) != fields:
-                raise ValueError("Use negotiate with arrival and budget_cents; approve with offer_id; or status/cancel without extra arguments.")
+                raise ValueError("Use negotiate with arrival and budget_cents; approve with offer_id; "
+                                 "or status/cancel without extra arguments.")
             binding = start_binding(sly_data)
-            if operation == "approve" and (not turn.confirmed_offer or
+            if operation == "approve" and (
+                    not turn.confirmed_offer or
                     args["offer_id"] != turn.confirmed_offer or args["offer_id"] != binding["presented_offer"]):
-                raise PermissionError("Present the exact offer first. The user must then reply 'Confirm booking' in a later private chat turn.")
+                raise PermissionError("Present the exact offer first. The user must then reply 'Confirm booking' "
+                                      "in a later private chat turn.")
             if operation == "approve":
                 offers = (binding["last_result"] or {}).get("offers", [])
                 offer = next((item for item in offers if item["offer_id"] == args["offer_id"]), None)
                 if not offer or offer["total_cents"] > (binding["requested_budget"] or 0):
-                    raise PermissionError("This offer exceeds the user's latest stated maximum. Cancel it and negotiate a new mandate.")
+                    raise PermissionError("This offer exceeds the user's latest stated maximum. "
+                                          "Cancel it and negotiate a new mandate.")
             endpoint = origin(os.environ.get("NSDEPLOY_COMMERCE_ARBITER_URL", "http://127.0.0.1:8105"))
-            denied = {item.strip().rstrip('/') for item in os.environ.get('NSDEPLOY_STEWARD_DENY_ORIGINS', '').split(',')}
+            denied = {item.strip().rstrip('/')
+                      for item in os.environ.get('NSDEPLOY_STEWARD_DENY_ORIGINS', '').split(',')}
             if endpoint in denied:
                 raise PermissionError("The arbiter is denied by the private steward's local policy.")
             key = credential_path().read_text().strip()
             payload = {"session": binding["session"]}
             if operation == "negotiate":
                 if not isinstance(args["arrival"], str) or type(args["budget_cents"]) is not int:
-                    raise ValueError("Supply the requested arrival date (YYYY-MM-DD) and an integer budget in USD cents.")
+                    raise ValueError("Supply the requested arrival date (YYYY-MM-DD) "
+                                     "and an integer budget in USD cents.")
                 if not binding["requested_budget"] or args["budget_cents"] != binding["requested_budget"]:
-                    raise PermissionError("Ask the user to state the maximum as a dollar amount, for example 'under $500'. Never invent or increase their budget.")
+                    raise PermissionError("Ask the user to state the maximum as a dollar amount, "
+                                          "for example 'under $500'. Never invent or increase their budget.")
                 arrival = date.fromisoformat(args["arrival"])
                 payload.update(budget_cents=args["budget_cents"], trip={
                     "destination": "Cailville", "arrival": arrival.isoformat(),
@@ -96,6 +103,7 @@ class ButterpinkCommerceGateway(CodedTool):
             elif operation == "approve":
                 payload["offer_id"] = args["offer_id"]
             # Avoid duplicate calls from parallel tool invocations in one private chat.
+
             def call():
                 with binding["lock"]:
                     return post_json(endpoint + API + operation, payload, {KEY_HEADER: key})
@@ -116,7 +124,9 @@ class ButterpinkCommerceGateway(CodedTool):
         except (ValueError, KeyError, PermissionError) as exc:
             result = {"status": "DENIED", "error": str(exc)}
         except (urllib.error.URLError, TimeoutError, OSError):
-            result = {"status": "UNAVAILABLE", "error": "The commerce service or private credential is unavailable. Check booking status before retrying; no successful booking is being claimed."}
+            result = {"status": "UNAVAILABLE",
+                      "error": "The commerce service or private credential is unavailable. "
+                               "Check booking status before retrying; no successful booking is being claimed."}
         turn.result = result
         return result
 
@@ -131,29 +141,35 @@ def add_to_private_network(network):
         "\nYou represent the Butterpink Family. For booking or negotiating a Seabreeze Inn stay, "
         "use butterpink_commerce directly from this private chat. This is a simulated one-night stay for two adults "
         "with parking, Wi-Fi, one local activity, taxes and fees. Ask for the arrival date and maximum USD budget "
-        "if missing. Never silently change the date, duration, travelers or budget; explain the fixture scope for unsupported requests. "
+        "if missing. Never silently change the date, duration, travelers or budget; "
+        "explain the fixture scope for unsupported requests. "
         "Call negotiate with arrival YYYY-MM-DD and the user's budget_cents; it creates the mandate and engages "
         "the public arbiter and Inn over HTTP. Do not send the private ceiling through public_agent_mcp_gateway. "
         "Present the canonical price, dates, scope and cancellation terms. Ask the user to reply 'Confirm booking'. "
-        "Only in a subsequent turn after explicit confirmation, call status to recover the current offer_id, then call approve with that exact ID. "
+        "Only in a subsequent turn after explicit confirmation, call status to recover the current offer_id, "
+        "then call approve with that exact ID. "
         "Use status for follow-ups and cancel when the user declines or wants to change the mandate. "
         "All steps stay here in nsFlow; no checkout website, pairing code, terminal or browser session is needed. "
         "Never invent offers, payment status or receipts. Only a SETTLED tool result is a booking. "
-        "For a repeat of an already settled request report the existing receipt; start a new chat for a separate identical booking."
+        "For a repeat of an already settled request report the existing receipt; "
+        "start a new chat for a separate identical booking."
     )
     network["metadata"]["sample_queries"] = [
         "Book a night at Seabreeze Inn for two adults for no more than $500.",
         "What is the status of my Inn booking?",
     ]
-    network["tools"].append({"name": "butterpink_commerce",
+    network["tools"].append({
+        "name": "butterpink_commerce",
         "class": "nsdeploy.commerce.steward.ButterpinkCommerceGateway",
-        "function": {"description": "Negotiate a one-night Seabreeze stay through the arbiter; inspect, cancel, or approve an exact offer after a new human confirmation turn.",
+        "function": {
+            "description": "Negotiate a one-night Seabreeze stay through the arbiter; inspect, cancel, or approve "
+                           "an exact offer after a new human confirmation turn.",
             "parameters": {"type": "object", "properties": {
                 "operation": {"type": "string", "enum": ["negotiate", "status", "approve", "cancel"]},
                 "arrival": {"type": "string", "description": "Requested arrival in YYYY-MM-DD; negotiate only."},
                 "budget_cents": {"type": "int", "description": "User's maximum total USD in cents; negotiate only."},
                 "offer_id": {"type": "string", "description": "Exact canonical offer ID; approve only."},
             }, "required": ["operation"], "additionalProperties": False}}})
-    network["metadata"]["commerce_delegation"] = {"steward": STEWARD,
-        "interface": "private_nsflow_chat", "human_confirmation": "subsequent_chat_turn"}
+    network["metadata"]["commerce_delegation"] = {
+        "steward": STEWARD, "interface": "private_nsflow_chat", "human_confirmation": "subsequent_chat_turn"}
     return network

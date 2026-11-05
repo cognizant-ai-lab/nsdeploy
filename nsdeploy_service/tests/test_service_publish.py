@@ -227,7 +227,8 @@ class PublishMigrationTest(unittest.TestCase):
         path = self._legacy_database()
         conn = sqlite3.connect(path)
         conn.execute("UPDATE deployments SET status='stopped'")
-        conn.commit(); conn.close()
+        conn.commit()
+        conn.close()
         store = Store(path)
         try:
             self.assertIsNotNone(store.get_deployment("old0")["published_at"])

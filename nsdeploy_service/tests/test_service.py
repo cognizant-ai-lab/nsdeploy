@@ -774,7 +774,6 @@ class EngineCliContractTest(unittest.TestCase):
         the two ways out named — `--network host`, or SUBDOMAIN_TEMPLATE.
         """
         import sys
-        from unittest import mock
 
         from nsdeploy_service.supervisor import engine_supports_host
 

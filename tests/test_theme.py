@@ -54,7 +54,8 @@ class ThemeChatTests(unittest.TestCase):
 ===STYLE===
 .page { color: navy; }
 ===BODY===
-<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div><main data-ns-slot="chat"></main><aside data-ns-slot="agents"></aside><div data-ns-slot="settings"></div></div>
+<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div><main data-ns-slot="chat"></main>\
+<aside data-ns-slot="agents"></aside><div data-ns-slot="settings"></div></div>
 """
         with tempfile.TemporaryDirectory() as tmp, \
                 patch("nsdeploy.theme.CACHE_DIR", Path(tmp)), \
@@ -81,7 +82,8 @@ class ThemeChatTests(unittest.TestCase):
 ===STYLE===
 .page { color: navy; }
 ===BODY===
-<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div><main data-ns-slot="chat"></main><aside data-ns-slot="agents"></aside></div>
+<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div><main data-ns-slot="chat"></main>\
+<aside data-ns-slot="agents"></aside></div>
 """
         with tempfile.TemporaryDirectory() as tmp, \
                 patch("nsdeploy.theme.CACHE_DIR", Path(tmp)), \

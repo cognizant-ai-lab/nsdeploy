@@ -22,10 +22,12 @@ class ActionBundleTests(unittest.TestCase):
     def test_subpath_headers_only_expose_public_agent_data(self):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)
-            plan = DeploymentPlan(network_name="example", config={"tools": [{"name": "front", "instructions": "Help."}]}, front_man="front")
+            plan = DeploymentPlan(network_name="example",
+                                  config={"tools": [{"name": "front", "instructions": "Help."}]}, front_man="front")
             log = io.StringIO()
             with contextlib.redirect_stdout(log):
-                manifest = generate_site(plan, out, "browser://mock", "", "https://app.test/agents/example", static_bundle=True)
+                manifest = generate_site(plan, out, "browser://mock", "", "https://app.test/agents/example",
+                                         static_bundle=True)
             self.assertNotIn("actions", manifest)
             self.assertIn("NONE configured", log.getvalue())
             headers = (out / "_headers").read_text()
@@ -42,7 +44,8 @@ class ActionBundleTests(unittest.TestCase):
 
     def test_native_forms_need_no_adapter_and_remain_static(self):
         with tempfile.TemporaryDirectory() as directory:
-            plan = DeploymentPlan(network_name="example", config={"tools": [{"name": "front", "instructions": "Help."}]}, front_man="front")
+            plan = DeploymentPlan(network_name="example",
+                                  config={"tools": [{"name": "front", "instructions": "Help."}]}, front_man="front")
             out = Path(directory)
             manifest = generate_site(plan, out, "browser://mock", "", "", static_bundle=True,
                                      action_pages=["/booking"], action_modules=["/js/cart.js"],
@@ -54,7 +57,8 @@ class ActionBundleTests(unittest.TestCase):
             self.assertTrue((out / "runtime/form-actions.js").exists())
 
     def test_discovery_configuration_rejects_foreign_pages_and_inexact_callers(self):
-        for path in ["https://elsewhere.test/form", "//elsewhere.test/form", "/\\elsewhere.test/form", "form", "/form#x"]:
+        for path in ["https://elsewhere.test/form", "//elsewhere.test/form", "/\\elsewhere.test/form", "form",
+                     "/form#x"]:
             with self.assertRaises(ValueError):
                 action_discovery_config([path])
         for caller in ["*", "https://caller.test/path", "https://caller.test/", "https://user:password@caller.test"]:
@@ -72,7 +76,8 @@ class ActionBundleTests(unittest.TestCase):
             plan = DeploymentPlan(network_name="example", config=original, front_man="front")
             for static in (False, True):
                 out = root / str(static)
-                manifest = generate_site(plan, out, "browser://mock", "https://model.test/v1", "", site_source_dir=source, static_bundle=static)
+                manifest = generate_site(plan, out, "browser://mock", "https://model.test/v1", "",
+                                         site_source_dir=source, static_bundle=static)
                 self.assertEqual(manifest["actions"]["module"], "./actions.js")
                 self.assertEqual((out / "actions.js").read_text(), adapter.read_text())
                 self.assertIn("./runtime/action-bridge.js", (out / "action-bridge.html").read_text())
@@ -89,7 +94,8 @@ class ActionBundleTests(unittest.TestCase):
             root = Path(directory)
             adapter = root / "custom.js"
             adapter.write_text("export function registerActions() {}")
-            plan = DeploymentPlan(network_name="example", config={"tools": [{"name": "front", "instructions": "Help."}]}, front_man="front")
+            plan = DeploymentPlan(network_name="example",
+                                  config={"tools": [{"name": "front", "instructions": "Help."}]}, front_man="front")
             manifest = generate_site(plan, root / "out", "browser://mock", "", "", actions_file=adapter)
             self.assertEqual(manifest["actions"]["version"], 1)
             self.assertEqual((root / "out/actions.js").read_text(), adapter.read_text())

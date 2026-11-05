@@ -187,15 +187,18 @@ def heuristic_profile(identity: Dict[str, Any], peers: Iterable[Dict[str, Any]])
         peer_id = peer["id"]
         if peer_id == "main_street_exchange" and site_type in {"business", "broker"}:
             score += 10
-        if peer_id == "neighbor_exchange" and any(term in text for term in ("community", "family", "household", "bank", "resident", "citizen")):
+        if peer_id == "neighbor_exchange" and any(
+                term in text for term in ("community", "family", "household", "bank", "resident", "citizen")):
             score += 9
         if peer_id == "harbor_town_hall":
             score += 5
-        if peer_id == "harbor_guide" and any(term in text for term in ("visitor", "travel", "event", "hotel", "restaurant", "tour")):
+        if peer_id == "harbor_guide" and any(
+                term in text for term in ("visitor", "travel", "event", "hotel", "restaurant", "tour")):
             score += 9
         if peer_id == "fix_and_found" and any(term in text for term in ("repair", "reuse", "equipment", "maintenance")):
             score += 8
-        if peer_id == "harbor_wheels_cooperative" and any(term in text for term in ("transport", "delivery", "event", "travel")):
+        if peer_id == "harbor_wheels_cooperative" and any(
+                term in text for term in ("transport", "delivery", "event", "travel")):
             score += 7
         scored.append((score, peer_id, peer))
     scored.sort(key=lambda item: (-item[0], item[1]))
@@ -440,7 +443,8 @@ def render_map_html(html_path: Path, community: Dict[str, Any], *,
                      public_port=public_port),
         indent=2, ensure_ascii=False,
     ).replace("<", "\\u003c")
-    replacement = f'{DATA_START}\n  <script id="cailville-community-data" type="application/json">\n{raw}\n  </script>\n  {DATA_END}'
+    replacement = (f'{DATA_START}\n  <script id="cailville-community-data" type="application/json">\n'
+                   f'{raw}\n  </script>\n  {DATA_END}')
     pattern = re.compile(re.escape(DATA_START) + ".*?" + re.escape(DATA_END), re.S)
     updated, count = pattern.subn(replacement, text, count=1)
     if count != 1:
@@ -606,10 +610,13 @@ def run_cailville_command(argv: Optional[List[str]] = None) -> int:
         description="Generate a public site, connect it into Cailville, and launch the complete demo.",
     )
     parser.add_argument("hocon", nargs="?", help="network HOCON (default: newest ~/Downloads/*.hocon)")
-    parser.add_argument("--port", type=int, default=None, help="site port (default: next Cailville port, starting at 8088)")
-    parser.add_argument("--base-map", action="store_true", help="discard earlier demo additions before adding this site")
+    parser.add_argument("--port", type=int, default=None,
+                        help="site port (default: next Cailville port, starting at 8088)")
+    parser.add_argument("--base-map", action="store_true",
+                        help="discard earlier demo additions before adding this site")
     parser.add_argument("--reset-map", action="store_true", help="restore the original 13-site map and exit")
-    parser.add_argument("--no-launch", action="store_true", help="generate and integrate the site without launching Cailville")
+    parser.add_argument("--no-launch", action="store_true",
+                        help="generate and integrate the site without launching Cailville")
     parser.add_argument("--no-theme", action="store_true", help="skip LLM site design")
     parser.add_argument("--no-theme-refresh", action="store_true", help="reuse an existing editable site theme")
     parser.add_argument("--theme-model", default="gpt-5.5", help="site-design and connection model (default gpt-5.5)")
