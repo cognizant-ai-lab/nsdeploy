@@ -19,9 +19,9 @@ How long it takes. The first run is dominated by step 2: nsdeploy's dependency
 closure is ~99 packages, because `neuro-san` brings langchain, openai and tiktoken
 with it, so a cold install downloads a few hundred MB and can run for minutes. The
 other five steps together are roughly 30s (the test suite is most of that). Install
-uv and this script will use it — it resolves the same tree several times faster, and
-this repository already ships a uv.lock. Every step prints its own elapsed time at
-the end so a slow step is distinguishable from a stuck one.
+uv and this script will use it — it resolves the same tree several times faster.
+Every step prints its own elapsed time at the end so a slow step is distinguishable
+from a stuck one.
 
 Flags:
     --skip-install   don't touch the environment, just verify
@@ -122,10 +122,10 @@ def stream(args: list[str], cwd: Path = ROOT, keep: int = 40) -> tuple[int, str]
 def installer() -> tuple[list[str], str]:
     """The fastest available installer, and a label for it.
 
-    uv resolves and installs the same tree several times faster than pip, and this
-    repository already ships a uv.lock — so if uv is on PATH it is almost certainly
-    the tool the checkout was built with. pip remains the fallback so nothing new is
-    required to bootstrap.
+    uv resolves and installs the same tree several times faster than pip, so it is
+    preferred when on PATH. Either installer resolves fresh from requirements.txt
+    (read by pyproject.toml); there is no lockfile in the repo. pip remains the
+    fallback so nothing new is required to bootstrap.
     """
     if shutil.which("uv"):
         return ["uv", "pip", "install", "--python", sys.executable], "uv"

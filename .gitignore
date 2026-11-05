@@ -11,6 +11,8 @@ output/
 .codex-*/
 venv/
 .venv/
+# uv sync writes one locally; the repo resolves fresh from requirements.txt on purpose.
+uv.lock
 node_modules/
 
 # misc

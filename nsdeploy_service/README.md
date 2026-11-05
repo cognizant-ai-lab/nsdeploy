@@ -48,8 +48,7 @@ connection 5s, everything else ~1s.
 Two things make it quicker:
 
 * **Install [uv](https://docs.astral.sh/uv/).** Bootstrap uses it automatically when
-  it is on PATH, and it resolves the same tree several times faster. This repository
-  already ships a `uv.lock`.
+  it is on PATH, and it resolves the same tree several times faster.
 * **On a re-run, skip what you have already proved:**
   `python nsdeploy_service/bootstrap.py --skip-install --skip-tests` — about 7s.
   Bootstrap says so itself when a run passes 90s, and warns when both packages
