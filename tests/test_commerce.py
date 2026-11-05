@@ -133,7 +133,7 @@ class CommerceHTTPTests(unittest.TestCase):
         self.seller_url = f'http://127.0.0.1:{self.seller_server.server_port}'
         self.config = {'role': 'arbiter', 'seller_backend': self.seller_url}
         self.arbiter = CommerceSite(self.config, self.arbiter_url, {}, self.root / 'private/arbiter.sqlite',
-                                   clock=lambda: self.now, steward_key=self.key)
+                                    clock=lambda: self.now, steward_key=self.key)
         self.seller = CommerceSite({'role': 'seller', 'arbiter_backend': self.arbiter_url}, self.seller_url, {})
         self.arbiter_server.RequestHandlerClass = self.handler(self.arbiter)
         self.seller_server.RequestHandlerClass = self.handler(self.seller)
@@ -201,7 +201,8 @@ class CommerceHTTPTests(unittest.TestCase):
             self.assertEqual(code, 404, path)
             self.assertNotIn('Set-Cookie', headers)
         for headers in ({KEY_HEADER: None}, {KEY_HEADER: 'forged'}, {'Origin': self.arbiter_url}):
-            self.assertEqual(self.request('negotiate', {'trip': default_trip(), 'budget_cents': 50000}, headers=headers)[0], 403)
+            self.assertEqual(self.request('negotiate', {'trip': default_trip(), 'budget_cents': 50000},
+                                          headers=headers)[0], 403)
         self.assertNotIn('Access-Control-Allow-Origin', self.request('info')[2])
         self.assertEqual(self.request(path='/')[1], 'existing agent site')
 
@@ -233,7 +234,7 @@ class CommerceHTTPTests(unittest.TestCase):
         self.assertEqual((result['state'], result['spent_cents']), ('CANCELLED', 0))
         state = self.negotiate(51000)
         self.arbiter = CommerceSite(self.config, self.arbiter_url, {}, self.root / 'private/arbiter.sqlite',
-                                   clock=lambda: self.now, steward_key=self.key)
+                                    clock=lambda: self.now, steward_key=self.key)
         self.arbiter_server.RequestHandlerClass = self.handler(self.arbiter)
         self.assertEqual(self.request('status', {})[1]['offers'], state['offers'])
         self.now += 901
@@ -252,20 +253,24 @@ class CommerceHTTPTests(unittest.TestCase):
     def test_concurrent_retries_settle_once(self):
         offer = self.negotiate()['offers'][0]
         with ThreadPoolExecutor(max_workers=4) as pool:
-            receipts = list(pool.map(lambda _: self.request('approve', {'offer_id': offer['offer_id']})[1]['receipt'], range(4)))
+            receipts = list(pool.map(lambda _: self.request('approve', {'offer_id': offer['offer_id']})[1]['receipt'],
+                                     range(4)))
         self.assertTrue(all(item == receipts[0] for item in receipts))
 
     def test_seller_capability_cannot_approve_or_forge_a_bid(self):
         state = self.negotiate()
         for token in ('forged', self.sessions['alice']):
             self.assertEqual(self.request('provider-bid', {'trip': default_trip(), 'capability': token})[0], 409)
-        self.assertEqual(self.request('provider-bid', {'trip': default_trip(), 'capability': 'forged'}, headers={'Origin': self.seller_url})[0], 403)
-        self.assertEqual(self.request('approve', {'offer_id': state['offers'][0]['offer_id']}, server=self.seller_server)[0], 403)
+        self.assertEqual(self.request('provider-bid', {'trip': default_trip(), 'capability': 'forged'},
+                                      headers={'Origin': self.seller_url})[0], 403)
+        self.assertEqual(self.request('approve', {'offer_id': state['offers'][0]['offer_id']},
+                                      server=self.seller_server)[0], 403)
 
     def test_subdomain_gateway_preserves_server_only_flow(self):
         gateway = self.server(make_gateway_handler('localhost', {'commerce-arbiter': self.arbiter_url}))
         code, result, _ = self.request('negotiate', {'trip': default_trip(), 'budget_cents': 50000},
-                                      server=gateway, headers={'Host': f'commerce-arbiter.localhost:{gateway.server_port}'})
+                                       server=gateway,
+                                       headers={'Host': f'commerce-arbiter.localhost:{gateway.server_port}'})
         self.assertEqual(code, 200, result)
         self.assertEqual(result['offers'][0]['total_cents'], 47750)
 
@@ -278,17 +283,19 @@ class CommerceHTTPTests(unittest.TestCase):
                   'print("RESULT:"+json.dumps(run(req["network"],req["prompts"])))')
         result = subprocess.run([sys.executable, '-c', script], input=json.dumps({
             'network': str(network), 'prompts': prompts, 'test_dir': str(Path(__file__).resolve().parent)}),
-            text=True, capture_output=True, timeout=120, env={**os.environ,
-            'AGENT_TOOL_PATH': str(Path(__file__).resolve().parents[1]),
-            'PYTHONPATH': str(Path(__file__).resolve().parents[1]) + os.pathsep + os.environ.get('PYTHONPATH', ''),
-            'NSDEPLOY_COMMERCE_ARBITER_URL': self.arbiter_url, 'NSDEPLOY_COMMERCE_KEY_FILE': str(self.key_file)})
+            text=True, capture_output=True, timeout=120, env={
+                **os.environ,
+                'AGENT_TOOL_PATH': str(Path(__file__).resolve().parents[1]),
+                'PYTHONPATH': str(Path(__file__).resolve().parents[1]) + os.pathsep + os.environ.get('PYTHONPATH', ''),
+                'NSDEPLOY_COMMERCE_ARBITER_URL': self.arbiter_url, 'NSDEPLOY_COMMERCE_KEY_FILE': str(self.key_file)})
         self.assertEqual(result.returncode, 0, result.stderr[-4000:] + result.stdout[-4000:])
         self.assertNotIn(self.key, result.stdout + result.stderr)
         return json.loads(next(line[7:] for line in result.stdout.splitlines() if line.startswith('RESULT:')))
 
     def test_real_graph_books_from_natural_request_and_subsequent_confirmation(self):
         arrival = default_trip()['arrival']
-        results = self.graph([f'Book a night at the inn on {arrival} for under $500.', 'Confirm booking', 'What is my booking status?'])
+        results = self.graph([f'Book a night at the inn on {arrival} for under $500.', 'Confirm booking',
+                              'What is my booking status?'])
         self.assertIsNotNone(results[0]['state'], results)
         self.assertEqual(results[0]['state']['state'], 'NEGOTIATING', results)
         self.assertIn('$477.50', results[0]['text'])
@@ -367,7 +374,8 @@ class CommerceDeploymentTests(unittest.TestCase):
             community = json.loads((root / filename).read_text())
             self.assertIn(['butterpink_family', 'commerce_arbiter'], community['relationships'])
             self.assertIn(['seabreeze_inn', 'commerce_arbiter'], community['relationships'])
-            self.assertGreater(choose_position(community['sites'])['my_px'], max(site['position']['my_px'] for site in community['sites']))
+            self.assertGreater(choose_position(community['sites'])['my_px'],
+                               max(site['position']['my_px'] for site in community['sites']))
         page = (root / 'cailville.html').read_text()
         self.assertIn('stewards-toggle', page)
         self.assertIn('Open ${sites[siteId].name} private steward in nsFlow', page)

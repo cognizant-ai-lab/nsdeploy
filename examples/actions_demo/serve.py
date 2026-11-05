@@ -30,7 +30,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
             if not 0 < length <= 4096:
                 raise ValueError("body size")
             values = json.loads(self.rfile.read(length))
-            if set(values) != {"date", "partySize"} or type(values["partySize"]) is not int or not 1 <= values["partySize"] <= 12:
+            if (set(values) != {"date", "partySize"} or type(values["partySize"]) is not int
+                    or not 1 <= values["partySize"] <= 12):
                 raise ValueError("invalid reservation")
             date.fromisoformat(values["date"])
             key = self.headers.get("Idempotency-Key", "")

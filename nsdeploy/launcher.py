@@ -513,14 +513,15 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
         commerce = from_plan(plan, site_dir, site_base or f"http://127.0.0.1:{port}")
         httpd = ThreadingHTTPServer(
             ("127.0.0.1", port), make_handler(site_dir, upstream, runtime_dir, ext_mcps,
-                                               local_mcps, f"http://127.0.0.1:{facade_port}/mcp", commerce))
+                                              local_mcps, f"http://127.0.0.1:{facade_port}/mcp", commerce))
         url = (site_base or f"http://127.0.0.1:{port}").rstrip("/") + "/"
         print(f"\n🌐  {plan.network_name} is live:  {url}")
         if site_base:
             print(f"    Loopback backend: 127.0.0.1:{port}")
         llm_default = "mock /v1 (developer mode)" if mock_llm else "BYOK /byok/v1 (API key required)"
         print(f"    LLM default: {llm_default}  ·  BYOK upstream → {upstream}")
-        print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: caller BYOK → {facade_upstream}  ·  steward: {plan.network_name}_private_steward.hocon")
+        print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: caller BYOK → {facade_upstream}  "
+              f"·  steward: {plan.network_name}_private_steward.hocon")
         if plan.hostable_tools:
             print("    MCP tool servers (same-origin proxy → private subprocess):")
             for i, (tool, (_, private_port)) in enumerate(zip(plan.hostable_tools, bindings)):

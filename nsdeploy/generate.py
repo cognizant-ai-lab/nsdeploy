@@ -67,19 +67,24 @@ quoted Response. Omit the block when chat alone is best. A composition can inclu
 several complementary components; do not repeat the same content in every channel.
 Keep stable, meaningful component IDs and form property keys across revisions.
 ```cruse-ui
-{"version":1,"components":[{"id":"availability","kind":"table","title":"Available options","columns":["Option","Availability"],"rows":[["Known option","Known availability"]]}]}
+{"version":1,"components":[{"id":"availability","kind":"table","title":"Available options","columns":["Option",\
+"Availability"],"rows":[["Known option","Known availability"]]}]}
 ```
 Supported component shapes (examples of structure, not factual data):
-{"id":"details","kind":"form","title":"…","schema":{"type":"object","properties":{"start_date":{"type":"string","format":"date","title":"Start date"}},"required":["start_date"]},"submitLabel":"Continue"}
+{"id":"details","kind":"form","title":"…","schema":{"type":"object","properties":{"start_date":{"type":"string",\
+"format":"date","title":"Start date"}},"required":["start_date"]},"submitLabel":"Continue"}
 Field types: string, integer/number (minimum/maximum), boolean, string format date,
 enum dropdown, x-ui:{widget:textarea} or {widget:radio}, array with items.enum for
 multiple selections. Use default only for known values. Mark only essential fields required.
 {"id":"options","kind":"choice","title":"…","options":[{"title":"…","subtitle":"…","meta":"…","value":"stable-option-id"}]}
-{"id":"approval","kind":"confirm","title":"…","confirmLabel":"Yes","cancelLabel":"No","confirmText":"Explicit action being approved"}
+{"id":"approval","kind":"confirm","title":"…","confirmLabel":"Yes","cancelLabel":"No","confirmText":"Explicit action \
+being approved"}
 {"id":"facts","kind":"info","title":"…","fields":{"Label":"Value"}}
-{"id":"report","kind":"report","title":"…","markdown":"## Findings\\n\\nStructured explanation with **emphasis**, lists and links."}
+{"id":"report","kind":"report","title":"…","markdown":"## Findings\\n\\nStructured explanation with **emphasis**, \
+lists and links."}
 {"id":"comparison","kind":"table","title":"…","columns":["Label","Value"],"rows":[["A","Known value"]]}
-{"id":"trend","kind":"chart","title":"…","chartType":"bar","unit":"Units","labels":["A","B"],"series":[{"name":"Series","values":[10,20]}],"summary":"Text explanation of the actual data."}
+{"id":"trend","kind":"chart","title":"…","chartType":"bar","unit":"Units","labels":["A","B"],\
+"series":[{"name":"Series","values":[10,20]}],"summary":"Text explanation of the actual data."}
 Charts support bar or line, up to 8 series and 120 labels. Values must be finite numbers;
 each series must match labels. Include a useful summary. Chart data is also accessible as a table.
 {"id":"visual","kind":"html","title":"…","html":"<article><h2>Findings</h2><p>Context</p></article>"}
@@ -326,7 +331,8 @@ def build_private_steward_hocon(
     {
       "name": "private_steward",
       "function": {
-        "description": "Represent the site operator in the public agent web. Delegate public-site work through the MCP gateway."
+        "description": "Represent the site operator in the public agent web. Delegate public-site work through the MCP \
+gateway."
       },
       "instructions": %s,
       "tools": ["public_agent_mcp_gateway"]
@@ -334,7 +340,8 @@ def build_private_steward_hocon(
     {
       "name": "public_agent_mcp_gateway",
       "function": {
-        "description": "Fetch and run any trusted public nsDeploy agent network locally. The site URL is checked against the local deny policy; MCP is a legacy fallback.",
+        "description": "Fetch and run any trusted public nsDeploy agent network locally. The site URL is checked \
+against the local deny policy; MCP is a legacy fallback.",
         "parameters": %s
       },
       "class": "nsdeploy.steward.PublicAgentNetworkGateway"

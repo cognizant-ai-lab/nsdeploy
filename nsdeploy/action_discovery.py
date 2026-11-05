@@ -34,7 +34,8 @@ class NoRedirect(HTTPRedirectHandler):
 
 def fetch(url, method="GET", headers=None):
     public_url(url)
-    request = Request(url, method=method, headers={"User-Agent": "Mozilla/5.0 (compatible; nsdeploy-discovery/1)", **(headers or {})})
+    request = Request(url, method=method,
+                      headers={"User-Agent": "Mozilla/5.0 (compatible; nsdeploy-discovery/1)", **(headers or {})})
     try:
         response = build_opener(NoRedirect).open(request, timeout=20)
     except HTTPError as exc:
@@ -84,7 +85,8 @@ class Page(HTMLParser):
 
 
 def fingerprint(form):
-    return hashlib.sha256(json.dumps(form, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    return hashlib.sha256(
+        json.dumps(form, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
 
 
 def action_name(method, url):
@@ -115,7 +117,8 @@ def form_action(page_url, form, index):
             continue
         if tag != "select":
             current_select = None
-        if any(k.startswith("on") or k.startswith("form") for k in a) or kind in ("password", "hidden", "file", "image") or (name and SENSITIVE.search(name)):
+        if (any(k.startswith("on") or k.startswith("form") for k in a)
+                or kind in ("password", "hidden", "file", "image") or (name and SENSITIVE.search(name))):
             raise ValueError("Form needs JavaScript, credentials, hidden state, or unsupported controls.")
         if not name or "disabled" in a:
             continue
@@ -126,7 +129,8 @@ def form_action(page_url, form, index):
         schema = {"type": "string", "title": a.get("aria-label", name), "maxLength": 4096}
         if kind in ("radio", "checkbox"):
             options.setdefault(name, []).append(a.get("value", "on"))
-            schema = {"type": "array", "items": {"type": "string"}, "maxItems": 100} if kind == "checkbox" else {"type": "string"}
+            schema = ({"type": "array", "items": {"type": "string"}, "maxItems": 100} if kind == "checkbox"
+                      else {"type": "string"})
             if kind == "checkbox" and "required" in a:
                 schema["minItems"] = 1
         elif tag == "select":
@@ -142,9 +146,11 @@ def form_action(page_url, form, index):
             if "required" in a:
                 schema["format"] = kind
             else:
-                schema["description"] = f"Optional {kind}; may be left blank. Validated against the source form before submission."
+                schema["description"] = (f"Optional {kind}; may be left blank. "
+                                         "Validated against the source form before submission.")
         if kind == "time":
-            schema["description"] = f"Time as HH:MM; minimum {a.get('min', 'unspecified')}, maximum {a.get('max', 'unspecified')}, step {a.get('step', '60')} seconds."
+            schema["description"] = (f"Time as HH:MM; minimum {a.get('min', 'unspecified')}, "
+                                     f"maximum {a.get('max', 'unspecified')}, step {a.get('step', '60')} seconds.")
         if "maxlength" in a:
             schema["maxLength"] = int(a["maxlength"])
         props[name] = schema
@@ -158,9 +164,13 @@ def form_action(page_url, form, index):
     if not props:
         raise ValueError("Form has no supported named input fields.")
     return {"name": action_name(method, page_url + f"?form={index}"),
-            "description": f"Submit native form {index + 1} from {page_url}. HTTP response is evidence of submission, not business acceptance.",
-            "effect": "write", "inputSchema": {"type": "object", "properties": props, "required": list(dict.fromkeys(required)), "additionalProperties": False},
-            "request": {"kind": "form", "url": endpoint, "method": method, "page": page_url, "index": index, "fingerprint": fingerprint(form)},
+            "description": (f"Submit native form {index + 1} from {page_url}. "
+                            "HTTP response is evidence of submission, not business acceptance."),
+            "effect": "write",
+            "inputSchema": {"type": "object", "properties": props, "required": list(dict.fromkeys(required)),
+                            "additionalProperties": False},
+            "request": {"kind": "form", "url": endpoint, "method": method, "page": page_url, "index": index,
+                        "fingerprint": fingerprint(form)},
             "evidence": {"source": page_url, "kind": "native-form"}, "enabled": False}
 
 
@@ -180,7 +190,8 @@ def resolve_ref(schema, spec, depth=0):
 
 def scalar_schema(schema, spec):
     schema = resolve_ref(schema, spec)
-    allowed = {"type", "title", "description", "enum", "minimum", "maximum", "minLength", "maxLength", "format", "default", "example", "deprecated"}
+    allowed = {"type", "title", "description", "enum", "minimum", "maximum", "minLength", "maxLength", "format",
+               "default", "example", "deprecated"}
     if schema.get("type") not in ("string", "number", "integer", "boolean") or set(schema) - allowed:
         raise ValueError("Only scalar API parameters and explicit free-form JSON body fields are supported.")
     if schema.get("format") not in (None, "email", "date", "int32", "int64", "float", "double"):
@@ -201,10 +212,12 @@ def api_actions(spec, source, issues):
                 continue
             label = f"{method.upper()} {path}"
             try:
-                if op.get("security", spec.get("security")) or SENSITIVE.search(path) or re.search(r"/(?:admin|login|logout|register|payment)(?:/|$)", path, re.I):
+                if (op.get("security", spec.get("security")) or SENSITIVE.search(path)
+                        or re.search(r"/(?:admin|login|logout|register|payment)(?:/|$)", path, re.I)):
                     raise ValueError("Authenticated or sensitive operation excluded.")
                 servers = op.get("servers", item.get("servers", spec.get("servers", [])))
-                if not servers or "{" in servers[0]["url"] or not path.startswith("/") or path.startswith("//") or "?" in path:
+                if (not servers or "{" in servers[0]["url"] or not path.startswith("/") or path.startswith("//")
+                        or "?" in path):
                     raise ValueError("API requires a fixed server URL and path.")
                 endpoint = public_url(servers[0]["url"].rstrip("/") + path)
                 props, required, bindings, json_fields = {}, [], [], []
@@ -213,7 +226,9 @@ def api_actions(spec, source, issues):
                     name = p["name"]
                     if p["in"] not in ("path", "query") or SENSITIVE.search(name):
                         raise ValueError("Header/cookie/credential parameters excluded.")
-                    if name in props or p.get("style", "simple" if p["in"] == "path" else "form") not in ("simple", "form") or p.get("allowReserved"):
+                    if (name in props
+                            or p.get("style", "simple" if p["in"] == "path" else "form") not in ("simple", "form")
+                            or p.get("allowReserved")):
                         raise ValueError("Ambiguous or unsupported parameter encoding.")
                     props[name] = scalar_schema(p["schema"], spec)
                     bindings.append({"name": name, "in": p["in"]})
@@ -224,14 +239,20 @@ def api_actions(spec, source, issues):
                     if method == "get" or set(body.get("content", {})) != {"application/json"}:
                         raise ValueError("Only JSON API request bodies are supported.")
                     schema = resolve_ref(body["content"]["application/json"]["schema"], spec)
-                    if schema.get("type") != "object" or not schema.get("properties") or set(schema) - {"type", "properties", "required", "additionalProperties", "description", "title"}:
+                    if (schema.get("type") != "object" or not schema.get("properties")
+                            or set(schema) - {"type", "properties", "required", "additionalProperties", "description",
+                                              "title"}):
                         raise ValueError("API body needs explicit object properties.")
                     for name, field in schema["properties"].items():
                         if name in props or SENSITIVE.search(name):
                             raise ValueError("Conflicting or credential body field.")
                         field = resolve_ref(field, spec)
-                        if field.get("type") == "object" and field.get("additionalProperties") is True and not field.get("properties") and not (set(field) - {"type", "additionalProperties", "description", "title"}):
-                            props[name] = {"type": "string", "maxLength": 16000, "description": "JSON object text. " + field.get("description", ""), "x-json": True}
+                        if (field.get("type") == "object" and field.get("additionalProperties") is True
+                                and not field.get("properties")
+                                and not (set(field) - {"type", "additionalProperties", "description", "title"})):
+                            props[name] = {"type": "string", "maxLength": 16000,
+                                           "description": "JSON object text. " + field.get("description", ""),
+                                           "x-json": True}
                             json_fields.append(name)
                         else:
                             props[name] = scalar_schema(field, spec)
@@ -239,10 +260,14 @@ def api_actions(spec, source, issues):
                     required += schema.get("required", [])
                 if set(re.findall(r"\{([^}]+)\}", endpoint)) != {p["name"] for p in bindings if p["in"] == "path"}:
                     raise ValueError("Path parameters do not match the endpoint template.")
-                result.append({"name": action_name(method, endpoint), "description": op.get("summary", label) + f" ({method.upper()} {endpoint})",
-                               "effect": "read" if method == "get" else ("irreversible" if method == "delete" else "write"),
-                               "inputSchema": {"type": "object", "properties": props, "required": required, "additionalProperties": False},
-                               "request": {"kind": "http", "url": endpoint, "method": method.upper(), "bindings": bindings, "jsonFields": json_fields, "body": bool(body)},
+                result.append({"name": action_name(method, endpoint),
+                               "description": op.get("summary", label) + f" ({method.upper()} {endpoint})",
+                               "effect": ("read" if method == "get"
+                                          else ("irreversible" if method == "delete" else "write")),
+                               "inputSchema": {"type": "object", "properties": props, "required": required,
+                                               "additionalProperties": False},
+                               "request": {"kind": "http", "url": endpoint, "method": method.upper(),
+                                           "bindings": bindings, "jsonFields": json_fields, "body": bool(body)},
                                "evidence": {"source": source, "kind": "openapi"}, "enabled": False})
             except (ValueError, KeyError, TypeError) as exc:
                 issues.append({"source": source, "operation": label, "reason": str(exc)})
@@ -270,11 +295,16 @@ def cors_probe(action, site_url, fetcher):
             allow = response.get("access-control-allow-origin") in ("*", origin(site_url))
             methods = {x.strip().upper() for x in response.get("access-control-allow-methods", "").split(",")}
             allowed_headers = {x.strip().lower() for x in response.get("access-control-allow-headers", "").split(",")}
-            preflight = 200 <= status < 300 and allow and (method in methods or "*" in methods) and ("Access-Control-Request-Headers" not in headers or bool(allowed_headers & {"*", "content-type"}))
-            checks.append({"url": url, "status": "preflight-permitted" if preflight else "unverified", "httpStatus": status})
+            preflight = (200 <= status < 300 and allow and (method in methods or "*" in methods)
+                         and ("Access-Control-Request-Headers" not in headers
+                              or bool(allowed_headers & {"*", "content-type"})))
+            checks.append({"url": url, "status": "preflight-permitted" if preflight else "unverified",
+                           "httpStatus": status})
         except (ValueError, OSError) as exc:
             checks.append({"url": url, "status": "unverified", "reason": str(exc)})
-    return {"checks": checks, "note": "OPTIONS only; actual browser execution and response CORS remain unverified. No business operation was run."}
+    return {"checks": checks,
+            "note": ("OPTIONS only; actual browser execution and response CORS remain unverified. "
+                     "No business operation was run.")}
 
 
 def discover(site, spec_path=None, site_url="", max_pages=6, fetcher=fetch):
@@ -283,7 +313,8 @@ def discover(site, spec_path=None, site_url="", max_pages=6, fetcher=fetch):
         raise ValueError("--action-max-pages must be between 1 and 20.")
     actions, issues, visited, queue = [], [], [], [site]
     if spec_path:
-        raw = fetcher(spec_path)[0] if str(spec_path).startswith(("https://", "http://")) else Path(spec_path).read_text()
+        raw = (fetcher(spec_path)[0] if str(spec_path).startswith(("https://", "http://"))
+               else Path(spec_path).read_text())
         actions += api_actions(json.loads(raw), str(spec_path), issues)
     while queue and len(visited) < max_pages:
         url = queue.pop(0)
@@ -302,7 +333,9 @@ def discover(site, spec_path=None, site_url="", max_pages=6, fetcher=fetch):
                 except (ValueError, KeyError) as exc:
                     issues.append({"source": url, "form": index + 1, "reason": str(exc)})
             if page.scripts:
-                issues.append({"source": url, "reason": "Page JavaScript was not executed. JS-only actions require a documented API or site-owned adapter."})
+                issues.append({"source": url,
+                               "reason": ("Page JavaScript was not executed. "
+                                          "JS-only actions require a documented API or site-owned adapter.")})
             for href in page.links:
                 target = urlsplit(urljoin(url, href))
                 if target.scheme not in ("http", "https") or target.username or target.password:
@@ -310,7 +343,9 @@ def discover(site, spec_path=None, site_url="", max_pages=6, fetcher=fetch):
                 target = urlunsplit((target.scheme, target.netloc, target.path, "", ""))
                 # Only explicit documentation/form navigation; never crawl query links,
                 # guessed endpoints, logout links or submit forms to explore the site.
-                if "?" not in href and origin(target) == origin(site) and re.search(r"(?:form|docs?|openapi|swagger|spec)(?:[./_-]|$)", urlsplit(target).path, re.I) and not re.search(r"logout|delete|remove|checkout", target, re.I):
+                if ("?" not in href and origin(target) == origin(site)
+                        and re.search(r"(?:form|docs?|openapi|swagger|spec)(?:[./_-]|$)", urlsplit(target).path, re.I)
+                        and not re.search(r"logout|delete|remove|checkout", target, re.I)):
                     if target not in visited and target not in queue:
                         queue.append(target)
         except (ValueError, OSError) as exc:
@@ -326,7 +361,8 @@ def discover(site, spec_path=None, site_url="", max_pages=6, fetcher=fetch):
             "actions": actions, "issues": issues}
 
 
-def prepare_actions(lock_path, site=None, spec=None, site_url="", refresh=False, include_all=False, allow=(), max_pages=6):
+def prepare_actions(lock_path, site=None, spec=None, site_url="", refresh=False, include_all=False, allow=(),
+                    max_pages=6):
     lock_path = Path(lock_path)
     if lock_path.exists() and not refresh:
         doc = json.loads(lock_path.read_text())
@@ -351,7 +387,9 @@ def prepare_actions(lock_path, site=None, spec=None, site_url="", refresh=False,
     for issue in doc["issues"]:
         print(f"   discovery note: {issue['source']}: {issue['reason']}")
     if not count:
-        raise ValueError(f"No discovered actions enabled. Review {lock_path}, set selected enabled fields to true, or use --action-allow NAME. --action-include-all enables all supported candidates for a test site.")
+        raise ValueError(f"No discovered actions enabled. Review {lock_path}, set selected enabled fields to true, "
+                         "or use --action-allow NAME. "
+                         "--action-include-all enables all supported candidates for a test site.")
     if doc.get("siteOrigin") != (origin(site_url) if site_url else None):
         print("   WARNING: publishing origin differs from the discovery checks; browser CORS needs verification.")
     return doc
