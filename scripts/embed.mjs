@@ -129,7 +129,7 @@ export class Embed {
     if (/<base\b/i.test(html)) {
       throw new Error("Pages with a <base> element need a manually placed snippet with explicit asset URLs.");
     }
-    const tokens = /<!--[\s\S]*?-->|<(script|style|textarea|title)\b[^>]*>[\s\S]*?<\/\1\s*>|<[^>"']*(?:"[^"]*"|'[^']*'|[^>"']*)*>/gi;
+    const tokens = /<!--[\s\S]*?-->|<(script|style|textarea|title)\b[^>]*>[\s\S]*?<\/\1\s*>|<(?:[^"'<>]|"[^"]*"|'[^']*')*>/gi;
     let found = -1;
     // Match actual HTML tags rather than closing-body text inside JavaScript or comments.
     for (const match of html.matchAll(tokens)) {
