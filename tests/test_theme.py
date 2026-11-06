@@ -3,6 +3,11 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
+from typing import Dict
+from typing import Literal
+import urllib.request
+from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from nsdeploy.generate import _index_html
@@ -16,13 +21,13 @@ from nsdeploy.theme import propose_theme
 
 
 class _Response:
-    def __enter__(self):
+    def __enter__(self) -> "_Response":
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: Any) -> Literal[False]:
         return False
 
-    def read(self):
+    def read(self) -> bytes:
         """
         Return a canned chat completion body.
 
@@ -34,12 +39,12 @@ class _Response:
 class ThemeChatTests(unittest.TestCase):
     """Tests for the theme chat request payload and prompt caching."""
 
-    def test_default_theme_model_is_gpt_5_6(self):
+    def test_default_theme_model_is_gpt_5_6(self) -> None:
         """Check default theme model is gpt 5 6."""
         self.assertEqual(DEFAULT_THEME_MODEL, "gpt-5.6")
 
     @patch("nsdeploy.theme.urllib.request.urlopen", return_value=_Response())
-    def test_gpt_5_payload_omits_temperature(self, urlopen):
+    def test_gpt_5_payload_omits_temperature(self, urlopen: MagicMock) -> None:
         """
         Check GPT-5 payload omits temperature.
 
@@ -47,13 +52,13 @@ class ThemeChatTests(unittest.TestCase):
         """
         self.assertEqual(_chat("https://api.openai.com/v1", "key", "gpt-5.6", "system", "user"), "theme")
 
-        request = urlopen.call_args.args[0]
-        payload = json.loads(request.data)
+        request: urllib.request.Request = urlopen.call_args.args[0]
+        payload: Dict[str, Any] = json.loads(request.data)
         self.assertNotIn("temperature", payload)
         self.assertEqual(urlopen.call_args.kwargs["timeout"], 180)
 
     @patch("nsdeploy.theme.urllib.request.urlopen", return_value=_Response())
-    def test_other_models_keep_low_temperature(self, urlopen):
+    def test_other_models_keep_low_temperature(self, urlopen: MagicMock) -> None:
         """
         Check other models keep low temperature.
 
@@ -61,25 +66,27 @@ class ThemeChatTests(unittest.TestCase):
         """
         _chat("http://127.0.0.1:11434/v1", "key", "qwen2.5:7b", "system", "user")
 
-        request = urlopen.call_args.args[0]
+        request: urllib.request.Request = urlopen.call_args.args[0]
         self.assertEqual(json.loads(request.data)["temperature"], 0.2)
 
-    def test_custom_prompt_is_appended_and_part_of_cache_identity(self):
+    def test_custom_prompt_is_appended_and_part_of_cache_identity(self) -> None:
         """Check custom prompt is appended and part of cache identity."""
-        plan = SimpleNamespace(
+        plan: SimpleNamespace = SimpleNamespace(
             config={"metadata": {"description": "A test network"}},
             network_name="test_network",
             front_man="front",
             agents=[{"name": "front", "function": {"description": "Helps users"}}],
         )
-        response = ('===META===\n{"brand":"Test"}\n===STYLE===\n.page { color: navy; }\n===BODY===\n'
-                    '<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div>'
-                    '<main data-ns-slot="chat"></main><aside data-ns-slot="agents"></aside>'
-                    '<div data-ns-slot="settings"></div></div>\n')
+        response: str = ('===META===\n{"brand":"Test"}\n===STYLE===\n.page { color: navy; }\n===BODY===\n'
+                         '<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div>'
+                         '<main data-ns-slot="chat"></main><aside data-ns-slot="agents"></aside>'
+                         '<div data-ns-slot="settings"></div></div>\n')
+        tmp: str
+        chat: MagicMock
         with tempfile.TemporaryDirectory() as tmp, \
                 patch("nsdeploy.theme.CACHE_DIR", Path(tmp)), \
                 patch("nsdeploy.theme._chat", return_value=response) as chat:
-            kwargs = {"model": "test-model", "api_key": "key", "upstream": "https://example.test/v1"}
+            kwargs: Dict[str, Any] = {"model": "test-model", "api_key": "key", "upstream": "https://example.test/v1"}
             propose_theme(plan, theme_prompt="Use warm paper tones", **kwargs)
             propose_theme(plan, theme_prompt="Use cool ocean tones", **kwargs)
 
@@ -89,22 +96,23 @@ class ThemeChatTests(unittest.TestCase):
         self.assertIn("Additional theme instructions from the deployer:\nUse cool ocean tones",
                       chat.call_args_list[1].args[4])
 
-    def test_fresh_generated_layout_must_place_settings(self):
+    def test_fresh_generated_layout_must_place_settings(self) -> None:
         """Check fresh generated layout must place settings."""
-        plan = SimpleNamespace(
+        plan: SimpleNamespace = SimpleNamespace(
             config={"metadata": {"description": "A test network"}},
             network_name="test_network",
             front_man="front",
             agents=[{"name": "front", "function": {"description": "Helps users"}}],
         )
-        response = ('===META===\n{"brand":"Test"}\n===STYLE===\n.page { color: navy; }\n===BODY===\n'
-                    '<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div>'
-                    '<main data-ns-slot="chat"></main><aside data-ns-slot="agents"></aside>'
-                    '</div>\n')
+        response: str = ('===META===\n{"brand":"Test"}\n===STYLE===\n.page { color: navy; }\n===BODY===\n'
+                         '<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div>'
+                         '<main data-ns-slot="chat"></main><aside data-ns-slot="agents"></aside>'
+                         '</div>\n')
+        tmp: str
         with tempfile.TemporaryDirectory() as tmp, \
                 patch("nsdeploy.theme.CACHE_DIR", Path(tmp)), \
                 patch("nsdeploy.theme._chat", return_value=response):
-            spec = propose_theme(
+            spec: ThemeSpec = propose_theme(
                 plan, model="test-model", api_key="key", upstream="https://example.test/v1",
             )
 
@@ -116,7 +124,7 @@ class ThemeChatTests(unittest.TestCase):
 class ThemeLayoutTests(unittest.TestCase):
     """Tests for theme layout prompts and generated page composition."""
 
-    def test_prompt_requests_composed_runtime_slots(self):
+    def test_prompt_requests_composed_runtime_slots(self) -> None:
         """Check prompt requests composed runtime slots."""
         self.assertEqual(PROMPT_VERSION, "13")
         self.assertIn('data-ns-layout="composed"', _SYSTEM_PROMPT)
@@ -138,9 +146,9 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertIn("YOU choose where and how it appears", _SYSTEM_PROMPT)
         self.assertIn("automatically opens it when an API key is required", _SYSTEM_PROMPT)
 
-    def test_composed_layout_and_native_drawer_survive_sanitizing(self):
+    def test_composed_layout_and_native_drawer_survive_sanitizing(self) -> None:
         """Check composed layout and native drawer survive sanitizing."""
-        spec = ThemeSpec.coerce({
+        spec: ThemeSpec = ThemeSpec.coerce({
             "body": """
                 <div id="app" data-ns-layout="composed" onclick="bad()">
                   <header class="mast" data-ns-slot="header"></header>
@@ -172,9 +180,9 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertNotIn("onclick", spec.body)
         self.assertNotIn("<script", spec.body)
 
-    def test_generated_composed_page_uses_flexible_scroll_and_widget_guards(self):
+    def test_generated_composed_page_uses_flexible_scroll_and_widget_guards(self) -> None:
         """Check generated composed page uses flexible scroll and widget guards."""
-        spec = ThemeSpec.coerce({
+        spec: ThemeSpec = ThemeSpec.coerce({
             "body": """
                 <div id="app" data-ns-layout="composed">
                   <div data-ns-slot="header"></div>
@@ -183,8 +191,8 @@ class ThemeLayoutTests(unittest.TestCase):
                 </div>
             """,
         })
-        page = _index_html(spec, "Test network")
-        css = _theme_css(spec)
+        page: str = _index_html(spec, "Test network")
+        css: str = _theme_css(spec)
 
         self.assertIn('<link rel="stylesheet" href="/theme.css"', page)
         self.assertIn('import("/site.js")', page)
@@ -193,9 +201,9 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertIn('.ns-widget{box-sizing:border-box!important;max-width:100%!important}', css)
         self.assertIn('boot("#app")', page)
 
-    def test_incomplete_composed_layout_falls_back_to_default(self):
+    def test_incomplete_composed_layout_falls_back_to_default(self) -> None:
         """Check incomplete composed layout falls back to default."""
-        spec = ThemeSpec.coerce({
+        spec: ThemeSpec = ThemeSpec.coerce({
             "body": """
                 <div id="app" data-ns-layout="composed">
                   <div data-ns-slot="header"></div>
@@ -208,9 +216,9 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertEqual(spec.body, "")
         self.assertEqual(spec.style, "")
 
-    def test_duplicate_optional_activity_slot_falls_back_to_default(self):
+    def test_duplicate_optional_activity_slot_falls_back_to_default(self) -> None:
         """Check duplicate optional activity slot falls back to default."""
-        spec = ThemeSpec.coerce({
+        spec: ThemeSpec = ThemeSpec.coerce({
             "body": """
                 <div id="app" data-ns-layout="composed">
                   <div data-ns-slot="header"></div>
@@ -226,9 +234,9 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertEqual(spec.body, "")
         self.assertEqual(spec.style, "")
 
-    def test_duplicate_settings_slot_falls_back_to_default(self):
+    def test_duplicate_settings_slot_falls_back_to_default(self) -> None:
         """Check duplicate settings slot falls back to default."""
-        spec = ThemeSpec.coerce({
+        spec: ThemeSpec = ThemeSpec.coerce({
             "body": """
                 <div id="app" data-ns-layout="composed">
                   <div data-ns-slot="header"></div>
@@ -244,29 +252,29 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertEqual(spec.body, "")
         self.assertEqual(spec.style, "")
 
-    def test_legacy_empty_mount_remains_supported(self):
+    def test_legacy_empty_mount_remains_supported(self) -> None:
         """Check legacy empty mount remains supported."""
-        spec = ThemeSpec.coerce({"body": '<div class="frame"><div id="app"></div></div>'})
-        page = _index_html(spec, "Legacy network")
+        spec: ThemeSpec = ThemeSpec.coerce({"body": '<div class="frame"><div id="app"></div></div>'})
+        page: str = _index_html(spec, "Legacy network")
 
         self.assertIn('<div id="app"></div>', page)
         self.assertIn('#app:not([data-ns-layout="composed"])', _theme_css(spec))
 
-    def test_fixed_editable_layout_keeps_default_full_viewport_shell(self):
+    def test_fixed_editable_layout_keeps_default_full_viewport_shell(self) -> None:
         """Check fixed editable layout keeps default full viewport shell."""
-        spec = ThemeSpec.coerce({
+        spec: ThemeSpec = ThemeSpec.coerce({
             "body": '<div id="app" data-ns-layout="fixed">Loading...</div>',
             "style": ".site-note { color: green; }",
         })
 
-        css = _theme_css(spec)
+        css: str = _theme_css(spec)
         self.assertIn(".site-note { color: green; }", css)
         self.assertIn("#app{height:100vh;overflow:hidden}", css)
         self.assertNotIn('#app:not([data-ns-layout="composed"])', css)
 
-    def test_relative_site_assets_survive_css_sanitizing(self):
+    def test_relative_site_assets_survive_css_sanitizing(self) -> None:
         """Check relative site assets survive css sanitizing."""
-        spec = ThemeSpec.coerce({
+        spec: ThemeSpec = ThemeSpec.coerce({
             "body": '<div id="app"></div>',
             "style": '.hero{background:url("./assets/harbor.jpg")}',
         })

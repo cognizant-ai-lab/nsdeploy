@@ -20,6 +20,11 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import ModuleType
+from typing import TYPE_CHECKING
+from typing import Any
+from typing import Dict
+from typing import List
 from typing import Optional
 
 from nsdeploy.action_discovery import prepare_actions
@@ -29,6 +34,7 @@ from nsdeploy.gateway import run_gateway_command
 from nsdeploy.linker import load_deploy_links
 from nsdeploy.linker import run_link_command
 from nsdeploy.launcher import serve
+from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.resolve import build_plan
 from nsdeploy.resolve import format_report
 from nsdeploy.resolve import load_toolbox_info
@@ -40,10 +46,14 @@ from nsdeploy.studio import DEFAULT_REF
 from nsdeploy.studio import DEFAULT_REPO
 from nsdeploy.studio import GithubStudio
 from nsdeploy.studio import LocalStudio
+from nsdeploy.studio import StudioSource
 from nsdeploy.theme import DEFAULT_THEME_MODEL
 from nsdeploy.theme import ThemeSpec
 from nsdeploy.theme import load_theme_file
 from nsdeploy.theme import propose_theme
+
+if TYPE_CHECKING:
+    from nsdeploy.cailville import CommunityDraft
 
 # Optional module: a plain deploy must not fail to start when it is absent from an install.
 try:
@@ -54,7 +64,7 @@ except ImportError as _exc:
     _CAILVILLE_IMPORT_ERROR = _exc
 
 
-def _load_cailville():
+def _load_cailville() -> Optional[ModuleType]:
     """Return the Cailville community helpers, or None when they are unavailable.
 
     Only `nsdeploy cailville ...` and --add-to-cailville need them; a plain deploy must
@@ -78,10 +88,10 @@ def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "link":
         return run_link_command(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "cailville":
-        cailville = _load_cailville()
+        cailville: Optional[ModuleType] = _load_cailville()
         return cailville.run_cailville_command(sys.argv[2:]) if cailville else 2
 
-    ap = argparse.ArgumentParser(prog="nsdeploy", description=__doc__)
+    ap: argparse.ArgumentParser = argparse.ArgumentParser(prog="nsdeploy", description=__doc__)
     ap.add_argument("hocon", help="path to the agent-network HOCON")
     ap.add_argument("--studio", default=None, help="local neuro-san-studio checkout (overrides GitHub)")
     ap.add_argument("--repo", default=DEFAULT_REPO, help=f"GitHub repo for tool files (default {DEFAULT_REPO})")
@@ -162,7 +172,7 @@ def main() -> int:
                          "BYOK/MCP, no Python tools or public MCP facade)")
     ap.add_argument("--mock-llm", action="store_true",
                     help="developer mode: make the deterministic keyless mock LLM the default")
-    args = ap.parse_args()
+    args: argparse.Namespace = ap.parse_args()
     if args.actions and not Path(args.actions).is_file():
         ap.error("--actions must name an existing JavaScript adapter")
     # pylint: disable-next=too-many-boolean-expressions  # flat list of conflicting options
@@ -170,7 +180,7 @@ def main() -> int:
                                      or args.action_site or args.action_spec or args.action_lock
                                      or args.action_refresh or args.action_allow or args.action_include_all):
         ap.error("--no-action-discovery cannot be combined with form discovery options")
-    action_pages = args.action_page or []
+    action_pages: List[str] = args.action_page or []
     try:
         # The conventional discovery lock can also supply these capabilities.
         action_discovery_config(action_pages, args.action_module, args.action_caller_origin, args.action_host_page,
@@ -184,11 +194,12 @@ def main() -> int:
         print("warning: --facade-key is ignored; the public facade only uses caller BYOK credentials",
               file=sys.stderr)
 
-    hocon_path = Path(args.hocon).resolve()
+    hocon_path: Path = Path(args.hocon).resolve()
     if not hocon_path.is_file():
         print(f"error: HOCON not found: {hocon_path}", file=sys.stderr)
         return 2
 
+    source: StudioSource
     if args.studio:
         source = LocalStudio(args.studio)
         print(f"▶ Resolving {hocon_path.name} (studio: {source.root}) …\n")
@@ -196,11 +207,11 @@ def main() -> int:
         source = GithubStudio(args.repo, args.ref)
         print(f"▶ Resolving {hocon_path.name} (tools from github:{args.repo}@{args.ref}) …\n")
 
-    network_name = hocon_path.stem
-    site_dir = (Path(args.site_dir).resolve() if args.site_dir
-                else hocon_path.parent / "sites" / network_name)
-    action_lock = Path(args.action_lock) if args.action_lock else site_dir / "discovered-actions.json"
-    discovered_actions = None
+    network_name: str = hocon_path.stem
+    site_dir: Path = (Path(args.site_dir).resolve() if args.site_dir
+                      else hocon_path.parent / "sites" / network_name)
+    action_lock: Path = Path(args.action_lock) if args.action_lock else site_dir / "discovered-actions.json"
+    discovered_actions: Optional[Dict[str, Any]] = None
     # pylint: disable-next=too-many-boolean-expressions  # flat list of discovery triggers
     if not args.no_action_discovery and (args.action_site or args.action_spec or args.action_lock
                                          or args.action_refresh or args.action_allow or args.action_include_all
@@ -216,8 +227,10 @@ def main() -> int:
                                 bool(discovered_actions))
     except ValueError as exc:
         ap.error(str(exc))
+    config: Dict[str, Any]
+    missing_includes: List[str]
     config, missing_includes = resolve_hocon(hocon_path, source)
-    cailville_draft = None
+    cailville_draft: Optional[CommunityDraft] = None
     cailville = None
     if args.add_to_cailville:
         cailville = _load_cailville()
@@ -238,21 +251,21 @@ def main() -> int:
             print(f"error: cannot add site to Cailville: {exc}", file=sys.stderr)
             return 2
     try:
-        links_path = Path(args.links).resolve() if args.links else None
+        links_path: Optional[Path] = Path(args.links).resolve() if args.links else None
         if links_path is not None and not links_path.is_file():
             raise ValueError(f"link file not found: {links_path}")
-        deploy_links = load_deploy_links(hocon_path, network_name, links_path, args.link)
+        deploy_links: Dict[str, str] = load_deploy_links(hocon_path, network_name, links_path, args.link)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     if deploy_links:
-        configured = dict(config.get("links", {}) or {})
+        configured: Dict[str, Any] = dict(config.get("links", {}) or {})
         configured.update(deploy_links)
         config["links"] = configured
-    private_steward_sites = {}
+    private_steward_sites: Dict[str, str] = {}
     if args.steward_sites:
         try:
-            steward_data = json.loads(Path(args.steward_sites).read_text(encoding="utf-8"))
+            steward_data: Any = json.loads(Path(args.steward_sites).read_text(encoding="utf-8"))
             if not isinstance(steward_data, dict) or not all(
                 isinstance(name, str) and isinstance(url, str)
                 for name, url in steward_data.items()
@@ -264,8 +277,8 @@ def main() -> int:
             return 2
     if cailville_draft is not None:
         private_steward_sites.update(cailville.public_site_directory(cailville_draft.community))
-    toolbox_info = {} if args.static_bundle else load_toolbox_info(source)
-    plan = build_plan(
+    toolbox_info: Dict[str, Any] = {} if args.static_bundle else load_toolbox_info(source)
+    plan: DeploymentPlan = build_plan(
         config, toolbox_info, network_name, missing_includes, source,
         include_python_tools=not args.static_bundle,
     )
@@ -279,9 +292,9 @@ def main() -> int:
 
     # Resolve the theme (Tier 1). Default look unless pinned (--theme-file) or LLM
     # theming (--theme) with a key; any failure falls back to the default.
-    theme = None
-    has_site_source = site_source_exists(site_dir)
-    refresh_site_source = False
+    theme: Optional[ThemeSpec] = None
+    has_site_source: bool = site_source_exists(site_dir)
+    refresh_site_source: bool = False
     if args.theme_file:
         theme = load_theme_file(Path(args.theme_file))
         print(f"   theme: using pinned {args.theme_file}")
@@ -294,7 +307,7 @@ def main() -> int:
                 return 2
             print(f"   theme: using editable source → {site_dir}")
         else:
-            key = args.theme_key or os.environ.get("OPENAI_API_KEY", "")
+            key: str = args.theme_key or os.environ.get("OPENAI_API_KEY", "")
             if not key:
                 if has_site_source:
                     print("   theme: no key ($OPENAI_API_KEY / --theme-key); refresh skipped")
@@ -307,10 +320,10 @@ def main() -> int:
                 else:
                     print("   theme: --theme set but no key ($OPENAI_API_KEY / --theme-key) — using the default look")
             else:
-                theme_upstream = args.theme_upstream or "https://api.openai.com/v1"
-                proposed = propose_theme(plan, model=args.theme_model, api_key=key,
-                                         upstream=theme_upstream, refresh=args.theme_refresh,
-                                         theme_prompt=args.theme_prompt)
+                theme_upstream: str = args.theme_upstream or "https://api.openai.com/v1"
+                proposed: ThemeSpec = propose_theme(plan, model=args.theme_model, api_key=key,
+                                                    upstream=theme_upstream, refresh=args.theme_refresh,
+                                                    theme_prompt=args.theme_prompt)
                 if has_site_source and args.theme_refresh and not proposed.body:
                     try:
                         theme = load_site_theme(site_dir)
@@ -332,23 +345,24 @@ def main() -> int:
 
     theme = theme or ThemeSpec()
     if not has_site_source or refresh_site_source:
-        brand = theme.brand or network_name.replace("_", " ").replace("-", " ").title()
-        brand_display = f"{theme.icon} {brand}".strip() if theme.icon else brand
+        brand: str = theme.brand or network_name.replace("_", " ").replace("-", " ").title()
+        brand_display: str = f"{theme.icon} {brand}".strip() if theme.icon else brand
         seed_site_source(site_dir, theme, brand_display, overwrite_theme=refresh_site_source)
-        action = "refreshed" if refresh_site_source else "created"
+        action: str = "refreshed" if refresh_site_source else "created"
         print(f"   editable site source {action} → {site_dir}")
         theme = load_site_theme(site_dir)
 
+    out_dir: Path
     if args.out:
         out_dir = Path(args.out).resolve()
     else:
-        bundle_parent = Path.cwd() / ".nsdeploy" / hocon_path.parent.name
+        bundle_parent: Path = Path.cwd() / ".nsdeploy" / hocon_path.parent.name
         out_dir = bundle_parent / network_name
-    site_base = ((args.site_url or "") if args.static_bundle
-                 else (args.site_url or f"http://127.0.0.1:{args.port}")).rstrip("/")
-    mock_router = "browser://mock" if args.static_bundle else f"{site_base}/v1"
-    byok_router = args.upstream.rstrip("/") if args.static_bundle else f"{site_base}/byok/v1"
-    runtime_dir = Path(args.runtime_dir).resolve() if args.runtime_dir else None
+    site_base: str = ((args.site_url or "") if args.static_bundle
+                      else (args.site_url or f"http://127.0.0.1:{args.port}")).rstrip("/")
+    mock_router: str = "browser://mock" if args.static_bundle else f"{site_base}/v1"
+    byok_router: str = args.upstream.rstrip("/") if args.static_bundle else f"{site_base}/byok/v1"
+    runtime_dir: Optional[Path] = Path(args.runtime_dir).resolve() if args.runtime_dir else None
     generate_site(plan, out_dir, mock_router, byok_router, site_base, cruse=not args.no_cruse,
                   theme=theme, site_source_dir=site_dir,
                   private_steward_sites=private_steward_sites or None,
@@ -359,12 +373,12 @@ def main() -> int:
                   action_caller_origins=args.action_caller_origin,
                   discovered_actions=discovered_actions,
                   mock_llm=args.mock_llm)
-    bundle_label = "static bundle" if args.static_bundle else "site"
+    bundle_label: str = "static bundle" if args.static_bundle else "site"
     print(f"✅ Generated {bundle_label} → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))
     if args.static_bundle:
-        omitted_tools = sorted({tool.name for tool in plan.hostable_tools} | set(plan.omitted_tools))
+        omitted_tools: List[str] = sorted({tool.name for tool in plan.hostable_tools} | set(plan.omitted_tools))
         if omitted_tools:
-            omitted = ", ".join(omitted_tools)
+            omitted: str = ", ".join(omitted_tools)
             print(f"   static bundle: omitted Python tools: {omitted}")
         if plan.external_mcps:
             print("   static bundle: external MCP servers will be called directly and must allow CORS")

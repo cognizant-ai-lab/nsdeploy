@@ -1,7 +1,18 @@
 import json
 import os
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Set
+from typing import Tuple
 import unittest
+from unittest.mock import _patch_dict
 from unittest.mock import patch
+
+import httpx
+from starlette.types import Receive
+from starlette.types import Scope
+from starlette.types import Send
 
 from nsdeploy.byok import BYOK_AUTH_HEADER
 from nsdeploy.byok import BYOK_MODEL_HEADER
@@ -22,39 +33,45 @@ class FacadeContextTests(unittest.IsolatedAsyncioTestCase):
     Tests for the facade's context packing, public-site handling and caller BYOK forwarding.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
         """
         Patch the environment with a host provider key that the facade must never use.
         """
         # A provider key present in the facade's environment must never be used.
-        env = patch.dict(os.environ, {"OPENAI_API_KEY": "host-key-must-not-be-used"})
+        env: _patch_dict = patch.dict(os.environ, {"OPENAI_API_KEY": "host-key-must-not-be-used"})
         env.start()
         self.addCleanup(env.stop)
 
-    def test_context_round_trip(self):
+    def test_context_round_trip(self) -> None:
         """
         Check that packed context unpacks to the original request, visited set and budget.
         """
-        packed = _pack_context(
+        packed: str = _pack_context(
             "Find a venue",
             {"http://127.0.0.1:8091", "http://127.0.0.1:8098"},
             4,
         )
+        request: str
+        visited: Set[str]
+        remaining: int
         request, visited, remaining = _unpack_context(packed)
         self.assertEqual(request, "Find a venue")
         self.assertEqual(visited, {"http://127.0.0.1:8091", "http://127.0.0.1:8098"})
         self.assertEqual(remaining, 4)
 
-    def test_missing_context_uses_default_budget(self):
+    def test_missing_context_uses_default_budget(self) -> None:
         """
         Check that a request without packed context gets an empty visited set and the default budget.
         """
+        request: str
+        visited: Set[str]
+        remaining: int
         request, visited, remaining = _unpack_context("plain request")
         self.assertEqual(request, "plain request")
         self.assertEqual(visited, set())
         self.assertEqual(remaining, PUBLIC_SITE_CALL_BUDGET)
 
-    def test_public_site_refs_use_standard_facade_contract(self):
+    def test_public_site_refs_use_standard_facade_contract(self) -> None:
         """
         Check that only standard facade paths are treated as public site references.
         """
@@ -62,42 +79,42 @@ class FacadeContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(_is_public_site_ref("http://127.0.0.1:8097/mcp"))
         self.assertFalse(_is_public_site_ref("http://127.0.0.1:8097/_mcp/0/mcp"))
 
-    def test_mcp_http_timeout_covers_long_sse_streams(self):
+    def test_mcp_http_timeout_covers_long_sse_streams(self) -> None:
         """
         Check that the MCP HTTP read timeout matches the public request timeout.
         """
-        timeout = _mcp_http_timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS)
+        timeout: httpx.Timeout = _mcp_http_timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS)
         self.assertEqual(timeout.read, PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS)
 
-    async def test_real_facade_requires_caller_byok(self):
+    async def test_real_facade_requires_caller_byok(self) -> None:
         """
         Check that the real facade refuses to run without caller BYOK credentials.
         """
-        runner = NetworkRunner(
+        runner: NetworkRunner = NetworkRunner(
             {"tools": [{"name": "front", "instructions": "Help."}]},
             "http://127.0.0.1:8091",
             "https://api.example/v1",
         )
-        result = await runner.run("request", "front")
+        result: str = await runner.run("request", "front")
         self.assertIn("caller BYOK credentials are required", result)
 
-    async def test_real_facade_uses_caller_key_and_model(self):
+    async def test_real_facade_uses_caller_key_and_model(self) -> None:
         """
         Check that the real facade calls the provider with the caller's key and model, not the host key.
         """
-        calls = []
+        calls: List[Tuple[str, Dict[str, Any], Dict[str, str]]] = []
 
         class Response:
             """
             Fake httpx response that returns a fixed assistant reply.
             """
 
-            def raise_for_status(self):
+            def raise_for_status(self) -> None:
                 """
                 Accept every response as successful.
                 """
 
-            def json(self):
+            def json(self) -> Dict[str, Any]:
                 """
                 Return a fixed chat completion payload.
 
@@ -110,16 +127,16 @@ class FacadeContextTests(unittest.IsolatedAsyncioTestCase):
             Fake httpx async client that records each POST.
             """
 
-            def __init__(self, **kwargs):
+            def __init__(self, **kwargs: Any) -> None:
                 pass
 
-            async def __aenter__(self):
+            async def __aenter__(self) -> "Client":
                 return self
 
-            async def __aexit__(self, *args):
+            async def __aexit__(self, *args: Any) -> None:
                 pass
 
-            async def post(self, url, content, headers):
+            async def post(self, url: str, content: bytes, headers: Dict[str, str]) -> Response:
                 """
                 Record the request and return a fake response.
 
@@ -131,18 +148,19 @@ class FacadeContextTests(unittest.IsolatedAsyncioTestCase):
                 calls.append((url, json.loads(content), headers))
                 return Response()
 
-        runner = NetworkRunner(
+        runner: NetworkRunner = NetworkRunner(
             {"tools": [{"name": "front", "instructions": "Help."}]},
             "http://127.0.0.1:8091",
             "https://api.example/v1",
         )
-        results = []
+        results: List[Dict[str, Any]] = []
 
-        async def app(scope, receive, send):  # pylint: disable=unused-argument; ASGI signature
+        async def app(scope: Scope, receive: Receive,  # pylint: disable=unused-argument; ASGI signature
+                      send: Send) -> None:  # pylint: disable=unused-argument; ASGI signature
             # pylint: disable-next=protected-access
             results.append(await runner._complete([{"role": "user", "content": "hello"}], []))
 
-        scope = {"type": "http", "headers": [
+        scope: Dict[str, Any] = {"type": "http", "headers": [
             (BYOK_AUTH_HEADER.lower().encode(), b"Bearer caller-secret"),
             (BYOK_MODEL_HEADER.lower().encode(), b"caller-model"),
         ]}
@@ -154,41 +172,42 @@ class FacadeContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[0][2]["Authorization"], "Bearer caller-secret")
         self.assertNotIn("host-key-must-not-be-used", json.dumps(calls))
 
-    async def test_public_site_hop_forwards_caller_byok(self):
+    async def test_public_site_hop_forwards_caller_byok(self) -> None:
         """
         Check that a hop to a public site forwards the caller's BYOK headers.
         """
-        client_headers = []
+        client_headers: List[Dict[str, str]] = []
 
         class Client:
             """
             Fake httpx async client that captures its headers and then aborts.
             """
 
-            def __init__(self, **kwargs):
+            def __init__(self, **kwargs: Any) -> None:
                 client_headers.append(kwargs.get("headers", {}))
                 raise RuntimeError("stop after capturing headers")
 
-        runner = NetworkRunner(
+        runner: NetworkRunner = NetworkRunner(
             {"tools": [{"name": "front", "instructions": "Help."}]},
             "http://127.0.0.1:8091",
             "https://api.example/v1",
         )
-        tools = [{
+        tools: List[Dict[str, Any]] = [{
             "name": "remote",
             "kind": "mcp",
             "endpoint": "http://127.0.0.1:8092/mcp",
             "remote_name": "invoke_network",
         }]
 
-        async def app(scope, receive, send):  # pylint: disable=unused-argument; ASGI signature
+        async def app(scope: Scope, receive: Receive,  # pylint: disable=unused-argument; ASGI signature
+                      send: Send) -> None:  # pylint: disable=unused-argument; ASGI signature
             with patch("nsdeploy.facade.httpx.AsyncClient", Client):
                 await runner._call_tool(  # pylint: disable=protected-access
                     "remote", {"request": "continue"}, tools, 0,
                     {"http://127.0.0.1:8091"}, {"remaining": 12},
                 )
 
-        scope = {"type": "http", "headers": [
+        scope: Dict[str, Any] = {"type": "http", "headers": [
             (BYOK_AUTH_HEADER.lower().encode(), b"Bearer caller-secret"),
             (BYOK_MODEL_HEADER.lower().encode(), b"caller-model"),
         ]}
@@ -197,37 +216,37 @@ class FacadeContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client_headers[0][BYOK_AUTH_HEADER], "Bearer caller-secret")
         self.assertEqual(client_headers[0][BYOK_MODEL_HEADER], "caller-model")
 
-    async def test_skips_recursive_public_site(self):
+    async def test_skips_recursive_public_site(self) -> None:
         """
         Check that a tool call back to the runner's own site is skipped.
         """
-        runner = NetworkRunner(
+        runner: NetworkRunner = NetworkRunner(
             {"tools": [{"name": "front", "instructions": ""}]},
             "http://127.0.0.1:8091",
             "mock://nsdeploy",
         )
-        tools = [{
+        tools: List[Dict[str, Any]] = [{
             "name": "remote",
             "kind": "mcp",
             "endpoint": "http://127.0.0.1:8091/mcp",
             "remote_name": "invoke_network",
         }]
-        result = await runner._call_tool(  # pylint: disable=protected-access
+        result: str = await runner._call_tool(  # pylint: disable=protected-access
             "remote", {"request": "loop back"}, tools, 0,
             {"http://127.0.0.1:8091"}, {"remaining": 12},
         )
         self.assertIn("Skipped recursive call", result)
 
-    async def test_mock_facade_finishes_after_one_tool_hop(self):
+    async def test_mock_facade_finishes_after_one_tool_hop(self) -> None:
         """
         Check that the mock facade makes one tool call and then finishes.
         """
-        runner = NetworkRunner(
+        runner: NetworkRunner = NetworkRunner(
             {"tools": [{"name": "front", "instructions": ""}]},
             "http://127.0.0.1:8091",
             "mock://nsdeploy",
         )
-        tools = [{
+        tools: List[Dict[str, Any]] = [{
             "name": "remote",
             "description": "remote",
             "parameters": {"type": "object", "properties": {"request": {"type": "string"}}},
@@ -236,9 +255,9 @@ class FacadeContextTests(unittest.IsolatedAsyncioTestCase):
             "remote_name": "invoke_network",
         }]
         # pylint: disable-next=protected-access
-        first = await runner._complete([{"role": "user", "content": "request"}], tools)
+        first: Dict[str, Any] = await runner._complete([{"role": "user", "content": "request"}], tools)
         self.assertEqual(len(first["message"]["tool_calls"]), 1)
-        second = await runner._complete([  # pylint: disable=protected-access
+        second: Dict[str, Any] = await runner._complete([  # pylint: disable=protected-access
             {"role": "user", "content": "request"},
             {"role": "tool", "name": "remote", "content": "result"},
         ], tools)

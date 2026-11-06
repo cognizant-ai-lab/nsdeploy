@@ -33,11 +33,15 @@ from dataclasses import field
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from http.client import HTTPResponse
+from io import FileIO
+from io import TextIOWrapper
 from pathlib import Path
 from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Set
 from typing import Tuple
 
 from nsdeploy_service.config import REPO_ROOT
@@ -59,15 +63,15 @@ from nsdeploy_service.store import UNATTRIBUTED_NAME
 from nsdeploy_service.store import Store
 from nsdeploy_service.store import StoreError
 
-IS_WINDOWS = sys.platform == "win32"
-READINESS_POLL_SECONDS = 0.5
-HTTP_PROBE_TIMEOUT_SECONDS = 5.0
-NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
-HOCON_SUFFIXES = (".hocon", ".conf", ".txt")
+IS_WINDOWS: bool = sys.platform == "win32"
+READINESS_POLL_SECONDS: float = 0.5
+HTTP_PROBE_TIMEOUT_SECONDS: float = 5.0
+NAME_RE: re.Pattern[str] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+HOCON_SUFFIXES: Tuple[str, ...] = (".hocon", ".conf", ".txt")
 # Every browser renames a second download of the same file to "thing (1).hocon", and
 # downloading a network's HOCON, editing it and uploading it again is a normal round
 # trip — so that marker arrives far more often than it looks like it would.
-DUPLICATE_MARKER_RE = re.compile(r"\s*\(\d+\)$")
+DUPLICATE_MARKER_RE: re.Pattern[str] = re.compile(r"\s*\(\d+\)$")
 
 
 class DeploymentError(RuntimeError):
@@ -105,7 +109,8 @@ def safe_network_name(raw: str) -> str:
     re-upload carries the original name, so it *replaces* that organization's existing
     deployment instead of standing up a near-duplicate beside it.
     """
-    name = (raw or "").strip()
+    name: str = (raw or "").strip()
+    suffix: str
     for suffix in HOCON_SUFFIXES:
         if name.lower().endswith(suffix):
             name = name[: -len(suffix)]
@@ -199,7 +204,7 @@ class Deployment:  # pylint: disable=too-many-instance-attributes; one field per
         """Notable routes on the deployed origin, as served by nsdeploy's launcher."""
         if self.status is not DeploymentStatus.READY:
             return {}
-        base = self.url.rstrip("/")
+        base: str = self.url.rstrip("/")
         return {
             "site": f"{base}/",
             "mock_llm": f"{base}/v1/chat/completions",
@@ -254,6 +259,7 @@ def _port_listening(host: str, port: int) -> bool:
 
 def _http_ok(url: str) -> bool:
     try:
+        resp: HTTPResponse
         with urllib.request.urlopen(url, timeout=HTTP_PROBE_TIMEOUT_SECONDS) as resp:
             return 200 <= resp.status < 400
     except (urllib.error.URLError, OSError, ValueError):
@@ -269,15 +275,16 @@ def _served_network_name(port: int, host: str = "127.0.0.1") -> Optional[str]:
     network, so it identifies the origin rather than merely proving something listens.
     """
     try:
+        resp: HTTPResponse
         with urllib.request.urlopen(f"http://{host}:{port}/agent-manifest.json",
                                     timeout=HTTP_PROBE_TIMEOUT_SECONDS) as resp:
             if not 200 <= resp.status < 400:
                 return None
-            manifest = json.loads(resp.read().decode("utf-8"))
+            manifest: Dict[str, Any] = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError, UnicodeDecodeError):
         return None
-    networks = manifest.get("networks") or [{}]
-    name = networks[0].get("name")
+    networks: List[Dict[str, Any]] = manifest.get("networks") or [{}]
+    name: Any = networks[0].get("name")
     return name if isinstance(name, str) else None
 
 
@@ -298,7 +305,7 @@ def publish_refusal(row: Dict[str, Any]) -> str:
     deploying, whereas one that served and then stopped needs relaunching. Collapsing
     them into "not ready" tells the operator nothing they can act on.
     """
-    name = row.get("name", "this network")
+    name: str = row.get("name", "this network")
     if not row.get("ready_at"):
         return (f"Deploy {name} successfully before publishing it to the map — "
                 f"it is {row['status']} and has never served.")
@@ -339,7 +346,7 @@ def engine_supports_host(python_exe: str) -> bool:
     that might not parse.
     """
     try:
-        result = subprocess.run(
+        result: subprocess.CompletedProcess[str] = subprocess.run(
             [python_exe, "-m", "nsdeploy", "--help"],
             capture_output=True, text=True, timeout=60,
             cwd=str(REPO_ROOT), check=False,
@@ -361,24 +368,26 @@ def bundle_ready(out_dir: Path, name: str) -> bool:
             and (out_dir / f"{name}.network.json").is_file())
 
 
-MAX_ERROR_CHARS = 600
+MAX_ERROR_CHARS: int = 600
 # A restart appends to the same log so the earlier attempt stays readable. Everything
 # that parses the log must therefore look only at the most recent run, or a previous
 # attempt's tool list and errors bleed into the current result.
-RUN_SEPARATOR = "=== nsdeploy-service: new run ==="
+RUN_SEPARATOR: str = "=== nsdeploy-service: new run ==="
 
 
 def latest_run(text: str) -> str:
     """The slice of a deployment log belonging to the most recent run."""
+    separator: str
+    tail: str
     _, separator, tail = text.rpartition(RUN_SEPARATOR)
     return tail if separator else text
 
 
 # A HOCON syntax error surfaces as a multi-kilobyte pyparsing grammar dump. The only
 # parts worth reporting are the exception class and where the parser gave up.
-_PARSE_LOCATION_RE = re.compile(r"\(at char \d+\), \(line:(\d+), col:(\d+)\)")
-_EXCEPTION_RE = re.compile(r"^(?P<cls>[\w.]*(?:Error|Exception)): (?P<msg>.*)$")
-_CLI_ERROR_RE = re.compile(r"^error: (?P<msg>.+)$")
+_PARSE_LOCATION_RE: re.Pattern[str] = re.compile(r"\(at char \d+\), \(line:(\d+), col:(\d+)\)")
+_EXCEPTION_RE: re.Pattern[str] = re.compile(r"^(?P<cls>[\w.]*(?:Error|Exception)): (?P<msg>.*)$")
+_CLI_ERROR_RE: re.Pattern[str] = re.compile(r"^error: (?P<msg>.+)$")
 
 
 def _error_excerpt(log_path: Path, returncode: Optional[int]) -> str:
@@ -387,42 +396,43 @@ def _error_excerpt(log_path: Path, returncode: Optional[int]) -> str:
     The full output always stays available via GET /deployments/{id}/logs; this is the
     one-glance summary that goes in the `error` field.
     """
-    status = f"nsdeploy exited with status {returncode}"
+    status: str = f"nsdeploy exited with status {returncode}"
     try:
-        text = latest_run(log_path.read_text(encoding="utf-8", errors="replace"))
+        text: str = latest_run(log_path.read_text(encoding="utf-8", errors="replace"))
     except OSError:
         return status
-    lines = text.splitlines()
+    lines: List[str] = text.splitlines()
 
     # nsdeploy's own argparse/validation failures are already well phrased.
+    line: str
     for line in reversed(lines):
-        cli = _CLI_ERROR_RE.match(line.strip())
+        cli: Optional[re.Match[str]] = _CLI_ERROR_RE.match(line.strip())
         if cli:
             return f"{status}: {cli.group('msg')[:MAX_ERROR_CHARS]}"
 
     if "pyparsing.exceptions" in text or "ConcatenatedValueParser" in text:
-        location = _PARSE_LOCATION_RE.search(text)
-        where = (f" at line {location.group(1)}, column {location.group(2)}"
-                 if location else "")
+        location: Optional[re.Match[str]] = _PARSE_LOCATION_RE.search(text)
+        where: str = (f" at line {location.group(1)}, column {location.group(2)}"
+                      if location else "")
         return (f"the HOCON could not be parsed{where}. {status}. "
                 f"Check the syntax and that every `include` path exists upstream.")
 
     for line in reversed(lines):
-        exc = _EXCEPTION_RE.match(line.strip())
+        exc: Optional[re.Match[str]] = _EXCEPTION_RE.match(line.strip())
         if exc:
-            message = " ".join(exc.group("msg").split())[:MAX_ERROR_CHARS]
+            message: str = " ".join(exc.group("msg").split())[:MAX_ERROR_CHARS]
             return f"{status}: {exc.group('cls')}: {message}"
 
-    tail = " ".join(" ".join(lines[-6:]).split())
+    tail: str = " ".join(" ".join(lines[-6:]).split())
     return f"{status}: {tail[:MAX_ERROR_CHARS]}" if tail else status
 
 
 def _tail(path: Path, limit: int) -> Tuple[List[str], bool]:
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text: str = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return [], False
-    lines = text.splitlines()
+    lines: List[str] = text.splitlines()
     if limit <= 0 or len(lines) <= limit:
         return lines, False
     return lines[-limit:], True
@@ -433,27 +443,28 @@ def _tail(path: Path, limit: int) -> Tuple[List[str], bool]:
 # printed in nsdeploy's stdout report (resolve.format_report), so those are parsed
 # from the log on a best-effort basis: a parse miss leaves the field empty and the
 # full log stays available via GET /deployments/{id}/logs.
-_BULLET_RE = re.compile(r"^\s*[•\-\*]\s*(.+?)\s*$")
-_SECTIONS = {
+_BULLET_RE: re.Pattern[str] = re.compile(r"^\s*[•\-\*]\s*(.+?)\s*$")
+_SECTIONS: Dict[str, str] = {
     "hostable_tools": "Hostable tools",
     "demo_mode_agents": "DEMO-MODE agents",
     "missing_tools": "Missing tools",
 }
-_EXT_MCP_RE = re.compile(r"External MCP \(proxied\):\s*\S+\s*→\s*(\S+)")
+_EXT_MCP_RE: re.Pattern[str] = re.compile(r"External MCP \(proxied\):\s*\S+\s*→\s*(\S+)")
 
 
 def _parse_report(log_text: str) -> Dict[str, List[str]]:
     found: Dict[str, List[str]] = {key: [] for key in _SECTIONS}
     current: Optional[str] = None
+    line: str
     for line in log_text.splitlines():
-        matched_header = next((key for key, marker in _SECTIONS.items() if marker in line), None)
+        matched_header: Optional[str] = next((key for key, marker in _SECTIONS.items() if marker in line), None)
         if matched_header:
             current = matched_header
             continue
-        bullet = _BULLET_RE.match(line)
+        bullet: Optional[re.Match[str]] = _BULLET_RE.match(line)
         if bullet and current:
             # "ddgs_search  →  module.Class  (MCP /_mcp/0/mcp)" → "ddgs_search"
-            item = re.split(r"\s+→\s+|\s*:\s", bullet.group(1), maxsplit=1)[0].strip()
+            item: str = re.split(r"\s+→\s+|\s*:\s", bullet.group(1), maxsplit=1)[0].strip()
             if item:
                 found[current].append(item)
         elif not line.strip():
@@ -466,7 +477,7 @@ def _parse_report(log_text: str) -> Dict[str, List[str]]:
 # classifies by path (resolve.py::_looks_like_mcp) and rewrites hostable tools and
 # external MCP servers to same-origin proxy paths, so all three shapes appear in the
 # generated config and none of them is a peer network.
-_MCP_SHAPED = re.compile(r"(/mcp/?$|/mcp/|/sse/?$|/_mcp/|/ext-mcp/)", re.I)
+_MCP_SHAPED: re.Pattern[str] = re.compile(r"(/mcp/?$|/mcp/|/sse/?$|/_mcp/|/ext-mcp/)", re.I)
 
 
 def _inline_peers(network: Dict[str, Any]) -> List[NetworkLink]:
@@ -482,10 +493,12 @@ def _inline_peers(network: Dict[str, Any]) -> List[NetworkLink]:
     agent listed, matching the shape of a slot-bound link.
     """
     callers_by_url: Dict[str, List[str]] = {}
+    agent: Any
     for agent in network.get("tools") or []:
         if not isinstance(agent, dict):
             continue
-        caller = agent.get("name") or ""
+        caller: str = agent.get("name") or ""
+        ref: Any
         for ref in agent.get("tools") or []:
             if not isinstance(ref, str) or not ref.lower().startswith(("http://", "https://")):
                 continue
@@ -511,14 +524,14 @@ def summarize_build(out_dir: Path, name: str, log_text: str) -> NetworkSummary:
     :param log_text: The deployment log; only the most recent run is read.
     :return: The network summary.
     """
-    summary = NetworkSummary()
+    summary: NetworkSummary = NetworkSummary()
     log_text = latest_run(log_text)
     try:
-        manifest = json.loads((out_dir / "agent-manifest.json").read_text(encoding="utf-8"))
+        manifest: Dict[str, Any] = json.loads((out_dir / "agent-manifest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         manifest = {}
     try:
-        network = json.loads((out_dir / f"{name}.network.json").read_text(encoding="utf-8"))
+        network: Dict[str, Any] = json.loads((out_dir / f"{name}.network.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         network = {}
 
@@ -538,7 +551,7 @@ def summarize_build(out_dir: Path, name: str, log_text: str) -> NetworkSummary:
     ]
     summary.peer_urls = _inline_peers(network)
     summary.brand = manifest.get("brand", "")
-    networks = manifest.get("networks") or [{}]
+    networks: List[Dict[str, Any]] = manifest.get("networks") or [{}]
     summary.description = networks[0].get("description", "")
     summary.sample_queries = networks[0].get("sample_queries") or []
     # The front-man's authored purpose, which theming does not touch. Read from the
@@ -554,7 +567,7 @@ def summarize_build(out_dir: Path, name: str, log_text: str) -> NetworkSummary:
         "",
     )
 
-    parsed = _parse_report(log_text)
+    parsed: Dict[str, List[str]] = _parse_report(log_text)
     summary.hostable_tools = parsed["hostable_tools"]
     summary.demo_mode_agents = parsed["demo_mode_agents"]
     summary.missing_tools = parsed["missing_tools"]
@@ -570,8 +583,8 @@ def _agent_description(item: dict) -> str:
     to single spaces here rather than left for every reader to cope with. The
     text itself is the author's and is not otherwise touched or truncated.
     """
-    function = item.get("function")
-    raw = function.get("description") if isinstance(function, dict) else None
+    function: Any = item.get("function")
+    raw: Any = function.get("description") if isinstance(function, dict) else None
     if not isinstance(raw, str):
         return ""
     return " ".join(raw.split())
@@ -588,14 +601,14 @@ def network_topology(
     no re-parsing of the original HOCON required.
     """
     try:
-        network = json.loads((out_dir / f"{name}.network.json").read_text(encoding="utf-8"))
+        network: Dict[str, Any] = json.loads((out_dir / f"{name}.network.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return [], []
 
-    tools = [item for item in (network.get("tools") or []) if item.get("name")]
-    by_name = {item["name"] for item in tools}
+    tools: List[Dict[str, Any]] = [item for item in (network.get("tools") or []) if item.get("name")]
+    by_name: Set[str] = {item["name"] for item in tools}
 
-    nodes = [
+    nodes: List[AgentGraphNode] = [
         AgentGraphNode(
             id=item["name"], name=item["name"],
             kind="root" if item["name"] == front_man
@@ -611,7 +624,9 @@ def network_topology(
 
     edges: List[AgentGraphEdge] = []
     external_ids: Dict[str, str] = {}
+    item: Dict[str, Any]
     for item in tools:
+        callee: str
         for callee in (item.get("tools") or []):
             if not callee:
                 continue
@@ -620,11 +635,11 @@ def network_topology(
                 continue
             # A hosted or external MCP endpoint, addressed by URL rather than by its
             # own agent card — represented as a leaf node keyed on that URL.
-            ext_id = external_ids.get(callee)
+            ext_id: Optional[str] = external_ids.get(callee)
             if ext_id is None:
                 ext_id = f"ext:{len(external_ids)}"
                 external_ids[callee] = ext_id
-                label = "Hosted tool" if "/_mcp/" in callee else "External MCP"
+                label: str = "Hosted tool" if "/_mcp/" in callee else "External MCP"
                 # For an endpoint the URL *is* the description: there is no
                 # authored prose about it anywhere in the HOCON, and "which one"
                 # is the only question a reader has about it.
@@ -666,26 +681,27 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
     """Owns the deployment registry, the port pool, and every child process."""
 
     def __init__(self, settings: Settings, store: Optional[Store] = None) -> None:
-        self.settings = settings
-        self.ports = PortPool(settings.port_start, settings.port_end)
+        self.settings: Settings = settings
+        self.ports: PortPool = PortPool(settings.port_start, settings.port_end)
         self._deployments: Dict[str, Deployment] = {}
-        self._lock = threading.Lock()
-        self._build_slots = asyncio.Semaphore(settings.max_concurrent_builds)
+        self._lock: threading.Lock = threading.Lock()
+        self._build_slots: asyncio.Semaphore = asyncio.Semaphore(settings.max_concurrent_builds)
         self._tasks: set[asyncio.Task] = set()
         settings.work_root.mkdir(parents=True, exist_ok=True)
-        self.store = store or Store(settings.database_path())
+        self.store: Store = store or Store(settings.database_path())
         # Deployed sites are children of this process, so anything a previous run left
         # marked live is already dead. Settle those rows before serving the directory.
-        self.orphaned = self.store.reconcile_orphans()
+        self.orphaned: List[str] = self.store.reconcile_orphans()
         # Uploads without an org still belong in the directory.
-        self.fallback_org = self.store.ensure_org(UNATTRIBUTED_NAME)
-        self.backfilled_positions = self._backfill_positions()
-        self.resummarized = self._repair_summaries()
-        self.shared_byok_synced = self._sync_shared_byok_sites()
+        self.fallback_org: Dict[str, Any] = self.store.ensure_org(UNATTRIBUTED_NAME)
+        self.backfilled_positions: List[str] = self._backfill_positions()
+        self.resummarized: List[str] = self._repair_summaries()
+        self.shared_byok_synced: List[str] = self._sync_shared_byok_sites()
 
     def _sync_shared_byok_sites(self) -> List[str]:
         """Apply the reversible browser behavior to already-generated sites."""
         changed: List[str] = []
+        row: Dict[str, Any]
         for row in self.store.list_deployments():
             if sync_shared_byok(Path(row["work_dir"])):
                 changed.append(row["id"])
@@ -715,22 +731,23 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         fields re-derives such a record at every startup and never converges.
         """
         repaired: List[str] = []
+        row: Dict[str, Any]
         for row in self.store.list_deployments():
-            summary = row.get("network") or {}
+            summary: Dict[str, Any] = row.get("network") or {}
             # Derived under this revision of the model, and not left blank by the
             # premature-ready bug. A record written before the version was recorded
             # reads back as 0 and is re-derived once, which stamps the version.
-            version = int(summary.get("schema_version") or 0)
-            complete = summary.get("agent_count") and version >= SUMMARY_SCHEMA_VERSION
+            version: int = int(summary.get("schema_version") or 0)
+            complete: Any = summary.get("agent_count") and version >= SUMMARY_SCHEMA_VERSION
             if complete:
                 continue
-            out_dir = Path(row["work_dir"]) / "site"
+            out_dir: Path = Path(row["work_dir"]) / "site"
             if not bundle_ready(out_dir, row["name"]):
                 continue  # never built; nothing to recover
-            log_path = Path(row["log_path"])
-            log_text = log_path.read_text(encoding="utf-8", errors="replace") \
+            log_path: Path = Path(row["log_path"])
+            log_text: str = log_path.read_text(encoding="utf-8", errors="replace") \
                 if log_path.is_file() else ""
-            rebuilt = summarize_build(out_dir, row["name"], log_text)
+            rebuilt: NetworkSummary = summarize_build(out_dir, row["name"], log_text)
             if not rebuilt.agent_count:
                 continue  # bundle unreadable — leave the record untouched
             self.store.set_summary(row["id"], rebuilt.model_dump(),
@@ -749,13 +766,14 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         * records whose stored slot is no longer on the grid, e.g. after the artwork's
           coastline moved and their pin would now sit in the water.
         """
-        rows = self.store.list_deployments()
-        stale = [row["id"] for row in rows if not is_on_grid(row.get("position"))]
+        rows: List[Dict[str, Any]] = self.store.list_deployments()
+        stale: List[str] = [row["id"] for row in rows if not is_on_grid(row.get("position"))]
         if not stale:
             return []
-        placed = [row["position"] for row in rows if is_on_grid(row.get("position"))]
+        placed: List[Dict[str, Any]] = [row["position"] for row in rows if is_on_grid(row.get("position"))]
+        deployment_id: str
         for deployment_id in stale:
-            position = next_position(placed)
+            position: Dict[str, int] = next_position(placed)
             placed.append(position)
             self.store.set_position(deployment_id, position)
         return stale
@@ -789,8 +807,9 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
 
         :return: A mapping from status value to count.
         """
-        counts = {status.value: 0 for status in DeploymentStatus}
+        counts: Dict[str, int] = {status.value: 0 for status in DeploymentStatus}
         with self._lock:
+            dep: Deployment
             for dep in self._deployments.values():
                 counts[dep.status.value] += 1
         return counts
@@ -808,7 +827,7 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         are the same organization rather than two pins claiming the same name.
         """
         if options.org_id:
-            org = self.store.get_org(options.org_id)
+            org: Optional[Dict[str, Any]] = self.store.get_org(options.org_id)
             if org is None:
                 raise DeploymentError(f"no organization {options.org_id!r}")
             return org
@@ -832,11 +851,11 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         live copy of the same network keeps serving would be the surprising
         outcome), then the most recently created.
         """
-        rows = [row for row in self.store.list_deployments(org_id=org_id)
-                if row.get("name") == name]
+        rows: List[Dict[str, Any]] = [row for row in self.store.list_deployments(org_id=org_id)
+                                      if row.get("name") == name]
         if not rows:
             return None
-        live_ids = {dep.id for dep in self.list() if dep.is_live}
+        live_ids: Set[str] = {dep.id for dep in self.list() if dep.is_live}
         rows.sort(key=lambda row: (row["id"] in live_ids, row.get("created_at") or ""),
                   reverse=True)
         return rows[0]
@@ -854,29 +873,29 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         * **published_at**, because a revision of a published network is still
           published and should not silently vanish off the map.
         """
-        deployment_id = row["id"]
-        existing = self.get(deployment_id)
+        deployment_id: str = row["id"]
+        existing: Optional[Deployment] = self.get(deployment_id)
         if existing is not None and existing.is_live:
             # Synchronous teardown: the port has to be free before it is re-reserved
             # below, and two processes must never hold it at once.
             self._teardown(existing, DeploymentStatus.STOPPED, "replaced by a new upload")
 
-        work_dir = Path(row["work_dir"])
+        work_dir: Path = Path(row["work_dir"])
         try:
             work_dir.mkdir(parents=True, exist_ok=True)
-            hocon_path = work_dir / f"{row['name']}.hocon"
+            hocon_path: Path = work_dir / f"{row['name']}.hocon"
             hocon_path.write_text(text, encoding="utf-8")
         except OSError as exc:
             raise DeploymentError(
                 f"cannot write the replacement HOCON for {row['name']}: {exc}") from exc
 
         try:
-            port = self.ports.reserve(preferred=row.get("port") or None)
+            port: int = self.ports.reserve(preferred=row.get("port") or None)
         except PortPoolExhausted as exc:
             raise DeploymentError(str(exc)) from exc
 
-        ttl = self.settings.ttl_seconds if options.ttl_seconds is None else options.ttl_seconds
-        dep = Deployment(
+        ttl: int = self.settings.ttl_seconds if options.ttl_seconds is None else options.ttl_seconds
+        dep: Deployment = Deployment(
             id=deployment_id,
             name=row["name"],
             org_id=org["id"],
@@ -918,12 +937,12 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
                 f"HOCON is {len(hocon_bytes)} bytes; the limit is {self.settings.max_hocon_bytes}"
             )
         try:
-            text = hocon_bytes.decode("utf-8")
+            text: str = hocon_bytes.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise DeploymentError(f"HOCON must be UTF-8 text: {exc}") from exc
 
-        name = safe_network_name(options.name or "network")
-        org = self._resolve_org(options)
+        name: str = safe_network_name(options.name or "network")
+        org: Dict[str, Any] = self._resolve_org(options)
 
         # Re-uploading the same network for the same organization replaces it rather
         # than standing up a second copy. The identity is (organization, network
@@ -934,12 +953,12 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         #
         # Deliberately not keyed on the HOCON's *contents*: an edited file is still
         # the same network, and that is exactly the case this has to cover.
-        replacing = self._existing_for(org["id"], name)
+        replacing: Optional[Dict[str, Any]] = self._existing_for(org["id"], name)
         if replacing is not None:
             return self._replace(replacing, text, options, org)
 
         with self._lock:
-            live = sum(1 for dep in self._deployments.values() if dep.is_live)
+            live: int = sum(1 for dep in self._deployments.values() if dep.is_live)
         if live >= self.settings.max_deployments:
             # Phrased for whoever is standing in front of the upload form. They are
             # not the person who can raise MAX_DEPLOYMENTS or stop someone else's
@@ -953,21 +972,21 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             )
 
         try:
-            port = self.ports.reserve()
+            port: int = self.ports.reserve()
         except PortPoolExhausted as exc:
             raise DeploymentError(str(exc)) from exc
 
-        deployment_id = uuid.uuid4().hex[:12]
+        deployment_id: str = uuid.uuid4().hex[:12]
         try:
-            work_dir = self.settings.work_root / deployment_id
+            work_dir: Path = self.settings.work_root / deployment_id
             work_dir.mkdir(parents=True, exist_ok=True)
-            hocon_path = work_dir / f"{name}.hocon"
+            hocon_path: Path = work_dir / f"{name}.hocon"
             hocon_path.write_text(text, encoding="utf-8")
-            ttl = self.settings.ttl_seconds if options.ttl_seconds is None else options.ttl_seconds
+            ttl: int = self.settings.ttl_seconds if options.ttl_seconds is None else options.ttl_seconds
             # Placed once, against every pin already on the map.
-            position = next_position(
+            position: Dict[str, int] = next_position(
                 row.get("position") for row in self.store.list_deployments())
-            dep = Deployment(
+            dep: Deployment = Deployment(
                 id=deployment_id,
                 name=name,
                 org_id=org["id"],
@@ -1002,7 +1021,7 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
 
     def start(self, dep: Deployment) -> None:
         """Schedule the build on the running event loop."""
-        task = asyncio.create_task(self._build(dep), name=f"build-{dep.id}")
+        task: asyncio.Task[None] = asyncio.create_task(self._build(dep), name=f"build-{dep.id}")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -1021,18 +1040,18 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         relaunch — and, since `_persist` below writes the merged options back to the
         row, every restart after this one keeps them too.
         """
-        row = self.store.get_deployment(deployment_id)
+        row: Optional[Dict[str, Any]] = self.store.get_deployment(deployment_id)
         if row is None:
             raise DeploymentError(f"no deployment {deployment_id!r}")
 
-        existing = self.get(deployment_id)
+        existing: Optional[Deployment] = self.get(deployment_id)
         if existing is not None and existing.is_live:
             raise DeploymentError(
                 f"{row['name']} is already {existing.status.value}; stop it before restarting")
 
         # The HOCON is the one thing a restart cannot do without. Older records predate
         # the hocon_path column, so fall back to the conventional path in the work dir.
-        hocon_path = Path(row["hocon_path"]) if row.get("hocon_path") \
+        hocon_path: Path = Path(row["hocon_path"]) if row.get("hocon_path") \
             else Path(row["work_dir"]) / f"{row['name']}.hocon"
         if not hocon_path.is_file():
             raise DeploymentError(
@@ -1040,7 +1059,7 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
                 f"({hocon_path}); upload it again to deploy")
 
         with self._lock:
-            live = sum(1 for dep in self._deployments.values() if dep.is_live)
+            live: int = sum(1 for dep in self._deployments.values() if dep.is_live)
         if live >= self.settings.max_deployments:
             raise DeploymentError(
                 f"This service is already running its maximum of "
@@ -1049,7 +1068,7 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
                 f"again.")
 
         try:
-            options = DeployOptions(**(row.get("options") or {}))
+            options: DeployOptions = DeployOptions(**(row.get("options") or {}))
         except (TypeError, ValueError):
             # A corrupt options blob must not block a restart; fall back to defaults
             # for everything except the organization, which the record still knows.
@@ -1057,11 +1076,11 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         if overrides:
             options = options.model_copy(update=overrides)
 
-        port = self.ports.reserve(preferred=row.get("port") or None)
+        port: int = self.ports.reserve(preferred=row.get("port") or None)
         try:
-            work_dir = Path(row["work_dir"])
-            ttl = self.settings.ttl_seconds if options.ttl_seconds is None else options.ttl_seconds
-            dep = Deployment(
+            work_dir: Path = Path(row["work_dir"])
+            ttl: int = self.settings.ttl_seconds if options.ttl_seconds is None else options.ttl_seconds
+            dep: Deployment = Deployment(
                 id=deployment_id,
                 name=row["name"],
                 org_id=row["org_id"],
@@ -1106,7 +1125,7 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
 
         Publishing is idempotent and keeps the original timestamp.
         """
-        row = self.store.get_deployment(deployment_id)
+        row: Optional[Dict[str, Any]] = self.store.get_deployment(deployment_id)
         if row is None:
             raise DeploymentError(f"no deployment {deployment_id!r}")
         if row.get("published_at"):
@@ -1118,7 +1137,7 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
 
     def unpublish(self, deployment_id: str) -> Dict[str, Any]:
         """Take a network off the map, leaving the deployment itself running."""
-        row = self.store.get_deployment(deployment_id)
+        row: Optional[Dict[str, Any]] = self.store.get_deployment(deployment_id)
         if row is None:
             raise DeploymentError(f"no deployment {deployment_id!r}")
         if row.get("published_at"):
@@ -1127,9 +1146,9 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
 
     # --- build ------------------------------------------------------------
     def _command(self, dep: Deployment) -> List[str]:
-        s = self.settings
-        opts = dep.options
-        cmd = [
+        s: Settings = self.settings
+        opts: DeployOptions = dep.options
+        cmd: List[str] = [
             s.python_exe, "-m", "nsdeploy", str(dep.hocon_path),
             "--port", str(dep.port),
             "--out", str(dep.out_dir),
@@ -1176,25 +1195,25 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             cmd += ["--repo", s.repo]
         if s.ref:
             cmd += ["--ref", s.ref]
-        theme = s.theme if opts.theme is None else opts.theme
+        theme: bool = s.theme if opts.theme is None else opts.theme
         if theme:
             cmd.append("--theme")
-            model = opts.theme_model or s.theme_model
+            model: str = opts.theme_model or s.theme_model
             if model:
                 cmd += ["--theme-model", model]
-            theme_refresh = s.theme_refresh if opts.theme_refresh is None else opts.theme_refresh
+            theme_refresh: bool = s.theme_refresh if opts.theme_refresh is None else opts.theme_refresh
             if theme_refresh:
                 cmd.append("--theme-refresh")
-            theme_prompt = opts.theme_prompt if opts.theme_prompt is not None else s.theme_prompt
+            theme_prompt: str = opts.theme_prompt if opts.theme_prompt is not None else s.theme_prompt
             if theme_prompt:
                 cmd += ["--theme-prompt", theme_prompt]
-        cruse = s.cruse if opts.cruse is None else opts.cruse
+        cruse: bool = s.cruse if opts.cruse is None else opts.cruse
         if not cruse:
             cmd.append("--no-cruse")
         return cmd
 
     def _spawn(self, dep: Deployment) -> subprocess.Popen:
-        env = dict(os.environ)
+        env: Dict[str, str] = dict(os.environ)
         env["PYTHONUNBUFFERED"] = "1"
         # nsdeploy's report is emoji-rich; without this the child's stdout is written
         # in the console codepage and the log comes back mojibaked.
@@ -1210,9 +1229,10 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         # Append rather than truncate so a restart keeps the previous attempt's output
         # visible; the separator is what keeps the log parsers scoped to this run.
         if dep.log_path.is_file() and dep.log_path.stat().st_size:
+            existing: TextIOWrapper
             with dep.log_path.open("a", encoding="utf-8") as existing:
                 existing.write(f"\n\n{RUN_SEPARATOR}\n\n")
-        log_handle = dep.log_path.open("ab", buffering=0)
+        log_handle: FileIO = dep.log_path.open("ab", buffering=0)
         # Own process group / session so the tree can be signalled as a unit and a
         # Ctrl-C to the service does not race the child's own cleanup.
         kwargs: Dict[str, object] = {}
@@ -1250,11 +1270,11 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
 
     async def _await_ready(self, dep: Deployment) -> None:
         """Poll until the site answers, the child dies, or the build times out."""
-        deadline = _now() + timedelta(seconds=self.settings.build_timeout_seconds)
+        deadline: datetime = _now() + timedelta(seconds=self.settings.build_timeout_seconds)
         while _now() < deadline:
             if dep.status is not DeploymentStatus.BUILDING:
                 return  # stopped underneath us
-            proc = dep.process
+            proc: Optional[subprocess.Popen] = dep.process
             if proc is None:
                 self._fail(dep, "deployment process vanished")
                 return
@@ -1284,14 +1304,14 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         """
         if not self._site_is_ready_to_summarize(dep):
             return False
-        host = probe_host(self.settings.deploy_host)
+        host: str = probe_host(self.settings.deploy_host)
         if not _port_listening(host, dep.port):
             return False
         return _served_network_name(dep.port, host) == dep.name
 
     def _mark_ready(self, dep: Deployment) -> None:
         sync_shared_byok(dep.work_dir)
-        log_text = dep.log_path.read_text(encoding="utf-8", errors="replace") \
+        log_text: str = dep.log_path.read_text(encoding="utf-8", errors="replace") \
             if dep.log_path.is_file() else ""
         dep.network = summarize_build(dep.out_dir, dep.name, log_text)
         dep.warnings = build_warnings(dep.network)
@@ -1329,7 +1349,8 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
     async def reap_expired(self) -> List[str]:
         """Stop deployments past their TTL and surface crashed ones. Returns stopped ids."""
         stopped: List[str] = []
-        now = _now()
+        now: datetime = _now()
+        dep: Deployment
         for dep in self.list():
             if not dep.is_live:
                 continue
@@ -1353,7 +1374,7 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         needs — so it should not also be the thing that tears a running site down.
         Stopping first makes that a separate, deliberate step.
         """
-        row = self.store.get_deployment(deployment_id)
+        row: Optional[Dict[str, Any]] = self.store.get_deployment(deployment_id)
         if row is not None and DeploymentStatus(row["status"]) in (
                 DeploymentStatus.QUEUED, DeploymentStatus.BUILDING, DeploymentStatus.READY):
             raise DeploymentError(
@@ -1367,8 +1388,10 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         """
         Cancel background tasks, stop live deployments and close the store.
         """
+        task: asyncio.Task
         for task in list(self._tasks):
             task.cancel()
+        dep: Deployment
         for dep in self.list():
             if dep.is_live:
                 await asyncio.to_thread(

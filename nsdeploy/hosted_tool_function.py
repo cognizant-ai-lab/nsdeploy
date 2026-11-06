@@ -23,7 +23,7 @@ class HostedToolFunction:
     JSON_TO_PY: Dict[str, type] = {"string": str, "integer": int, "number": float,
                                    "boolean": bool, "array": list, "object": dict}
 
-    def __init__(self, coded: Any, name: str, description: str, parameters: Dict[str, Any]):
+    def __init__(self, coded: Any, name: str, description: str, parameters: Dict[str, Any]) -> None:
         """
         Constructor.
 

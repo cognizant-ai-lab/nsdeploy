@@ -9,5 +9,5 @@ banner) — it was NS Deploy NexGen. The import path stays `nsdeploy_service` an
 the settings prefix stays `NSDEPLOY_SERVICE_` so a rename never silently
 invalidates a deployment's config.
 """
-PRODUCT_NAME = "Agentic City"
-__version__ = "0.1.0"
+PRODUCT_NAME: str = "Agentic City"
+__version__: str = "0.1.0"

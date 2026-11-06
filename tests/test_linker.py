@@ -2,6 +2,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
+from typing import Dict
 
 from nsdeploy.generate import build_manifest
 from nsdeploy.generate import build_private_steward_hocon
@@ -23,34 +25,35 @@ from nsdeploy.theme import ThemeSpec
 class LinkerTests(unittest.TestCase):
     """Tests for linking dangling network references."""
 
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; closed in tearDown
-        self.root = Path(self.temp.name)
-        self.source = LocalStudio(self.root)
+    def setUp(self) -> None:
+        self.temp: tempfile.TemporaryDirectory[str] = (
+            tempfile.TemporaryDirectory())  # pylint: disable=consider-using-with; closed in tearDown
+        self.root: Path = Path(self.temp.name)
+        self.source: LocalStudio = LocalStudio(self.root)
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def test_dangling_reference_becomes_link_slot(self):
+    def test_dangling_reference_becomes_link_slot(self) -> None:
         """Check dangling reference becomes link slot."""
-        config = {
+        config: Dict[str, Any] = {
             "tools": [{
                 "name": "travel_concierge",
                 "instructions": "Arrange a trip.",
                 "tools": ["airline_reservations"],
             }]
         }
-        plan = build_plan(config, {}, "travel_agency", [], self.source)
+        plan: DeploymentPlan = build_plan(config, {}, "travel_agency", [], self.source)
         self.assertEqual(plan.missing_tools, [])
         self.assertEqual(plan.link_slots, {"airline_reservations": ["travel_concierge"]})
 
-        deployed = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
+        deployed: Dict[str, Any] = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
         self.assertEqual(deployed["tools"][0]["tools"], ["airline_reservations"])
         self.assertIn("airline_reservations", deployed["link_slots"])
 
-    def test_configured_link_rewrites_reference_to_remote_network(self):
+    def test_configured_link_rewrites_reference_to_remote_network(self) -> None:
         """Check configured link rewrites reference to remote network."""
-        config = {
+        config: Dict[str, Any] = {
             "links": {"airline_reservations": "http://127.0.0.1:8092/link_demo_airline"},
             "tools": [{
                 "name": "travel_concierge",
@@ -58,32 +61,32 @@ class LinkerTests(unittest.TestCase):
                 "tools": ["airline_reservations"],
             }],
         }
-        plan = build_plan(config, {}, "travel_agency", [], self.source)
-        deployed = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
+        plan: DeploymentPlan = build_plan(config, {}, "travel_agency", [], self.source)
+        deployed: Dict[str, Any] = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
         self.assertEqual(
             deployed["tools"][0]["tools"],
             ["http://127.0.0.1:8092/link_demo_airline"],
         )
         self.assertEqual(deployed["link_slots"], {})
 
-    def test_direct_url_tool_is_preserved_as_public_agent_network(self):
+    def test_direct_url_tool_is_preserved_as_public_agent_network(self) -> None:
         """Check direct url tool is preserved as public agent network."""
-        remote = "http://127.0.0.1:8093/seabreeze_inn"
-        config = {
+        remote: str = "http://127.0.0.1:8093/seabreeze_inn"
+        config: Dict[str, Any] = {
             "tools": [{
                 "name": "commercial_sales_manager",
                 "instructions": "Coordinate farm sales.",
                 "tools": [remote],
             }],
         }
-        plan = build_plan(config, {}, "greenbank_farm", [], self.source)
+        plan: DeploymentPlan = build_plan(config, {}, "greenbank_farm", [], self.source)
 
         self.assertEqual(plan.external_networks, [remote])
         self.assertEqual(plan.external_mcps, [])
-        deployed = rewrite_config(plan, "http://127.0.0.1:8094", cruse=False)
+        deployed: Dict[str, Any] = rewrite_config(plan, "http://127.0.0.1:8094", cruse=False)
         self.assertEqual(deployed["tools"][0]["tools"], [remote])
 
-        manifest = build_manifest(
+        manifest: Dict[str, Any] = build_manifest(
             plan, deployed,
             "http://127.0.0.1:8094/v1",
             "http://127.0.0.1:8094/byok/v1",
@@ -95,15 +98,15 @@ class LinkerTests(unittest.TestCase):
         self.assertFalse(manifest["llm_router"]["mock"])
         self.assertNotIn("mock_router", manifest["llm_router"])
 
-    def test_mock_llm_is_an_explicit_developer_opt_in(self):
+    def test_mock_llm_is_an_explicit_developer_opt_in(self) -> None:
         """Check mock llm is an explicit developer opt in."""
-        plan = DeploymentPlan(
+        plan: DeploymentPlan = DeploymentPlan(
             network_name="demo",
             config={"tools": [{"name": "front", "instructions": "Help."}]},
             front_man="front",
         )
-        config = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
-        manifest = build_manifest(
+        config: Dict[str, Any] = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
+        manifest: Dict[str, Any] = build_manifest(
             plan, config,
             "http://127.0.0.1:8091/v1",
             "http://127.0.0.1:8091/byok/v1",
@@ -115,37 +118,37 @@ class LinkerTests(unittest.TestCase):
         self.assertEqual(manifest["llm_router"]["mock_router"], "http://127.0.0.1:8091/v1")
         self.assertTrue(manifest["llm_router"]["mock"])
 
-    def test_mcp_url_is_not_classified_as_public_agent_network(self):
+    def test_mcp_url_is_not_classified_as_public_agent_network(self) -> None:
         """Check mcp url is not classified as public agent network."""
-        remote = "https://tools.example/mcp"
-        config = {
+        remote: str = "https://tools.example/mcp"
+        config: Dict[str, Any] = {
             "tools": [{
                 "name": "front",
                 "instructions": "Help.",
                 "tools": [remote],
             }],
         }
-        plan = build_plan(config, {}, "demo", [], self.source)
+        plan: DeploymentPlan = build_plan(config, {}, "demo", [], self.source)
 
         self.assertEqual(plan.external_mcps, [remote])
         self.assertEqual(plan.external_networks, [])
 
-    def test_static_plan_skips_python_tool_resolution(self):
+    def test_static_plan_skips_python_tool_resolution(self) -> None:
         """Check static plan skips python tool resolution."""
-        config = {"tools": [
+        config: Dict[str, Any] = {"tools": [
             {"name": "front", "instructions": "Help.", "tools": ["private_search"]},
             {"name": "private_search", "class": "missing.Search"},
         ]}
-        plan = build_plan(
+        plan: DeploymentPlan = build_plan(
             config, {}, "portable", [], self.source, include_python_tools=False,
         )
         self.assertEqual(plan.hostable_tools, [])
         self.assertEqual(plan.missing_tools, [])
         self.assertEqual(plan.omitted_tools, ["private_search"])
 
-    def test_unlinked_demo_leaf_remains_as_local_fallback(self):
+    def test_unlinked_demo_leaf_remains_as_local_fallback(self) -> None:
         """Check unlinked demo leaf remains as local fallback."""
-        config = {
+        config: Dict[str, Any] = {
             "tools": [
                 {
                     "name": "travel_concierge",
@@ -159,8 +162,8 @@ class LinkerTests(unittest.TestCase):
                 },
             ],
         }
-        plan = build_plan(config, {}, "travel_agency", [], self.source)
-        deployed = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
+        plan: DeploymentPlan = build_plan(config, {}, "travel_agency", [], self.source)
+        deployed: Dict[str, Any] = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
 
         self.assertEqual(plan.demo_link_fallbacks, ["link_demo_airline"])
         self.assertEqual(plan.replaced_agents, [])
@@ -168,9 +171,9 @@ class LinkerTests(unittest.TestCase):
                          ["travel_concierge", "link_demo_airline"])
         self.assertEqual(deployed["tools"][0]["tools"], ["link_demo_airline"])
 
-    def test_link_replaces_same_named_demo_leaf(self):
+    def test_link_replaces_same_named_demo_leaf(self) -> None:
         """Check link replaces same named demo leaf."""
-        config = {
+        config: Dict[str, Any] = {
             "links": {"link_demo_airline": "http://127.0.0.1:8092/link_demo_airline"},
             "tools": [
                 {
@@ -185,8 +188,8 @@ class LinkerTests(unittest.TestCase):
                 },
             ],
         }
-        plan = build_plan(config, {}, "travel_agency", [], self.source)
-        deployed = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
+        plan: DeploymentPlan = build_plan(config, {}, "travel_agency", [], self.source)
+        deployed: Dict[str, Any] = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
 
         self.assertEqual(plan.replaced_agents, ["link_demo_airline"])
         self.assertEqual([item["name"] for item in deployed["tools"]], ["travel_concierge"])
@@ -195,26 +198,26 @@ class LinkerTests(unittest.TestCase):
             ["http://127.0.0.1:8092/link_demo_airline"],
         )
 
-    def test_sidecar_round_trip(self):
+    def test_sidecar_round_trip(self) -> None:
         """Check sidecar round trip."""
-        path = self.root / "travel.links.json"
-        expected = {"airline_reservations": "http://127.0.0.1:8092/link_demo_airline"}
+        path: Path = self.root / "travel.links.json"
+        expected: Dict[str, str] = {"airline_reservations": "http://127.0.0.1:8092/link_demo_airline"}
         write_link_file(path, "travel", expected)
         self.assertEqual(load_link_file(path, "travel"), expected)
         self.assertEqual(json.loads(path.read_text())["version"], 1)
 
-    def test_callee_exports_only_its_own_identity_by_default(self):
+    def test_callee_exports_only_its_own_identity_by_default(self) -> None:
         """Check callee exports only its own identity by default."""
-        config = {
+        config: Dict[str, Any] = {
             "tools": [{"name": "airline_front", "instructions": "Book flights."}],
         }
-        desc = describe_config(config, "link_demo_airline")
+        desc: NetworkDescription = describe_config(config, "link_demo_airline")
         self.assertIsInstance(desc, NetworkDescription)
         self.assertEqual(desc.aliases, ["link_demo_airline", "airline_front"])
 
-    def test_linker_discovers_referenced_demo_leaf(self):
+    def test_linker_discovers_referenced_demo_leaf(self) -> None:
         """Check linker discovers referenced demo leaf."""
-        config = {
+        config: Dict[str, Any] = {
             "tools": [
                 {
                     "name": "travel_concierge",
@@ -227,37 +230,37 @@ class LinkerTests(unittest.TestCase):
                 },
             ],
         }
-        desc = describe_config(config, "travel_agency")
+        desc: NetworkDescription = describe_config(config, "travel_agency")
         self.assertEqual(desc.imports, {"link_demo_airline": ["travel_concierge"]})
 
-    def test_hosted_tool_uses_same_origin_proxy_and_manifest_allows_it(self):
+    def test_hosted_tool_uses_same_origin_proxy_and_manifest_allows_it(self) -> None:
         """Check hosted tool uses same origin proxy and manifest allows it."""
-        tool = HostableTool("search", "x.Search", "coded_tools.x", "Search", "Search", {})
-        plan = DeploymentPlan(
+        tool: HostableTool = HostableTool("search", "x.Search", "coded_tools.x", "Search", "Search", {})
+        plan: DeploymentPlan = DeploymentPlan(
             network_name="demo", config={"tools": []}, front_man="front",
             hostable_tools=[tool],
         )
-        site = "http://127.0.0.1:8091"
+        site: str = "http://127.0.0.1:8091"
         plan.config = {
             "tools": [{"name": "front", "instructions": "Help.", "tools": ["search"]}]
         }
-        config = rewrite_config(plan, site, cruse=False)
+        config: Dict[str, Any] = rewrite_config(plan, site, cruse=False)
         self.assertEqual(config["tools"][0]["tools"], [f"{site}/_mcp/0/mcp"])
-        manifest = build_manifest(plan, config, f"{site}/v1", f"{site}/byok/v1", site, ThemeSpec())
+        manifest: Dict[str, Any] = build_manifest(plan, config, f"{site}/v1", f"{site}/byok/v1", site, ThemeSpec())
         self.assertIn(site, manifest["allowed_peers"])
         self.assertEqual(manifest["peer_policy"]["mode"], "open")
         self.assertEqual(manifest["agent_mcp"]["endpoint"], f"{site}/mcp")
         self.assertEqual(manifest["agent_mcp"]["llm_credentials"]["mode"], "caller-byok")
         self.assertTrue(manifest["agent_mcp"]["llm_credentials"]["required"])
 
-    def test_private_steward_is_generated_for_any_public_site(self):
+    def test_private_steward_is_generated_for_any_public_site(self) -> None:
         """Check private steward is generated for any public site."""
-        plan = DeploymentPlan(
+        plan: DeploymentPlan = DeploymentPlan(
             network_name="harbor_services", config={"metadata": {"description": "Harbor services"}},
             front_man="harbor_front",
             links={"harbor_guide": "http://127.0.0.1:8091/harbor_guide"},
         )
-        hocon = build_private_steward_hocon(
+        hocon: str = build_private_steward_hocon(
             plan,
             "https://harbor.example",
             {"town_hall": "https://town-hall.example"},
@@ -273,30 +276,30 @@ class LinkerTests(unittest.TestCase):
         self.assertIn("Never invent example domains or hostnames", hocon)
         self.assertIn("After the operator confirms an action", hocon)
 
-    def test_generated_steward_filename_includes_network_name(self):
+    def test_generated_steward_filename_includes_network_name(self) -> None:
         """Check generated steward filename includes network name."""
-        plan = DeploymentPlan(
+        plan: DeploymentPlan = DeploymentPlan(
             network_name="harbor_services", config={"tools": [{"name": "front", "instructions": "Help."}]},
             front_man="front",
         )
-        out = self.root / "site"
+        out: Path = self.root / "site"
         generate_site(plan, out, "http://127.0.0.1:8091/v1", "http://127.0.0.1:8091/byok/v1",
                       "http://127.0.0.1:8091", cruse=False)
         self.assertTrue((out / "harbor_services_private_steward.hocon").is_file())
         self.assertFalse((out / "private-steward.hocon").exists())
-        manifest = out.parent / "manifest.hocon"
+        manifest: Path = out.parent / "manifest.hocon"
         self.assertTrue(manifest.is_file())
-        contents = manifest.read_text()
+        contents: str = manifest.read_text()
         self.assertIn('"site/harbor_services_private_steward.hocon": true', contents)
         self.assertNotIn(str(manifest.parent.resolve()), contents)
 
-    def test_static_bundle_is_self_contained_and_omits_server_features(self):
+    def test_static_bundle_is_self_contained_and_omits_server_features(self) -> None:
         """Check static bundle is self contained and omits server features."""
-        python_tool = HostableTool(
+        python_tool: HostableTool = HostableTool(
             "search", "x.Search", "coded_tools.x", "Search", "Search", {},
         )
-        direct_mcp = "https://tools.example/mcp"
-        plan = DeploymentPlan(
+        direct_mcp: str = "https://tools.example/mcp"
+        plan: DeploymentPlan = DeploymentPlan(
             network_name="portable",
             config={"tools": [{
                 "name": "front", "instructions": "Help.",
@@ -306,18 +309,18 @@ class LinkerTests(unittest.TestCase):
             hostable_tools=[python_tool],
             external_mcps=[direct_mcp],
         )
-        out = self.root / "portable"
-        runtime = self.root / "runtime-source"
+        out: Path = self.root / "portable"
+        runtime: Path = self.root / "runtime-source"
         runtime.mkdir()
         (runtime / "index.js").write_text("export const boot = () => {};\n")
         (runtime / "sandbox-worker.js").write_text("// worker\n")
 
-        manifest = generate_site(
+        manifest: Dict[str, Any] = generate_site(
             plan, out, "browser://mock", "https://api.example/v1", "",
             cruse=False, static_bundle=True, runtime_dir=runtime,
         )
 
-        config = json.loads((out / "portable.network.json").read_text())
+        config: Dict[str, Any] = json.loads((out / "portable.network.json").read_text())
         self.assertEqual(config["tools"][0]["tools"], [direct_mcp])
         self.assertEqual(config["deployment"]["omitted_python_tools"], ["search"])
         self.assertEqual(manifest["llm_router"]["base_url"], "https://api.example/v1")
@@ -333,32 +336,32 @@ class LinkerTests(unittest.TestCase):
         self.assertFalse((out / "portable_private_steward.hocon").exists())
         self.assertNotIn("private steward", (out / "STATIC_HOSTING.md").read_text())
         self.assertFalse((out.parent / "manifest.hocon").exists())
-        index = (out / "index.html").read_text()
+        index: str = (out / "index.html").read_text()
         self.assertIn('from "./runtime/index.js"', index)
         self.assertIn('href="./theme.css"', index)
 
-        mock_manifest = generate_site(
+        mock_manifest: Dict[str, Any] = generate_site(
             plan, self.root / "portable-mock", "browser://mock", "https://api.example/v1", "",
             cruse=False, static_bundle=True, runtime_dir=runtime, mock_llm=True,
         )
         self.assertEqual(mock_manifest["llm_router"]["base_url"], "browser://mock")
         self.assertTrue(mock_manifest["deployment"]["browser_mock"])
 
-    def test_static_bundle_removes_stale_private_stewards(self):
+    def test_static_bundle_removes_stale_private_stewards(self) -> None:
         """Check static bundle removes stale private stewards."""
-        plan = DeploymentPlan(
+        plan: DeploymentPlan = DeploymentPlan(
             network_name="portable",
             config={"tools": [{"name": "front", "instructions": "Help."}]},
             front_man="front",
         )
-        out = self.root / "portable"
+        out: Path = self.root / "portable"
         out.mkdir()
         (out / "portable_private_steward.hocon").write_text("stale")
         (out / "private-steward.hocon").write_text("legacy")
         (out.parent / "manifest.hocon").write_text(
             '{\n  "portable/portable_private_steward.hocon": true,\n}\n'
         )
-        runtime = self.root / "runtime-source"
+        runtime: Path = self.root / "runtime-source"
         runtime.mkdir()
         (runtime / "index.js").write_text("export const boot = () => {};\n")
         (runtime / "sandbox-worker.js").write_text("// worker\n")
@@ -372,15 +375,15 @@ class LinkerTests(unittest.TestCase):
         self.assertFalse((out / "private-steward.hocon").exists())
         self.assertNotIn("portable_private_steward", (out.parent / "manifest.hocon").read_text())
 
-    def test_private_steward_manifest_collects_multiple_bundles(self):
+    def test_private_steward_manifest_collects_multiple_bundles(self) -> None:
         """Check private steward manifest collects multiple bundles."""
-        root = self.root / "cailville"
+        root: Path = self.root / "cailville"
         (root / "harbor_guide").mkdir(parents=True)
         (root / "deneman_place").mkdir(parents=True)
         (root / "harbor_guide" / "harbor_guide_private_steward.hocon").write_text("{}")
         (root / "deneman_place" / "deneman_place_private_steward.hocon").write_text("{}")
-        manifest = write_private_steward_manifest(root)
-        contents = manifest.read_text()
+        manifest: Path = write_private_steward_manifest(root)
+        contents: str = manifest.read_text()
         self.assertIn('"harbor_guide/harbor_guide_private_steward.hocon": true', contents)
         self.assertIn('"deneman_place/deneman_place_private_steward.hocon": true', contents)
         self.assertNotIn(str(root.resolve()), contents)

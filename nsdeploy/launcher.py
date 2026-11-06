@@ -6,6 +6,7 @@ hostable tool. No neuro-san server is involved.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -26,36 +27,40 @@ from typing import Dict
 from typing import List
 from typing import Mapping
 from typing import Optional
+from typing import Set
 from typing import Tuple
+from typing import Type
 
 from nsdeploy.byok import BYOK_AUTH_HEADER
 from nsdeploy.byok import BYOK_MODEL_HEADER
+from nsdeploy.commerce.service import CommerceSite
 from nsdeploy.commerce.service import from_plan
 from nsdeploy.resolve import DeploymentPlan
+from nsdeploy.resolve import HostableTool
 
 # The vendored neuro-san-web browser runtime (self-contained ES modules) ships inside
 # the package as data so editable and regular installs both find it. Overridable via
 # serve(..., runtime_dir=...) / --runtime-dir.
-DEFAULT_RUNTIME_DIR = Path(__file__).resolve().parent / "runtime"
-MIME = {
+DEFAULT_RUNTIME_DIR: Path = Path(__file__).resolve().parent / "runtime"
+MIME: Dict[str, str] = {
     ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
     ".mjs": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",
     ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".map": "application/json",
 }
-WORKER_CSP = "default-src 'none'; script-src blob:; connect-src 'none'; worker-src 'none'"
-MCP_PROXY_TIMEOUT_SECONDS = 480
-UPSTREAM_REQUEST_TIMEOUT_SECONDS = 480
-MODEL_CATALOG_TIMEOUT_SECONDS = 120
+WORKER_CSP: str = "default-src 'none'; script-src blob:; connect-src 'none'; worker-src 'none'"
+MCP_PROXY_TIMEOUT_SECONDS: int = 480
+UPSTREAM_REQUEST_TIMEOUT_SECONDS: int = 480
+MODEL_CATALOG_TIMEOUT_SECONDS: int = 120
 
 # A served site must never use an LLM credential configured on the host: every real
 # completion carries the visitor's (or MCP caller's) own key. These patterns identify
 # provider credentials and provider endpoints that must not leak into the facade
 # subprocess. Non-secret settings (NSDEPLOY_FACADE_UPSTREAM, NSDEPLOY_FACADE_MODEL,
 # timeouts, PATH, PYTHONPATH) are kept.
-_SCRUB_PREFIXES = ("OPENAI_", "ANTHROPIC_", "AZURE_OPENAI_", "GEMINI_", "GOOGLE_API_",
-                   "NSDEPLOY_STEWARD_BYOK_")
-_SCRUB_SUFFIXES = ("_API_KEY", "_API_TOKEN", "_SECRET_KEY")
-_SCRUB_EXACT = {"GOOGLE_APPLICATION_CREDENTIALS", "NSDEPLOY_FACADE_API_KEY"}
+_SCRUB_PREFIXES: Tuple[str, ...] = ("OPENAI_", "ANTHROPIC_", "AZURE_OPENAI_", "GEMINI_", "GOOGLE_API_",
+                                    "NSDEPLOY_STEWARD_BYOK_")
+_SCRUB_SUFFIXES: Tuple[str, ...] = ("_API_KEY", "_API_TOKEN", "_SECRET_KEY")
+_SCRUB_EXACT: Set[str] = {"GOOGLE_APPLICATION_CREDENTIALS", "NSDEPLOY_FACADE_API_KEY"}
 
 
 def scrubbed_env(base: Mapping[str, str]) -> Dict[str, str]:
@@ -86,9 +91,10 @@ def _sse(obj: Dict[str, Any]) -> bytes:
 
 
 def _last_user_text(messages: List[Dict[str, Any]]) -> str:
+    m: Dict[str, Any]
     for m in reversed(messages):
         if m.get("role") == "user":
-            c = m.get("content")
+            c: Any = m.get("content")
             return c if isinstance(c, str) else json.dumps(c)
     return ""
 
@@ -100,7 +106,7 @@ def _called_tool_names(messages: List[Dict[str, Any]]) -> set:
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-statements  # closure-based handler
 def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: List[str],
                  local_mcps: Optional[List[str]] = None, facade_mcp: Optional[str] = None,
-                 commerce=None):
+                 commerce: Optional[CommerceSite] = None) -> Type[BaseHTTPRequestHandler]:
     """
     Build the HTTP request handler class for the deployed site origin.
 
@@ -113,28 +119,28 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
     :param commerce: Optional commerce service that handles /commerce requests.
     :return: A BaseHTTPRequestHandler subclass bound to these settings.
     """
-    ext_mcp_re = re.compile(r"^/ext-mcp/(\d+)/mcp$")
-    local_mcp_re = re.compile(r"^/_mcp/(\d+)/mcp$")
+    ext_mcp_re: re.Pattern[str] = re.compile(r"^/ext-mcp/(\d+)/mcp$")
+    local_mcp_re: re.Pattern[str] = re.compile(r"^/_mcp/(\d+)/mcp$")
     local_mcps = local_mcps or []
     facade_mcp = facade_mcp or ""
-    link_lock = threading.Lock()
+    link_lock: threading.Lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         """
         Serve the static site and runtime, the mock LLM router, the BYOK proxy and the MCP proxies.
         """
-        protocol_version = "HTTP/1.1"
+        protocol_version: str = "HTTP/1.1"
 
-        def log_message(self, *a):  # quiet
+        def log_message(self, *a: Any) -> None:  # quiet
             pass
 
-        def _cors(self):
+        def _cors(self) -> None:
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "*")
             self.send_header("Access-Control-Expose-Headers", "Mcp-Session-Id, X-Nsdeploy-LLM-Route")
 
-        def do_OPTIONS(self):  # pylint: disable=invalid-name  # BaseHTTPRequestHandler naming
+        def do_OPTIONS(self) -> None:  # pylint: disable=invalid-name  # BaseHTTPRequestHandler naming
             """
             Answer a CORS preflight request.
             """
@@ -144,17 +150,17 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             self.end_headers()
 
         # pylint: disable-next=inconsistent-return-statements  # mixed returns kept to preserve behavior
-        def do_POST(self):  # pylint: disable=invalid-name,too-many-return-statements  # flat route table
+        def do_POST(self) -> None:  # pylint: disable=invalid-name,too-many-return-statements  # flat route table
             """
             Route a POST request to commerce, the LLM endpoints, the link store or an MCP proxy.
 
             :return: The result of the route handler.
             """
-            path = self.path.split("?")[0]
+            path: str = self.path.split("?")[0]
             if commerce and (path == "/commerce" or path.startswith("/commerce/")):
                 return commerce.handle(self)
-            length = int(self.headers.get("Content-Length", 0) or 0)
-            raw = self.rfile.read(length) if length else b""
+            length: int = int(self.headers.get("Content-Length", 0) or 0)
+            raw: bytes = self.rfile.read(length) if length else b""
             if path == "/v1/chat/completions":
                 return self._mock_router(raw)
             if path == "/byok/v1/chat/completions":
@@ -163,7 +169,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 return self._save_link(raw)
             if path == "/mcp" and facade_mcp:
                 return self._mcp_proxy(facade_mcp, raw, "public facade", "POST")
-            m = local_mcp_re.match(path)
+            m: Optional[re.Match[str]] = local_mcp_re.match(path)
             if m:
                 return self._local_mcp_proxy(int(m.group(1)), raw, "POST")
             m = ext_mcp_re.match(path)
@@ -172,16 +178,16 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             self._send(404, b"not found", "text/plain")
 
         # pylint: disable-next=inconsistent-return-statements  # mixed returns kept to preserve behavior
-        def do_DELETE(self):  # pylint: disable=invalid-name  # BaseHTTPRequestHandler naming
+        def do_DELETE(self) -> None:  # pylint: disable=invalid-name  # BaseHTTPRequestHandler naming
             """
             Route a DELETE request to an MCP proxy to end its session.
 
             :return: The result of the route handler.
             """
-            path = self.path.split("?")[0]
+            path: str = self.path.split("?")[0]
             if path == "/mcp" and facade_mcp:
                 return self._mcp_proxy(facade_mcp, b"", "public facade", "DELETE")
-            m = local_mcp_re.match(path)
+            m: Optional[re.Match[str]] = local_mcp_re.match(path)
             if m:
                 return self._local_mcp_proxy(int(m.group(1)), b"", "DELETE")
             m = ext_mcp_re.match(path)
@@ -189,56 +195,56 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 return self._ext_mcp_proxy(int(m.group(1)), b"", "DELETE")
             self._send(404, b"not found", "text/plain")
 
-        def _save_link(self, raw: bytes):
+        def _save_link(self, raw: bytes) -> None:
             """Persist one outbound demo link on this site; no shared registry."""
             try:
-                body = json.loads(raw or b"{}")
-                network = body.get("network", "")
-                reference = body.get("reference", "")
-                target = body.get("target", "").rstrip("/")
-                parsed = urllib.parse.urlparse(target)
+                body: Dict[str, Any] = json.loads(raw or b"{}")
+                network: Any = body.get("network", "")
+                reference: Any = body.get("reference", "")
+                target: str = body.get("target", "").rstrip("/")
+                parsed: urllib.parse.ParseResult = urllib.parse.urlparse(target)
                 # pylint: disable-next=too-many-boolean-expressions  # flat validation list
                 if (not isinstance(network, str) or not isinstance(reference, str)
                         or not network or not reference or len(reference) > 200
                         or parsed.scheme not in ("http", "https") or not parsed.netloc):
                     raise ValueError("network, reference, and an http(s) target are required")
 
-                config_path = site_dir / f"{network}.network.json"
+                config_path: Path = site_dir / f"{network}.network.json"
                 if not config_path.is_file():
                     return self._send(404, b'{"error":"unknown network"}', "application/json")
-                config = json.loads(config_path.read_text(encoding="utf-8"))
+                config: Dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
                 if reference not in (config.get("link_slots", {}) or {}):
                     return self._send(404, b'{"error":"unknown link slot"}', "application/json")
 
-                links_path = site_dir / "links.json"
+                links_path: Path = site_dir / "links.json"
                 with link_lock:
                     try:
-                        doc = json.loads(links_path.read_text(encoding="utf-8"))
+                        doc: Dict[str, Any] = json.loads(links_path.read_text(encoding="utf-8"))
                     except (OSError, ValueError):
                         doc = {"version": 1, "networks": {}}
                     doc.setdefault("networks", {}).setdefault(network, {})[reference] = target
-                    temp_path = site_dir / ".links.json.tmp"
+                    temp_path: Path = site_dir / ".links.json.tmp"
                     temp_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
                     temp_path.replace(links_path)
-                result = json.dumps({"linked": reference, "target": target}).encode("utf-8")
+                result: bytes = json.dumps({"linked": reference, "target": target}).encode("utf-8")
                 return self._send(200, result, "application/json")
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 result = json.dumps({"error": str(exc)}).encode("utf-8")
                 return self._send(400, result, "application/json")
 
         # --- deterministic, name-agnostic mock LLM router (no key needed) ---------
-        def _mock_router(self, raw: bytes):  # pylint: disable=too-many-locals
+        def _mock_router(self, raw: bytes) -> None:  # pylint: disable=too-many-locals
             try:
-                body = json.loads(raw or b"{}")
+                body: Dict[str, Any] = json.loads(raw or b"{}")
             # pylint: disable-next=broad-exception-caught  # the mock answers any malformed body as empty
             except Exception:
                 body = {}
-            messages = body.get("messages", []) or []
-            tools = body.get("tools", []) or []
-            available = [t.get("function", {}).get("name") for t in tools if t.get("function")]
-            called = _called_tool_names(messages)
-            uncalled = [n for n in available if n not in called]
-            text = _last_user_text(messages)
+            messages: List[Dict[str, Any]] = body.get("messages", []) or []
+            tools: List[Dict[str, Any]] = body.get("tools", []) or []
+            available: List[Optional[str]] = [t.get("function", {}).get("name") for t in tools if t.get("function")]
+            called: Set[Any] = _called_tool_names(messages)
+            uncalled: List[Optional[str]] = [n for n in available if n not in called]
+            text: str = _last_user_text(messages)
 
             self.send_response(200)
             self._cors()
@@ -248,23 +254,26 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             # No Content-Length: signal end-of-stream by closing the connection so the
             # browser's SSE reader gets `done` (mirrors res.end() in the Node demo).
             self.send_header("Connection", "close")
-            self.close_connection = True  # pylint: disable=attribute-defined-outside-init  # base-class attribute
+            self.close_connection: bool = True  # pylint: disable=attribute-defined-outside-init  # base-class attribute
             self.end_headers()
             if uncalled:
-                name = uncalled[0]
-                schema = next((t["function"].get("parameters", {}) for t in tools
-                               if t.get("function", {}).get("name") == name), {})
+                name: Optional[str] = uncalled[0]
+                schema: Dict[str, Any] = next((t["function"].get("parameters", {}) for t in tools
+                                               if t.get("function", {}).get("name") == name), {})
                 args: Dict[str, Any] = {}
+                p: str
                 for p in (schema.get("required") or []):
                     args[p] = text
+                common: str
                 for common in ("request", "inquiry", "search_terms", "query", "input"):
                     args.setdefault(common, text)
-                tc = {"index": 0, "id": f"call_{name}", "type": "function",
-                      "function": {"name": name, "arguments": json.dumps(args)}}
+                tc: Dict[str, Any] = {"index": 0, "id": f"call_{name}", "type": "function",
+                                      "function": {"name": name, "arguments": json.dumps(args)}}
                 self.wfile.write(_sse({"choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [tc]}}]}))
                 self.wfile.write(_sse({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}))
             else:
-                summary = self._summarize(messages)
+                summary: str = self._summarize(messages)
+                piece: str
                 for piece in summary.split(" "):
                     self.wfile.write(_sse({"model": "neuro-san-mock",
                                            "choices": [{"index": 0, "delta": {"content": piece + " "}}]}))
@@ -272,24 +281,24 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             self.wfile.write(b"data: [DONE]\n\n")
 
         def _summarize(self, messages: List[Dict[str, Any]]) -> str:
-            results = [m.get("content", "") for m in messages if m.get("role") == "tool"]
+            results: List[Any] = [m.get("content", "") for m in messages if m.get("role") == "tool"]
             if not results:
                 return "(mock) I have no grounded tool output to summarize for this request."
-            joined = " ".join(str(r) for r in results)[:1200]
+            joined: str = " ".join(str(r) for r in results)[:1200]
             return "(mock summary) Based on the tools I consulted: " + joined
 
         # --- BYOK CORS pass-through proxy to a real OpenAI-compatible upstream ----
-        def _byok_proxy(self, raw: bytes):
-            auth = self.headers.get("Authorization", "")
-            req = urllib.request.Request(
+        def _byok_proxy(self, raw: bytes) -> None:
+            auth: str = self.headers.get("Authorization", "")
+            req: urllib.request.Request = urllib.request.Request(
                 f"{upstream}/chat/completions", data=raw, method="POST",
                 headers={"Content-Type": "application/json", "Authorization": auth, "Accept": "text/event-stream"},
             )
             try:
                 # pylint: disable-next=consider-using-with  # streamed below for the rest of the request
-                up = urllib.request.urlopen(req, timeout=UPSTREAM_REQUEST_TIMEOUT_SECONDS)
+                up: http.client.HTTPResponse = urllib.request.urlopen(req, timeout=UPSTREAM_REQUEST_TIMEOUT_SECONDS)
             except urllib.error.HTTPError as e:
-                detail = e.read()
+                detail: bytes = e.read()
                 self.send_response(e.code)
                 self._cors()
                 self.send_header("Content-Type", "application/json")
@@ -309,25 +318,26 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             self.close_connection = True  # pylint: disable=attribute-defined-outside-init  # base-class attribute
             self.end_headers()
             while True:
-                chunk = up.read(2048)
+                chunk: bytes = up.read(2048)
                 if not chunk:
                     break
                 self.wfile.write(chunk)
 
         # --- same-origin proxies to private local/external MCP servers -------------
-        def _local_mcp_proxy(self, index: int, raw: bytes, method: str):
+        def _local_mcp_proxy(self, index: int, raw: bytes, method: str) -> None:
             if index < 0 or index >= len(local_mcps):
                 return self._send(404, b"unknown local MCP", "text/plain")
             return self._mcp_proxy(local_mcps[index], raw, "local", method)
 
-        def _ext_mcp_proxy(self, index: int, raw: bytes, method: str):
+        def _ext_mcp_proxy(self, index: int, raw: bytes, method: str) -> None:
             if index < 0 or index >= len(ext_mcps):
                 return self._send(404, b"unknown external MCP", "text/plain")
             return self._mcp_proxy(ext_mcps[index], raw, "external", method)
 
         # pylint: disable-next=too-many-locals,too-many-branches  # header forwarding plus streaming
-        def _mcp_proxy(self, target: str, raw: bytes, kind: str, method: str):
+        def _mcp_proxy(self, target: str, raw: bytes, kind: str, method: str) -> None:
             # Forward the MCP/JSON-RPC request + the headers the protocol needs.
+            fwd: Dict[str, str]
             fwd = {"Accept": self.headers.get("Accept", "application/json, text/event-stream"),
                    "MCP-Protocol-Version": self.headers.get("MCP-Protocol-Version", "2025-06-18"),
                    # urllib's default Python-urllib/* user agent is blocked by
@@ -341,29 +351,31 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                    )}
             if method == "POST":
                 fwd["Content-Type"] = "application/json"
-            sid = self.headers.get("Mcp-Session-Id")
+            sid: Optional[str] = self.headers.get("Mcp-Session-Id")
             if sid:
                 fwd["Mcp-Session-Id"] = sid
-            last_event_id = self.headers.get("Last-Event-ID")
+            last_event_id: Optional[str] = self.headers.get("Last-Event-ID")
             if last_event_id:
                 fwd["Last-Event-ID"] = last_event_id
             if kind == "public facade":
+                header: str
                 for header in (BYOK_AUTH_HEADER, BYOK_MODEL_HEADER):
-                    value = self.headers.get(header)
+                    value: Optional[str] = self.headers.get(header)
                     if value:
                         fwd[header] = value
             try:
                 # pylint: disable-next=consider-using-with  # streamed below and closed in the finally block
-                up = urllib.request.urlopen(
+                up: http.client.HTTPResponse = urllib.request.urlopen(
                     urllib.request.Request(
                         target, data=raw if raw else None, method=method, headers=fwd),
                     timeout=MCP_PROXY_TIMEOUT_SECONDS)
             except urllib.error.HTTPError as e:
-                detail = e.read()
+                detail: bytes = e.read()
                 self._send(e.code, detail, e.headers.get("Content-Type", "application/json"))
                 return
             # pylint: disable-next=broad-exception-caught  # network/DNS/timeout; reported as an MCP-readable error
             except Exception as e:
+                msg: bytes
                 msg = json.dumps({"jsonrpc": "2.0", "error": {"code": -32000,
                                   "message": f"{kind} MCP unreachable: {e}"}}).encode("utf-8")
                 self._send(502, msg, "application/json")
@@ -371,7 +383,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             self.send_response(up.status)
             self._cors()
             self.send_header("Content-Type", up.headers.get("Content-Type", "application/json"))
-            up_sid = up.headers.get("Mcp-Session-Id")
+            up_sid: Optional[str] = up.headers.get("Mcp-Session-Id")
             if up_sid:
                 self.send_header("Mcp-Session-Id", up_sid)
             self.send_header("Cache-Control", "no-cache")
@@ -380,7 +392,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             self.end_headers()
             try:
                 while True:
-                    chunk = up.read(2048)
+                    chunk: bytes = up.read(2048)
                     if not chunk:
                         break
                     self.wfile.write(chunk)
@@ -393,18 +405,18 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
 
         # --- static files: /runtime/* from the runtime, else from the site -------
         # pylint: disable-next=inconsistent-return-statements  # mixed returns kept to preserve behavior
-        def do_GET(self):  # pylint: disable=invalid-name,too-many-return-statements  # flat route table
+        def do_GET(self) -> None:  # pylint: disable=invalid-name,too-many-return-statements  # flat route table
             """
             Route a GET request to commerce, an MCP proxy, the model catalog or a static file.
 
             :return: The result of the route handler.
             """
-            path = self.path.split("?")[0]
+            path: str = self.path.split("?")[0]
             if commerce and (path == "/commerce" or path.startswith("/commerce/")):
                 return commerce.handle(self)
             if path == "/mcp" and facade_mcp:
                 return self._mcp_proxy(facade_mcp, b"", "public facade", "GET")
-            m = local_mcp_re.match(path)
+            m: Optional[re.Match[str]] = local_mcp_re.match(path)
             if m:
                 return self._local_mcp_proxy(int(m.group(1)), b"", "GET")
             m = ext_mcp_re.match(path)
@@ -414,32 +426,33 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 return self._byok_models_proxy()
             if path == "/":
                 path = "/index.html"
+            file_path: Path
             if path.startswith("/runtime/"):
                 file_path = runtime_dir / path[len("/runtime/"):]
             else:
                 file_path = site_dir / path.lstrip("/")
             if ".." in path or not file_path.is_file():
                 return self._send(404, b"404 " + path.encode(), "text/plain", cors=False)
-            data = file_path.read_bytes()
-            extra = {}
+            data: bytes = file_path.read_bytes()
+            extra: Dict[str, str] = {}
             if path == "/runtime/sandbox-worker.js":
                 extra["Content-Security-Policy"] = WORKER_CSP
-            public_data = path in ("/agent-manifest.json", "/links.json", "/agent-mcp.json",
-                                   "/.well-known/nsdeploy.json", "/.well-known/nsdeploy-agent.json") or (
-                                       path.count("/") == 1 and path.endswith(".network.json"))
+            public_data: bool = path in ("/agent-manifest.json", "/links.json", "/agent-mcp.json",
+                                         "/.well-known/nsdeploy.json", "/.well-known/nsdeploy-agent.json") or (
+                                             path.count("/") == 1 and path.endswith(".network.json"))
             self._send(200, data, MIME.get(file_path.suffix, "application/octet-stream"), extra, cors=public_data)
 
-        def _byok_models_proxy(self):
+        def _byok_models_proxy(self) -> None:
             """Expose the active upstream catalog for browser-side model validation."""
-            auth = self.headers.get("Authorization", "")
-            req = urllib.request.Request(
+            auth: str = self.headers.get("Authorization", "")
+            req: urllib.request.Request = urllib.request.Request(
                 f"{upstream}/models", method="GET",
                 headers={"Authorization": auth, "Accept": "application/json"},
             )
             try:
                 # pylint: disable-next=consider-using-with  # response lifetime kept as-is to preserve behavior
-                up = urllib.request.urlopen(req, timeout=MODEL_CATALOG_TIMEOUT_SECONDS)
-                detail = up.read()
+                up: http.client.HTTPResponse = urllib.request.urlopen(req, timeout=MODEL_CATALOG_TIMEOUT_SECONDS)
+                detail: bytes = up.read()
                 return self._send(
                     up.status, detail,
                     up.headers.get("Content-Type", "application/json"),
@@ -455,12 +468,15 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 detail = json.dumps({"error": f"model catalog unavailable: {exc}"}).encode("utf-8")
                 return self._send(502, detail, "application/json")
 
-        def _send(self, code: int, body: bytes, ctype: str, extra: Optional[Dict[str, str]] = None, *, cors=True):
+        def _send(self, code: int, body: bytes, ctype: str, extra: Optional[Dict[str, str]] = None, *,
+                  cors: bool = True) -> None:
             self.send_response(code)
             if cors:
                 self._cors()
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
+            k: str
+            v: str
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
             self.end_headers()
@@ -470,13 +486,14 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
 
 
 def _free_tcp_port() -> int:
+    sock: socket.socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
 
 
 def _wait_for_listener(proc: subprocess.Popen, port: int, timeout: float = 15.0) -> None:
-    deadline = time.monotonic() + timeout
+    deadline: float = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             raise RuntimeError(f"MCP subprocess exited with status {proc.returncode}")
@@ -505,21 +522,24 @@ def spawn_mcp_servers(plan: DeploymentPlan, studio_root: Path, python_exe: str) 
     # NOTE: tool subprocesses currently inherit the full host environment (some studio
     # coded tools construct provider clients from it). Tightening this to scrubbed_env()
     # is tracked separately together with the affected tools.
-    env = dict(os.environ)
-    repo_root = str(Path(__file__).resolve().parents[1])
+    env: Dict[str, str] = dict(os.environ)
+    repo_root: str = str(Path(__file__).resolve().parents[1])
     env["PYTHONPATH"] = os.pathsep.join([repo_root, str(studio_root), env.get("PYTHONPATH", "")])
     try:
+        index: int
+        tool: HostableTool
         for index, tool in enumerate(plan.hostable_tools):
             last_error: Optional[Exception] = None
+            attempt: int
             for attempt in range(5):
-                port = _free_tcp_port()
-                spec = {"name": tool.name, "module": tool.module, "class_name": tool.class_name,
-                        "description": tool.description, "parameters": tool.parameters, "port": port}
-                spec_file = Path(tempfile.gettempdir()) / (
+                port: int = _free_tcp_port()
+                spec: Dict[str, Any] = {"name": tool.name, "module": tool.module, "class_name": tool.class_name,
+                                        "description": tool.description, "parameters": tool.parameters, "port": port}
+                spec_file: Path = Path(tempfile.gettempdir()) / (
                     f"nsdeploy_{os.getpid()}_{index}_{attempt}.json")
                 spec_file.write_text(json.dumps(spec), encoding="utf-8")
                 # pylint: disable-next=consider-using-with  # long-lived subprocess owned by the caller
-                proc = subprocess.Popen(
+                proc: subprocess.Popen = subprocess.Popen(
                     [python_exe, "-m", "nsdeploy.mcp_host", "--studio", str(studio_root),
                      "--spec", str(spec_file)], env=env, cwd=repo_root,
                 )
@@ -564,16 +584,16 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
     python_exe = python_exe or sys.executable
     runtime_dir = runtime_dir or DEFAULT_RUNTIME_DIR
     ext_mcps = ext_mcps or []
-    bindings = spawn_mcp_servers(plan, studio_root, python_exe)
+    bindings: List[Tuple[subprocess.Popen, int]] = spawn_mcp_servers(plan, studio_root, python_exe)
     facade_proc: Optional[subprocess.Popen] = None
     try:
-        local_mcps = [f"http://127.0.0.1:{private_port}/mcp" for _, private_port in bindings]
-        facade_port = _free_tcp_port()
+        local_mcps: List[str] = [f"http://127.0.0.1:{private_port}/mcp" for _, private_port in bindings]
+        facade_port: int = _free_tcp_port()
         facade_upstream = facade_upstream or os.environ.get("NSDEPLOY_FACADE_UPSTREAM") or upstream
-        repo_root = str(Path(__file__).resolve().parents[1])
+        repo_root: str = str(Path(__file__).resolve().parents[1])
         # The facade runs the network for MCP callers with *their* BYOK credentials, so it
         # must not even be able to see the host's provider credentials.
-        env = scrubbed_env(os.environ)
+        env: Dict[str, str] = scrubbed_env(os.environ)
         env["PYTHONPATH"] = os.pathsep.join([repo_root, str(studio_root), env.get("PYTHONPATH", "")])
         # pylint: disable-next=consider-using-with  # stopped in the finally block below
         facade_proc = subprocess.Popen(
@@ -582,26 +602,30 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
             env=env, cwd=repo_root,
         )
         _wait_for_listener(facade_proc, facade_port)
-        commerce = from_plan(plan, site_dir, site_base or f"http://127.0.0.1:{port}")
-        handler = make_handler(site_dir, upstream, runtime_dir, ext_mcps, local_mcps,
-                               f"http://127.0.0.1:{facade_port}/mcp", commerce)
-        httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
-        url = (site_base or f"http://127.0.0.1:{port}").rstrip("/") + "/"
+        commerce: Optional[CommerceSite] = from_plan(plan, site_dir, site_base or f"http://127.0.0.1:{port}")
+        handler: Type[BaseHTTPRequestHandler] = make_handler(site_dir, upstream, runtime_dir, ext_mcps, local_mcps,
+                                                             f"http://127.0.0.1:{facade_port}/mcp", commerce)
+        httpd: ThreadingHTTPServer = ThreadingHTTPServer(("127.0.0.1", port), handler)
+        url: str = (site_base or f"http://127.0.0.1:{port}").rstrip("/") + "/"
         print(f"\n🌐  {plan.network_name} is live:  {url}")
         if site_base:
             print(f"    Loopback backend: 127.0.0.1:{port}")
-        llm_default = "mock /v1 (developer mode)" if mock_llm else "BYOK /byok/v1 (API key required)"
+        llm_default: str = "mock /v1 (developer mode)" if mock_llm else "BYOK /byok/v1 (API key required)"
         print(f"    LLM default: {llm_default}  ·  BYOK upstream → {upstream}")
         print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: caller BYOK → {facade_upstream}"
               f"  ·  steward: {plan.network_name}_private_steward.hocon")
         if plan.hostable_tools:
             print("    MCP tool servers (same-origin proxy → private subprocess):")
+            i: int
+            tool: HostableTool
+            private_port: int
             for i, (tool, (_, private_port)) in enumerate(zip(plan.hostable_tools, bindings)):
                 print(f"      • {tool.name}  →  /_mcp/{i}/mcp  →  127.0.0.1:{private_port}")
+        target: str
         for i, target in enumerate(ext_mcps):
             print(f"    External MCP (proxied): /ext-mcp/{i}/mcp  →  {target}")
         if plan.link_slots:
-            pending = len(set(plan.link_slots) - set(plan.links))
+            pending: int = len(set(plan.link_slots) - set(plan.links))
             print(f"    Linker: {pending} pending agent-network link(s); outbound bindings stay on this site")
         print("    Ctrl-C to stop.\n")
         try:
@@ -613,5 +637,6 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
     finally:
         if facade_proc is not None:
             _stop_process(facade_proc)
+        proc: subprocess.Popen
         for proc, _ in bindings:
             _stop_process(proc)

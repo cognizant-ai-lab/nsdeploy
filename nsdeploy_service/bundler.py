@@ -17,6 +17,7 @@ from typing import Tuple
 
 from nsdeploy.generate import generate_site
 from nsdeploy.resolve import DeploymentPlan
+from nsdeploy.resolve import HostableTool
 from nsdeploy.resolve import build_plan
 from nsdeploy.resolve import resolve_hocon
 from nsdeploy.studio import DEFAULT_REF
@@ -138,6 +139,7 @@ class Bundler:
         result: Optional[BundleResult] = None
         # The whole build is scratch: the tree is packed into memory and the
         # directory goes before the response is written.
+        scratch: str
         with tempfile.TemporaryDirectory(prefix="nsdeploy-bundle-") as scratch:
             result = self.build_in(Path(scratch), name, text, options)
         return result
@@ -174,6 +176,7 @@ class Bundler:
         name: str = self.safe_name(row.get("name"))
         work_dir: Path = Path(row.get("work_dir") or "")
         result: Optional[BundleResult] = None
+        scratch: str
         with tempfile.TemporaryDirectory(prefix="nsdeploy-bundle-") as scratch:
             result = self.build_in(Path(scratch), name, text, options,
                                    deployment_work=work_dir)
@@ -400,6 +403,7 @@ class Bundler:
         omitted: Set[str] = set(plan.omitted_tools)
         names: str = ""
         # Every hostable tool needs a Python process, and a static bundle has none.
+        tool: HostableTool
         for tool in plan.hostable_tools:
             omitted.add(tool.name)
         if omitted:
@@ -434,6 +438,7 @@ class Bundler:
         """
         paths: List[Path] = []
         # Sorted, so that two builds of one network pack in one order.
+        path: Path
         for path in sorted(out_dir.rglob("*")):
             if path.is_file():
                 paths.append(path)
@@ -441,6 +446,9 @@ class Bundler:
         total: int = 0
         # mtime=0 on the gzip header for the same reason the entries are flattened
         # below: the archive must be a function of its content and nothing else.
+        zipped: gzip.GzipFile
+        archive: tarfile.TarFile
+        handle: io.BufferedReader
         with gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=0) as zipped:
             with tarfile.open(fileobj=zipped, mode="w", format=tarfile.PAX_FORMAT) as archive:
                 # One entry for each generated file, with the ownership, mode and

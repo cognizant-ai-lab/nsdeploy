@@ -146,7 +146,7 @@ class BundleOptions(BaseModel):
 # bounded while POST /orgs, PATCH /orgs and the console's own "change organization"
 # dialog were not, so a long name was refused on upload and accepted everywhere else.
 # models.py is the lowest layer that all of them already import.
-ORG_NAME_MAX = 40
+ORG_NAME_MAX: int = 40
 
 # Letters and digits are Unicode (\w), so "Zürich Analytics" and non-Latin team names
 # are accepted — this is an international event and an ASCII-only rule would reject
@@ -164,7 +164,7 @@ ORG_NAME_MAX = 40
 #
 # Length is a separate job: a 30-character hex string is made entirely of legal
 # characters, so only ORG_NAME_MAX refuses a pasted credential.
-ORG_NAME_PATTERN = r"^[^\W_](?:[\w &'().,\-/+#]*(?:[^\W_]|[).]))?$"
+ORG_NAME_PATTERN: str = r"^[^\W_](?:[\w &'().,\-/+#]*(?:[^\W_]|[).]))?$"
 
 
 class OrgCreate(BaseModel):
@@ -229,7 +229,7 @@ class NetworkLink(BaseModel):
 # Bump this whenever a field is added to NetworkSummary that _repair_summaries()
 # should backfill onto records built before it existed. A stored summary carrying
 # an older version is re-derived from the bundle once, at the next startup.
-SUMMARY_SCHEMA_VERSION = 1
+SUMMARY_SCHEMA_VERSION: int = 1
 
 
 class NetworkSummary(BaseModel):
@@ -406,6 +406,8 @@ class ThemeTokens(BaseModel):
         the *default* colour, so a typo'd hue would come back as stock blue and
         read as "the edit was applied, just not the way I meant".
         """
+        key: str
+        colour: str
         for key, colour in (value or {}).items():
             if not is_color(colour):
                 raise ValueError(

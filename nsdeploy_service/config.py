@@ -14,15 +14,16 @@ from dataclasses import field
 from pathlib import Path
 from typing import List
 from typing import Optional
+from urllib.parse import SplitResult
 from urllib.parse import urlsplit
 
-ENV_PREFIX = "NSDEPLOY_SERVICE_"
+ENV_PREFIX: str = "NSDEPLOY_SERVICE_"
 
 # A DNS label is at most 63 characters. The network slug is capped well below that
 # so `{slug}-{id}` always fits without the truncation ever reaching the id — the id
 # is the part that makes the hostname unique, so it must survive intact.
-SLUG_MAX = 40
-LABEL_MAX = 63
+SLUG_MAX: int = 40
+LABEL_MAX: int = 63
 
 
 def slugify(value: str) -> str:
@@ -31,7 +32,7 @@ def slugify(value: str) -> str:
     Network names are Python-ish identifiers (`store_order_management_system`) and
     underscores are not legal in hostnames, so they become hyphens.
     """
-    slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
+    slug: str = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
     return slug[:SLUG_MAX].strip("-")
 
 
@@ -43,10 +44,10 @@ def sanitize_label(label: str) -> str:
 
 # This package. Everything the service owns lives under here, so the whole folder
 # can be dropped into any version of nsdeploy without edits on either side.
-SERVICE_ROOT = Path(__file__).resolve().parent
+SERVICE_ROOT: Path = Path(__file__).resolve().parent
 # The nsdeploy checkout this service was dropped into. `python -m nsdeploy` is run
 # from here so the package and its bundled browser runtime resolve.
-REPO_ROOT = SERVICE_ROOT.parent
+REPO_ROOT: Path = SERVICE_ROOT.parent
 
 
 def _env(name: str, default: str = "") -> str:
@@ -54,7 +55,7 @@ def _env(name: str, default: str = "") -> str:
 
 
 def _env_int(name: str, default: int) -> int:
-    raw = _env(name)
+    raw: str = _env(name)
     if not raw:
         return default
     try:
@@ -64,7 +65,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    raw = _env(name).lower()
+    raw: str = _env(name).lower()
     if not raw:
         return default
     return raw not in ("0", "false", "no", "off")
@@ -72,7 +73,7 @@ def _env_bool(name: str, default: bool) -> bool:
 
 def _env_list(name: str, default: List[str]) -> List[str]:
     """A comma-separated setting. Empty entries are dropped, not kept as ''."""
-    raw = _env(name)
+    raw: str = _env(name)
     if not raw:
         return list(default)
     return [item.strip() for item in raw.split(",") if item.strip()]
@@ -271,11 +272,11 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
         :return: The settings, with unset variables taking their defaults.
         :raises ValueError: If a value is malformed or the settings are inconsistent.
         """
-        default = cls()
-        work_root = _env("WORK_ROOT")
-        db_path = _env("DB_PATH")
-        ui_dir = _env("UI_DIR")
-        settings = cls(
+        default: Settings = cls()
+        work_root: str = _env("WORK_ROOT")
+        db_path: str = _env("DB_PATH")
+        ui_dir: str = _env("UI_DIR")
+        settings: Settings = cls(
             host=_env("HOST", default.host),
             port=_env_int("PORT", default.port),
             deploy_host=_env("DEPLOY_HOST", default.deploy_host),
@@ -330,7 +331,7 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
         """
         if self.port_end < self.port_start:
             raise ValueError("PORT_END must be >= PORT_START")
-        pool_size = self.port_end - self.port_start + 1
+        pool_size: int = self.port_end - self.port_start + 1
         if self.max_deployments > pool_size:
             raise ValueError(
                 f"MAX_DEPLOYMENTS ({self.max_deployments}) exceeds the port pool "
@@ -363,13 +364,14 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
                 "every origin, so keep one or the other"
             )
         # Each entry, because one unusable line should not be found a request at a time.
+        origin: str
         for origin in self.cors_origins:
             if origin != "*":
                 self._validate_cors_origin(origin)
 
     @staticmethod
     def _validate_cors_origin(origin: str) -> None:
-        parts = urlsplit(origin.rstrip("/"))
+        parts: SplitResult = urlsplit(origin.rstrip("/"))
         if parts.scheme not in ("http", "https") or not parts.netloc:
             raise ValueError(
                 f"CORS_ORIGINS entry {origin!r} is not an origin; write it as "
@@ -392,6 +394,7 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
         allowed: List[str] = []
         # A trailing slash is the usual way to write this and would never match, so
         # it is removed rather than refused.
+        origin: str
         for origin in self.cors_origins:
             allowed.append(origin.rstrip("/"))
         return allowed
@@ -416,9 +419,9 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
         label is unusable. A deployment must not fail to get a URL because a template
         was mis-set, and the id alone is always valid.
         """
-        slug = slugify(name)
+        slug: str = slugify(name)
         try:
-            rendered = self.subdomain_template.format(
+            rendered: str = self.subdomain_template.format(
                 id=deployment_id, port=port, slug=slug, name=slug)
         except (KeyError, IndexError, ValueError):
             rendered = deployment_id
@@ -432,6 +435,6 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
         before generation and cannot be rewritten afterwards.
         """
         if self.subdomain_template:
-            label = self.subdomain_label(deployment_id, port, name)
+            label: str = self.subdomain_label(deployment_id, port, name)
             return f"{self.public_scheme}://{label}.{self.public_host}"
         return f"{self.public_scheme}://{self.public_host}:{port}"
