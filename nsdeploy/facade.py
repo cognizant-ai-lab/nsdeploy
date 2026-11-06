@@ -26,6 +26,7 @@ from nsdeploy.byok import (
     current_byok_credentials,
     forwarding_headers,
 )
+from nsdeploy.site_manifest import SiteManifest
 
 
 PUBLIC_SITE_CALL_BUDGET = 12
@@ -515,24 +516,6 @@ async def _serve(config: Dict[str, Any], site_base: str, upstream: str, port: in
     await server.serve()
 
 
-def _manifest_front_man(config_path: Path) -> str:
-    """
-    Read the front-man of the network in `config_path` from the site's agent-manifest.json.
-
-    :param config_path: Path of the site's `<network>.network.json`
-    :return: The front-man agent name listed for that network
-    :raises ValueError: When the manifest lists no front-man for the network
-    """
-    manifest_path = config_path.parent / "agent-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    entry: Dict[str, Any] = None
-    # Find the manifest entry for this network.
-    for entry in manifest.get("networks", []) or []:
-        if f"{entry.get('name')}.network.json" == config_path.name and isinstance(entry.get("front_man"), str):
-            return entry.get("front_man")
-    raise ValueError(f"{manifest_path} names no front-man for {config_path.name}")
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the nsDeploy public MCP facade.")
     parser.add_argument("--config", required=True)
@@ -544,7 +527,7 @@ def main() -> int:
     args = parser.parse_args()
     config_path = Path(args.config)
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    front_man = args.front_man or _manifest_front_man(config_path)
+    front_man = args.front_man or SiteManifest.front_man(config_path)
     asyncio.run(_serve(config, args.site_base, args.upstream, args.port, front_man))
     return 0
 
