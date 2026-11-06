@@ -1,0 +1,34 @@
+---
+name: Checkmarx One (trial)
+
+on:
+  push:
+    branches:
+      - devin/1793991472-cx-rescan
+
+jobs:
+  checkmarx:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      # 2.3.33
+      - uses: Checkmarx/ast-github-action@c52fa63dbd4916520882e10456d66ff4dd7bf754
+        with:
+          base_uri: ${{ vars.CX_BASE_URI }}
+          cx_tenant: ${{ vars.CX_TENANT }}
+          cx_client_id: ${{ vars.CX_CLIENT_ID }}
+          cx_client_secret: ${{ secrets.CX_CLIENT_SECRET }}
+          project_name: ${{ github.repository }}
+          branch: ${{ github.ref }}
+          scan_params: '--sast-preset-name "Checkmarx Default" --report-format json --output-name cx_full --output-path .'
+      # v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: cx-full
+          path: '*.json'
