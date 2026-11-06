@@ -33,6 +33,7 @@ from nsdeploy.byok import ByokCredentials
 from nsdeploy.byok import ByokContextMiddleware
 from nsdeploy.byok import current_byok_credentials
 from nsdeploy.byok import forwarding_headers
+from nsdeploy.site_manifest import SiteManifest
 
 
 PUBLIC_SITE_CALL_BUDGET = 12
@@ -554,12 +555,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run the nsDeploy public MCP facade.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--site-base", required=True)
-    parser.add_argument("--front-man", required=True)
+    parser.add_argument("--front-man", default=None,
+                        help="front-man agent; defaults to the one in the site's agent-manifest.json")
     parser.add_argument("--port", required=True, type=int)
     parser.add_argument("--upstream", default="mock://nsdeploy")
     args = parser.parse_args()
-    config = json.loads(Path(args.config).read_text(encoding="utf-8"))
-    asyncio.run(_serve(config, args.site_base, args.upstream, args.port, args.front_man))
+    config_path = Path(args.config)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    front_man = args.front_man or SiteManifest.front_man(config_path)
+    asyncio.run(_serve(config, args.site_base, args.upstream, args.port, front_man))
     return 0
 
 

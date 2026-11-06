@@ -21,54 +21,13 @@ import importlib
 import json
 import sys
 from pathlib import Path
-from typing import Any
-from typing import Dict
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 from starlette.middleware.cors import CORSMiddleware
 
-# Optional so the host still runs tools when neuro_san is absent.
-try:
-    from neuro_san.interfaces.coded_tool import CodedTool
-except ImportError:
-    CodedTool = None
-
-_JSON_TO_PY = {"string": "str", "integer": "int", "number": "float",
-               "boolean": "bool", "array": "list", "object": "dict"}
-
-
-def _make_tool_function(coded: Any, parameters: Dict[str, Any]):  # pylint: disable=too-many-locals; codegen state
-    """Build an async function whose signature mirrors the tool's JSON-Schema params,
-    so FastMCP advertises a correct inputSchema, and which forwards to the coded tool.
-    """
-    try:
-        use_async = type(coded).async_invoke is not CodedTool.async_invoke
-    # Any attribute failure, including an absent neuro_san, falls back to duck typing on the tool instance.
-    except Exception:  # pylint: disable=broad-exception-caught
-        use_async = hasattr(coded, "async_invoke") and not hasattr(coded, "invoke")
-
-    async def _run(args: Dict[str, Any]) -> str:
-        args = {k: v for k, v in args.items() if v is not None}
-        if use_async:
-            result = await coded.async_invoke(args, {})
-        else:
-            result = coded.invoke(args, {})
-        return result if isinstance(result, str) else json.dumps(result, default=str)
-
-    props = (parameters or {}).get("properties", {}) or {}
-    required = set((parameters or {}).get("required", []) or [])
-    sig_parts, collect_parts = [], []
-    for pname, pdef in props.items():
-        ann = _JSON_TO_PY.get((pdef or {}).get("type"), "str")
-        sig_parts.append(f"{pname}: {ann}" if pname in required else f"{pname}: {ann} = None")
-        collect_parts.append(f"{pname!r}: {pname}")
-    sig = ", ".join(sig_parts)
-    collect = "{" + ", ".join(collect_parts) + "}"
-    src = f"async def _toolfn({sig}):\n    return await _run({collect})\n"
-    namespace: Dict[str, Any] = {"_run": _run}
-    exec(src, namespace)  # noqa: S102 pylint: disable=exec-used; controlled codegen from a resolved schema
-    return namespace["_toolfn"]
+from nsdeploy.coded_tool_module import CodedToolModule
+from nsdeploy.hosted_tool_function import HostedToolFunction
 
 
 def main() -> int:
@@ -88,14 +47,16 @@ def main() -> int:
 
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
 
-    module = importlib.import_module(spec["module"])
-    tool_class = getattr(module, spec["class_name"])
+    module_name = CodedToolModule.find_dotted(Path(studio_root), spec.get("module"))
+    class_name = spec.get("class_name")
+    if module_name is None or not isinstance(class_name, str) or not class_name.isidentifier():
+        raise SystemExit(f"[mcp_host] spec does not name a studio coded tool: {spec.get('module')}.{class_name}")
+    module = importlib.import_module(module_name)
+    tool_class = getattr(module, class_name)
     coded = tool_class()
 
     mcp = FastMCP(spec["name"], port=int(spec["port"]))
-    fn = _make_tool_function(coded, spec.get("parameters") or {})
-    fn.__name__ = spec["name"]
-    fn.__doc__ = spec.get("description") or spec["name"]
+    fn = HostedToolFunction(coded, spec["name"], spec.get("description") or spec["name"], spec.get("parameters") or {})
     mcp.tool(name=spec["name"], description=spec.get("description") or spec["name"])(fn)
 
     # The browser calls this MCP server cross-origin (different port from the site),

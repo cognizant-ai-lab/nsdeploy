@@ -466,7 +466,8 @@ class ByokOnlyTests(unittest.TestCase):
             "https://net.agents.example.com",
         )
         flags = {arg for arg in cmd if arg.startswith("--")}
-        self.assertEqual(flags, {"--config", "--site-base", "--front-man", "--port", "--upstream"})
+        self.assertEqual(flags, {"--config", "--site-base", "--port", "--upstream"})
+        self.assertNotIn("front", cmd)
         self.assertNotIn("--api-key", cmd)
         self.assertEqual(cmd[cmd.index("--site-base") + 1], "https://net.agents.example.com")
         legacy = _facade_command(
