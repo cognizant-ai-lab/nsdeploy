@@ -803,15 +803,15 @@ From the repository root, with your existing themes:
 python -m nsdeploy examples/kitchenasty_ordering_agent.hocon \
   --static-bundle --theme \
   --out ./dist/kitchenasty_ordering_agent \
-  --site-url http://agent-a.evolution.ml/kitchenasty_ordering_agent \
+  --site-url http://agent-a.example.com/kitchenasty_ordering_agent \
   --action-site https://httpbin.org/forms/post \
   --action-max-pages 1 --action-refresh --action-include-all \
-  --action-caller-origin http://cors.decisionai.ml
+  --action-caller-origin http://agent-b.example.com
 
 python -m nsdeploy examples/openresto_concierge.hocon \
   --static-bundle --theme \
   --out ./dist/openresto_concierge \
-  --site-url http://cors.decisionai.ml/openresto_concierge \
+  --site-url http://agent-b.example.com/openresto_concierge \
   --action-site https://restful-api.dev/ \
   --action-spec examples/actions/restful-api.openapi.json \
   --action-max-pages 1 --action-refresh --action-include-all
@@ -830,13 +830,13 @@ Check the receipt's actual `data.form` echo. Ask OpenResto to create a synthetic
 for four guests on 2026-11-14 at 19:00; check the returned server-assigned `id`.
 In the next turn ask it to retrieve that exact id and compare the stored values.
 
-The deployed example is available at
-`http://cors.decisionai.ml/openresto_concierge`; its remote KitchenAsty site is
-`http://agent-a.evolution.ml/kitchenasty_ordering_agent`. The KitchenAsty HOCON
+In this example, OpenResto is deployed at
+`http://agent-b.example.com/openresto_concierge`; its remote KitchenAsty site is
+`http://agent-a.example.com/kitchenasty_ordering_agent`. The KitchenAsty HOCON
 reference includes both the bundle path and the exported network name:
-`http://agent-a.evolution.ml/kitchenasty_ordering_agent/kitchenasty_ordering_agent`.
+`http://agent-a.example.com/kitchenasty_ordering_agent/kitchenasty_ordering_agent`.
 The repeated name is intentional. The caller passed to `--action-caller-origin`
-is only the exact origin (`http://cors.decisionai.ml`), without a path.
+is only the exact origin (`http://agent-b.example.com`), without a path.
 
 Then ask OpenResto:
 
@@ -863,7 +863,7 @@ Successful end-to-end execution produces two independent receipts:
   server-assigned `data.id` from `https://api.restful-api.dev/objects`.
 - `.../kitchenasty_ordering_agent#post_forms_post_76079b9e` reports HTTP 200
   from `https://httpbin.org/post`; `data.form` echoes the pizza fields. Its echoed
-  `Origin` is `http://agent-a.evolution.ml`, demonstrating that the remote action
+  `Origin` is `http://agent-a.example.com`, demonstrating that the remote action
   ran in its owning site's bridge rather than being imitated by OpenResto.
 
 `state: "response_received"` proves that the browser received an HTTP response.
@@ -967,7 +967,7 @@ configured route forms; modules declare their own caller policy.
 
 For the OpenResto/KitchenAsty deployment, keep your theme/model/output flags and add
 the actual application routes to each build. Add
-`--action-caller-origin https://agent-b.decisionai.ml` to KitchenAsty if OpenResto
+`--action-caller-origin https://agent-b.example.com` to KitchenAsty if OpenResto
 is hosted on that origin. These agent domains must also host their corresponding
 real applications and backends. An unrelated original website cannot be inspected
 or operated just by naming it in HOCON. The routes must be taken from your actual

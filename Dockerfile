@@ -1,9 +1,5 @@
 FROM python:3.11-slim
 
-# nsdeploy pip-installs a hosted tool's third-party deps on demand at build time.
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
 # pyproject.toml reads its dependencies from requirements.txt; without that file setuptools
