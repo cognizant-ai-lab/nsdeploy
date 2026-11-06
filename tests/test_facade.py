@@ -1,6 +1,8 @@
 import json
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from nsdeploy.byok import BYOK_AUTH_HEADER, BYOK_MODEL_HEADER, ByokContextMiddleware
@@ -10,6 +12,7 @@ from nsdeploy.facade import (
     NetworkRunner,
     PUBLIC_SITE_CALL_BUDGET,
     PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS,
+    _manifest_front_man,
     _mcp_http_timeout,
     _is_public_site_ref,
     _pack_context,
@@ -182,6 +185,17 @@ class FacadeContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second["message"].get("tool_calls"), None)
         self.assertEqual(MOCK_TOOL_CALLS_PER_AGENT, 1)
         self.assertGreater(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS, 30)
+
+
+class ManifestFrontManTests(unittest.TestCase):
+    def test_front_man_comes_from_site_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            site = Path(directory)
+            (site / "agent-manifest.json").write_text(json.dumps({"networks": [
+                {"name": "other", "front_man": "wrong"}, {"name": "net", "front_man": "front"}]}), encoding="utf-8")
+            self.assertEqual(_manifest_front_man(site / "net.network.json"), "front")
+            with self.assertRaises(ValueError):
+                _manifest_front_man(site / "missing.network.json")
 
 
 if __name__ == "__main__":

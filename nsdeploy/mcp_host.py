@@ -18,18 +18,22 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import inspect
 import json
 import sys
 from pathlib import Path
 from typing import Any, Dict
 
-_JSON_TO_PY = {"string": "str", "integer": "int", "number": "float",
-               "boolean": "bool", "array": "list", "object": "dict"}
+from nsdeploy.coded_tool_module import CodedToolModule
+
+_JSON_TO_PY = {"string": str, "integer": int, "number": float,
+               "boolean": bool, "array": list, "object": dict}
 
 
 def _make_tool_function(coded: Any, parameters: Dict[str, Any]):
     """Build an async function whose signature mirrors the tool's JSON-Schema params,
     so FastMCP advertises a correct inputSchema, and which forwards to the coded tool.
+    The signature is built with `inspect`, so parameter names must be identifiers.
     """
     try:
         from neuro_san.interfaces.coded_tool import CodedTool
@@ -37,7 +41,7 @@ def _make_tool_function(coded: Any, parameters: Dict[str, Any]):
     except Exception:
         use_async = hasattr(coded, "async_invoke") and not hasattr(coded, "invoke")
 
-    async def _run(args: Dict[str, Any]) -> str:
+    async def _toolfn(**args: Any) -> str:
         args = {k: v for k, v in args.items() if v is not None}
         if use_async:
             result = await coded.async_invoke(args, {})
@@ -47,17 +51,15 @@ def _make_tool_function(coded: Any, parameters: Dict[str, Any]):
 
     props = (parameters or {}).get("properties", {}) or {}
     required = set((parameters or {}).get("required", []) or [])
-    sig_parts, collect_parts = [], []
+    sig_params = []
+    # Add one keyword-only parameter per schema property.
     for pname, pdef in props.items():
-        ann = _JSON_TO_PY.get((pdef or {}).get("type"), "str")
-        sig_parts.append(f"{pname}: {ann}" if pname in required else f"{pname}: {ann} = None")
-        collect_parts.append(f"{pname!r}: {pname}")
-    sig = ", ".join(sig_parts)
-    collect = "{" + ", ".join(collect_parts) + "}"
-    src = f"async def _toolfn({sig}):\n    return await _run({collect})\n"
-    namespace: Dict[str, Any] = {"_run": _run}
-    exec(src, namespace)  # noqa: S102 - controlled codegen from a schema we resolved
-    return namespace["_toolfn"]
+        ann = _JSON_TO_PY.get((pdef or {}).get("type"), str)
+        default = inspect.Parameter.empty if pname in required else None
+        # inspect.Parameter raises ValueError for a name that is not an identifier.
+        sig_params.append(inspect.Parameter(pname, inspect.Parameter.KEYWORD_ONLY, default=default, annotation=ann))
+    _toolfn.__signature__ = inspect.Signature(sig_params, return_annotation=str)
+    return _toolfn
 
 
 def main() -> int:
@@ -73,8 +75,12 @@ def main() -> int:
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
     from mcp.server.fastmcp import FastMCP
 
-    module = importlib.import_module(spec["module"])
-    tool_class = getattr(module, spec["class_name"])
+    module_name = CodedToolModule.find_dotted(Path(studio_root), spec.get("module"))
+    class_name = spec.get("class_name")
+    if module_name is None or not isinstance(class_name, str) or not class_name.isidentifier():
+        raise SystemExit(f"[mcp_host] spec does not name a studio coded tool: {spec.get('module')}.{class_name}")
+    module = importlib.import_module(module_name)
+    tool_class = getattr(module, class_name)
     coded = tool_class()
 
     mcp = FastMCP(spec["name"], port=int(spec["port"]))
