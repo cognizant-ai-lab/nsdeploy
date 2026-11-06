@@ -3,7 +3,8 @@
 This module is server code, never a browser asset or an agent tool response.
 The buyer ceiling and seller floor are withheld from the opposite party.
 """
-from datetime import date, timedelta
+from datetime import date
+from datetime import timedelta
 
 PROVIDERS = CONNECTED = ("seabreeze_inn",)
 RETAIL_SCOPE = "Retail transactions are not enabled."

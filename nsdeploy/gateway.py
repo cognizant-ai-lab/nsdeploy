@@ -7,8 +7,11 @@ import http.client
 import json
 import re
 import urllib.parse
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Dict, Iterable, Mapping
+from http.server import BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer
+from typing import Dict
+from typing import Iterable
+from typing import Mapping
 
 
 GATEWAY_TIMEOUT_SECONDS = 480

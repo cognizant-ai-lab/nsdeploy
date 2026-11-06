@@ -18,11 +18,18 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Mapping
+from typing import Optional
+from typing import Tuple
 
-from nsdeploy.byok import BYOK_AUTH_HEADER, BYOK_MODEL_HEADER
+from nsdeploy.byok import BYOK_AUTH_HEADER
+from nsdeploy.byok import BYOK_MODEL_HEADER
 from nsdeploy.commerce.service import from_plan
 from nsdeploy.resolve import DeploymentPlan
 

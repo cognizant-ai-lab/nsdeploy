@@ -3,10 +3,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nsdeploy.generate import (build_manifest, build_private_steward_hocon, generate_site,
-                               rewrite_config, write_private_steward_manifest)
-from nsdeploy.linker import NetworkDescription, describe_config, load_link_file, write_link_file
-from nsdeploy.resolve import DEMO_MODE_MARKER, DeploymentPlan, HostableTool, build_plan
+from nsdeploy.generate import build_manifest
+from nsdeploy.generate import build_private_steward_hocon
+from nsdeploy.generate import generate_site
+from nsdeploy.generate import rewrite_config
+from nsdeploy.generate import write_private_steward_manifest
+from nsdeploy.linker import NetworkDescription
+from nsdeploy.linker import describe_config
+from nsdeploy.linker import load_link_file
+from nsdeploy.linker import write_link_file
+from nsdeploy.resolve import DEMO_MODE_MARKER
+from nsdeploy.resolve import DeploymentPlan
+from nsdeploy.resolve import HostableTool
+from nsdeploy.resolve import build_plan
 from nsdeploy.studio import LocalStudio
 from nsdeploy.theme import ThemeSpec
 

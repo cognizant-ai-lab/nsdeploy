@@ -8,19 +8,34 @@ import os
 import tarfile
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Set
+from typing import Tuple
 
 from nsdeploy.generate import generate_site
-from nsdeploy.resolve import DeploymentPlan, build_plan, resolve_hocon
-from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio, StudioSource
-from nsdeploy.theme import DEFAULT_THEME_MODEL, ThemeSpec, propose_theme
+from nsdeploy.resolve import DeploymentPlan
+from nsdeploy.resolve import build_plan
+from nsdeploy.resolve import resolve_hocon
+from nsdeploy.studio import DEFAULT_REF
+from nsdeploy.studio import DEFAULT_REPO
+from nsdeploy.studio import GithubStudio
+from nsdeploy.studio import LocalStudio
+from nsdeploy.studio import StudioSource
+from nsdeploy.theme import DEFAULT_THEME_MODEL
+from nsdeploy.theme import ThemeSpec
+from nsdeploy.theme import propose_theme
 
 from nsdeploy_service import themespec
 from nsdeploy_service.bundle_error import BundleError
 from nsdeploy_service.bundle_result import BundleResult
 from nsdeploy_service.config import Settings
-from nsdeploy_service.models import BundleOptions, DeployOptions
-from nsdeploy_service.supervisor import DeploymentError, safe_network_name
+from nsdeploy_service.models import BundleOptions
+from nsdeploy_service.models import DeployOptions
+from nsdeploy_service.supervisor import DeploymentError
+from nsdeploy_service.supervisor import safe_network_name
 
 
 class Bundler:

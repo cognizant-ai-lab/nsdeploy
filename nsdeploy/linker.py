@@ -11,18 +11,26 @@ import json
 import re
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
-from urllib.parse import urljoin, urlparse
+from typing import Any
+from typing import Dict
+from typing import Iterable
+from typing import List
+from typing import Optional
+from urllib.parse import urljoin
+from urllib.parse import urlparse
 
-from nsdeploy.resolve import (
-    BROWSER_OMITTED_TOOLS,
-    DEMO_MODE_MARKER,
-    expand_embedded_network_refs,
-    resolve_hocon,
-)
-from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio, StudioSource
+from nsdeploy.resolve import BROWSER_OMITTED_TOOLS
+from nsdeploy.resolve import DEMO_MODE_MARKER
+from nsdeploy.resolve import expand_embedded_network_refs
+from nsdeploy.resolve import resolve_hocon
+from nsdeploy.studio import DEFAULT_REF
+from nsdeploy.studio import DEFAULT_REPO
+from nsdeploy.studio import GithubStudio
+from nsdeploy.studio import LocalStudio
+from nsdeploy.studio import StudioSource
 
 
 @dataclass

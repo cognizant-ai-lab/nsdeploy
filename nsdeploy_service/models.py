@@ -2,9 +2,14 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel
+from pydantic import Field
+from pydantic import field_validator
 
 # themespec owns the one seam into nsdeploy's private colour rule, so the schema
 # validates against exactly what the write path will accept (see themespec.py).

@@ -6,16 +6,17 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from nsdeploy_service.app import create_app
 from nsdeploy_service.config import Settings
-from nsdeploy_service.layout import (
-    COLUMNS,
-    ROWS,
-    choose_position,
-    is_on_grid,
-    next_position,
-)
-from nsdeploy_service.models import DeployOptions, HealthView
-from nsdeploy_service.supervisor import Supervisor, summarize_build
+from nsdeploy_service.layout import COLUMNS
+from nsdeploy_service.layout import ROWS
+from nsdeploy_service.layout import choose_position
+from nsdeploy_service.layout import is_on_grid
+from nsdeploy_service.layout import next_position
+from nsdeploy_service.models import DeployOptions
+from nsdeploy_service.models import HealthView
+from nsdeploy_service.supervisor import Supervisor
+from nsdeploy_service.supervisor import summarize_build
 
 MANIFEST_WITH_LINK = {
     "brand": "Travel Agency",
@@ -394,9 +395,6 @@ class HealthWarningTest(unittest.TestCase):
 
     def _health(self):
         """Call the real endpoint, so this tests the projection and not a stub."""
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import create_app
-
         with TestClient(create_app(self._settings())) as client:
             response = client.get("/health")
             self.assertEqual(response.status_code, 200)
@@ -431,9 +429,6 @@ class HealthWarningTest(unittest.TestCase):
         first.create(b"x", DeployOptions(name="demo"))
         first.store.close()
         self._supervisors.remove(first)
-
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import create_app
 
         with TestClient(create_app(self._settings())) as client:
             for poll in range(4):

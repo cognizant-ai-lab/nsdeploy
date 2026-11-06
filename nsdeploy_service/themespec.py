@@ -31,10 +31,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any
+from typing import Dict
+from typing import Tuple
 
-from nsdeploy.site_source import load_site_theme, site_source_exists
-from nsdeploy.theme import DEFAULT_COLORS, DEFAULT_FONT, ThemeSpec
+from nsdeploy.site_source import load_site_theme
+from nsdeploy.site_source import site_source_exists
+from nsdeploy.theme import DEFAULT_COLORS
+from nsdeploy.theme import DEFAULT_FONT
+from nsdeploy.theme import ThemeSpec
 
 # --- the two nsdeploy internals this module depends on ------------------------
 # Private names, imported deliberately and only here, so that editing a theme

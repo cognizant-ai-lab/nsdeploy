@@ -13,7 +13,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nsdeploy_service.app import _row_view, _view
+from nsdeploy_service.app import _row_view
+from nsdeploy_service.app import _view
 from nsdeploy_service.config import Settings
 from nsdeploy_service.models import DeployOptions
 from nsdeploy_service.supervisor import Supervisor

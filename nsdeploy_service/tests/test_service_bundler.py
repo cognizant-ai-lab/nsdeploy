@@ -5,13 +5,17 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
 from unittest import mock
 
 from fastapi.testclient import TestClient
 
 from nsdeploy.theme import ThemeSpec
 
+from nsdeploy_service.app import create_app
 from nsdeploy_service.bundle_error import BundleError
 from nsdeploy_service.bundle_result import BundleResult
 from nsdeploy_service.bundler import Bundler
@@ -246,9 +250,6 @@ class BundleEndpointTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def _client(self):
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import create_app
-
         settings = Settings(studio=str(self.root / "studio"),
                             work_root=self.root / "work",
                             port_start=8700, port_end=8709)

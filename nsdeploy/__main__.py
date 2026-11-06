@@ -20,31 +20,50 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 from nsdeploy.action_discovery import prepare_actions
 from nsdeploy.form_actions import action_discovery_config
 from nsdeploy.generate import generate_site
 from nsdeploy.gateway import run_gateway_command
-from nsdeploy.linker import load_deploy_links, run_link_command
+from nsdeploy.linker import load_deploy_links
+from nsdeploy.linker import run_link_command
 from nsdeploy.launcher import serve
-from nsdeploy.resolve import build_plan, format_report, load_toolbox_info, resolve_hocon
-from nsdeploy.site_source import load_site_theme, seed_site_source, site_source_exists
-from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio
-from nsdeploy.theme import DEFAULT_THEME_MODEL, ThemeSpec, load_theme_file, propose_theme
+from nsdeploy.resolve import build_plan
+from nsdeploy.resolve import format_report
+from nsdeploy.resolve import load_toolbox_info
+from nsdeploy.resolve import resolve_hocon
+from nsdeploy.site_source import load_site_theme
+from nsdeploy.site_source import seed_site_source
+from nsdeploy.site_source import site_source_exists
+from nsdeploy.studio import DEFAULT_REF
+from nsdeploy.studio import DEFAULT_REPO
+from nsdeploy.studio import GithubStudio
+from nsdeploy.studio import LocalStudio
+from nsdeploy.theme import DEFAULT_THEME_MODEL
+from nsdeploy.theme import ThemeSpec
+from nsdeploy.theme import load_theme_file
+from nsdeploy.theme import propose_theme
+
+# Optional module: a plain deploy must not fail to start when it is absent from an install.
+try:
+    from nsdeploy import cailville as _cailville
+    _CAILVILLE_IMPORT_ERROR: Optional[ImportError] = None
+except ImportError as _exc:
+    _cailville = None
+    _CAILVILLE_IMPORT_ERROR = _exc
 
 
 def _load_cailville():
-    """Import the Cailville community helpers on demand.
+    """Return the Cailville community helpers, or None when they are unavailable.
 
     Only `nsdeploy cailville ...` and --add-to-cailville need them; a plain deploy must
     not fail to start when that module is absent from an install.
     """
-    try:
-        from nsdeploy import cailville  # pylint: disable=import-outside-toplevel; optional module
-    except ImportError as exc:
-        print(f"error: Cailville support is unavailable in this install: {exc}", file=sys.stderr)
-        return None
-    return cailville
+    if _cailville is None:
+        print(f"error: Cailville support is unavailable in this install: {_CAILVILLE_IMPORT_ERROR}",
+              file=sys.stderr)
+    return _cailville
 
 
 # pylint: disable-next=too-many-locals,too-many-return-statements,too-many-branches,too-many-statements  # flat CLI flow

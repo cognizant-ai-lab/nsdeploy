@@ -10,19 +10,24 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from nsdeploy_service import __version__
+from nsdeploy_service.app import ORG_NAME_MAX
+from nsdeploy_service.app import ORG_NAME_PATTERN
+from nsdeploy_service.app import create_app
+from nsdeploy_service.app import read_ui_version
 from nsdeploy_service.config import Settings
-from nsdeploy_service.models import DeploymentStatus, DeployOptions, NetworkSummary
-from nsdeploy_service.ports import PortPool, PortPoolExhausted
-from nsdeploy_service.supervisor import (
-    DeploymentError,
-    Supervisor,
-    _error_excerpt,
-    _parse_report,
-    build_warnings,
-    engine_supports_host,
-    safe_network_name,
-    summarize_build,
-)
+from nsdeploy_service.models import DeploymentStatus
+from nsdeploy_service.models import DeployOptions
+from nsdeploy_service.models import NetworkSummary
+from nsdeploy_service.ports import PortPool
+from nsdeploy_service.ports import PortPoolExhausted
+from nsdeploy_service.supervisor import DeploymentError
+from nsdeploy_service.supervisor import Supervisor
+from nsdeploy_service.supervisor import _error_excerpt
+from nsdeploy_service.supervisor import _parse_report
+from nsdeploy_service.supervisor import build_warnings
+from nsdeploy_service.supervisor import engine_supports_host
+from nsdeploy_service.supervisor import safe_network_name
+from nsdeploy_service.supervisor import summarize_build
 
 # A verbatim slice of nsdeploy's stdout report — the format the service parses tool
 # and agent *names* out of (they are not recorded anywhere in the generated bundle).
@@ -189,42 +194,27 @@ class UiVersionTest(unittest.TestCase):
 
     def test_reads_the_pinned_version(self):
         """The version pinned on the asset URLs is reported."""
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import read_ui_version
-
         self._write('<link href="a.css?v=18"><script src="b.js?v=18"></script>')
         self.assertEqual(read_ui_version(self.ui), "18")
 
     def test_no_index_html_reports_nothing(self):
         """'Cannot tell' must be distinguishable from a mismatch, or a console with
         no readable version would nag about an update on every poll."""
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import read_ui_version
-
         self.assertEqual(read_ui_version(self.ui), "")
 
     def test_unversioned_assets_report_nothing(self):
         """Assets with no version pin report an empty version."""
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import read_ui_version
-
         self._write('<link href="a.css"><script src="b.js"></script>')
         self.assertEqual(read_ui_version(self.ui), "")
 
     def test_disagreeing_versions_report_nothing(self):
         """A document that pins its assets to two different versions has no single
         answer, and guessing one would compare against the wrong thing."""
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import read_ui_version
-
         self._write('<link href="a.css?v=18"><script src="b.js?v=17"></script>')
         self.assertEqual(read_ui_version(self.ui), "")
 
     def test_health_reports_it(self):
         """/health reports the console's asset version."""
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import create_app
-
         self._write('<link href="a.css?v=42">')
         settings = Settings(work_root=self.ui / "work", ui_dir=self.ui,
                             port_start=8730, port_end=8739)
@@ -233,9 +223,6 @@ class UiVersionTest(unittest.TestCase):
 
     def test_health_reports_the_build(self):
         """/health reports the configured build, falling back to the package version."""
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import create_app
-
         self._write('<link href="a.css?v=42">')
         for build, expected in (("1.2.3", "1.2.3"), ("", __version__)):
             settings = Settings(work_root=self.ui / "work", ui_dir=self.ui,
@@ -590,9 +577,6 @@ class OrgNameLimitTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def _client(self):
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import create_app
-
         return TestClient(create_app(
             Settings(work_root=self.root, port_start=8890, port_end=8899)))
 
@@ -605,9 +589,6 @@ class OrgNameLimitTest(unittest.TestCase):
         what actually changed, and reading it back exercises both paths without
         spawning a process.
         """
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import ORG_NAME_MAX
-
         with self._client() as client:
             schema = client.get("/openapi.json").json()
 
@@ -638,9 +619,6 @@ class OrgNameLimitTest(unittest.TestCase):
 
     def test_a_name_past_the_limit_is_rejected(self):
         """An org_name longer than the limit is rejected with 422."""
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import ORG_NAME_MAX
-
         with self._client() as client:
             response = client.post(
                 "/deployments",
@@ -652,9 +630,6 @@ class OrgNameLimitTest(unittest.TestCase):
         """The raw upload path bounds org_name as well."""
         # The one that would have been forgotten: /deployments/raw takes org_name as a
         # query parameter rather than a form field, so it needed its own limit.
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import ORG_NAME_MAX
-
         with self._client() as client:
             response = client.post(
                 f"/deployments/raw?name=n&org_name={'a' * (ORG_NAME_MAX + 1)}",
@@ -665,9 +640,6 @@ class OrgNameLimitTest(unittest.TestCase):
         """Real team names fit within the limit."""
         # The limit is useless if it rejects the names people actually use. These are
         # drawn from what is deployed today plus a plausibly verbose one.
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import ORG_NAME_MAX
-
         for name in ("Icecream store", "Acme Logistics", "Team Phoenix",
                      "Cognizant Agentic Engineering Team"):
             with self.subTest(name=name):
@@ -675,9 +647,6 @@ class OrgNameLimitTest(unittest.TestCase):
 
     def test_the_api_token_shape_that_caused_this_is_refused(self):
         """A pasted API token is longer than the limit."""
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import ORG_NAME_MAX
-
         self.assertGreater(len("0123456789abcdef" * 3),
                            ORG_NAME_MAX)
 
@@ -692,9 +661,6 @@ class OrgNameCharacterTest(unittest.TestCase):
     """
 
     def _matches(self, value):
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import ORG_NAME_PATTERN
-
         return bool(re.match(ORG_NAME_PATTERN, value))
 
     def test_real_team_names_are_accepted(self):
@@ -748,9 +714,6 @@ class OrgNameCharacterTest(unittest.TestCase):
         it and is not meant to. ORG_NAME_MAX is what does — and the token that caused
         all this was 48 characters.
         """
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import ORG_NAME_MAX
-
         pasted = "0123456789abcdef" * 3
         self.assertTrue(self._matches(pasted[:30]), "characters alone cannot catch this")
         self.assertGreater(len(pasted), ORG_NAME_MAX, "but the length limit does")
