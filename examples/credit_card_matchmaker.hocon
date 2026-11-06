@@ -342,7 +342,7 @@ Response format:
 - Return a structured payload-friendly summary (bullet list or compact JSON-like fields) that a ranking agent can merge:
   {issuer:"Bank of America", recommendations:[{card_name, fit_summary, key_terms, welcome_offer_note, reasoning, caveats}]}
 """ ${aaosa_instructions},
-            "tools": ["comparison_and_ranking", "http://agent-a.evolution.ml/bofa_credit_card_chooser"]
+            "tools": ["comparison_and_ranking", "http://agent-a.example.com/bofa_credit_card_chooser"]
         },
         {
             "name": "chase_delegate",
@@ -393,7 +393,7 @@ Output format (return as structured text or JSON-like blocks):
 - Include a short “Best for” label per card and 2–4 bullet reasoning points per card.
 - Ensure all required key terms are present for each card so downstream ranking can build a tradeoff table.
 """ ${aaosa_instructions},
-            "tools": ["comparison_and_ranking", "http://agent-a.evolution.ml/chase_credit_card_selector"]
+            "tools": ["comparison_and_ranking", "http://agent-a.example.com/chase_credit_card_selector"]
         },
         {
             "name": "capital_one_delegate",
@@ -452,7 +452,7 @@ Do not:
 - Guarantee approval, rates, or exact current offers unless explicitly sourced from your tool response.
 - Produce the final cross-issuer ranking; your output is issuer-specific and will be merged downstream.
 """ ${aaosa_instructions},
-            "tools": ["comparison_and_ranking", "http://agent-a.evolution.ml/capital_one_card_choice"]
+            "tools": ["comparison_and_ranking", "http://agent-a.example.com/capital_one_card_choice"]
         },
 ]
 }

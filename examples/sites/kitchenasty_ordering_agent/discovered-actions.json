@@ -2,7 +2,7 @@
   "version": 1,
   "source": "https://httpbin.org/forms/post",
   "spec": null,
-  "siteOrigin": "http://agent-a.evolution.ml",
+  "siteOrigin": "http://agent-a.example.com",
   "visited": [
     "https://httpbin.org/forms/post"
   ],
