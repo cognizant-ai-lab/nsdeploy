@@ -12,7 +12,9 @@
 ignore=.git
 
 # Directories from top level that should be ignored.
-ignore-paths=node_modules
+# Vendored upstream snapshot pinned by sha256 in tests/test_commerce.py; must stay byte-identical.
+ignore-paths=node_modules,
+    nsdeploy/commerce/arbiter.py
 
 # Add files or directories matching the regex patterns to the blacklist. The
 # regex matches against base names, not paths.

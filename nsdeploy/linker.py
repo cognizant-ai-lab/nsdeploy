@@ -26,7 +26,11 @@ from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio
 
 
 @dataclass
-class NetworkDescription:
+class NetworkDescription:  # pylint: disable=too-many-instance-attributes; plain record
+    """
+    Description of one agent network: its front man, aliases, dangling imports and where it is served.
+    """
+
     network: str
     front_man: str
     aliases: List[str]
@@ -50,7 +54,16 @@ def _configured_links(config: Dict[str, Any]) -> Dict[str, str]:
     return result
 
 
+# pylint: disable-next=too-many-locals
 def describe_config(config: Dict[str, Any], network: str, path: Optional[Path] = None) -> NetworkDescription:
+    """
+    Describe a network from its parsed HOCON configuration.
+
+    :param config: The parsed network configuration.
+    :param network: The network name.
+    :param path: The HOCON file the configuration came from, if local.
+    :return: The network description.
+    """
     tools = config.get("tools", []) or []
     names = {item.get("name") for item in tools if isinstance(item, dict) and item.get("name")}
     agents = [
@@ -149,6 +162,14 @@ def describe_peer(site_url: str) -> List[NetworkDescription]:
 
 
 def update_peer_link(source: NetworkDescription, reference: str, target: str) -> None:
+    """
+    Ask a peer site to link one of its dangling references to a target URL.
+
+    :param source: The peer network whose reference is linked.
+    :param reference: The dangling reference name.
+    :param target: The URL the reference links to.
+    :raises OSError: If the peer is static or the update fails.
+    """
     if not source.links_endpoint:
         raise OSError(
             f"peer site {source.site or source.network} is static; its links are "
@@ -173,10 +194,24 @@ def update_peer_link(source: NetworkDescription, reference: str, target: str) ->
 
 
 def sidecar_path(hocon_path: Path) -> Path:
+    """
+    Return the link sidecar file path for a HOCON file.
+
+    :param hocon_path: The network HOCON path.
+    :return: The sidecar path, with a ".links.json" suffix.
+    """
     return hocon_path.with_suffix(".links.json")
 
 
 def load_link_file(path: Path, network: str) -> Dict[str, str]:
+    """
+    Load a network's links from a link file.
+
+    :param path: The link file path.
+    :param network: The network whose links are read.
+    :return: The links by reference name, or an empty dict when the file is missing.
+    :raises ValueError: If the file cannot be read or parsed.
+    """
     if not path.is_file():
         return {}
     try:
@@ -191,6 +226,13 @@ def load_link_file(path: Path, network: str) -> Dict[str, str]:
 
 
 def write_link_file(path: Path, network: str, links: Dict[str, str]) -> None:
+    """
+    Write a network's links to a link file.
+
+    :param path: The link file path.
+    :param network: The network whose links are written.
+    :param links: The links by reference name.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = {"version": 1, "networks": {network: dict(sorted(links.items()))}}
     path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
@@ -198,6 +240,16 @@ def write_link_file(path: Path, network: str, links: Dict[str, str]) -> None:
 
 def load_deploy_links(hocon_path: Path, network: str, explicit_path: Optional[Path] = None,
                       inline: Optional[Iterable[str]] = None) -> Dict[str, str]:
+    """
+    Load a network's deploy-time links from its link file plus inline NAME=URL bindings.
+
+    :param hocon_path: The network HOCON path, used to find the sidecar link file.
+    :param network: The network name.
+    :param explicit_path: An explicit link file path overriding the sidecar.
+    :param inline: Inline NAME=URL bindings that override file links.
+    :return: The links by reference name.
+    :raises ValueError: If the link file or an inline binding is invalid.
+    """
     path = explicit_path or sidecar_path(hocon_path)
     links = load_link_file(path, network) if path.is_file() else {}
     for binding in inline or []:
@@ -207,6 +259,14 @@ def load_deploy_links(hocon_path: Path, network: str, explicit_path: Optional[Pa
 
 
 def parse_assignment(value: str, label: str) -> tuple[str, str]:
+    """
+    Parse a NAME=URL command-line assignment.
+
+    :param value: The assignment text.
+    :param label: The option name used in error messages.
+    :return: The name and URL.
+    :raises ValueError: If the assignment is not NAME=http(s)://...
+    """
     if "=" not in value:
         raise ValueError(f"--{label} must be NAME=URL, got: {value}")
     name, url = value.split("=", 1)
@@ -225,7 +285,14 @@ def _matches(reference: str, export: NetworkDescription) -> bool:
     return any(_norm(alias) == wanted for alias in export.aliases)
 
 
+# pylint: disable-next=too-many-locals,too-many-branches,too-many-statements  # single CLI flow
 def run_link_command(argv: Optional[List[str]] = None) -> int:
+    """
+    Run the "nsdeploy link" command.
+
+    :param argv: The command-line arguments; defaults to sys.argv.
+    :return: The process exit code.
+    """
     parser = argparse.ArgumentParser(
         prog="nsdeploy link",
         description="Link dangling agent references to explicitly supplied HOCONs or peer sites.",
@@ -273,7 +340,8 @@ def run_link_command(argv: Optional[List[str]] = None) -> int:
             found = describe_peer(peer)
             peer_descriptions.extend(found)
             exports.extend(found)
-        except Exception as exc:
+        # Any peer failure is reported and stops the command.
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             print(f"error: cannot inspect peer {peer}: {exc}")
             return 2
 
@@ -337,7 +405,8 @@ def run_link_command(argv: Optional[List[str]] = None) -> int:
                 else:
                     try:
                         update_peer_link(desc, ref, candidates[0].url)
-                    except Exception as exc:
+                    # Any peer update failure is reported and the remaining references continue.
+                    except Exception as exc:  # pylint: disable=broad-exception-caught
                         print(f"  error   {ref}: cannot update {desc.site}: {exc}")
                         continue
                     print(f"  linked  {ref} -> {candidates[0].url}")

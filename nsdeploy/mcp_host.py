@@ -27,6 +27,11 @@ from nsdeploy.hosted_tool_function import HostedToolFunction
 
 
 def main() -> int:
+    """
+    Host one studio coded tool as a streamable-http MCP server.
+
+    :return: The process exit code.
+    """
     parser = argparse.ArgumentParser(description="Host one studio tool as an MCP server.")
     parser.add_argument("--studio", required=True)
     parser.add_argument("--spec", required=True)
@@ -37,7 +42,8 @@ def main() -> int:
         sys.path.insert(0, studio_root)
 
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
-    from mcp.server.fastmcp import FastMCP
+    # Server dependencies load only in the hosting subprocess.
+    from mcp.server.fastmcp import FastMCP  # pylint: disable=import-outside-toplevel
 
     module_name = CodedToolModule.find_dotted(Path(studio_root), spec.get("module"))
     class_name = spec.get("class_name")
@@ -53,8 +59,8 @@ def main() -> int:
 
     # The browser calls this MCP server cross-origin (different port from the site),
     # so it must send CORS headers and expose the MCP session header to JS.
-    import uvicorn
-    from starlette.middleware.cors import CORSMiddleware
+    import uvicorn  # pylint: disable=import-outside-toplevel
+    from starlette.middleware.cors import CORSMiddleware  # pylint: disable=import-outside-toplevel
 
     app = mcp.streamable_http_app()
     app.add_middleware(

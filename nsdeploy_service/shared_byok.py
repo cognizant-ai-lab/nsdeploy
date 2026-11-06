@@ -18,6 +18,11 @@ SCRIPT_PATH = SERVICE_ROOT / "site_customization" / "shared-byok.js"
 
 
 def shared_byok_script() -> str:
+    """
+    Read the shared BYOK cookie script that is injected into site JavaScript.
+
+    :return: The script source with surrounding whitespace stripped.
+    """
     return SCRIPT_PATH.read_text(encoding="utf-8").strip()
 
 

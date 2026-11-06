@@ -21,6 +21,8 @@ import os
 import sys
 from pathlib import Path
 
+from nsdeploy.action_discovery import prepare_actions
+from nsdeploy.form_actions import action_discovery_config
 from nsdeploy.generate import generate_site
 from nsdeploy.gateway import run_gateway_command
 from nsdeploy.linker import load_deploy_links, run_link_command
@@ -38,14 +40,20 @@ def _load_cailville():
     not fail to start when that module is absent from an install.
     """
     try:
-        from nsdeploy import cailville
+        from nsdeploy import cailville  # pylint: disable=import-outside-toplevel; optional module
     except ImportError as exc:
         print(f"error: Cailville support is unavailable in this install: {exc}", file=sys.stderr)
         return None
     return cailville
 
 
+# pylint: disable-next=too-many-locals,too-many-return-statements,too-many-branches,too-many-statements  # flat CLI flow
 def main() -> int:
+    """
+    Run the nsdeploy command line: dispatch subcommands, or resolve, generate and serve a network.
+
+    :return: The process exit code.
+    """
     if len(sys.argv) > 1 and sys.argv[1] == "gateway":
         return run_gateway_command(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "link":
@@ -138,7 +146,7 @@ def main() -> int:
     args = ap.parse_args()
     if args.actions and not Path(args.actions).is_file():
         ap.error("--actions must name an existing JavaScript adapter")
-    from nsdeploy.form_actions import action_discovery_config
+    # pylint: disable-next=too-many-boolean-expressions  # flat list of conflicting options
     if args.no_action_discovery and (args.action_page or args.action_host_page or args.action_caller_origin
                                      or args.action_site or args.action_spec or args.action_lock
                                      or args.action_refresh or args.action_allow or args.action_include_all):
@@ -172,9 +180,9 @@ def main() -> int:
     network_name = hocon_path.stem
     site_dir = (Path(args.site_dir).resolve() if args.site_dir
                 else hocon_path.parent / "sites" / network_name)
-    from nsdeploy.action_discovery import prepare_actions
     action_lock = Path(args.action_lock) if args.action_lock else site_dir / "discovered-actions.json"
     discovered_actions = None
+    # pylint: disable-next=too-many-boolean-expressions  # flat list of discovery triggers
     if not args.no_action_discovery and (args.action_site or args.action_spec or args.action_lock
                                          or args.action_refresh or args.action_allow or args.action_include_all
                                          or action_lock.exists()):
