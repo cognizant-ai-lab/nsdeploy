@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import URLError
 
+from nsdeploy.cailville_map import CailvilleMap
 from nsdeploy.commerce.arbiter import Arbiter
 from nsdeploy.commerce.arbiter import CommerceError
 from nsdeploy.commerce.catalog import default_trip
@@ -516,8 +517,10 @@ class CommerceDeploymentTests(unittest.TestCase):
         Check that the community map keeps arbiter links and private nsFlow links.
         """
         root = Path(__file__).parents[1] / 'cailville'
-        for filename in ('community.json', 'community.base.json'):
-            community = json.loads((root / filename).read_text())
+        path: Path = None
+        # Check the checked-in base map and the active map, which is the base map until a site is added.
+        for path in [root / 'community.base.json', CailvilleMap.active_path(root)]:
+            community = json.loads(path.read_text())
             self.assertIn(['butterpink_family', 'commerce_arbiter'], community['relationships'])
             self.assertIn(['seabreeze_inn', 'commerce_arbiter'], community['relationships'])
             rightmost = max(site['position']['my_px'] for site in community['sites'])

@@ -232,9 +232,9 @@ to the manifest directory, for example
 and portable with the bundle directory. To run those stewards in a standard
 Neuro-SAN server, set `AGENT_MANIFEST_FILE` to that manifest.
 `launch_all.sh` also starts the private Neuro-SAN studio from
-`/Users/754339/projects/cailville-private` (using its installed
-`neuro-san-studio` package), points its `AGENT_MANIFEST_FILE` at this generated
-manifest, and opens nsFlow on port `4174`.
+`../neuro-san-studio`, a neuro-san-studio project next to this checkout (using
+the `neuro-san-studio` package installed in its virtualenv), points its
+`AGENT_MANIFEST_FILE` at this generated manifest, and opens nsFlow on port `4174`.
 It waits for both the Neuro-SAN HTTP server and nsFlow to be ready before opening
 the demo, avoiding an initial concierge connection race.
 Override the private project or ports with `NSDEPLOY_PRIVATE_STUDIO_DIR`,
@@ -453,7 +453,8 @@ python -m nsdeploy examples/community_bank_front_office.hocon \
 
 Use `--cailville-base-map` with `--add-to-cailville` to discard prior demo additions first.
 The base community lives in `cailville/community.base.json`; the active cumulative state is
-`cailville/community.json`. `launch_all.sh` reads the active state, so newly added sites and
+`cailville/community.json`, a local git-ignored file created on the first addition (until then
+the base map is used). `launch_all.sh` reads the active state, so newly added sites and
 both sides of inferred public-network relationships are launched automatically. Public sites
 receive only their inferred peer links, while every private steward receives the directory of
 all currently active Cailville public sites. Returning to the base map also removes prior demo
