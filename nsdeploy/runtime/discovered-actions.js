@@ -61,6 +61,7 @@ async function formRequest(request, args, signal) {
   if (!form.checkValidity()) throw new Error("Form values violate the source website's constraints. No submission sent.");
   const data = new URLSearchParams(new FormData(form));
   const endpoint = url(request.url);
+  if (endpoint.origin !== url(request.page).origin) throw new Error("Form destination origin changed. No submission sent.");
   if (request.method === "GET") { endpoint.search = data.toString(); return { endpoint, init: {} }; }
   return { endpoint, init: { body: data } };
 }

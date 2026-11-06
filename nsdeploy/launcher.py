@@ -64,11 +64,11 @@ def _facade_command(python_exe: str, site_dir: Path, plan: DeploymentPlan, port:
                     facade_port: int, facade_upstream: str,
                     site_base: Optional[str] = None) -> List[str]:
     """argv for the public MCP facade subprocess. It carries no credential: the facade
-    only ever uses the caller's BYOK headers."""
+    only ever uses the caller's BYOK headers. HOCON-derived names such as the front-man
+    stay out of argv; the facade reads them from the site's agent-manifest.json."""
     return [python_exe, "-m", "nsdeploy.facade", "--config",
             str(site_dir / f"{plan.network_name}.network.json"), "--site-base",
             (site_base or f"http://127.0.0.1:{port}").rstrip("/"),
-            "--front-man", plan.front_man,
             "--port", str(facade_port), "--upstream", facade_upstream]
 
 
