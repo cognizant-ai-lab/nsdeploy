@@ -6,15 +6,13 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
-from nsdeploy.byok import (
-    BYOK_AUTH_HEADER,
-    BYOK_MODEL_HEADER,
-    ByokContextMiddleware,
-    ByokCredentials,
-    authorization_for_key,
-    byok_headers,
-    current_byok_credentials,
-)
+from nsdeploy.byok import BYOK_AUTH_HEADER
+from nsdeploy.byok import BYOK_MODEL_HEADER
+from nsdeploy.byok import ByokContextMiddleware
+from nsdeploy.byok import ByokCredentials
+from nsdeploy.byok import authorization_for_key
+from nsdeploy.byok import byok_headers
+from nsdeploy.byok import current_byok_credentials
 
 
 class ByokTests(unittest.IsolatedAsyncioTestCase):

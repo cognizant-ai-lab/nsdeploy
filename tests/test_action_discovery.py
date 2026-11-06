@@ -6,7 +6,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from nsdeploy.action_discovery import Page, api_actions, discover, form_action, prepare_actions
+from nsdeploy.action_discovery import Page
+from nsdeploy.action_discovery import api_actions
+from nsdeploy.action_discovery import discover
+from nsdeploy.action_discovery import form_action
+from nsdeploy.action_discovery import prepare_actions
 from nsdeploy.generate import generate_site
 from nsdeploy.resolve import DeploymentPlan
 

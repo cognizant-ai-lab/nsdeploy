@@ -25,7 +25,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from nsdeploy_service.config import REPO_ROOT, SERVICE_ROOT
+from nsdeploy_service.config import REPO_ROOT
+from nsdeploy_service.config import SERVICE_ROOT
 
 
 def env_path() -> Path:

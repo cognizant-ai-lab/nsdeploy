@@ -22,7 +22,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from nsdeploy_service import supervisor, trust
+from nsdeploy_service import supervisor
+from nsdeploy_service import trust
 from nsdeploy_service.config import SERVICE_ROOT
 
 
@@ -52,7 +53,7 @@ class CaBundleTest(unittest.TestCase):
         return mock.patch.object(trust, "has_usable_store", return_value=False)
 
     def _no_truststore(self):
-        return mock.patch.dict("sys.modules", {"truststore": None})
+        return mock.patch.object(trust, "truststore", None)
 
     def test_installs_a_trust_store_when_the_interpreter_has_none(self):
         """A trust store is installed when the interpreter has none."""
@@ -108,8 +109,7 @@ class CaBundleTest(unittest.TestCase):
 
     def test_reports_nothing_when_neither_is_available(self):
         """Nothing is installed when neither truststore nor certifi is available."""
-        with self._no_store(), mock.patch.dict(
-                "sys.modules", {"truststore": None, "certifi": None}):
+        with self._no_store(), self._no_truststore(), mock.patch.object(trust, "certifi", None):
             self.assertIsNone(trust.ensure_ca_bundle())
 
     def test_it_does_not_touch_the_environment(self):

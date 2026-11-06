@@ -24,71 +24,88 @@ import platform
 import re
 import sys
 import urllib.request
-from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
-from typing import Annotated, List, Optional
+from datetime import datetime
+from datetime import timezone
+from pathlib import Path
+from pathlib import PurePosixPath
+from typing import Annotated
+from typing import List
+from typing import Optional
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi import Depends
+from fastapi import FastAPI
+from fastapi import File
+from fastapi import Form
+from fastapi import HTTPException
+from fastapi import Query
+from fastapi import Request
+from fastapi import Response
+from fastapi import UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
+from fastapi.responses import JSONResponse
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from nsdeploy_service import PRODUCT_NAME, __version__
-from nsdeploy_service import envfile, themespec
+from nsdeploy_service import PRODUCT_NAME
+from nsdeploy_service import __version__
+from nsdeploy_service import envfile
+from nsdeploy_service import themespec
 from nsdeploy_service.bundle_error import BundleError
 from nsdeploy_service.bundle_result import BundleResult
 from nsdeploy_service.bundler import Bundler
 from nsdeploy_service.config import Settings
-from nsdeploy_service.models import (
-    ORG_NAME_MAX,
-    ORG_NAME_PATTERN,
-    AgentGraphView,
-    BundleOptions,
-    DeploymentList,
-    DeploymentStatus,
-    DeploymentView,
-    DeployOptions,
-    DirectoryOrg,
-    DirectoryView,
-    GraphEdge,
-    GraphNode,
-    GraphView,
-    HealthView,
-    LogView,
-    NetworkSummary,
-    OrgCreate,
-    OrgList,
-    OrgUpdate,
-    OrgView,
-    SettingsUpdate,
-    SettingsView,
-    ThemeSpecApplied,
-    ThemeSpecView,
-    ThemeTokens,
-    ThemeUpdate,
-)
+from nsdeploy_service.models import ORG_NAME_MAX
+from nsdeploy_service.models import ORG_NAME_PATTERN
+from nsdeploy_service.models import AgentGraphView
+from nsdeploy_service.models import BundleOptions
+from nsdeploy_service.models import DeploymentList
+from nsdeploy_service.models import DeploymentStatus
+from nsdeploy_service.models import DeploymentView
+from nsdeploy_service.models import DeployOptions
+from nsdeploy_service.models import DirectoryOrg
+from nsdeploy_service.models import DirectoryView
+from nsdeploy_service.models import GraphEdge
+from nsdeploy_service.models import GraphNode
+from nsdeploy_service.models import GraphView
+from nsdeploy_service.models import HealthView
+from nsdeploy_service.models import LogView
+from nsdeploy_service.models import NetworkSummary
+from nsdeploy_service.models import OrgCreate
+from nsdeploy_service.models import OrgList
+from nsdeploy_service.models import OrgUpdate
+from nsdeploy_service.models import OrgView
+from nsdeploy_service.models import SettingsUpdate
+from nsdeploy_service.models import SettingsView
+from nsdeploy_service.models import ThemeSpecApplied
+from nsdeploy_service.models import ThemeSpecView
+from nsdeploy_service.models import ThemeTokens
+from nsdeploy_service.models import ThemeUpdate
 from nsdeploy_service.layout import next_position
-from nsdeploy_service.models import RelationsView, SuggestedEdge
-from nsdeploy_service.relations import (
-    ChatFn,
-    SuggestedRelation,
-    identities_from_rows,
-    suggest_relations,
-)
+from nsdeploy_service.models import RelationsView
+from nsdeploy_service.models import SuggestedEdge
+from nsdeploy_service.relations import ChatFn
+from nsdeploy_service.relations import SuggestedRelation
+from nsdeploy_service.relations import identities_from_rows
+from nsdeploy_service.relations import suggest_relations
 from nsdeploy_service.siteproxy import SiteProxy
 from nsdeploy_service.store import StoreError
-from nsdeploy_service.supervisor import (
-    Deployment,
-    DeploymentError,
-    Supervisor,
-    _iso,
-    _tail as read_log,
-    is_publishable,
-    network_topology,
-    publish_refusal,
-)
+from nsdeploy_service.supervisor import Deployment
+from nsdeploy_service.supervisor import DeploymentError
+from nsdeploy_service.supervisor import Supervisor
+from nsdeploy_service.supervisor import _iso
+from nsdeploy_service.supervisor import _tail as read_log
+from nsdeploy_service.supervisor import is_publishable
+from nsdeploy_service.supervisor import network_topology
+from nsdeploy_service.supervisor import publish_refusal
 from nsdeploy_service.trust import ensure_ca_bundle
+
+# Optional drop-in folder: a checkout without it still runs.
+try:
+    from nsdeploy_service.adminPanel import install as install_admin_panel
+except ImportError:
+    install_admin_panel = None
 
 WAIT_POLL_SECONDS = 0.4
 
@@ -1347,18 +1364,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     # --- admin panel -------------------------------------------------------
     # A drop-in folder that owns its own routes, UI, database and settings. This is
-    # the entire integration: nothing above is aware of it, and it is imported
-    # lazily so a checkout without the folder still runs. See
+    # the entire integration: nothing above is aware of it. See
     # nsdeploy_service/adminPanel/INTEGRATION.md.
     #
     # It must come before the SiteProxy wrap below: that object is not a FastAPI,
     # so there would be nothing to mount onto.
-    try:
-        # pylint: disable-next=import-outside-toplevel  # optional drop-in folder
-        from nsdeploy_service.adminPanel import install as install_admin_panel
-    except ImportError:
-        pass
-    else:
+    if install_admin_panel is not None:
         install_admin_panel(app, settings)
 
     # Serve deployed sites on their own hostnames through this one listener. Wrapped

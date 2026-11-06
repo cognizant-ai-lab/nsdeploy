@@ -4,10 +4,14 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
 
 from fastapi.testclient import TestClient
 
+from nsdeploy_service.app import create_app
 from nsdeploy_service.config import Settings
 from nsdeploy_service.models import DeployOptions
 
@@ -68,9 +72,6 @@ class DeploymentBundleTest(unittest.TestCase):
         :param overrides: Settings overrides for this test.
         :return: The test client.
         """
-        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
-        from nsdeploy_service.app import create_app
-
         settings = Settings(studio=str(self.root / "studio"),
                             work_root=self.root / "work",
                             port_start=8700, port_end=8709, **overrides)

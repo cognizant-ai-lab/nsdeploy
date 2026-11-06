@@ -8,8 +8,12 @@ import json
 from pathlib import Path
 import re
 from urllib.error import HTTPError
-from urllib.parse import urljoin, urlsplit, urlunsplit
-from urllib.request import Request, build_opener, HTTPRedirectHandler
+from urllib.parse import urljoin
+from urllib.parse import urlsplit
+from urllib.parse import urlunsplit
+from urllib.request import Request
+from urllib.request import build_opener
+from urllib.request import HTTPRedirectHandler
 
 MAX_BYTES = 2_000_000
 SENSITIVE = re.compile(r"password|passwd|secret|token|authorization|api.?key|credit.?card|card.?number|cvv", re.I)

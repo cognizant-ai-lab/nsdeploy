@@ -16,16 +16,24 @@ import os
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Tuple
 
 import httpx
+import uvicorn
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+from mcp.server.fastmcp import FastMCP
+from starlette.middleware.cors import CORSMiddleware
 
-from nsdeploy.byok import (
-    ByokCredentials,
-    ByokContextMiddleware,
-    current_byok_credentials,
-    forwarding_headers,
-)
+from nsdeploy.byok import ByokCredentials
+from nsdeploy.byok import ByokContextMiddleware
+from nsdeploy.byok import current_byok_credentials
+from nsdeploy.byok import forwarding_headers
+from nsdeploy.site_manifest import SiteManifest
 
 
 PUBLIC_SITE_CALL_BUDGET = 12
@@ -375,10 +383,6 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
         if endpoint in self.mcp_cache:
             return self.mcp_cache[endpoint]
         try:
-            # Deferred so importing the runner does not load the MCP client stack.
-            from mcp import ClientSession  # pylint: disable=import-outside-toplevel
-            from mcp.client.streamable_http import streamable_http_client  # pylint: disable=import-outside-toplevel
-
             async with asyncio.timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS):
                 async with httpx.AsyncClient(
                     timeout=_mcp_http_timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS),
@@ -450,10 +454,6 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
                     _text(arguments["request"]), next_visited, budget["remaining"]
                 )
         try:
-            # Deferred so importing the runner does not load the MCP client stack.
-            from mcp import ClientSession  # pylint: disable=import-outside-toplevel
-            from mcp.client.streamable_http import streamable_http_client  # pylint: disable=import-outside-toplevel
-
             async with asyncio.timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS):
                 client_headers = (
                     forwarding_headers()
@@ -530,11 +530,6 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
 
 
 async def _serve(config: Dict[str, Any], site_base: str, upstream: str, port: int, front_man: str):
-    # Deferred so the runner can be imported without the MCP server stack.
-    from mcp.server.fastmcp import FastMCP  # pylint: disable=import-outside-toplevel
-    import uvicorn  # pylint: disable=import-outside-toplevel
-    from starlette.middleware.cors import CORSMiddleware  # pylint: disable=import-outside-toplevel
-
     runner = NetworkRunner(config, site_base, upstream)
     mcp = FastMCP("nsdeploy-public-facade", port=port)
 
@@ -560,12 +555,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run the nsDeploy public MCP facade.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--site-base", required=True)
-    parser.add_argument("--front-man", required=True)
+    parser.add_argument("--front-man", default=None,
+                        help="front-man agent; defaults to the one in the site's agent-manifest.json")
     parser.add_argument("--port", required=True, type=int)
     parser.add_argument("--upstream", default="mock://nsdeploy")
     args = parser.parse_args()
-    config = json.loads(Path(args.config).read_text(encoding="utf-8"))
-    asyncio.run(_serve(config, args.site_base, args.upstream, args.port, args.front_man))
+    config_path = Path(args.config)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    front_man = args.front_man or SiteManifest.front_man(config_path)
+    asyncio.run(_serve(config, args.site_base, args.upstream, args.port, front_man))
     return 0
 
 

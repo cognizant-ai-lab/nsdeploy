@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import socket
 import threading
-from typing import Optional, Set
+from typing import Optional
+from typing import Set
 
 
 class PortPoolExhausted(RuntimeError):

@@ -12,11 +12,17 @@ import json
 import os
 import urllib.parse
 import urllib.request
-from typing import Any, Dict
+from typing import Any
+from typing import Dict
 
+import httpx
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
 from neuro_san.interfaces.coded_tool import CodedTool
 
-from nsdeploy.byok import ByokCredentials, authorization_for_key, byok_headers
+from nsdeploy.byok import ByokCredentials
+from nsdeploy.byok import authorization_for_key
+from nsdeploy.byok import byok_headers
 from nsdeploy.facade import NetworkRunner
 
 
@@ -31,8 +37,6 @@ def _origin(url: str) -> str:
 
 
 def _mcp_http_timeout(seconds: float):
-    import httpx  # pylint: disable=import-outside-toplevel; loaded only for the MCP fallback
-
     short = min(30.0, seconds)
     return httpx.Timeout(seconds, connect=short, pool=short)
 
@@ -102,11 +106,6 @@ class PublicAgentNetworkGateway(CodedTool):
         if _origin(endpoint).rstrip("/") in denied:
             return "Denied by the steward's NSDEPLOY_STEWARD_DENY_ORIGINS policy."
         try:
-            # Deferred so the network-run path does not load the MCP client stack.
-            from mcp import ClientSession  # pylint: disable=import-outside-toplevel
-            from mcp.client.streamable_http import streamable_http_client  # pylint: disable=import-outside-toplevel
-            import httpx  # pylint: disable=import-outside-toplevel
-
             # Do not wait indefinitely for a remote public network. Disabling
             # automatic DELETE on context exit also lets cancellation interrupt
             # a long-lived SSE stream immediately; a timed-out request must not

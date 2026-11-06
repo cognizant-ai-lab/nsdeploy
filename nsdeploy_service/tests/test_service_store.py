@@ -7,25 +7,24 @@ import unittest
 from pathlib import Path
 
 from nsdeploy_service.config import Settings
-from nsdeploy_service.models import SUMMARY_SCHEMA_VERSION, DeploymentStatus, DeployOptions
-from nsdeploy_service.ports import PortPool, PortPoolExhausted
-from nsdeploy_service.store import (
-    RESTART_REASON,
-    UNATTRIBUTED_NAME,
-    Store,
-    StoreError,
-    org_name_key,
-)
-from nsdeploy_service.supervisor import (
-    RUN_SEPARATOR,
-    DeploymentError,
-    Supervisor,
-    bundle_ready,
-    engine_supports_host,
-    latest_run,
-    probe_host,
-    summarize_build,
-)
+from nsdeploy_service.models import SUMMARY_SCHEMA_VERSION
+from nsdeploy_service.models import DeploymentStatus
+from nsdeploy_service.models import DeployOptions
+from nsdeploy_service.ports import PortPool
+from nsdeploy_service.ports import PortPoolExhausted
+from nsdeploy_service.store import RESTART_REASON
+from nsdeploy_service.store import UNATTRIBUTED_NAME
+from nsdeploy_service.store import Store
+from nsdeploy_service.store import StoreError
+from nsdeploy_service.store import org_name_key
+from nsdeploy_service.supervisor import RUN_SEPARATOR
+from nsdeploy_service.supervisor import DeploymentError
+from nsdeploy_service.supervisor import Supervisor
+from nsdeploy_service.supervisor import bundle_ready
+from nsdeploy_service.supervisor import engine_supports_host
+from nsdeploy_service.supervisor import latest_run
+from nsdeploy_service.supervisor import probe_host
+from nsdeploy_service.supervisor import summarize_build
 
 
 class StoreTempCase(unittest.TestCase):

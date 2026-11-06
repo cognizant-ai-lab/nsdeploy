@@ -29,13 +29,18 @@ import re
 import subprocess
 import sys
 from contextlib import redirect_stderr
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
 from urllib.parse import urlparse
 
 from pyhocon import ConfigFactory
 
+from nsdeploy.coded_tool_module import CodedToolModule
 from nsdeploy.studio import StudioSource
 
 # Substring that marks an agent as running in non-grounded "demo mode" (it is told
@@ -353,11 +358,15 @@ def _resolve_class(class_path: str, source: StudioSource) -> Optional[tuple[str,
         return None
     module_part, class_name = class_path.rsplit(".", 1)
     module_leaf = module_part.split(".")[-1]
+    if not module_leaf.isidentifier() or not class_name.isidentifier():
+        return None
     if not source.ensure_coded_tool(f"{module_leaf}.py"):
         return None
     if str(source.root) not in sys.path:
         sys.path.insert(0, str(source.root))
-    module = f"coded_tools.{module_leaf}"
+    module = CodedToolModule.find(source.root, module_leaf)
+    if module is None:
+        return None
     mod = _import_with_autoinstall(module)
     if mod and hasattr(mod, class_name) and _can_construct_with_no_args(getattr(mod, class_name)):
         return module, class_name

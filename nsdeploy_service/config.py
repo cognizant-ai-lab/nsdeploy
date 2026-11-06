@@ -9,9 +9,11 @@ from __future__ import annotations
 import os
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
-from typing import List, Optional
+from typing import List
+from typing import Optional
 from urllib.parse import urlsplit
 
 ENV_PREFIX = "NSDEPLOY_SERVICE_"

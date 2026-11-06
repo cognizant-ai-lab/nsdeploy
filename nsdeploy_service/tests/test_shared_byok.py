@@ -2,12 +2,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nsdeploy_service.shared_byok import (
-    END_MARKER,
-    START_MARKER,
-    shared_byok_script,
-    sync_shared_byok,
-)
+from nsdeploy_service.shared_byok import END_MARKER
+from nsdeploy_service.shared_byok import START_MARKER
+from nsdeploy_service.shared_byok import shared_byok_script
+from nsdeploy_service.shared_byok import sync_shared_byok
 
 
 class SharedByokTests(unittest.TestCase):
