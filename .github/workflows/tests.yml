@@ -29,6 +29,7 @@ jobs:
       shellcheck-command: 'build_scripts/run_shellcheck.sh'
       run-markdownlint: true
       markdownlint-command: 'build_scripts/run_markdownlint.sh'
+      run-hadolint: true
       pytest-extra-args: '-n auto'
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
