@@ -14,6 +14,7 @@ Assertions are made against the installed wrapper rather than the process-wide
 service process, and that is irreversible, so any test reading global `ssl` state
 would depend on whether an app happened to be built first.
 """
+import inspect
 import os
 import ssl
 import tempfile
@@ -21,12 +22,14 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from nsdeploy_service import trust
+from nsdeploy_service import supervisor, trust
+from nsdeploy_service.config import SERVICE_ROOT
 
 
 class CaBundleTest(unittest.TestCase):
+    """Installs a CA trust store for the service process when the interpreter has none."""
     def setUp(self):
-        trust._installed = None
+        trust._installed = None  # pylint: disable=protected-access; the test inspects internals
         self._env = mock.patch.dict(os.environ, {}, clear=False)
         self._env.start()
         os.environ.pop("SSL_CERT_FILE", None)
@@ -34,6 +37,7 @@ class CaBundleTest(unittest.TestCase):
         # Both installation paths mutate the ssl module process-wide; restore them so
         # one test cannot change what another observes.
         self._ssl_state = (ssl.create_default_context,
+                           # pylint: disable-next=protected-access  # the test inspects internals
                            ssl._create_default_https_context,
                            ssl.SSLContext)
 
@@ -42,7 +46,7 @@ class CaBundleTest(unittest.TestCase):
          ssl._create_default_https_context,
          ssl.SSLContext) = self._ssl_state
         self._env.stop()
-        trust._installed = None
+        trust._installed = None  # pylint: disable=protected-access; the test inspects internals
 
     def _no_store(self):
         return mock.patch.object(trust, "has_usable_store", return_value=False)
@@ -51,6 +55,7 @@ class CaBundleTest(unittest.TestCase):
         return mock.patch.dict("sys.modules", {"truststore": None})
 
     def test_installs_a_trust_store_when_the_interpreter_has_none(self):
+        """A trust store is installed when the interpreter has none."""
         with self._no_store():
             self.assertIsNotNone(trust.ensure_ca_bundle())
 
@@ -63,9 +68,10 @@ class CaBundleTest(unittest.TestCase):
                              "the operating system trust store")
 
     def test_the_certifi_fallback_supplies_its_bundle_as_the_default_cafile(self):
+        """The certifi fallback supplies its bundle as the default cafile."""
         captured = {}
 
-        def spy(*args, **kwargs):
+        def spy(*_args, **kwargs):
             captured.update(kwargs)
             return "context"
 
@@ -81,7 +87,7 @@ class CaBundleTest(unittest.TestCase):
         """Only the "caller had no opinion" case is filled in."""
         captured = {}
 
-        def spy(*args, **kwargs):
+        def spy(*_args, **kwargs):
             captured.update(kwargs)
             return "context"
 
@@ -97,9 +103,11 @@ class CaBundleTest(unittest.TestCase):
         is a separate hook from the one httpx uses — both must be installed."""
         with self._no_store(), self._no_truststore():
             trust.ensure_ca_bundle()
+            # pylint: disable-next=protected-access  # the test inspects internals
             self.assertIs(ssl._create_default_https_context, ssl.create_default_context)
 
     def test_reports_nothing_when_neither_is_available(self):
+        """Nothing is installed when neither truststore nor certifi is available."""
         with self._no_store(), mock.patch.dict(
                 "sys.modules", {"truststore": None, "certifi": None}):
             self.assertIsNone(trust.ensure_ca_bundle())
@@ -113,6 +121,7 @@ class CaBundleTest(unittest.TestCase):
         self.assertIsNone(os.environ.get("SSL_CERT_DIR"))
 
     def test_does_nothing_when_the_interpreter_already_has_a_store(self):
+        """Nothing is installed when the interpreter already has a usable store."""
         with mock.patch.object(trust, "has_usable_store", return_value=True):
             self.assertIsNone(trust.ensure_ca_bundle())
 
@@ -123,15 +132,17 @@ class CaBundleTest(unittest.TestCase):
         with self._no_store():
             self.assertIsNone(trust.ensure_ca_bundle())
         self.assertEqual(os.environ["SSL_CERT_FILE"], "/etc/ssl/corporate-root.pem")
-        self.assertIsNone(trust._installed)
+        self.assertIsNone(trust._installed)  # pylint: disable=protected-access; the test inspects internals
 
     def test_respects_an_operator_supplied_directory(self):
+        """An operator-supplied SSL_CERT_DIR is left in place."""
         os.environ["SSL_CERT_DIR"] = "/etc/ssl/certs"
         with self._no_store():
             self.assertIsNone(trust.ensure_ca_bundle())
-        self.assertIsNone(trust._installed)
+        self.assertIsNone(trust._installed)  # pylint: disable=protected-access; the test inspects internals
 
     def test_is_idempotent(self):
+        """Repeated calls return the same result."""
         with self._no_store():
             self.assertEqual(trust.ensure_ca_bundle(), trust.ensure_ca_bundle())
 
@@ -146,6 +157,7 @@ class CaBundleTest(unittest.TestCase):
             self.assertFalse(trust.has_usable_store())
 
     def test_an_existing_store_path_counts(self):
+        """A store path that exists counts as a usable store."""
         with tempfile.TemporaryDirectory() as tmp:
             bundle = Path(tmp) / "cert.pem"
             bundle.write_text("", encoding="utf-8")
@@ -157,7 +169,9 @@ class CaBundleTest(unittest.TestCase):
 
 
 class TlsFailureMessageTest(unittest.TestCase):
+    """Describes a TLS verification failure in actionable terms."""
     def test_names_the_url_and_the_ways_out(self):
+        """The message names the URL and the settings that fix it."""
         text = trust.describe_tls_failure("https://api.openai.com/x", "verify failed")
         self.assertIn("https://api.openai.com/x", text)
         self.assertIn("SSL_CERT_FILE", text)
@@ -171,15 +185,12 @@ class BootstrapTest(unittest.TestCase):
     into any version of it."""
 
     def test_the_bootstrap_module_exists_where_the_supervisor_points(self):
-        from nsdeploy_service.config import SERVICE_ROOT
-
+        """The bootstrap module exists where the supervisor points."""
         self.assertTrue((SERVICE_ROOT / "_bootstrap" / "sitecustomize.py").is_file())
 
     def test_the_supervisor_puts_it_first_on_the_child_path(self):
-        import inspect
-
-        from nsdeploy_service import supervisor
-
+        """The supervisor puts the bootstrap directory on the child's path."""
+        # pylint: disable-next=protected-access  # the test inspects internals
         source = inspect.getsource(supervisor.Supervisor._spawn)
         self.assertIn('SERVICE_ROOT / "_bootstrap"', source)
 

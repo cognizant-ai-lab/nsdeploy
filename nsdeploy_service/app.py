@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # every route is registered inside create_app
 """FastAPI surface for the nsdeploy deployment service.
 
     POST   /deployments            upload a HOCON  -> 202 {id, status: "queued"}
@@ -29,6 +30,7 @@ from typing import Annotated, List, Optional
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -86,6 +88,7 @@ from nsdeploy_service.supervisor import (
     network_topology,
     publish_refusal,
 )
+from nsdeploy_service.trust import ensure_ca_bundle
 
 WAIT_POLL_SECONDS = 0.4
 
@@ -202,7 +205,7 @@ def _view(dep: Deployment) -> DeploymentView:
     )
 
 
-def _row_view(row: dict, settings: Settings) -> DeploymentView:
+def _row_view(row: dict, settings: Settings) -> DeploymentView:  # pylint: disable=unused-argument; shared call shape
     """Build a view from a persisted row — the read path for list/get/directory.
 
     Records outlive the processes they describe (and the service itself), so this must
@@ -348,18 +351,24 @@ def _org_view(row: dict) -> OrgView:
     )
 
 
+# pylint: disable-next=too-many-locals,too-many-statements  # routes are closures over settings and app
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
+    """
+    Build the FastAPI application with every route, middleware and the site proxy.
+
+    :param settings: The service settings, or None to read them from the environment.
+    :return: The ASGI application.
+    :raises ValueError: If settings are read from the environment and are invalid.
+    """
     settings = settings or Settings.from_env()
     # Configure TLS trust here rather than only in __main__, so an ASGI server
     # importing `app` directly (uvicorn/gunicorn in a container) gets it too.
     # Service-owned, so this works against an unmodified nsdeploy; the build
     # subprocesses get it via _bootstrap/sitecustomize.py instead.
-    from nsdeploy_service.trust import ensure_ca_bundle
-
     ensure_ca_bundle()
 
     @contextlib.asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(app: FastAPI):  # pylint: disable=redefined-outer-name; FastAPI passes the app
         # Built inside the loop so the build semaphore binds to the right one.
         app.state.settings = settings
         app.state.supervisor = Supervisor(settings)
@@ -388,7 +397,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             with contextlib.suppress(Exception):
                 await supervisor.reap_expired()
 
-    app = FastAPI(
+    app = FastAPI(  # pylint: disable=redefined-outer-name; module-level `app` is this function's result
         title=PRODUCT_NAME,
         version=__version__,
         summary="Deploy a neuro-san agent-network HOCON as a live website over HTTP.",
@@ -409,8 +418,6 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # hides every other response header, so a bundle fetched from another origin
     # would otherwise arrive with its name, digest and warnings reading as null.
     if settings.cors_origins:
-        from fastapi.middleware.cors import CORSMiddleware
-
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.cors_allowed_origins(),
@@ -440,7 +447,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     # Applied per route rather than as a parameter: the gate injects nothing into the
     # handler, and a route-level dependency keeps it out of the OpenAPI parameter list.
-    AUTH = [Depends(require_token)]
+    AUTH = [Depends(require_token)]  # pylint: disable=invalid-name; route-level constant
 
     def supervisor_of(request: Request) -> Supervisor:
         return request.app.state.supervisor
@@ -484,6 +491,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.post("/deployments", status_code=202, response_model=DeploymentView,
               dependencies=AUTH, summary="Deploy a HOCON (multipart upload)")
+    # pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals  # one per form field
     async def deploy(
         request: Request,
         response: Response,
@@ -528,6 +536,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.post("/deployments/raw", status_code=202, response_model=DeploymentView,
               dependencies=AUTH, summary="Deploy a HOCON posted as a raw request body")
+    # pylint: disable-next=too-many-arguments,too-many-positional-arguments  # one parameter per form field
     async def deploy_raw(
         request: Request,
         response: Response,
@@ -633,9 +642,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/graph", response_model=GraphView, dependencies=AUTH,
              summary="Deployed networks and the links between them, as a map")
-    async def graph(
+    async def graph(  # pylint: disable=too-many-locals; builds nodes and edges in one pass
         request: Request,
         org_id: Annotated[Optional[str], Query(description="filter to one organization")] = None,
+        # pylint: disable-next=unused-argument  # accepted so existing /graph callers do not break
         live_only: Annotated[bool, Query(description="hide stopped and failed nodes")] = False,
         suggest: Annotated[bool, Query(
             description="also infer suggested relations (slow on a large map)")] = False,
@@ -1000,7 +1010,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # product and not a process: it has no port, no lifecycle, no place on the map
     # and no record. It is built, handed over and forgotten, so everything here is
     # answered on the open connection and nothing reaches the store.
+    # pylint: disable-next=invalid-name  # route-level constant
     BUNDLE_MEDIA_TYPE = "application/gzip"
+    # pylint: disable-next=invalid-name  # route-level constant
     BUNDLE_RESPONSES = {
         200: {"content": {BUNDLE_MEDIA_TYPE: {"schema": {"type": "string",
                                                          "format": "binary"}}},
@@ -1013,11 +1025,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     #
     # The three left out have nothing finished to offer. `queued` and `building`
     # have not produced a site yet, and `failed` tried and could not.
+    # pylint: disable-next=invalid-name  # route-level constant
     BUNDLE_STATUSES = (DeploymentStatus.READY, DeploymentStatus.STOPPED)
 
     @app.post("/bundles", dependencies=AUTH, response_class=Response,
               responses=BUNDLE_RESPONSES,
               summary="Build a HOCON into a static bundle and return it (multipart)")
+    # pylint: disable-next=too-many-arguments,too-many-positional-arguments  # one parameter per form field
     async def build_bundle(
         request: Request,
         file: Annotated[UploadFile, File(description="the agent-network .hocon")],
@@ -1048,6 +1062,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.post("/bundles/raw", dependencies=AUTH, response_class=Response,
               responses=BUNDLE_RESPONSES,
               summary="Build a HOCON posted as a raw request body into a static bundle")
+    # pylint: disable-next=too-many-arguments,too-many-positional-arguments  # one parameter per form field
     async def build_bundle_raw(
         request: Request,
         name: Annotated[str, Query(description="network name (becomes the HOCON "
@@ -1191,15 +1206,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # parallel name for the same thing. The secrets are masked on the way out; the
     # rest are the same deploy defaults Settings already reads at startup
     # (config.py) — upstream/theme_model as plain text, theme/theme_refresh as bools.
+    # pylint: disable-next=invalid-name  # route-level constant
     SETTINGS_SECRET_KEYS = {
         "nsdeploy_api_token": "NSDEPLOY_SERVICE_API_TOKEN",
         "openai_api_key": "OPENAI_API_KEY",
     }
+    # pylint: disable-next=invalid-name  # route-level constant
     SETTINGS_TEXT_KEYS = {
         "upstream": "NSDEPLOY_SERVICE_UPSTREAM",
         "theme_model": "NSDEPLOY_SERVICE_THEME_MODEL",
         "theme_prompt": "NSDEPLOY_SERVICE_THEME_PROMPT",
     }
+    # pylint: disable-next=invalid-name  # route-level constant
     SETTINGS_BOOL_KEYS = {
         "theme": "NSDEPLOY_SERVICE_THEME",
         "theme_refresh": "NSDEPLOY_SERVICE_THEME_REFRESH",
@@ -1209,6 +1227,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # is installed at all. Asked of the panel rather than inferred, and entirely
     # optional: a checkout without the folder, or one where the panel has not
     # mounted yet, simply reports neither as managed.
+    # pylint: disable-next=invalid-name  # route-level constant
     SETTINGS_PANEL_KIND = {"nsdeploy_api_token": "app", "openai_api_key": "llm"}
 
     def _panel_managed() -> set:
@@ -1220,7 +1239,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 field for field, kind in SETTINGS_PANEL_KIND.items()
                 if context.store.default_key(kind) is not None
             }
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught; the panel's faults stay out of the host
             # The panel's own store is its business; a fault there must not take
             # out the host's settings dialog.
             return set()
@@ -1335,6 +1354,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # It must come before the SiteProxy wrap below: that object is not a FastAPI,
     # so there would be nothing to mount onto.
     try:
+        # pylint: disable-next=import-outside-toplevel  # optional drop-in folder
         from nsdeploy_service.adminPanel import install as install_admin_panel
     except ImportError:
         pass
@@ -1397,8 +1417,8 @@ a{color:var(--acc)}
   <input type="file" id="file" accept=".hocon,.conf,text/plain" required>
   <div class="row">
     <div><label for="name">name (optional)</label><input type="text" id="name" placeholder="from filename"></div>
-    <div><label for="ttl">ttl seconds (0 = never)</label><input type="number" id="ttl" min="0" \
-placeholder="service default"></div>
+    <div><label for="ttl">ttl seconds (0 = never)</label><input type="number" id="ttl" min="0"
+      placeholder="service default"></div>
   </div>
   <button type="submit" id="go">Deploy</button>
 </fieldset>

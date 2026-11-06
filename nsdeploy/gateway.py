@@ -31,6 +31,13 @@ def network_slug(network: str) -> str:
 
 
 def normalize_base_domain(base_domain: str) -> str:
+    """
+    Normalize and validate a shared base domain.
+
+    :param base_domain: The domain suffix, e.g. "agents.example.com".
+    :return: The lowercased domain without a trailing dot.
+    :raises ValueError: If the domain has a scheme, path or port, or has an invalid label.
+    """
     domain = base_domain.strip().lower().rstrip(".")
     if "://" in domain or "/" in domain or ":" in domain:
         raise ValueError("base domain must be a hostname without a scheme, path, or port")
@@ -42,6 +49,16 @@ def normalize_base_domain(base_domain: str) -> str:
 
 def public_origin(network: str, base_domain: str, *, scheme: str = "http",
                   port: int | None = None) -> str:
+    """
+    Return the public origin of a network served under the base domain.
+
+    :param network: The agent-network name.
+    :param base_domain: The shared domain suffix.
+    :param scheme: The public scheme, "http" or "https".
+    :param port: The public port, or None for the scheme default.
+    :return: The origin string, e.g. "https://my-net.agents.example.com".
+    :raises ValueError: If the scheme, network name or base domain is invalid.
+    """
     scheme = scheme.lower()
     if scheme not in {"http", "https"}:
         raise ValueError("public scheme must be http or https")
@@ -66,6 +83,7 @@ def parse_routes(values: Iterable[str]) -> Dict[str, str]:
                 f"network names {owners[slug]!r} and {network!r} both map to subdomain {slug!r}"
             )
         parsed = urllib.parse.urlsplit(target.strip())
+        # pylint: disable-next=too-many-boolean-expressions  # flat validation list
         if (parsed.scheme not in {"http", "https"} or not parsed.hostname
                 or parsed.username or parsed.password or parsed.query or parsed.fragment):
             raise ValueError(f"route backend must be an http(s) origin, got: {target}")
@@ -99,35 +117,67 @@ def _safe_header(name: str, value: str) -> tuple[str, str] | None:
     return name, value
 
 
-def make_gateway_handler(base_domain: str, routes: Mapping[str, str]):
+def make_gateway_handler(base_domain: str, routes: Mapping[str, str]):  # pylint: disable=too-many-statements
+    """
+    Build a request handler class that proxies each subdomain to its backend.
+
+    :param base_domain: The shared domain suffix.
+    :param routes: The mapping of subdomain slug to backend origin.
+    :return: A BaseHTTPRequestHandler subclass bound to the routes.
+    :raises ValueError: If the base domain is invalid.
+    """
     domain = normalize_base_domain(base_domain)
     route_map = dict(routes)
 
     class GatewayHandler(BaseHTTPRequestHandler):
+        """
+        Reverse proxy handler that routes requests by Host subdomain.
+        """
         protocol_version = "HTTP/1.1"
 
         def log_message(self, *args):
             pass
 
-        def do_GET(self):
+        def do_GET(self):  # pylint: disable=invalid-name; BaseHTTPRequestHandler naming
+            """
+            Proxy a GET request.
+            """
             self._proxy()
 
-        def do_HEAD(self):
+        def do_HEAD(self):  # pylint: disable=invalid-name; BaseHTTPRequestHandler naming
+            """
+            Proxy a HEAD request.
+            """
             self._proxy()
 
-        def do_POST(self):
+        def do_POST(self):  # pylint: disable=invalid-name; BaseHTTPRequestHandler naming
+            """
+            Proxy a POST request.
+            """
             self._proxy()
 
-        def do_PUT(self):
+        def do_PUT(self):  # pylint: disable=invalid-name; BaseHTTPRequestHandler naming
+            """
+            Proxy a PUT request.
+            """
             self._proxy()
 
-        def do_PATCH(self):
+        def do_PATCH(self):  # pylint: disable=invalid-name; BaseHTTPRequestHandler naming
+            """
+            Proxy a PATCH request.
+            """
             self._proxy()
 
-        def do_DELETE(self):
+        def do_DELETE(self):  # pylint: disable=invalid-name; BaseHTTPRequestHandler naming
+            """
+            Proxy a DELETE request.
+            """
             self._proxy()
 
-        def do_OPTIONS(self):
+        def do_OPTIONS(self):  # pylint: disable=invalid-name; BaseHTTPRequestHandler naming
+            """
+            Proxy a OPTIONS request.
+            """
             self._proxy()
 
         def _send_json(self, status: int, value: dict) -> None:
@@ -151,7 +201,8 @@ def make_gateway_handler(base_domain: str, routes: Mapping[str, str]):
             slug = host.lower()[:-len(suffix)]
             return route_map.get(slug)
 
-        def _proxy(self) -> None:
+        # pylint: disable-next=too-many-locals,too-many-branches,too-many-statements  # single streaming proxy flow
+        def _proxy(self) -> None:  # pylint: disable=inconsistent-return-statements  # kept to preserve behavior
             if self.path.split("?", 1)[0] == "/_nsdeploy/gateway/health":
                 return self._send_json(200, {"status": "ok", "routes": len(route_map)})
             target = self._route()
@@ -195,7 +246,7 @@ def make_gateway_handler(base_domain: str, routes: Mapping[str, str]):
                     self.send_header(*safe)
                 if not has_length:
                     self.send_header("Connection", "close")
-                    self.close_connection = True
+                    self.close_connection = True  # pylint: disable=attribute-defined-outside-init; base-class flag
                 self.end_headers()
                 if self.command != "HEAD":
                     while True:
@@ -211,7 +262,7 @@ def make_gateway_handler(base_domain: str, routes: Mapping[str, str]):
                     except (BrokenPipeError, ConnectionError):
                         pass
                 else:
-                    self.close_connection = True
+                    self.close_connection = True  # pylint: disable=attribute-defined-outside-init; base-class flag
             finally:
                 connection.close()
 
@@ -219,6 +270,12 @@ def make_gateway_handler(base_domain: str, routes: Mapping[str, str]):
 
 
 def run_gateway_command(argv: list[str] | None = None) -> int:
+    """
+    Run the `nsdeploy gateway` subcommand until interrupted.
+
+    :param argv: The subcommand arguments, or None to read sys.argv.
+    :return: The process exit code.
+    """
     parser = argparse.ArgumentParser(
         prog="nsdeploy gateway",
         description="Expose multiple loopback nsdeploy sites through one host-routed port.",

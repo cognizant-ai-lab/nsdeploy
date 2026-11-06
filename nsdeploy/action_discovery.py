@@ -16,23 +16,65 @@ SENSITIVE = re.compile(r"password|passwd|secret|token|authorization|api.?key|cre
 
 
 def public_url(value):
+    """
+    Validate that a URL is a public HTTP(S) URL without credentials or fragments.
+
+    :param value: The URL to validate.
+    :return: The unchanged URL.
+    :raises ValueError: If the URL is not an acceptable public HTTP(S) URL.
+    """
     u = urlsplit(value)
-    if u.scheme not in ("http", "https") or not u.hostname or u.username or u.password or u.fragment or "\\" in value:
+    # pylint: disable-next=too-many-boolean-expressions  # flat validation list
+    if (u.scheme not in ("http", "https") or not u.hostname or u.username or u.password or u.fragment
+            or "\\" in value):
         raise ValueError("Action sources require HTTP(S) URLs without credentials or fragments.")
     return value
 
 
 def origin(value):
+    """
+    Return the scheme and network location of a public URL.
+
+    :param value: The URL to inspect.
+    :return: The origin string, e.g. "https://example.com".
+    :raises ValueError: If the URL is not an acceptable public HTTP(S) URL.
+    """
     u = urlsplit(public_url(value))
     return f"{u.scheme}://{u.netloc}"
 
 
 class NoRedirect(HTTPRedirectHandler):
+    """
+    Redirect handler that refuses every redirect so discovery reads only the supplied URL.
+    """
+
+    # pylint: disable-next=too-many-arguments,too-many-positional-arguments  # base-class signature
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """
+        Refuse the redirect.
+
+        :param req: The original request.
+        :param fp: The response file object.
+        :param code: The HTTP status code.
+        :param msg: The HTTP status message.
+        :param headers: The response headers.
+        :param newurl: The redirect target URL.
+        :return: Never returns.
+        :raises ValueError: Always, because discovery does not follow redirects.
+        """
         raise ValueError("Discovery does not follow redirects; supply the final URL.")
 
 
 def fetch(url, method="GET", headers=None):
+    """
+    Fetch a public URL without following redirects, bounded to MAX_BYTES.
+
+    :param url: The URL to fetch.
+    :param method: The HTTP method to use.
+    :param headers: Optional extra request headers.
+    :return: A tuple of (decoded body text, response headers dict, HTTP status).
+    :raises ValueError: On a non-public URL, an HTTP error (except for OPTIONS) or an oversized response.
+    """
     public_url(url)
     request = Request(url, method=method,
                       headers={"User-Agent": "Mozilla/5.0 (compatible; nsdeploy-discovery/1)", **(headers or {})})
@@ -50,13 +92,28 @@ def fetch(url, method="GET", headers=None):
 
 
 class Page(HTMLParser):
+    """
+    HTML parser that collects forms, their controls, links and the script count of a page.
+    """
+
     def __init__(self, text):
+        """
+        Parse the page text immediately.
+
+        :param text: The HTML text of the page.
+        """
         super().__init__(convert_charrefs=True)
         self.forms, self.links, self.scripts = [], [], 0
         self.form, self.option = None, None
         self.feed(text)
 
     def handle_starttag(self, tag, attrs):
+        """
+        Record scripts, links, forms and form controls.
+
+        :param tag: The lowercase tag name.
+        :param attrs: The list of (name, value) attribute pairs.
+        """
         attrs = dict(attrs)
         attrs = {k: v or "" for k, v in attrs.items()}
         if tag == "script":
@@ -73,11 +130,21 @@ class Page(HTMLParser):
                 control["text"] = ""
                 self.option = control
 
-    def handle_data(self, text):
+    def handle_data(self, data):
+        """
+        Accumulate the text of the current option element.
+
+        :param data: The text data.
+        """
         if self.option is not None:
-            self.option["text"] += text
+            self.option["text"] += data
 
     def handle_endtag(self, tag):
+        """
+        Close the current form or option element.
+
+        :param tag: The lowercase tag name.
+        """
         if tag == "form":
             self.form = None
         if tag == "option":
@@ -85,17 +152,39 @@ class Page(HTMLParser):
 
 
 def fingerprint(form):
-    return hashlib.sha256(
-        json.dumps(form, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    """
+    Compute a stable SHA-256 fingerprint of a parsed form.
+
+    :param form: The parsed form dictionary.
+    :return: The hexadecimal digest.
+    """
+    canonical = json.dumps(form, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def action_name(method, url):
+    """
+    Build a readable, unique action name from a method and URL.
+
+    :param method: The HTTP method.
+    :param url: The URL of the operation.
+    :return: The action name.
+    """
     path = re.sub(r"[^a-zA-Z0-9]+", "_", urlsplit(url).path).strip("_")[:45] or "root"
     digest = hashlib.sha256(f"{method} {url}".encode()).hexdigest()[:8]
     return f"{method.lower()}_{path}_{digest}"
 
 
-def form_action(page_url, form, index):
+def form_action(page_url, form, index):  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    """
+    Convert a parsed native form into a disabled action description.
+
+    :param page_url: The URL of the page holding the form.
+    :param form: The parsed form dictionary.
+    :param index: The zero-based index of the form on the page.
+    :return: The action dictionary.
+    :raises ValueError: If the form uses unsupported features.
+    """
     attrs = form["attributes"]
     if not attrs.get("action") or any(k.startswith("on") for k in attrs):
         raise ValueError("Form has no native action or uses inline JavaScript.")
@@ -175,6 +264,15 @@ def form_action(page_url, form, index):
 
 
 def resolve_ref(schema, spec, depth=0):
+    """
+    Resolve a local OpenAPI "$ref" chain.
+
+    :param schema: The schema that may contain a "$ref".
+    :param spec: The full OpenAPI specification.
+    :param depth: The current recursion depth.
+    :return: The resolved schema.
+    :raises ValueError: On non-local or too deeply nested references.
+    """
     if depth > 8:
         raise ValueError("Recursive OpenAPI references unsupported.")
     if "$ref" not in schema:
@@ -189,6 +287,14 @@ def resolve_ref(schema, spec, depth=0):
 
 
 def scalar_schema(schema, spec):
+    """
+    Reduce an OpenAPI scalar schema to the supported subset.
+
+    :param schema: The parameter or field schema.
+    :param spec: The full OpenAPI specification.
+    :return: The reduced schema.
+    :raises ValueError: If the schema is not a supported scalar.
+    """
     schema = resolve_ref(schema, spec)
     allowed = {"type", "title", "description", "enum", "minimum", "maximum", "minLength", "maxLength", "format",
                "default", "example", "deprecated"}
@@ -202,11 +308,20 @@ def scalar_schema(schema, spec):
     return result
 
 
-def api_actions(spec, source, issues):
+def api_actions(spec, source, issues):  # pylint: disable=too-many-locals,too-many-branches
+    """
+    Convert supported OpenAPI 3 operations into disabled action descriptions.
+
+    :param spec: The parsed OpenAPI specification.
+    :param source: The source path or URL of the specification.
+    :param issues: A list that receives one entry per excluded operation.
+    :return: The list of action dictionaries.
+    :raises ValueError: If the specification is not OpenAPI 3.
+    """
     if not str(spec.get("openapi", "")).startswith("3."):
         raise ValueError("Supply an OpenAPI 3 JSON specification.")
     result = []
-    for path, item in spec.get("paths", {}).items():
+    for path, item in spec.get("paths", {}).items():  # pylint: disable=too-many-nested-blocks
         for method, op in item.items():
             if method not in ("get", "post", "put", "patch", "delete"):
                 continue
@@ -226,9 +341,8 @@ def api_actions(spec, source, issues):
                     name = p["name"]
                     if p["in"] not in ("path", "query") or SENSITIVE.search(name):
                         raise ValueError("Header/cookie/credential parameters excluded.")
-                    if (name in props
-                            or p.get("style", "simple" if p["in"] == "path" else "form") not in ("simple", "form")
-                            or p.get("allowReserved")):
+                    style = p.get("style", "simple" if p["in"] == "path" else "form")
+                    if name in props or style not in ("simple", "form") or p.get("allowReserved"):
                         raise ValueError("Ambiguous or unsupported parameter encoding.")
                     props[name] = scalar_schema(p["schema"], spec)
                     bindings.append({"name": name, "in": p["in"]})
@@ -239,9 +353,8 @@ def api_actions(spec, source, issues):
                     if method == "get" or set(body.get("content", {})) != {"application/json"}:
                         raise ValueError("Only JSON API request bodies are supported.")
                     schema = resolve_ref(body["content"]["application/json"]["schema"], spec)
-                    if (schema.get("type") != "object" or not schema.get("properties")
-                            or set(schema) - {"type", "properties", "required", "additionalProperties", "description",
-                                              "title"}):
+                    body_keys = {"type", "properties", "required", "additionalProperties", "description", "title"}
+                    if schema.get("type") != "object" or not schema.get("properties") or set(schema) - body_keys:
                         raise ValueError("API body needs explicit object properties.")
                     for name, field in schema["properties"].items():
                         if name in props or SENSITIVE.search(name):
@@ -249,7 +362,7 @@ def api_actions(spec, source, issues):
                         field = resolve_ref(field, spec)
                         if (field.get("type") == "object" and field.get("additionalProperties") is True
                                 and not field.get("properties")
-                                and not (set(field) - {"type", "additionalProperties", "description", "title"})):
+                                and not set(field) - {"type", "additionalProperties", "description", "title"}):
                             props[name] = {"type": "string", "maxLength": 16000,
                                            "description": "JSON object text. " + field.get("description", ""),
                                            "x-json": True}
@@ -274,7 +387,15 @@ def api_actions(spec, source, issues):
     return result
 
 
-def cors_probe(action, site_url, fetcher):
+def cors_probe(action, site_url, fetcher):  # pylint: disable=too-many-locals
+    """
+    Probe whether the browser may call an action's URLs from the publishing site via CORS preflight.
+
+    :param action: The action dictionary.
+    :param site_url: The publishing site URL, or an empty string when unknown.
+    :param fetcher: The fetch callable, with the signature of fetch().
+    :return: A dictionary with the per-URL checks and a note.
+    """
     request = action["request"]
     urls = [request["url"]] + ([request["page"]] if request["kind"] == "form" else [])
     checks = []
@@ -303,18 +424,32 @@ def cors_probe(action, site_url, fetcher):
         except (ValueError, OSError) as exc:
             checks.append({"url": url, "status": "unverified", "reason": str(exc)})
     return {"checks": checks,
-            "note": ("OPTIONS only; actual browser execution and response CORS remain unverified. "
-                     "No business operation was run.")}
+            "note": "OPTIONS only; actual browser execution and response CORS remain unverified. "
+                    "No business operation was run."}
 
 
+# pylint: disable-next=too-many-locals,too-many-branches
 def discover(site, spec_path=None, site_url="", max_pages=6, fetcher=fetch):
+    """
+    Discover native forms and OpenAPI operations reachable from a site.
+
+    :param site: The public start URL.
+    :param spec_path: Optional OpenAPI JSON path or URL.
+    :param site_url: The publishing site URL used for CORS probes.
+    :param max_pages: The maximum number of pages to visit (1-20).
+    :param fetcher: The fetch callable, with the signature of fetch().
+    :return: The discovery lock document.
+    :raises ValueError: On invalid arguments or more than 100 operations.
+    """
     public_url(site)
     if not 1 <= max_pages <= 20:
         raise ValueError("--action-max-pages must be between 1 and 20.")
     actions, issues, visited, queue = [], [], [], [site]
     if spec_path:
-        raw = (fetcher(spec_path)[0] if str(spec_path).startswith(("https://", "http://"))
-               else Path(spec_path).read_text())
+        if str(spec_path).startswith(("https://", "http://")):
+            raw = fetcher(spec_path)[0]
+        else:
+            raw = Path(spec_path).read_text(encoding="utf-8")
         actions += api_actions(json.loads(raw), str(spec_path), issues)
     while queue and len(visited) < max_pages:
         url = queue.pop(0)
@@ -322,7 +457,7 @@ def discover(site, spec_path=None, site_url="", max_pages=6, fetcher=fetch):
             continue
         visited.append(url)
         try:
-            raw, headers, _ = fetcher(url)
+            raw, _, _ = fetcher(url)
             if raw.lstrip().startswith("{"):
                 actions += api_actions(json.loads(raw), url, issues)
                 continue
@@ -333,9 +468,8 @@ def discover(site, spec_path=None, site_url="", max_pages=6, fetcher=fetch):
                 except (ValueError, KeyError) as exc:
                     issues.append({"source": url, "form": index + 1, "reason": str(exc)})
             if page.scripts:
-                issues.append({"source": url,
-                               "reason": ("Page JavaScript was not executed. "
-                                          "JS-only actions require a documented API or site-owned adapter.")})
+                issues.append({"source": url, "reason": "Page JavaScript was not executed. JS-only actions require "
+                                                        "a documented API or site-owned adapter."})
             for href in page.links:
                 target = urlsplit(urljoin(url, href))
                 if target.scheme not in ("http", "https") or target.username or target.password:
@@ -361,11 +495,26 @@ def discover(site, spec_path=None, site_url="", max_pages=6, fetcher=fetch):
             "actions": actions, "issues": issues}
 
 
-def prepare_actions(lock_path, site=None, spec=None, site_url="", refresh=False, include_all=False, allow=(),
-                    max_pages=6):
+# pylint: disable-next=too-many-arguments,too-many-positional-arguments
+def prepare_actions(lock_path, site=None, spec=None, site_url="", refresh=False,
+                    include_all=False, allow=(), max_pages=6):
+    """
+    Load or (re)discover the action lock, apply enablement choices and write it back.
+
+    :param lock_path: The path of the discovered-actions lock file.
+    :param site: The public start URL for discovery.
+    :param spec: Optional OpenAPI JSON path or URL.
+    :param site_url: The publishing site URL used for CORS probes.
+    :param refresh: Whether to rediscover even if a lock file exists.
+    :param include_all: Whether to enable every discovered action.
+    :param allow: Names of actions to enable.
+    :param max_pages: The maximum number of pages to visit during discovery.
+    :return: The lock document.
+    :raises ValueError: On an invalid lock, changed source, unknown names, or no enabled actions.
+    """
     lock_path = Path(lock_path)
     if lock_path.exists() and not refresh:
-        doc = json.loads(lock_path.read_text())
+        doc = json.loads(lock_path.read_text(encoding="utf-8"))
         if doc.get("version") != 1 or not isinstance(doc.get("actions"), list):
             raise ValueError("Invalid discovered-actions lock file.")
         if (site and site != doc.get("source")) or (spec and str(spec) != doc.get("spec")):
@@ -381,15 +530,15 @@ def prepare_actions(lock_path, site=None, spec=None, site_url="", refresh=False,
         if include_all or action["name"] in allow:
             action["enabled"] = True
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    lock_path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     count = sum(a.get("enabled") is True for a in doc["actions"])
     print(f"   discovered actions: {count}/{len(doc['actions'])} enabled; review {lock_path}")
     for issue in doc["issues"]:
         print(f"   discovery note: {issue['source']}: {issue['reason']}")
     if not count:
         raise ValueError(f"No discovered actions enabled. Review {lock_path}, set selected enabled fields to true, "
-                         "or use --action-allow NAME. "
-                         "--action-include-all enables all supported candidates for a test site.")
+                         "or use --action-allow NAME. --action-include-all enables all supported candidates "
+                         "for a test site.")
     if doc.get("siteOrigin") != (origin(site_url) if site_url else None):
         print("   WARNING: publishing origin differs from the discovery checks; browser CORS needs verification.")
     return doc

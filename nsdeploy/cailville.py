@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 from nsdeploy.cailville_map import CailvilleMap
 from nsdeploy.gateway import network_slug, public_origin
+from nsdeploy.generate import write_private_steward_manifest
 from nsdeploy.linker import write_link_file
 from nsdeploy.resolve import resolve_hocon
 from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio, StudioSource
@@ -37,6 +38,9 @@ ICONS = {
 
 @dataclass
 class CommunityDraft:
+    """
+    Proposed Cailville community update for one new or refreshed site, pending commit.
+    """
     community: Dict[str, Any]
     augmented_config: Dict[str, Any]
     site: Dict[str, Any]
@@ -46,6 +50,13 @@ class CommunityDraft:
 
 
 def load_community(path: Path) -> Dict[str, Any]:
+    """
+    Load and minimally validate a Cailville community file.
+
+    :param path: Path of the community JSON file.
+    :return: The parsed community document.
+    :raises ValueError: If the file is unreadable or lacks a "sites" list.
+    """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -57,6 +68,15 @@ def load_community(path: Path) -> Dict[str, Any]:
 
 def site_origin(site: Dict[str, Any], *, base_domain: Optional[str] = None,
                 public_scheme: str = "http", public_port: Optional[int] = None) -> str:
+    """
+    Return the public origin of one Cailville site.
+
+    :param site: The community site entry.
+    :param base_domain: Base domain for subdomain URLs; loopback port URLs when omitted.
+    :param public_scheme: URL scheme for subdomain URLs.
+    :param public_port: Optional public port for subdomain URLs.
+    :return: The site origin URL.
+    """
     if base_domain:
         return public_origin(site["id"], base_domain, scheme=public_scheme, port=public_port)
     return f"http://127.0.0.1:{site['port']}"
@@ -92,6 +112,13 @@ def cailville_ports(cailville_dir: Path, project_dir: Optional[Path] = None) -> 
 
 
 def latest_download_hocon(downloads: Optional[Path] = None) -> Path:
+    """
+    Return the most recently modified .hocon file in the downloads directory.
+
+    :param downloads: Directory to search; defaults to ~/Downloads.
+    :return: Resolved path of the newest .hocon file.
+    :raises ValueError: If the directory holds no .hocon files.
+    """
     root = (downloads or (Path.home() / "Downloads")).expanduser()
     candidates = [path for path in root.glob("*.hocon") if path.is_file()]
     if not candidates:
@@ -100,6 +127,14 @@ def latest_download_hocon(downloads: Optional[Path] = None) -> Path:
 
 
 def allocate_port(community: Dict[str, Any], preferred: Optional[int] = None) -> int:
+    """
+    Pick a demo port that no Cailville site uses yet.
+
+    :param community: The community document.
+    :param preferred: Port to use if it is free.
+    :return: The selected port.
+    :raises ValueError: If the preferred port is taken or no port in 8088-8999 is free.
+    """
     used = {int(site["port"]) for site in community.get("sites", []) if site.get("port")}
     if preferred is not None:
         if preferred in used:
@@ -155,7 +190,15 @@ def _tokens(value: str) -> set[str]:
     return {word for word in re.findall(r"[a-z0-9]+", value.lower()) if len(word) > 2 and word not in stop}
 
 
+# pylint: disable-next=too-many-branches  # flat keyword rule table
 def heuristic_profile(identity: Dict[str, Any], peers: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Infer a site profile and its connections from keywords, without a model.
+
+    :param identity: Network identity from _identity().
+    :param peers: Existing community sites.
+    :return: Profile with name, description, kind, type, icon, connect_to and connect_from.
+    """
     text = " ".join([
         identity["network"], identity["description"],
         " ".join(item.get("name", "") + " " + item.get("role", "") for item in identity["agents"]),
@@ -196,7 +239,8 @@ def heuristic_profile(identity: Dict[str, Any], peers: Iterable[Dict[str, Any]])
         if peer_id == "harbor_guide" and any(
                 term in text for term in ("visitor", "travel", "event", "hotel", "restaurant", "tour")):
             score += 9
-        if peer_id == "fix_and_found" and any(term in text for term in ("repair", "reuse", "equipment", "maintenance")):
+        if peer_id == "fix_and_found" and any(
+                term in text for term in ("repair", "reuse", "equipment", "maintenance")):
             score += 8
         if peer_id == "harbor_wheels_cooperative" and any(
                 term in text for term in ("transport", "delivery", "event", "travel")):
@@ -226,7 +270,7 @@ def heuristic_profile(identity: Dict[str, Any], peers: Iterable[Dict[str, Any]])
 def _extract_json(text: str) -> Dict[str, Any]:
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.I)
     start, end = cleaned.find("{"), cleaned.rfind("}")
-    if start >= 0 and end > start:
+    if 0 <= start < end:
         cleaned = cleaned[start:end + 1]
     value = json.loads(cleaned)
     if not isinstance(value, dict):
@@ -269,9 +313,21 @@ def _model_profile(identity: Dict[str, Any], peers: List[Dict[str, Any]], *,
     return _extract_json(body["choices"][0]["message"]["content"])
 
 
+# pylint: disable-next=too-many-arguments,too-many-locals  # keyword-only model settings
 def infer_profile(identity: Dict[str, Any], peers: List[Dict[str, Any]], *, model: str,
                   api_key: str = "", upstream: str = "https://api.openai.com/v1",
                   use_model: bool = True) -> Dict[str, Any]:
+    """
+    Infer a site profile, preferring a model proposal and falling back to heuristics.
+
+    :param identity: Network identity from _identity().
+    :param peers: Existing community sites.
+    :param model: Chat model that proposes connections.
+    :param api_key: API key for the model; local inference is used when empty.
+    :param upstream: OpenAI-compatible endpoint for the model.
+    :param use_model: Whether to ask the model at all.
+    :return: Profile with name, description, kind, type, icon, connect_to and connect_from.
+    """
     fallback = heuristic_profile(identity, peers)
     proposed: Dict[str, Any] = {}
     model_succeeded = False
@@ -280,6 +336,7 @@ def infer_profile(identity: Dict[str, Any], peers: List[Dict[str, Any]], *, mode
             proposed = _model_profile(identity, peers, model=model, api_key=api_key, upstream=upstream)
             model_succeeded = True
             print(f"   Cailville connections proposed via {model}")
+        # pylint: disable-next=broad-exception-caught  # any model failure falls back to local inference
         except Exception as exc:
             print(f"   Cailville connection model failed ({str(exc)[:100]}); using local inference")
     else:
@@ -308,6 +365,12 @@ def infer_profile(identity: Dict[str, Any], peers: List[Dict[str, Any]], *, mode
 
 
 def choose_position(sites: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Choose the free map position farthest from existing sites.
+
+    :param sites: Existing community sites.
+    :return: Position with x, y, mx and my_px keys.
+    """
     occupied = [site.get("position", {}) for site in sites]
     candidates = [
         (x, y) for y in (13, 24, 35, 46, 57, 68, 79, 88)
@@ -333,10 +396,22 @@ def choose_position(sites: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+# pylint: disable-next=too-many-arguments  # keyword-only URL settings
 def augment_config(config: Dict[str, Any], network: str,
                    community: Dict[str, Any], *, base_domain: Optional[str] = None,
                    public_scheme: str = "http",
                    public_port: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Add the network's outbound Cailville relationships as front-man tools and links.
+
+    :param config: The network config.
+    :param network: The network ID.
+    :param community: The community document.
+    :param base_domain: Base domain for subdomain URLs; loopback port URLs when omitted.
+    :param public_scheme: URL scheme for subdomain URLs.
+    :param public_port: Optional public port for subdomain URLs.
+    :return: A copy of the config with the links added.
+    """
     result = copy.deepcopy(config)
     sites = {site["id"]: site for site in community.get("sites", [])}
     targets = [target for source, target in community.get("relationships", [])
@@ -362,12 +437,32 @@ def augment_config(config: Dict[str, Any], network: str,
     return result
 
 
+# pylint: disable-next=too-many-arguments,too-many-locals  # keyword-only CLI settings
 def plan_addition(config: Dict[str, Any], hocon_path: Path, *, port: Optional[int],
                   site_dir: Path, cailville_dir: Optional[Path] = None,
                   base_map: bool = False, model: str = "gpt-5.5", api_key: str = "",
                   upstream: str = "https://api.openai.com/v1", use_model: bool = True,
                   studio: Optional[str] = None, repo: str = DEFAULT_REPO,
                   ref: str = DEFAULT_REF) -> CommunityDraft:
+    """
+    Plan how a network joins Cailville without writing anything.
+
+    :param config: The resolved network config.
+    :param hocon_path: Path of the network HOCON; its stem is the network ID.
+    :param port: Requested site port, or None to reuse or allocate one.
+    :param site_dir: Editable site source directory.
+    :param cailville_dir: Cailville directory; defaults to the bundled one.
+    :param base_map: Whether to start from the base map, discarding earlier additions.
+    :param model: Chat model that proposes connections.
+    :param api_key: API key for the model.
+    :param upstream: OpenAI-compatible endpoint for the model.
+    :param use_model: Whether to ask the model at all.
+    :param studio: Local studio checkout, if any.
+    :param repo: GitHub studio repo.
+    :param ref: Git ref of the studio repo.
+    :return: The draft community update.
+    :raises ValueError: If the community file is invalid or the port is unavailable.
+    """
     cailville_dir = (cailville_dir or DEFAULT_CAILVILLE_DIR).resolve()
     source_path = cailville_dir / "community.base.json" if base_map else CailvilleMap.active_path(cailville_dir)
     community = copy.deepcopy(load_community(source_path))
@@ -404,7 +499,7 @@ def plan_addition(config: Dict[str, Any], hocon_path: Path, *, port: Optional[in
     community["sites"] = peers + [site]
     edges = {
         (source, target) for source, target in community.get("relationships", [])
-        if source != network and target != network
+        if network not in (source, target)
     }
     edges.update((network, target) for target in profile["connect_to"])
     edges.update((source, network) for source in profile["connect_from"])
@@ -434,6 +529,16 @@ def _map_payload(community: Dict[str, Any], *, base_domain: Optional[str] = None
 def render_map_html(html_path: Path, community: Dict[str, Any], *,
                     base_domain: Optional[str] = None, public_scheme: str = "http",
                     public_port: Optional[int] = None) -> None:
+    """
+    Replace the embedded community data in the Cailville map HTML.
+
+    :param html_path: Path of the map HTML file.
+    :param community: The community document.
+    :param base_domain: Base domain for subdomain URLs; loopback port URLs when omitted.
+    :param public_scheme: URL scheme for subdomain URLs.
+    :param public_port: Optional public port for subdomain URLs.
+    :raises ValueError: If the data markers are missing or cannot be replaced.
+    """
     text = html_path.read_text(encoding="utf-8")
     if DATA_START not in text or DATA_END not in text:
         raise ValueError(f"Cailville data markers are missing from {html_path}")
@@ -454,6 +559,11 @@ def render_map_html(html_path: Path, community: Dict[str, Any], *,
 
 
 def commit_addition(draft: CommunityDraft) -> None:
+    """
+    Write the drafted community file and refresh the map HTML.
+
+    :param draft: The planned community update.
+    """
     output = draft.cailville_dir / "community.json"
     temp = output.with_name(f".{output.name}.tmp")
     temp.write_text(json.dumps(draft.community, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -465,6 +575,11 @@ def commit_addition(draft: CommunityDraft) -> None:
 
 
 def reset_map(cailville_dir: Path = DEFAULT_CAILVILLE_DIR) -> None:
+    """
+    Restore community.json and the map HTML from the base community file.
+
+    :param cailville_dir: Cailville directory.
+    """
     cailville_dir = cailville_dir.resolve()
     community = load_community(cailville_dir / "community.base.json")
     output = cailville_dir / "community.json"
@@ -478,10 +593,21 @@ def _member_path(cailville_dir: Path, value: str) -> Path:
     return path.resolve() if path.is_absolute() else (cailville_dir / path).resolve()
 
 
+# pylint: disable-next=too-many-locals
 def prepare_runtime_sources(cailville_dir: Path, project_dir: Path, *,
                             base_domain: Optional[str] = None,
                             public_scheme: str = "http",
                             public_port: Optional[int] = None) -> Dict[str, Path]:
+    """
+    Write link-augmented configs for added sites and the sites that call them.
+
+    :param cailville_dir: Directory holding community.json.
+    :param project_dir: Project root that holds the .nsdeploy output tree.
+    :param base_domain: Base domain for subdomain URLs; loopback port URLs when omitted.
+    :param public_scheme: URL scheme for subdomain URLs.
+    :param public_port: Optional public port for subdomain URLs.
+    :return: Map of site ID to its written config path.
+    """
     community = load_community(CailvilleMap.active_path(cailville_dir))
     sites = {site["id"]: site for site in community["sites"]}
     added = {site_id for site_id, site in sites.items() if not site.get("base", False)}
@@ -511,6 +637,16 @@ def write_steward_sites_file(cailville_dir: Path, project_dir: Path, *,
                              base_domain: Optional[str] = None,
                              public_scheme: str = "http",
                              public_port: Optional[int] = None) -> Path:
+    """
+    Write the public-site directory that private stewards read.
+
+    :param cailville_dir: Directory holding community.json.
+    :param project_dir: Project root that holds the .nsdeploy output tree.
+    :param base_domain: Base domain for subdomain URLs; loopback port URLs when omitted.
+    :param public_scheme: URL scheme for subdomain URLs.
+    :param public_port: Optional public port for subdomain URLs.
+    :return: Path of the written file.
+    """
     community = load_community(CailvilleMap.active_path(cailville_dir))
     destination = project_dir / ".nsdeploy" / "cailville" / "community-public-sites.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -525,8 +661,14 @@ def write_steward_sites_file(cailville_dir: Path, project_dir: Path, *,
 
 
 def write_active_private_manifest(cailville_dir: Path, project_dir: Path) -> Path:
-    from nsdeploy.generate import write_private_steward_manifest
+    """
+    Write the private steward manifest listing every active Cailville network.
 
+    :param cailville_dir: Directory holding community.json.
+    :param project_dir: Project root that holds the .nsdeploy output tree.
+    :return: Path of the written manifest.
+    :raises ValueError: If the community map is malformed.
+    """
     community = load_community(CailvilleMap.active_path(cailville_dir))
     active = [site["id"] for site in community["sites"]]
     return write_private_steward_manifest(
@@ -561,10 +703,21 @@ def write_runtime_link_files(cailville_dir: Path, project_dir: Path, *,
     return result
 
 
+# pylint: disable-next=too-many-locals
 def emit_launch_rows(cailville_dir: Path, project_dir: Path, *,
                      base_domain: Optional[str] = None,
                      public_scheme: str = "http",
                      public_port: Optional[int] = None) -> None:
+    """
+    Prepare runtime files and print one tab-separated launch row per Cailville site.
+
+    :param cailville_dir: Directory holding community.json.
+    :param project_dir: Project root that holds the .nsdeploy output tree.
+    :param base_domain: Base domain for subdomain URLs; loopback port URLs when omitted.
+    :param public_scheme: URL scheme for subdomain URLs.
+    :param public_port: Optional public port for subdomain URLs.
+    :raises ValueError: If network names map to duplicate subdomains.
+    """
     community = load_community(CailvilleMap.active_path(cailville_dir))
     runtime_sources = prepare_runtime_sources(
         cailville_dir, project_dir, base_domain=base_domain,
@@ -603,7 +756,14 @@ def emit_launch_rows(cailville_dir: Path, project_dir: Path, *,
                          str(studio), str(links) if links else "-", origin)))
 
 
+# pylint: disable-next=too-many-branches,too-many-statements  # flat CLI option handling
 def run_cailville_command(argv: Optional[List[str]] = None) -> int:
+    """
+    Generate a site, add it to Cailville and optionally launch the whole demo.
+
+    :param argv: Command-line arguments; defaults to sys.argv.
+    :return: Process exit status.
+    """
     parser = argparse.ArgumentParser(
         prog="nsdeploy cailville",
         description="Generate a public site, connect it into Cailville, and launch the complete demo.",
@@ -676,7 +836,7 @@ def run_cailville_command(argv: Optional[List[str]] = None) -> int:
         command.extend(("--theme-key", args.theme_key))
     if args.theme_prompt:
         command.extend(("--theme-prompt", args.theme_prompt))
-    result = subprocess.run(command, cwd=project_dir)
+    result = subprocess.run(command, cwd=project_dir, check=False)
     if result.returncode:
         return result.returncode
     if args.no_launch:

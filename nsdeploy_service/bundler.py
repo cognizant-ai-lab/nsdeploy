@@ -205,6 +205,7 @@ class Bundler:
                              upstream=upstream or deployed.upstream,
                              cruse=deployed.cruse, theme=False)
 
+    # pylint: disable-next=too-many-locals  # one linear build pipeline
     def build_in(self, work: Path, name: str, text: str, options: BundleOptions,
                  deployment_work: Optional[Path] = None) -> BundleResult:
         """

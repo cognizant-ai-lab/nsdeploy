@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest import mock
 
+from fastapi.testclient import TestClient
+
 from nsdeploy.theme import ThemeSpec
 
 from nsdeploy_service.bundle_error import BundleError
@@ -48,7 +50,7 @@ class BundlerTest(unittest.TestCase):
     """The build half: a HOCON in, a gzipped tar out, and the refusals."""
 
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
         # An empty checkout, so includes resolve locally and GithubStudio is never
         # constructed. The test network has no includes, so there is nothing to find.
@@ -117,22 +119,26 @@ class BundlerTest(unittest.TestCase):
         self.assertEqual(manifest["linking"]["site"], "https://shop.example.com/bundle")
 
     def test_reports_what_a_static_bundle_cannot_carry(self):
+        """The warnings name what a static bundle cannot carry."""
         warnings = self._build().warnings
         self.assertTrue(any("MCP facade is unavailable" in line for line in warnings),
                         f"no facade warning in {warnings}")
 
     def test_refuses_an_empty_hocon(self):
+        """An empty HOCON is refused."""
         with self.assertRaises(BundleError) as caught:
             self._build(hocon="   ")
         self.assertIn("empty", str(caught.exception))
 
     def test_refuses_a_hocon_over_the_limit(self):
+        """A HOCON larger than the configured limit is refused."""
         bundler = self._bundler(max_hocon_bytes=16)
         with self.assertRaises(BundleError) as caught:
             self._build(bundler=bundler)
         self.assertIn("the limit is 16", str(caught.exception))
 
     def test_refuses_bytes_that_are_not_utf8(self):
+        """Bytes that are not UTF-8 are refused."""
         bundler = self._bundler()
         wanted = BundleOptions(name="hello_shop")
         with self.assertRaises(BundleError) as caught:
@@ -149,6 +155,7 @@ class BundlerTest(unittest.TestCase):
         self.assertIn("invalid network name", str(caught.exception))
 
     def test_refuses_a_network_with_no_front_man(self):
+        """A network with no front man is refused."""
         with self.assertRaises(BundleError) as caught:
             self._build(hocon=NO_FRONT_MAN)
         self.assertIn("front-man", str(caught.exception))
@@ -166,7 +173,7 @@ class BundlerThemeTest(unittest.TestCase):
     disagrees with a deployment."""
 
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
         (self.root / "studio").mkdir()
 
@@ -193,6 +200,7 @@ class BundlerThemeTest(unittest.TestCase):
         proposer.assert_not_called()
 
     def test_a_requested_theme_asks_the_model(self):
+        """A requested theme asks the model for a theme."""
         bundler = self._bundler()
         spec = ThemeSpec()
         spec.body = "<main>themed</main>"
@@ -205,6 +213,7 @@ class BundlerThemeTest(unittest.TestCase):
         self.assertFalse([line for line in result.warnings if "theme" in line])
 
     def test_a_theme_without_a_key_warns_and_keeps_the_default_look(self):
+        """A theme request without a key warns and keeps the default look."""
         bundler = self._bundler()
         with mock.patch("nsdeploy_service.bundler.propose_theme") as proposer:
             with mock.patch.dict("os.environ", {"OPENAI_API_KEY": ""}):
@@ -229,7 +238,7 @@ class BundleEndpointTest(unittest.TestCase):
     """The delivery half: one request in, one archive out."""
 
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
         (self.root / "studio").mkdir()
 
@@ -237,8 +246,7 @@ class BundleEndpointTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def _client(self):
-        from fastapi.testclient import TestClient
-
+        # pylint: disable-next=import-outside-toplevel  # importing app builds its module-level app
         from nsdeploy_service.app import create_app
 
         settings = Settings(studio=str(self.root / "studio"),
@@ -270,6 +278,7 @@ class BundleEndpointTest(unittest.TestCase):
             self.assertIn("index.html", archive.getnames())
 
     def test_the_name_falls_back_to_the_uploaded_filename(self):
+        """The bundle name falls back to the uploaded filename."""
         with self._client() as client:
             response = client.post(
                 "/bundles",
@@ -279,6 +288,7 @@ class BundleEndpointTest(unittest.TestCase):
         self.assertEqual(response.headers["x-bundle-name"], "corner_shop")
 
     def test_the_raw_body_route_builds_the_same_bundle(self):
+        """The raw-body route builds the same bundle as multipart."""
         with self._client() as client:
             multipart = client.post(
                 "/bundles",
@@ -296,6 +306,7 @@ class BundleEndpointTest(unittest.TestCase):
         self.assertEqual(raw.content, multipart.content)
 
     def test_a_bad_request_is_a_400_with_a_reason(self):
+        """A bad request is a 400 that states the reason."""
         with self._client() as client:
             response = client.post(
                 "/bundles",

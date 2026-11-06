@@ -77,7 +77,7 @@ def _env_list(name: str, default: List[str]) -> List[str]:
 
 
 @dataclass
-class Settings:
+class Settings:  # pylint: disable=too-many-instance-attributes; one field per setting
     """Runtime configuration for the deployment service."""
 
     # --- the service's own listener ---
@@ -263,6 +263,12 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        """
+        Build validated settings from NSDEPLOY_SERVICE_* environment variables.
+
+        :return: The settings, with unset variables taking their defaults.
+        :raises ValueError: If a value is malformed or the settings are inconsistent.
+        """
         default = cls()
         work_root = _env("WORK_ROOT")
         db_path = _env("DB_PATH")
@@ -315,6 +321,11 @@ class Settings:
         return settings
 
     def validate(self) -> None:
+        """
+        Check that the settings are mutually consistent.
+
+        :raises ValueError: If a setting is out of range or conflicts with another.
+        """
         if self.port_end < self.port_start:
             raise ValueError("PORT_END must be >= PORT_START")
         pool_size = self.port_end - self.port_start + 1
@@ -384,6 +395,11 @@ class Settings:
         return allowed
 
     def database_path(self) -> Path:
+        """
+        Return the SQLite database path, defaulting to service.db under the work root.
+
+        :return: The database path.
+        """
         return self.db_path or (self.work_root / "service.db")
 
     def subdomain_label(self, deployment_id: str, port: int, name: str = "") -> str:

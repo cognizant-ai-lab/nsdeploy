@@ -17,8 +17,10 @@ from nsdeploy.cailville import (
 
 
 class CailvilleCommunityTests(unittest.TestCase):
+    """Tests for the Cailville community runtime sources."""
+
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; closed in tearDown
         self.root = Path(self.temp.name)
         self.cailville = self.root / "cailville"
         self.cailville.mkdir()
@@ -74,6 +76,7 @@ class CailvilleCommunityTests(unittest.TestCase):
         (self.cailville / f"{name}.hocon").write_text(json.dumps(config))
 
     def test_latest_download_hocon_uses_mtime(self):
+        """Check latest download hocon uses mtime."""
         downloads = self.root / "Downloads"
         downloads.mkdir()
         old = downloads / "old.hocon"
@@ -85,12 +88,14 @@ class CailvilleCommunityTests(unittest.TestCase):
         self.assertEqual(latest_download_hocon(downloads), new.resolve())
 
     def test_allocate_port_skips_base_and_prior_additions(self):
+        """Check allocate port skips base and prior additions."""
         community = json.loads((self.cailville / "community.json").read_text())
         self.assertEqual(allocate_port(community), 8089)
         with self.assertRaises(ValueError):
             allocate_port(community, 8097)
 
     def test_cleanup_ports_include_prior_generated_bundles(self):
+        """Check cleanup ports include prior generated bundles."""
         bundle = self.root / ".nsdeploy" / "cailville" / "prior_demo"
         bundle.mkdir(parents=True)
         (bundle / "agent-manifest.json").write_text(json.dumps({
@@ -103,6 +108,7 @@ class CailvilleCommunityTests(unittest.TestCase):
         self.assertIn(8097, ports)
 
     def test_base_map_addition_updates_map_links_and_reverse_runtime_sources(self):
+        """Check base map addition updates map links and reverse runtime sources."""
         bank = self.root / "community_bank.hocon"
         bank.write_text(json.dumps({"tools": [{
             "name": "bank_front",
@@ -142,6 +148,7 @@ class CailvilleCommunityTests(unittest.TestCase):
             )
 
     def test_cumulative_additions_receive_distinct_ports_and_map_positions(self):
+        """Check cumulative additions receive distinct ports and map positions."""
         first = self.root / "bakery.hocon"
         second = self.root / "clinic.hocon"
         for path, description in (

@@ -18,7 +18,10 @@ from nsdeploy.byok import (
 
 
 class ByokTests(unittest.IsolatedAsyncioTestCase):
+    """Tests for bring-your-own-key header helpers and MCP middleware."""
+
     def test_header_helpers_and_repr_do_not_expose_key(self):
+        """Check header helpers and repr do not expose key."""
         self.assertEqual(authorization_for_key("secret"), "Bearer secret")
         self.assertEqual(authorization_for_key("Bearer secret"), "Bearer secret")
         self.assertEqual(byok_headers("secret", "gpt-test"), {
@@ -28,6 +31,7 @@ class ByokTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("secret", repr(ByokCredentials("Bearer secret", "gpt-test")))
 
     async def test_fastmcp_session_keeps_initializer_credentials(self):
+        """Check fastmcp session keeps initializer credentials."""
         mcp = FastMCP(
             "byok-test",
             transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
