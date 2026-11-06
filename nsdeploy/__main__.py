@@ -52,6 +52,8 @@ from nsdeploy.theme import ThemeSpec
 from nsdeploy.theme import load_theme_file
 from nsdeploy.theme import propose_theme
 
+# cailville is optional (see the try/except below), so a runtime import would break installs without it.
+# CommunityDraft only appears in annotations, which are never evaluated, so import it for type checkers only.
 if TYPE_CHECKING:
     from nsdeploy.cailville import CommunityDraft
 
