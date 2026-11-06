@@ -146,6 +146,12 @@ class Vocabulary:
         return math.log((1 + self.document_count) / (1 + frequency)) + 1.0
 
     def mass(self, terms: Iterable[str]) -> float:
+        """
+        Sum the weights of a set of terms.
+
+        :param terms: The terms to weigh.
+        :return: The total weight.
+        """
         return sum(self.weight(term) for term in terms)
 
 
@@ -238,6 +244,9 @@ def identities_from_rows(rows: Iterable[Dict[str, Any]]) -> List[NetworkIdentity
 
 @dataclass(frozen=True)
 class Affinity:
+    """
+    Overlap score between two networks plus the shared terms, strongest first.
+    """
     score: float
     shared: Tuple[str, ...]
 
@@ -259,6 +268,9 @@ def affinity(left: NetworkIdentity, right: NetworkIdentity,
 
 @dataclass(frozen=True)
 class SlotMatch:
+    """
+    How well a provider covers one of a consumer's open slots, with the matched terms.
+    """
     reference: str
     coverage: float
     matched: Tuple[str, ...]
@@ -391,7 +403,7 @@ def _parse_llm_relations(content: str, known: Dict[str, NetworkIdentity],
                          ) -> List[SuggestedRelation]:
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", str(content or "").strip(), flags=re.I)
     start, end = text.find("{"), text.rfind("}")
-    if start >= 0 and end > start:
+    if 0 <= start < end:
         text = text[start:end + 1]
     payload = json.loads(text)
     if not isinstance(payload, dict):
@@ -437,7 +449,7 @@ def suggest_relations(
     try:
         proposed = _parse_llm_relations(
             chat(LLM_SYSTEM_PROMPT, _llm_payload(identities)), known)
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught; any model failure falls back to the heuristic
         # A model that is unavailable, slow or malformed must not take the view down.
         return heuristic, "heuristic"
     if not proposed:

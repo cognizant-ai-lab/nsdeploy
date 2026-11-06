@@ -11,7 +11,10 @@ from nsdeploy.form_actions import action_discovery_config
 
 
 class ActionBundleTests(unittest.TestCase):
+    """Tests for generated site action bundles and discovery configuration."""
+
     def test_discovery_has_no_guessed_route_and_host_forms_are_explicit(self):
+        """Check discovery has no guessed route and host forms are explicit."""
         self.assertEqual(action_discovery_config(), {})
         config = action_discovery_config(host_page=True)
         self.assertTrue(config["hostPage"])
@@ -20,10 +23,11 @@ class ActionBundleTests(unittest.TestCase):
             action_discovery_config(host_page=True, callers=["https://caller.test"])
 
     def test_subpath_headers_only_expose_public_agent_data(self):
+        """Check subpath headers only expose public agent data."""
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)
-            plan = DeploymentPlan(network_name="example",
-                                  config={"tools": [{"name": "front", "instructions": "Help."}]}, front_man="front")
+            config = {"tools": [{"name": "front", "instructions": "Help."}]}
+            plan = DeploymentPlan(network_name="example", config=config, front_man="front")
             log = io.StringIO()
             with contextlib.redirect_stdout(log):
                 manifest = generate_site(plan, out, "browser://mock", "", "https://app.test/agents/example",
@@ -43,9 +47,10 @@ class ActionBundleTests(unittest.TestCase):
             self.assertIn("targets the generated agent page, which has no native forms", log.getvalue())
 
     def test_native_forms_need_no_adapter_and_remain_static(self):
+        """Check native forms need no adapter and remain static."""
         with tempfile.TemporaryDirectory() as directory:
-            plan = DeploymentPlan(network_name="example",
-                                  config={"tools": [{"name": "front", "instructions": "Help."}]}, front_man="front")
+            config = {"tools": [{"name": "front", "instructions": "Help."}]}
+            plan = DeploymentPlan(network_name="example", config=config, front_man="front")
             out = Path(directory)
             manifest = generate_site(plan, out, "browser://mock", "", "", static_bundle=True,
                                      action_pages=["/booking"], action_modules=["/js/cart.js"],
@@ -57,8 +62,10 @@ class ActionBundleTests(unittest.TestCase):
             self.assertTrue((out / "runtime/form-actions.js").exists())
 
     def test_discovery_configuration_rejects_foreign_pages_and_inexact_callers(self):
-        for path in ["https://elsewhere.test/form", "//elsewhere.test/form", "/\\elsewhere.test/form", "form",
-                     "/form#x"]:
+        """Check discovery configuration rejects foreign pages and inexact callers."""
+        paths = ["https://elsewhere.test/form", "//elsewhere.test/form", "/\\elsewhere.test/form", "form",
+                 "/form#x"]
+        for path in paths:
             with self.assertRaises(ValueError):
                 action_discovery_config([path])
         for caller in ["*", "https://caller.test/path", "https://caller.test/", "https://user:password@caller.test"]:
@@ -66,6 +73,7 @@ class ActionBundleTests(unittest.TestCase):
                 action_discovery_config(["/form"], callers=[caller])
 
     def test_adapter_and_bridge_are_published_without_hocon_changes(self):
+        """Check adapter and bridge are published without hocon changes."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "source"
@@ -90,12 +98,13 @@ class ActionBundleTests(unittest.TestCase):
                 self.assertNotIn("actions", manifest)
 
     def test_explicit_adapter_overrides_site_convention(self):
+        """Check explicit adapter overrides site convention."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             adapter = root / "custom.js"
             adapter.write_text("export function registerActions() {}")
-            plan = DeploymentPlan(network_name="example",
-                                  config={"tools": [{"name": "front", "instructions": "Help."}]}, front_man="front")
+            config = {"tools": [{"name": "front", "instructions": "Help."}]}
+            plan = DeploymentPlan(network_name="example", config=config, front_man="front")
             manifest = generate_site(plan, root / "out", "browser://mock", "", "", actions_file=adapter)
             self.assertEqual(manifest["actions"]["version"], 1)
             self.assertEqual((root / "out/actions.js").read_text(), adapter.read_text())

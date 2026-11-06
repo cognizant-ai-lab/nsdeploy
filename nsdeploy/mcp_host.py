@@ -27,14 +27,16 @@ _JSON_TO_PY = {"string": "str", "integer": "int", "number": "float",
                "boolean": "bool", "array": "list", "object": "dict"}
 
 
-def _make_tool_function(coded: Any, parameters: Dict[str, Any]):
+def _make_tool_function(coded: Any, parameters: Dict[str, Any]):  # pylint: disable=too-many-locals; codegen state
     """Build an async function whose signature mirrors the tool's JSON-Schema params,
     so FastMCP advertises a correct inputSchema, and which forwards to the coded tool.
     """
     try:
-        from neuro_san.interfaces.coded_tool import CodedTool
+        # Imported lazily so the host still runs tools when neuro_san is absent.
+        from neuro_san.interfaces.coded_tool import CodedTool  # pylint: disable=import-outside-toplevel
         use_async = type(coded).async_invoke is not CodedTool.async_invoke
-    except Exception:
+    # Any import or attribute failure falls back to duck typing on the tool instance.
+    except Exception:  # pylint: disable=broad-exception-caught
         use_async = hasattr(coded, "async_invoke") and not hasattr(coded, "invoke")
 
     async def _run(args: Dict[str, Any]) -> str:
@@ -56,11 +58,16 @@ def _make_tool_function(coded: Any, parameters: Dict[str, Any]):
     collect = "{" + ", ".join(collect_parts) + "}"
     src = f"async def _toolfn({sig}):\n    return await _run({collect})\n"
     namespace: Dict[str, Any] = {"_run": _run}
-    exec(src, namespace)  # noqa: S102 - controlled codegen from a schema we resolved
+    exec(src, namespace)  # noqa: S102 pylint: disable=exec-used; controlled codegen from a resolved schema
     return namespace["_toolfn"]
 
 
 def main() -> int:
+    """
+    Host one studio coded tool as a streamable-http MCP server.
+
+    :return: The process exit code.
+    """
     parser = argparse.ArgumentParser(description="Host one studio tool as an MCP server.")
     parser.add_argument("--studio", required=True)
     parser.add_argument("--spec", required=True)
@@ -71,7 +78,8 @@ def main() -> int:
         sys.path.insert(0, studio_root)
 
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
-    from mcp.server.fastmcp import FastMCP
+    # Server dependencies load only in the hosting subprocess.
+    from mcp.server.fastmcp import FastMCP  # pylint: disable=import-outside-toplevel
 
     module = importlib.import_module(spec["module"])
     tool_class = getattr(module, spec["class_name"])
@@ -85,8 +93,8 @@ def main() -> int:
 
     # The browser calls this MCP server cross-origin (different port from the site),
     # so it must send CORS headers and expose the MCP session header to JS.
-    import uvicorn
-    from starlette.middleware.cors import CORSMiddleware
+    import uvicorn  # pylint: disable=import-outside-toplevel
+    from starlette.middleware.cors import CORSMiddleware  # pylint: disable=import-outside-toplevel
 
     app = mcp.streamable_http_app()
     app.add_middleware(
