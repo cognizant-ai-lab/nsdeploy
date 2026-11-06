@@ -18,48 +18,12 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import inspect
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
 
 from nsdeploy.coded_tool_module import CodedToolModule
-
-_JSON_TO_PY = {"string": str, "integer": int, "number": float,
-               "boolean": bool, "array": list, "object": dict}
-
-
-def _make_tool_function(coded: Any, parameters: Dict[str, Any]):
-    """Build an async function whose signature mirrors the tool's JSON-Schema params,
-    so FastMCP advertises a correct inputSchema, and which forwards to the coded tool.
-    The signature is built with `inspect`, so parameter names must be identifiers.
-    """
-    try:
-        from neuro_san.interfaces.coded_tool import CodedTool
-        use_async = type(coded).async_invoke is not CodedTool.async_invoke
-    except Exception:
-        use_async = hasattr(coded, "async_invoke") and not hasattr(coded, "invoke")
-
-    async def _toolfn(**args: Any) -> str:
-        args = {k: v for k, v in args.items() if v is not None}
-        if use_async:
-            result = await coded.async_invoke(args, {})
-        else:
-            result = coded.invoke(args, {})
-        return result if isinstance(result, str) else json.dumps(result, default=str)
-
-    props = (parameters or {}).get("properties", {}) or {}
-    required = set((parameters or {}).get("required", []) or [])
-    sig_params = []
-    # Add one keyword-only parameter per schema property.
-    for pname, pdef in props.items():
-        ann = _JSON_TO_PY.get((pdef or {}).get("type"), str)
-        default = inspect.Parameter.empty if pname in required else None
-        # inspect.Parameter raises ValueError for a name that is not an identifier.
-        sig_params.append(inspect.Parameter(pname, inspect.Parameter.KEYWORD_ONLY, default=default, annotation=ann))
-    _toolfn.__signature__ = inspect.Signature(sig_params, return_annotation=str)
-    return _toolfn
+from nsdeploy.hosted_tool_function import HostedToolFunction
 
 
 def main() -> int:
@@ -84,9 +48,7 @@ def main() -> int:
     coded = tool_class()
 
     mcp = FastMCP(spec["name"], port=int(spec["port"]))
-    fn = _make_tool_function(coded, spec.get("parameters") or {})
-    fn.__name__ = spec["name"]
-    fn.__doc__ = spec.get("description") or spec["name"]
+    fn = HostedToolFunction(coded, spec["name"], spec.get("description") or spec["name"], spec.get("parameters") or {})
     mcp.tool(name=spec["name"], description=spec.get("description") or spec["name"])(fn)
 
     # The browser calls this MCP server cross-origin (different port from the site),
