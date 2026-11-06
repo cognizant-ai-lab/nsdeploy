@@ -6,7 +6,8 @@ demonstrations held in memory, discarded on exit. No LLM or real booking service
 import argparse
 from datetime import date
 from functools import partial
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler
+from http.server import ThreadingHTTPServer
 import json
 from pathlib import Path
 import threading

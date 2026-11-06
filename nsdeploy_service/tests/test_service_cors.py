@@ -1,7 +1,8 @@
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, List
+from typing import Any
+from typing import List
 
 from fastapi.testclient import TestClient
 

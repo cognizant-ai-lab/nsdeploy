@@ -5,10 +5,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from nsdeploy.generate import _index_html, _theme_css
-from nsdeploy.theme import (
-    DEFAULT_THEME_MODEL, PROMPT_VERSION, ThemeSpec, _SYSTEM_PROMPT, _chat, propose_theme,
-)
+from nsdeploy.generate import _index_html
+from nsdeploy.generate import _theme_css
+from nsdeploy.theme import DEFAULT_THEME_MODEL
+from nsdeploy.theme import PROMPT_VERSION
+from nsdeploy.theme import ThemeSpec
+from nsdeploy.theme import _SYSTEM_PROMPT
+from nsdeploy.theme import _chat
+from nsdeploy.theme import propose_theme
 
 
 class _Response:

@@ -38,7 +38,18 @@ from __future__ import annotations
 import os
 import ssl
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
+from typing import Optional
+
+# Optional dependencies: each fallback is skipped when its package is absent.
+try:
+    import truststore
+except ImportError:
+    truststore = None
+try:
+    import certifi
+except ImportError:
+    certifi = None
 
 # Set once per process; the value is also the "already done" flag.
 _installed: Optional[str] = None  # pylint: disable=invalid-name; mutable process state, not a constant
@@ -87,9 +98,7 @@ def _try_os_trust_store() -> Optional[str]:
     project's own machine api.github.com is untouched while api.openai.com is
     re-signed, so GitHub fetches succeeded and every LLM call failed.
     """
-    try:
-        import truststore  # pylint: disable=import-outside-toplevel; optional dependency
-    except ImportError:
+    if truststore is None:
         return None
     try:
         truststore.inject_into_ssl()
@@ -100,9 +109,7 @@ def _try_os_trust_store() -> Optional[str]:
 
 def _try_certifi() -> Optional[str]:
     """Fall back to certifi's public roots. Enough for an un-inspected network."""
-    try:
-        import certifi  # pylint: disable=import-outside-toplevel; optional dependency
-    except ImportError:
+    if certifi is None:
         return None
     bundle = certifi.where()
     if not Path(bundle).is_file():

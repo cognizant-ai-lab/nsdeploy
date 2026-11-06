@@ -17,13 +17,22 @@ from unittest.mock import patch
 from urllib.error import URLError
 
 from nsdeploy.cailville_map import CailvilleMap
-from nsdeploy.commerce.arbiter import Arbiter, CommerceError
-from nsdeploy.commerce.catalog import default_trip, public_catalog
-from nsdeploy.commerce.service import API, KEY_HEADER, CommerceSite, from_plan
+from nsdeploy.commerce.arbiter import Arbiter
+from nsdeploy.commerce.arbiter import CommerceError
+from nsdeploy.commerce.catalog import default_trip
+from nsdeploy.commerce.catalog import public_catalog
+from nsdeploy.commerce.service import API
+from nsdeploy.commerce.service import KEY_HEADER
+from nsdeploy.commerce.service import CommerceSite
+from nsdeploy.commerce.service import from_plan
+from nsdeploy.commerce.steward import ButterpinkCommerceGateway
+from nsdeploy.commerce.steward import TURN
 from nsdeploy.cailville import choose_position
 from nsdeploy.gateway import make_gateway_handler
-from nsdeploy.generate import generate_site, build_private_steward_hocon
-from nsdeploy.launcher import DEFAULT_RUNTIME_DIR, make_handler
+from nsdeploy.generate import generate_site
+from nsdeploy.generate import build_private_steward_hocon
+from nsdeploy.launcher import DEFAULT_RUNTIME_DIR
+from nsdeploy.launcher import make_handler
 from nsdeploy.resolve import DeploymentPlan
 
 
@@ -444,8 +453,6 @@ class CommerceHTTPTests(unittest.TestCase):  # pylint: disable=too-many-instance
         """
         Check that serialized turn state cannot grant approval authority.
         """
-        # Imported here because the steward module requires neuro_san.
-        from nsdeploy.commerce.steward import ButterpinkCommerceGateway, TURN  # pylint: disable=import-outside-toplevel
         result = asyncio.run(ButterpinkCommerceGateway().async_invoke(
             {'operation': 'approve', 'offer_id': 'invented'},
             {TURN: {'confirmed_offer': 'invented'}}))

@@ -27,7 +27,9 @@ and behind an nginx/Caddy that simply passes Host through.
 from __future__ import annotations
 
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict
+from typing import Optional
+from typing import Tuple
 from urllib.parse import urlsplit
 
 import httpx

@@ -4,16 +4,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nsdeploy.cailville import (
-    DATA_END,
-    DATA_START,
-    allocate_port,
-    cailville_ports,
-    commit_addition,
-    latest_download_hocon,
-    plan_addition,
-    prepare_runtime_sources,
-)
+from nsdeploy.cailville import DATA_END
+from nsdeploy.cailville import DATA_START
+from nsdeploy.cailville import allocate_port
+from nsdeploy.cailville import cailville_ports
+from nsdeploy.cailville import commit_addition
+from nsdeploy.cailville import latest_download_hocon
+from nsdeploy.cailville import plan_addition
+from nsdeploy.cailville import prepare_runtime_sources
 
 
 class CailvilleCommunityTests(unittest.TestCase):

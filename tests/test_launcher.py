@@ -7,12 +7,16 @@ import types
 import unittest
 import urllib.error
 import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from nsdeploy.byok import BYOK_AUTH_HEADER, BYOK_MODEL_HEADER
-from nsdeploy.launcher import _facade_command, make_handler, scrubbed_env
+from nsdeploy.byok import BYOK_AUTH_HEADER
+from nsdeploy.byok import BYOK_MODEL_HEADER
+from nsdeploy.launcher import _facade_command
+from nsdeploy.launcher import make_handler
+from nsdeploy.launcher import scrubbed_env
 
 
 class StaticHeaderTests(unittest.TestCase):

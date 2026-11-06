@@ -4,8 +4,10 @@ import unittest
 from unittest.mock import patch
 
 from nsdeploy.byok import ByokCredentials
-from nsdeploy.facade import NetworkRunner, load_published_network
-from nsdeploy.steward import PublicAgentMcpGateway, PublicAgentNetworkGateway
+from nsdeploy.facade import NetworkRunner
+from nsdeploy.facade import load_published_network
+from nsdeploy.steward import PublicAgentMcpGateway
+from nsdeploy.steward import PublicAgentNetworkGateway
 
 
 class _Response:

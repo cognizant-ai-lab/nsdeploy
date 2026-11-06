@@ -16,8 +16,11 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from .arbiter import Arbiter, CommerceError
-from .catalog import default_trip, public_catalog, validate_trip
+from nsdeploy.commerce.arbiter import Arbiter
+from nsdeploy.commerce.arbiter import CommerceError
+from nsdeploy.commerce.catalog import default_trip
+from nsdeploy.commerce.catalog import public_catalog
+from nsdeploy.commerce.catalog import validate_trip
 
 PROVIDER = "seabreeze_inn"
 ARBITER = "commerce_arbiter"

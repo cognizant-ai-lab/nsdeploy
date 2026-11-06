@@ -12,18 +12,16 @@ from fastapi.testclient import TestClient
 
 from nsdeploy_service.app import create_app
 from nsdeploy_service.config import Settings
-from nsdeploy_service.relations import (
-    AgentRole,
-    NetworkIdentity,
-    affinity,
-    build_vocabulary,
-    derive_relations,
-    identities_from_rows,
-    load_identity,
-    slot_matches,
-    suggest_relations,
-    tokens,
-)
+from nsdeploy_service.relations import AgentRole
+from nsdeploy_service.relations import NetworkIdentity
+from nsdeploy_service.relations import affinity
+from nsdeploy_service.relations import build_vocabulary
+from nsdeploy_service.relations import derive_relations
+from nsdeploy_service.relations import identities_from_rows
+from nsdeploy_service.relations import load_identity
+from nsdeploy_service.relations import slot_matches
+from nsdeploy_service.relations import suggest_relations
+from nsdeploy_service.relations import tokens
 
 
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments  # fixture builder mirrors NetworkIdentity

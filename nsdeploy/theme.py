@@ -21,10 +21,16 @@ import html as _htmlmod
 import json
 import re
 import urllib.request
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
+from dataclasses import dataclass
+from dataclasses import field
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Tuple
 
 PROMPT_VERSION = "13"
 CACHE_DIR = Path.home() / ".cache" / "nsdeploy" / "themes"

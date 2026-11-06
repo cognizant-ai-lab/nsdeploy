@@ -13,3 +13,14 @@ uvicorn>=0.30
 starlette>=0.40
 # The CodedTool base class that studio coded tools subclass.
 neuro-san>=0.5
+# HTTP client for the MCP facade, the steward and the service's site proxy.
+httpx>=0.27
+# Agent middleware for the commerce demo (also neuro-san dependencies).
+langchain>=1.0
+langchain-core>=1.0
+# Deployment service HTTP surface and its request/response models.
+fastapi>=0.110
+pydantic>=2.0
+# Optional TLS trust stores for the deployment service (trust.py).
+truststore>=0.9
+certifi

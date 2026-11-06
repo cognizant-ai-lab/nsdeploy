@@ -12,15 +12,24 @@ import sys
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
+from typing import Dict
+from typing import Iterable
+from typing import List
+from typing import Optional
 from urllib.parse import urlparse
 
 from nsdeploy.cailville_map import CailvilleMap
-from nsdeploy.gateway import network_slug, public_origin
+from nsdeploy.gateway import network_slug
+from nsdeploy.gateway import public_origin
 from nsdeploy.generate import write_private_steward_manifest
 from nsdeploy.linker import write_link_file
 from nsdeploy.resolve import resolve_hocon
-from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio, StudioSource
+from nsdeploy.studio import DEFAULT_REF
+from nsdeploy.studio import DEFAULT_REPO
+from nsdeploy.studio import GithubStudio
+from nsdeploy.studio import LocalStudio
+from nsdeploy.studio import StudioSource
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
