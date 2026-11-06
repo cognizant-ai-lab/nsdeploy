@@ -863,8 +863,6 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 await asyncio.sleep(WAIT_POLL_SECONDS)
 
         try:
-            # wait_for rather than asyncio.timeout so this still runs on Python 3.10,
-            # which is what nsdeploy's pyproject declares as the floor.
             await asyncio.wait_for(settled(), timeout=timeout)
         except asyncio.TimeoutError:
             # Not an error: the build may still be running. Report current state.
