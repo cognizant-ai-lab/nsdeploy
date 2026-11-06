@@ -104,6 +104,9 @@ for compatibility and ignored.
 
 ## Self-contained static bundle
 
+To add a floating **Agent** widget or an inline panel to an existing website without Python, see
+[the static embed installer](docs/embed.md). It accepts self-contained HOCON or an existing static bundle.
+
 Use `--static-bundle` to produce a webroot that can be copied to a conventional
 static host without installing Python or nsDeploy there. The command form is:
 
