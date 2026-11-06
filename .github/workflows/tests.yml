@@ -1,0 +1,34 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    if: >
+      (github.event_name == 'push' && github.ref != 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name != github.repository)
+    # 1.0.13
+    uses: cognizant-ai-lab/build-common/.github/workflows/_python-quality-gate.yml@e11ab4d3725a79bd8b28c3f7fb0785615290cf24
+    with:
+      # 1.0.13
+      build-common-ref: 'e11ab4d3725a79bd8b28c3f7fb0785615290cf24'
+      python-version: '3.12'
+      test-python-versions: '["3.12", "3.13", "3.14"]'
+      lint-toolchain: 'legacy'  # flake8 only (black/isort are opt-in)
+      pylint-command: 'build_scripts/run_pylint.sh'
+      shellcheck-command: 'build_scripts/run_shellcheck.sh'
+      run-markdownlint: true
+      markdownlint-command: 'build_scripts/run_markdownlint.sh'
+      pytest-extra-args: '-n auto'
+    secrets:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
