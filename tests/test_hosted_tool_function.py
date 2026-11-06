@@ -1,7 +1,8 @@
 import asyncio
 import inspect
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
 from mcp.server.fastmcp import FastMCP
 

@@ -1,6 +1,14 @@
 import inspect
 import json
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
+
+# Optional so the host still runs tools when neuro_san is absent.
+try:
+    from neuro_san.interfaces.coded_tool import CodedTool
+except ImportError:
+    CodedTool = None
 
 
 class HostedToolFunction:
@@ -40,10 +48,9 @@ class HostedToolFunction:
         :return: True when the tool overrides `async_invoke`
         """
         try:
-            # pylint: disable=import-outside-toplevel
-            from neuro_san.interfaces.coded_tool import CodedTool
             return type(coded).async_invoke is not CodedTool.async_invoke
-        except (ImportError, AttributeError):
+        # An absent neuro_san or a tool without async_invoke falls back to duck typing.
+        except AttributeError:
             return hasattr(coded, "async_invoke") and not hasattr(coded, "invoke")
 
     @staticmethod
