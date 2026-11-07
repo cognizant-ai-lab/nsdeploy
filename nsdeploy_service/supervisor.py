@@ -774,6 +774,43 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         with self._lock:
             return self._deployments.get(deployment_id)
 
+    def build_queue(self) -> Dict[str, Any]:
+        """
+        Report how many deployments wait for a build slot, and for how long.
+
+        A deployment holds its slot for the whole build *and* the readiness poll, so
+        one stuck build can keep others queued for up to BUILD_TIMEOUT_SECONDS. The
+        wait itself has no deadline — `build_timeout_seconds` is measured only after
+        a slot is taken — so without these numbers a stalled queue and a busy one
+        look the same from outside.
+
+        Counted from the in-memory deployments, which is where a queue can exist: a
+        record from an earlier run is terminal and never waits for a slot.
+
+        :return: The slot count, how many build now, how many wait, and the longest
+                 wait in whole seconds (None when nothing waits).
+        """
+        waiting: List[Deployment] = []
+        building: int = 0
+        now: datetime = _now()
+        # One pass over the live deployments, so both counts read one snapshot.
+        for dep in self.list():
+            if dep.status is DeploymentStatus.QUEUED:
+                waiting.append(dep)
+            elif dep.status is DeploymentStatus.BUILDING:
+                building += 1
+        oldest: Optional[int] = None
+        if waiting:
+            # list() is newest first, so the last entry has waited longest.
+            earliest: Deployment = waiting[-1]
+            oldest = int((now - earliest.created_at).total_seconds())
+        return {
+            "slots": self.settings.max_concurrent_builds,
+            "building": building,
+            "waiting": len(waiting),
+            "oldest_wait_seconds": oldest,
+        }
+
     def list(self) -> List[Deployment]:
         """
         List every registered deployment, newest first.

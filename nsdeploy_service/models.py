@@ -616,6 +616,15 @@ class HealthView(BaseModel):
     platform: str
     deployments: Dict[str, int]
     port_pool: Dict[str, Any]
+    build_queue: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="`slots` (MAX_CONCURRENT_BUILDS), `building`, `waiting` and "
+                    "`oldest_wait_seconds` — the longest any deployment has sat in "
+                    "`queued`, or null when none waits. A deployment holds its slot "
+                    "for the build and the readiness poll, and nothing times it out "
+                    "while it waits, so `building` at `slots` with a rising "
+                    "`oldest_wait_seconds` is a stalled queue rather than a busy one.",
+    )
     reconciled_at_startup: int = Field(
         default=0,
         description="deployment records this run settled to `stopped` at boot because "

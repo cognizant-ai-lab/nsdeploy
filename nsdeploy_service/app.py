@@ -1212,6 +1212,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "capacity": supervisor.ports.capacity,
                 "reserved": sorted(supervisor.ports.reserved()),
             },
+            # Live, not persisted: only this process can have a queue, and a
+            # deployment waiting for a slot is invisible in every other field.
+            build_queue=supervisor.build_queue(),
             warnings=warnings,
         )
 
