@@ -229,6 +229,9 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
 
     # --- access control ---
     api_token: str = ""              # empty = open (fine on loopback only)
+    # Writes `api_token` into the console page, so the console does not ask for it. Anyone who
+    # can load the console can then read the token: it only stops non-browser callers.
+    autofill_api_token: bool = False
 
     # Origins allowed to call this API from a browser on another host. Empty — the
     # default — installs no CORS middleware at all, so the service answers exactly as
@@ -315,6 +318,7 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
             relations_model=_env("RELATIONS_MODEL", default.relations_model),
             build_version=_env("BUILD_VERSION", default.build_version),
             api_token=_env("API_TOKEN", default.api_token),
+            autofill_api_token=_env_bool("AUTOFILL_API_TOKEN", default.autofill_api_token),
             cors_origins=_env_list("CORS_ORIGINS", default.cors_origins),
             tls_terminated_externally=_env_bool("TLS_TERMINATED_EXTERNALLY",
                                                 default.tls_terminated_externally),
