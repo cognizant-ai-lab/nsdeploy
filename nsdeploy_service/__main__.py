@@ -91,7 +91,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  site BYOK upstream {settings.upstream}")
     print(f"  theming           {'on' if settings.theme else 'off'}"
           f"   TTL {settings.ttl_seconds or 'disabled'}"
-          f"   auth {'bearer token' if settings.api_token else 'open'}")
+          f"   auth {'bearer token' if settings.api_token else 'open'}"
+          f"{'   console proxy on' if settings.console_proxy else ''}")
+    if settings.console_proxy:
+        print(f"\n  WARNING: {settings.CONSOLE_PROXY_WARNING}\n", file=sys.stderr)
     if not settings.api_token and settings.host not in ("127.0.0.1", "localhost", "::1"):
         print("\n  WARNING: bound off-loopback with no --api-token. An uploaded HOCON can "
               "execute\n           arbitrary Python on this host. See nsdeploy_service/README.md.\n",

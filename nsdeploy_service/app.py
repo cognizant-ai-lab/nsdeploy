@@ -454,8 +454,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             max_age=600,
         )
 
-    # Added after CORS, so it is the outer layer: a cross-origin preflight to /console-api gets a 403, and only
-    # the same-origin console can use the server's token.
+    # Added after CORS, so it is the outer layer. With the proxy on, it refuses cross-site requests before CORS
+    # sees them, so only the same-origin console can use the server's token. With it off, CORS applies.
     app.add_middleware(ConsoleProxy, settings=settings)
 
     def require_token(request: Request) -> None:
@@ -1169,6 +1169,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # gets a 401. With no token it is, and in a way the check above does not
         # cover: any page a user visits can drive this service from their browser,
         # loopback included, because the browser reaches 127.0.0.1 for them.
+        if settings.console_proxy:
+            warnings.append(settings.CONSOLE_PROXY_WARNING)
         if "*" in settings.cors_origins and not settings.api_token:
             warnings.append(
                 "CORS_ORIGINS is '*' with no API_TOKEN set; any web page a user "
@@ -1264,7 +1266,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             # out the host's settings dialog.
             return set()
 
-    def _settings_view() -> SettingsView:
+    def _settings_view(show_last4: bool = True) -> SettingsView:
         stored = envfile.read_env_file()
         managed = _panel_managed()
         fields = {}
@@ -1284,7 +1286,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 # deploy-time theming will use.
                 value = os.environ.get(env_key) or stored.get(env_key, "")
             fields[field_name] = {
-                "is_set": bool(value), "last4": value[-4:] if value else "",
+                "is_set": bool(value), "last4": value[-4:] if value and show_last4 else "",
                 "managed_by_admin_panel": field_name in managed,
             }
         # Read from the live Settings object, not the environment again: it already
@@ -1299,8 +1301,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/settings", response_model=SettingsView, dependencies=AUTH,
              summary="The local API credentials (masked) and deploy defaults")
-    async def get_settings() -> SettingsView:
-        return _settings_view()
+    async def get_settings(request: Request) -> SettingsView:
+        # Through the console proxy anyone can read this, so the key endings stay out.
+        return _settings_view(show_last4=not getattr(request.state, ConsoleProxy.STATE_KEY, False))
 
     @app.post("/settings", response_model=SettingsView, dependencies=AUTH,
               summary="Save API credentials and deploy defaults to this checkout's .env")
@@ -1319,6 +1322,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             for field, value in payload.items() if field in SETTINGS_BOOL_KEYS
         })
 
+        if not Settings.is_valid_api_token(updates.get("NSDEPLOY_SERVICE_API_TOKEN", "")):
+            raise HTTPException(status_code=400, detail="the API token must be printable ASCII")
         if updates:
             envfile.write_env_values(updates)
             os.environ.update(updates)

@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import socket
 import subprocess
@@ -6,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -170,6 +172,19 @@ class SettingsTest(unittest.TestCase):
         """An inverted port pool is rejected."""
         with self.assertRaises(ValueError):
             Settings(port_start=8200, port_end=8100).validate()
+
+    def test_rejects_a_token_that_cannot_be_sent(self):
+        """An API token that is not printable ASCII is rejected."""
+        with self.assertRaises(ValueError):
+            Settings(api_token="s3crèt").validate()
+
+    def test_console_proxy_accepts_only_known_values(self):
+        """CONSOLE_PROXY accepts only the usual true and false words."""
+        with mock.patch.dict(os.environ, {"NSDEPLOY_SERVICE_CONSOLE_PROXY": "disabled"}):
+            with self.assertRaises(ValueError):
+                Settings.from_env()
+        with mock.patch.dict(os.environ, {"NSDEPLOY_SERVICE_CONSOLE_PROXY": "on"}):
+            self.assertTrue(Settings.from_env().console_proxy)
 
 
 class UiVersionTest(unittest.TestCase):
