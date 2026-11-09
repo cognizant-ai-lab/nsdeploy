@@ -89,6 +89,7 @@ from nsdeploy_service.relations import ChatFn
 from nsdeploy_service.relations import SuggestedRelation
 from nsdeploy_service.relations import identities_from_rows
 from nsdeploy_service.relations import suggest_relations
+from nsdeploy_service.site_env import SiteEnv
 from nsdeploy_service.siteproxy import SiteProxy
 from nsdeploy_service.store import StoreError
 from nsdeploy_service.supervisor import Deployment
@@ -1188,6 +1189,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 f"terminates TLS on each port in that range. Host where the range is "
                 f"reachable, or set SUBDOMAIN_TEMPLATE (see nsdeploy_service/README.md)."
             )
+        # Theming runs in each site's build, which receives the key only when SITE_ENV_ALLOW
+        # lists it. Checked per request, because POST /settings can turn THEME on at runtime.
+        theme_warning: Optional[str] = SiteEnv.theme_key_warning(settings.theme, os.environ, settings.site_env_allow)
+        if theme_warning:
+            warnings.append(theme_warning)
+        # Sites never receive the service's own credentials, so listing one in SITE_ENV_ALLOW does nothing.
+        allow_warning: Optional[str] = SiteEnv.allow_list_warning(settings.site_env_allow)
+        if allow_warning:
+            warnings.append(allow_warning)
         # Reconciliation is routine housekeeping at startup, not a fault, and it is a
         # one-off event rather than an ongoing condition — so it is reported as a
         # plain count, never in `warnings`. Putting it in `warnings` made every
@@ -1274,9 +1284,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 # from the same place the check reads.
                 value = str(settings.api_token or "")
             else:
-                # The environment is correct for the LLM key: supervisor._spawn copies
-                # os.environ into every build subprocess, so that is literally what
-                # deploy-time theming will use.
+                # The LLM key lives in the service's environment. A site build receives it
+                # only when SITE_ENV_ALLOW lists it, which deploy-time theming needs; see
+                # site_env.py.
                 value = os.environ.get(env_key) or stored.get(env_key, "")
             fields[field_name] = {
                 "is_set": bool(value), "last4": value[-4:] if value else "",

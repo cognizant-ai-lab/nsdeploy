@@ -330,7 +330,7 @@ everything (see [config.py](nsdeploy_service/config.py)).
 | `UI_DIR` | `nsdeploy_service/ui` | the console's static files; point elsewhere to serve it from a CDN |
 | `UPSTREAM` | `https://api.openai.com/v1` | each site's BYOK proxy target |
 | `STUDIO` | *(empty)* | local neuro-san-studio checkout; avoids per-build GitHub fetches |
-| `THEME` | `off` | deploy-time LLM theming; needs `OPENAI_API_KEY` and adds minutes |
+| `THEME` | `off` | deploy-time LLM theming; needs `OPENAI_API_KEY` listed in `SITE_ENV_ALLOW` (see below) and adds minutes |
 | `AUTOPUBLISH` | `on` | put a new deployment on the map the moment it is created; `off` restores the draft → publish workflow |
 | `TTL_SECONDS` | `0` | auto-stop after N seconds; `0` (the default) keeps deployments up until stopped |
 | `MAX_DEPLOYMENTS` | `60` | live ceiling; must be <= the port pool, and <= the map grid (88 slots) or pins stack |
@@ -345,8 +345,20 @@ everything (see [config.py](nsdeploy_service/config.py)).
 | `BUILD_VERSION` | *(empty)* | build shown in the console header; the Dockerfile sets it from the `NSDEPLOY_SERVICE_BUILD_VERSION` build arg, and it falls back to the package version |
 | `API_TOKEN` | *(empty)* | when set, every route except `/health` needs `Authorization: Bearer …` |
 | `CORS_ORIGINS` | *(empty)* | comma-separated origins allowed to call this API from a browser on another host, e.g. `https://app.example.com,http://127.0.0.1:5173`. Empty sends no CORS headers at all. Each entry is `scheme://host[:port]` with no path; `*` allows any origin and is only safe with `API_TOKEN` set |
+| `SITE_ENV_ALLOW` | *(empty)* | comma-separated environment variables a site process still receives although they look like provider credentials, e.g. `OPENAI_API_KEY`. Any uploaded network can read a listed variable (see below). The service's own `*_TOKEN`, `*_KEY`, `*_SECRET` and `*_PASSWORD` settings are never passed |
 | `ENV_FILE` | `<repo root>/.env` | where credentials are read from and `POST /settings` writes; put it on a volume in a container, or saved settings are lost on restart |
 <!-- pyml enable md013 -->
+
+**Site processes do not get the service's secrets.** A site runs code from the uploaded network, so the service
+starts it without its own credentials (`NSDEPLOY_SERVICE_*` names ending in `_TOKEN`, `_KEY`, `_SECRET` or
+`_PASSWORD`) and without LLM-provider keys (`OPENAI_*`, `ANTHROPIC_*`, `*_API_KEY`, … — the names nsdeploy keeps
+from its `/mcp` facade). Everything else, such as `PATH`, proxy and TLS settings, is passed on. `SITE_ENV_ALLOW`
+passes a listed provider variable through, for a coded tool that reads one; the service's own credentials are
+never passed. `THEME` needs `OPENAI_API_KEY` in that list, because theming runs inside the site's build; without
+it nsdeploy prints `--theme set but no key` and uses the default look, and the service warns at start-up and on
+`/health`. Any uploaded network can read a listed variable, through a `${NAME}` substitution in its HOCON or
+through its coded tools, so list a key only when everyone who may upload may also see that key. This is not
+isolation: a site still runs as the service's OS user and can read the files that user can, such as `.env`.
 
 **Deployments are long-lived and records are persisted.** Organizations, deployment
 records, the uploaded HOCON, and the options chosen for it all persist, so the directory
@@ -503,9 +515,11 @@ settled before this is reachable by anyone else:
 > importing the Python classes it names and `pip install`ing their missing dependencies
 > ([`resolve.py::_import_with_autoinstall`](nsdeploy/resolve.py#L299), with
 > `AUTO_INSTALL_TOOL_DEPS = True` as a module constant and no environment override). Tool
-> subprocesses also inherit the full host environment — a gap nsdeploy itself flags at
-> [`launcher.py:441-443`](nsdeploy/launcher.py#L441-L443). Accepting uploads from untrusted
-> callers therefore means running untrusted code with the service's privileges.
+> subprocesses also inherit the site's environment — a gap nsdeploy itself flags in
+> [`launcher.py::spawn_mcp_servers`](nsdeploy/launcher.py). The service keeps its own credentials, and provider
+> keys not listed in `SITE_ENV_ALLOW`, out of that environment (see Configuration), but the code still runs as
+> the service's OS user. Accepting uploads from untrusted callers therefore means running untrusted code with the
+> service's privileges.
 
 So the hosted phase is a containerisation and routing exercise, roughly:
 

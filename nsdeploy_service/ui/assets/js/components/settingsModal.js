@@ -54,7 +54,9 @@ const BOOL_FIELDS = [
     key: 'theme',
     label: 'Enable deploy-time theming',
     hint: 'Runs an LLM pass over each network at deploy time (needs the OpenAI key '
-      + 'above; adds minutes to the build). NSDEPLOY_SERVICE_THEME.',
+      + 'above, and the operator must also list OPENAI_API_KEY in '
+      + 'NSDEPLOY_SERVICE_SITE_ENV_ALLOW on the server; adds minutes to the build). '
+      + 'NSDEPLOY_SERVICE_THEME.',
   },
   {
     key: 'theme_refresh',
