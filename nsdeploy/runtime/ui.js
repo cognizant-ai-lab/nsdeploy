@@ -12,6 +12,7 @@ import {
   getSelectedByokProfile,
   guessByokProfileName,
   loadByokStore,
+  loadTabByokSetup,
   portableByokRouter,
   resolveByokRouter,
   saveTabByokSetup,
@@ -869,9 +870,9 @@ export function mountApp(root, { engine, trace, manifest }) {
 
   routerEl.value = engine.routerOverride || engine.top?.llm?.baseUrl || byokRouter || mockUrl;
   modelEl.value = engine.modelOverride || "";
-  let storedKey = "";
-  try { storedKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
-  keyEl.value = storedKey || selectedProfile?.key || "";
+  // The key shown comes from the same source as the router and model the engine
+  // uses, so it never shows another setup's key next to this tab's router.
+  keyEl.value = loadTabByokSetup(selectedProfile).key;
   profileNameEl.value = selectedProfile?.name || "";
   langchainEl.checked = !!engine.agentRunner;
 

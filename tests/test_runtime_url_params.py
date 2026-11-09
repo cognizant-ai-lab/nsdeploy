@@ -75,6 +75,13 @@ class TestRuntimeUrlParams(unittest.TestCase):
             with self.subTest(file_name=file_name, pattern=pattern):
                 self.assertNotEqual(self.find_calls(file_name, pattern), [])
 
+    def test_settings_panel_shows_the_tab_key(self) -> None:
+        """
+        Check that the settings panel fills the key from the tab setup, never straight from session storage.
+        """
+        self.assertEqual(self.find_calls("ui.js", r"sessionStorage\.getItem\("), [])
+        self.assertNotEqual(self.find_calls("ui.js", r"keyEl\.value = loadTabByokSetup\("), [])
+
     def test_page_url_keeps_router_and_model(self) -> None:
         """
         Check that boot and Apply remove only the key from the page URL, so a host page keeps its own parameters.
