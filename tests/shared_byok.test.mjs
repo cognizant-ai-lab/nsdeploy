@@ -8,12 +8,14 @@ const source = fs.readFileSync(
   'utf8',
 );
 
-function browser({ cookie = '', sessionKey = '', inputValue = '' } = {}) {
+// tabRouter is the router of a setup applied in the tab; '' is an applied setup with no router.
+function browser({ cookie = '', sessionKey = '', inputValue = '', tabRouter = null } = {}) {
   const listeners = {};
   const writes = [];
   const input = { value: inputValue };
   const apply = { addEventListener(type, fn) { listeners[type] = fn; } };
   const session = new Map(sessionKey ? [['nsweb-byok-key', sessionKey]] : []);
+  if (tabRouter !== null) session.set('nsweb-byok-router', tabRouter);
   let reloads = 0;
   const document = {
     get cookie() { return cookie; },
@@ -28,7 +30,8 @@ function browser({ cookie = '', sessionKey = '', inputValue = '' } = {}) {
     document,
     location: { protocol: 'https:', reload() { reloads += 1; } },
     sessionStorage: {
-      getItem(key) { return session.get(key) || null; },
+      // An empty string is a stored value, as in a real browser, not a missing item.
+      getItem(key) { return session.has(key) ? session.get(key) : null; },
       setItem(key, value) { session.set(key, value); },
     },
     decodeURIComponent,
@@ -50,6 +53,20 @@ test('a shared cookie seeds a new network and reloads exactly once', () => {
     inputValue: 'sk-shared/value',
   });
   assert.equal(reloaded.reloads(), 0);
+});
+
+test('a setup applied in the tab keeps its empty key: no seeding, no reload, no key in the field', () => {
+  const page = browser({
+    cookie: '__Secure-nsdeploy_shared_byok_v1=sk-shared%2Fvalue',
+    tabRouter: 'https://tab.example.test/v1',
+  });
+  assert.equal(page.session.has('nsweb-byok-key'), false);
+  assert.equal(page.input.value, '');
+  assert.equal(page.reloads(), 0);
+
+  const noRouter = browser({ cookie: '__Secure-nsdeploy_shared_byok_v1=sk-shared%2Fvalue', tabRouter: '' });
+  assert.equal(noRouter.input.value, '');
+  assert.equal(noRouter.reloads(), 0);
 });
 
 test('Apply writes the entered key as a secure 48-hour cookie', () => {
