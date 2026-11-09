@@ -18,11 +18,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import List
 from typing import Optional
+
+from typing_extensions import override
 
 RAW_URL = "https://raw.githubusercontent.com/{repo}/{ref}/{path}"
 TREE_URL = "https://api.github.com/repos/{repo}/git/trees/{ref}?recursive=1"
@@ -159,11 +162,33 @@ class StudioSource:
         if text is None:
             return None
         dest.parent.mkdir(parents=True, exist_ok=True)
-        # Concurrent builds share the mirror, so a reader must never see a partly written file.
-        partial: Path = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
-        partial.write_text(text, encoding="utf-8")
-        os.replace(partial, dest)
+        # Concurrent builds share the mirror, so a reader must never see a partly written file,
+        # and each writer needs its own temporary file.
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=dest.parent, prefix=f".{dest.name}.",
+                                         suffix=".tmp", delete=False) as partial:
+            partial_path: Path = Path(partial.name)
+            try:
+                partial.write(text)
+            except OSError:
+                partial.close()
+                partial_path.unlink(missing_ok=True)
+                raise
+        try:
+            os.replace(partial_path, dest)
+        except OSError:
+            partial_path.unlink(missing_ok=True)
+            raise
         return dest
+
+    def _drop_mirror(self, rel_path: str) -> None:
+        """
+        Remove the mirrored copy of `rel_path`, so that pyhocon cannot read a file the upstream no longer has.
+
+        :param rel_path: The logical path relative to root
+        """
+        dest: Path = self._root / rel_path
+        if dest.resolve().is_relative_to(self._root.resolve()):
+            dest.unlink(missing_ok=True)
 
 
 class LocalStudio(StudioSource):
@@ -184,6 +209,7 @@ class LocalStudio(StudioSource):
         default_cache: Path = Path.home() / ".cache" / "nsdeploy" / f"local_{self._checkout.name}_{digest}"
         super().__init__(Path(cache_dir) if cache_dir else default_cache)
 
+    @override
     def ensure(self, rel_path: str) -> Optional[Path]:
         """
         Copy the checkout's file for `rel_path` into root.
@@ -191,8 +217,12 @@ class LocalStudio(StudioSource):
         :param rel_path: The logical path relative to root
         :return: The local path, or None when the checkout has no such file
         """
-        return self._mirror(rel_path)
+        path: Optional[Path] = self._mirror(rel_path)
+        if path is None:
+            self._drop_mirror(rel_path)
+        return path
 
+    @override
     def _list_files(self) -> List[str]:
         """
         List the checkout's files, without hidden directories or `SKIPPED_CHECKOUT_DIRS`.
@@ -214,6 +244,7 @@ class LocalStudio(StudioSource):
                 files.append((relative / file_name).as_posix())
         return files
 
+    @override
     def _read_upstream(self, upstream: str) -> Optional[str]:
         """
         Read one file of the checkout.
@@ -236,6 +267,7 @@ class GithubStudio(StudioSource):
         safe = repo.replace("/", "_")
         super().__init__(Path(cache_dir) if cache_dir else (Path.home() / ".cache" / "nsdeploy" / f"{safe}@{ref}"))
 
+    @override
     def ensure(self, rel_path: str) -> Optional[Path]:
         """
         Return the cached file for `rel_path`, downloading it first if it is not cached.
@@ -248,6 +280,7 @@ class GithubStudio(StudioSource):
             return dest
         return self._mirror(rel_path)
 
+    @override
     def _list_files(self) -> List[str]:
         """
         List the repository's files with one GitHub API call.
@@ -265,6 +298,7 @@ class GithubStudio(StudioSource):
                 files.append(entry.get("path"))
         return files
 
+    @override
     def _read_upstream(self, upstream: str) -> Optional[str]:
         """
         Download one file of the repository.

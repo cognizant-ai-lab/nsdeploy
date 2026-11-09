@@ -1,7 +1,10 @@
 import shutil
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import List
+from typing import Optional
 
 from nsdeploy.coded_tool_module import CodedToolModule
 from nsdeploy.studio import LocalStudio
@@ -85,3 +88,37 @@ class TestLocalStudio(unittest.TestCase):
         Tests that a file the checkout does not have is reported as unavailable.
         """
         self.assertIsNone(self.studio.ensure("toolbox/missing.hocon"))
+
+    def test_ensure_drops_deleted_file(self) -> None:
+        """
+        Tests that a file deleted from the checkout is also removed from the mirror.
+        """
+        self.studio.ensure("registries/aaosa.hocon")
+        (self.checkout / "registries" / "aaosa.hocon").unlink()
+        self.assertIsNone(LocalStudio(self.checkout, cache_dir=self.cache).ensure("registries/aaosa.hocon"))
+        self.assertFalse((self.cache / "registries" / "aaosa.hocon").exists())
+
+    def test_concurrent_ensure_shares_mirror(self) -> None:
+        """
+        Tests that builds in several threads can mirror the same file at the same time.
+        """
+        studios: List[LocalStudio] = []
+        # Give each thread its own source, as each build creates one.
+        for _ in range(16):  # type: int
+            studios.append(LocalStudio(self.checkout, cache_dir=self.cache))
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            results: List[Optional[Path]] = list(pool.map(self.ensure_toolbox, studios))
+        # Every thread gets the mirrored file.
+        for result in results:  # type: Optional[Path]
+            self.assertEqual(result, self.cache / "toolbox" / "toolbox_info.hocon")
+        self.assertEqual(list(self.cache.glob("toolbox/*.tmp")), [])
+
+    @staticmethod
+    def ensure_toolbox(studio: LocalStudio) -> Optional[Path]:
+        """
+        Mirror the toolbox file through one source.
+
+        :param studio: The source to use
+        :return: The mirrored path
+        """
+        return studio.ensure("toolbox/toolbox_info.hocon")
