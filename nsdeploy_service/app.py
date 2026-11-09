@@ -56,6 +56,7 @@ from nsdeploy_service.bundle_error import BundleError
 from nsdeploy_service.bundle_result import BundleResult
 from nsdeploy_service.bundler import Bundler
 from nsdeploy_service.config import Settings
+from nsdeploy_service.console_proxy import ConsoleProxy
 from nsdeploy_service.models import ORG_NAME_MAX
 from nsdeploy_service.models import ORG_NAME_PATTERN
 from nsdeploy_service.models import AgentGraphView
@@ -452,6 +453,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             ],
             max_age=600,
         )
+
+    # Added after CORS, so it is the outer layer: a cross-origin preflight to /console-api gets a 403, and only
+    # the same-origin console can use the server's token.
+    app.add_middleware(ConsoleProxy, settings=settings)
 
     def require_token(request: Request) -> None:
         """Bearer-token gate. Disabled when no token is configured (loopback default)."""
@@ -1344,25 +1349,6 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # html=True makes /app/ serve index.html, which keeps the page's relative asset
     # paths (assets/js/main.js) resolving under /app/.
     if settings.ui_dir.is_dir():
-        # Registered before the mount, so these routes answer the entry document instead of StaticFiles.
-        if settings.autofill_api_token:
-            @app.get("/app/", response_class=HTMLResponse, include_in_schema=False)
-            @app.get("/app/index.html", response_class=HTMLResponse, include_in_schema=False)
-            async def console_with_token() -> HTMLResponse:
-                """
-                Serve the console entry document with the API token seeded into sessionStorage.
-
-                :return: index.html with an inline script that sets the token auth.js reads.
-                """
-                html = (settings.ui_dir / "index.html").read_text(encoding="utf-8")
-                # Read per request: POST /settings can replace the token live.
-                if settings.api_token:
-                    # Escape "<" so a token cannot close the script element.
-                    token = json.dumps(settings.api_token).replace("<", "\\u003c")
-                    seed = f"<script>try{{sessionStorage.setItem('nsdeploy.token',{token})}}catch(e){{}}</script>"
-                    html = html.replace("</head>", seed + "</head>", 1)
-                return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
-
         app.mount("/app", ConsoleFiles(directory=settings.ui_dir, html=True), name="ui")
 
         @app.get("/", include_in_schema=False)

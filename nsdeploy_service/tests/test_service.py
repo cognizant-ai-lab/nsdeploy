@@ -231,66 +231,6 @@ class UiVersionTest(unittest.TestCase):
                 self.assertEqual(client.get("/health").json()["build"], expected)
 
 
-class ConsoleTokenAutofillTest(unittest.TestCase):
-    """
-    AUTOFILL_API_TOKEN seeds the API token into the console page, so the console does not ask for it.
-    """
-
-    def setUp(self) -> None:
-        """
-        Create a console directory with a minimal index.html.
-        """
-        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
-        self.ui = Path(self._tmp.name)
-        (self.ui / "index.html").write_text("<html><head><title>x</title></head><body></body></html>",
-                                            encoding="utf-8")
-
-    def tearDown(self) -> None:
-        """
-        Remove the console directory.
-        """
-        self._tmp.cleanup()
-
-    def _get(self, path: str, autofill: bool, token: str) -> str:
-        """
-        Fetch a console path from a service with the given settings.
-
-        :param path: The path to fetch.
-        :param autofill: The value of `autofill_api_token`.
-        :param token: The value of `api_token`.
-        :return: The response body.
-        """
-        settings = Settings(work_root=self.ui / "work", ui_dir=self.ui, port_start=8730, port_end=8739,
-                            api_token=token, autofill_api_token=autofill)
-        with TestClient(create_app(settings)) as client:
-            response = client.get(path)
-            self.assertEqual(response.status_code, 200)
-            return response.text
-
-    def test_seeds_the_token(self) -> None:
-        """
-        With autofill on, the entry document sets the token that auth.js reads.
-        """
-        # Both paths serve the entry document.
-        path: str
-        for path in ("/app/", "/app/index.html"):
-            html = self._get(path, True, "s3cret")
-            self.assertIn("sessionStorage.setItem('nsdeploy.token',\"s3cret\")", html)
-            self.assertLess(html.index("nsdeploy.token"), html.index("</head>"))
-
-    def test_off_by_default(self) -> None:
-        """
-        With autofill off, the token is not in the page.
-        """
-        self.assertNotIn("s3cret", self._get("/app/", False, "s3cret"))
-
-    def test_token_cannot_close_the_script(self) -> None:
-        """
-        A "<" in the token is escaped, so the token cannot end the script element.
-        """
-        self.assertNotIn("</script><b>", self._get("/app/", True, "a</script><b>"))
-
-
 class ReportParsingTest(unittest.TestCase):
     """Extracts tool and agent names from the nsdeploy stdout report."""
     def test_extracts_names_per_section(self):
