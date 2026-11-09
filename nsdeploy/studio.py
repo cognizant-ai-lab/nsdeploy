@@ -16,6 +16,8 @@ with it, and is cached at the logical path locally.
 from __future__ import annotations
 
 import json
+import os
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -26,10 +28,35 @@ RAW_URL = "https://raw.githubusercontent.com/{repo}/{ref}/{path}"
 TREE_URL = "https://api.github.com/repos/{repo}/git/trees/{ref}?recursive=1"
 DEFAULT_REPO = "cognizant-ai-lab/neuro-san-studio"
 DEFAULT_REF = "main"
+# The recursive tree listing is one API call per process, and a deployment service
+# runs one process per build. Unauthenticated api.github.com allows 60 calls an
+# hour per IP, so a busy service stops being able to resolve includes at all —
+# the failure is a hard RuntimeError, not a slow build. The listing is cached on
+# disk beside the blobs it indexes, so every later build in the TTL reads a file.
+TREE_CACHE_NAME = ".git-tree.json"
+TREE_CACHE_TTL_SECONDS = 900
+# A token raises the limit from 60 to 5000 calls an hour. Read from the standard
+# names so an existing CI or container secret is picked up without new config.
+TOKEN_ENV_NAMES = ("NSDEPLOY_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN")
+
+
+def _github_token() -> str:
+    """The GitHub token to authenticate tree listings with, if one is set."""
+    # First name that holds a value wins, so a deployment can override the
+    # ambient CI token without unsetting it.
+    for name in TOKEN_ENV_NAMES:
+        value: str = (os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _http_get(url: str) -> Optional[str]:
-    req = urllib.request.Request(url, headers={"User-Agent": "nsdeploy", "Accept": "*/*"})
+    headers = {"User-Agent": "nsdeploy", "Accept": "*/*"}
+    token = _github_token()
+    if token and url.startswith("https://api.github.com/"):
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return resp.read().decode("utf-8")
@@ -109,12 +136,47 @@ class GithubStudio(StudioSource):
     def root(self) -> Path:
         return self._root
 
+    def _tree_cache_path(self) -> Path:
+        """Where this repo+ref's tree listing is cached between processes."""
+        return self._root / TREE_CACHE_NAME
+
+    def _cached_tree(self) -> Optional[List[str]]:
+        """The tree listing from disk, or None when it is absent or stale."""
+        path = self._tree_cache_path()
+        try:
+            age = time.time() - path.stat().st_mtime
+            if age > TREE_CACHE_TTL_SECONDS:
+                return None
+            paths = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(paths, list):
+            return None
+        return paths
+
+    def _store_tree(self, paths: List[str]) -> None:
+        """Cache a tree listing for the next process. A failure is not fatal."""
+        tmp = self._root / f"{TREE_CACHE_NAME}.{os.getpid()}"
+        try:
+            tmp.write_text(json.dumps(paths), encoding="utf-8")
+            # Replaced atomically: several builds race here, and a half-written
+            # listing would be read as a corrupt cache by all of them.
+            tmp.replace(self._tree_cache_path())
+        except OSError:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
     def _load_tree(self) -> List[str]:
+        if self._tree is None:
+            self._tree = self._cached_tree()
         if self._tree is None:
             data = _http_get(TREE_URL.format(repo=self.repo, ref=self.ref))
             if data is None:
                 raise RuntimeError(f"cannot read git tree for {self.repo}@{self.ref}")
             self._tree = [t["path"] for t in json.loads(data).get("tree", []) if t.get("type") == "blob"]
+            self._store_tree(self._tree)
         return self._tree
 
     def _resolve_upstream(self, rel_path: str) -> Optional[str]:

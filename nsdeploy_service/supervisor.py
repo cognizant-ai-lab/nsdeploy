@@ -671,6 +671,10 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         self._deployments: Dict[str, Deployment] = {}
         self._lock = threading.Lock()
         self._build_slots = asyncio.Semaphore(settings.max_concurrent_builds)
+        # Slots actually held. A deployment keeps BUILDING status after it
+        # releases its slot, so the status counts alone no longer say whether
+        # the service is saturated.
+        self._slots_in_use: int = 0
         self._tasks: set[asyncio.Task] = set()
         settings.work_root.mkdir(parents=True, exist_ok=True)
         self.store = store or Store(settings.database_path())
@@ -806,6 +810,7 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             oldest = int((now - earliest.created_at).total_seconds())
         return {
             "slots": self.settings.max_concurrent_builds,
+            "slots_in_use": self._slots_in_use,
             "building": building,
             "waiting": len(waiting),
             "oldest_wait_seconds": oldest,
@@ -1268,6 +1273,10 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             log_handle.close()
 
     async def _build(self, dep: Deployment) -> None:
+        # One deadline for both phases, so splitting the slot cannot let a
+        # deployment take twice as long as BUILD_TIMEOUT_SECONDS to settle.
+        deadline: datetime = _now() + timedelta(seconds=self.settings.build_timeout_seconds)
+        generated: bool = False
         async with self._build_slots:
             if dep.status is not DeploymentStatus.QUEUED:
                 return  # cancelled while queued
@@ -1279,15 +1288,68 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
                 self._fail(dep, f"could not start nsdeploy: {exc}")
                 return
             self._persist(dep)  # record the pid now that the child exists
+            self._slots_in_use += 1
             try:
-                await self._await_ready(dep)
+                generated = await self._await_generated(dep, deadline)
             except asyncio.CancelledError:
                 self._teardown(dep, DeploymentStatus.STOPPED, "service shutting down")
                 raise
+            finally:
+                self._slots_in_use -= 1
+        if not generated:
+            return
+        # Outside the slot. The child has written its bundle and is only binding
+        # a port now, so it needs no build capacity — and holding one here is what
+        # made a slow-starting site stall every queued deployment behind it.
+        try:
+            await self._await_ready(dep, deadline)
+        except asyncio.CancelledError:
+            self._teardown(dep, DeploymentStatus.STOPPED, "service shutting down")
+            raise
 
-    async def _await_ready(self, dep: Deployment) -> None:
-        """Poll until the site answers, the child dies, or the build times out."""
-        deadline = _now() + timedelta(seconds=self.settings.build_timeout_seconds)
+    async def _await_generated(self, dep: Deployment, deadline: datetime) -> bool:
+        """
+        Poll until nsdeploy has written the bundle, or the build ends badly.
+
+        This is the phase a build slot exists to bound. `bundle_ready` tests the
+        two files generate_site writes before launcher.serve() is reached, so it
+        is the observable end of the resolving, include-fetching and generating
+        a slot is meant to limit. What follows is the child binding a port, which
+        costs nothing a slot protects.
+
+        :param dep: The deployment being built.
+        :param deadline: When the whole build gives up.
+        :return: True when the bundle exists and the wait for a listener should
+                 continue; False when this deployment is already settled.
+        """
+        while _now() < deadline:
+            if dep.status is not DeploymentStatus.BUILDING:
+                return False  # stopped underneath us
+            proc: Optional[subprocess.Popen] = dep.process
+            if proc is None:
+                self._fail(dep, "deployment process vanished")
+                return False
+            if proc.poll() is not None:
+                self._fail(dep, _error_excerpt(dep.log_path, proc.returncode))
+                return False
+            if await asyncio.to_thread(self._site_is_ready_to_summarize, dep):
+                return True
+            await asyncio.sleep(READINESS_POLL_SECONDS)
+        self._fail(
+            dep,
+            f"nsdeploy did not generate the bundle within "
+            f"{self.settings.build_timeout_seconds}s (a cold build fetches includes "
+            f"from GitHub and may pip-install tool deps)",
+        )
+        return False
+
+    async def _await_ready(self, dep: Deployment, deadline: datetime) -> None:
+        """
+        Poll until the site answers, the child dies, or the build times out.
+
+        :param dep: The deployment being built.
+        :param deadline: When the whole build gives up.
+        """
         while _now() < deadline:
             if dep.status is not DeploymentStatus.BUILDING:
                 return  # stopped underneath us

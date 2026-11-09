@@ -278,6 +278,7 @@ class BuildQueueTest(unittest.TestCase):
         return created
 
     def test_an_idle_service_reports_an_empty_queue(self):
+        """Nothing waiting and nothing building reports zero, not null."""
         supervisor = self._supervisor()
         queue = supervisor.build_queue()
         self.assertEqual(queue.get("waiting"), 0)
@@ -291,6 +292,7 @@ class BuildQueueTest(unittest.TestCase):
         self.assertEqual(supervisor.build_queue().get("slots"), 2)
 
     def test_queued_deployments_are_counted(self):
+        """Every deployment waiting for a slot is in the count."""
         supervisor = self._supervisor()
         self._queue(supervisor, 3)
         self.assertEqual(supervisor.build_queue().get("waiting"), 3)
@@ -311,6 +313,8 @@ class BuildQueueTest(unittest.TestCase):
         queue = supervisor.build_queue()
         self.assertEqual(queue.get("building"), 1)
         self.assertEqual(queue.get("waiting"), 1)
+        # Status only: nothing here ever took a slot.
+        self.assertEqual(queue.get("slots_in_use"), 0)
 
     def test_a_terminal_deployment_is_in_neither_count(self):
         """A stopped record waits for nothing. Counting it would make a quiet service
@@ -325,6 +329,7 @@ class BuildQueueTest(unittest.TestCase):
         self.assertIsNone(queue.get("oldest_wait_seconds"))
 
     def test_health_reports_the_queue(self):
+        """The block reaches the caller, not only the supervisor."""
         settings = Settings(work_root=Path(self._tmp.name) / "svc",
                             port_start=8540, port_end=8549, max_deployments=5,
                             max_concurrent_builds=2)
