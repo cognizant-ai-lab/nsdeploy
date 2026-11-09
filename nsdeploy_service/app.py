@@ -56,6 +56,7 @@ from nsdeploy_service.bundle_error import BundleError
 from nsdeploy_service.bundle_result import BundleResult
 from nsdeploy_service.bundler import Bundler
 from nsdeploy_service.config import Settings
+from nsdeploy_service.console_proxy import ConsoleProxy
 from nsdeploy_service.models import ORG_NAME_MAX
 from nsdeploy_service.models import ORG_NAME_PATTERN
 from nsdeploy_service.models import AgentGraphView
@@ -452,6 +453,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             ],
             max_age=600,
         )
+
+    # Added after CORS, so it is the outer layer: a cross-origin preflight to /console-api gets a 403, and only
+    # the same-origin console can use the server's token.
+    app.add_middleware(ConsoleProxy, settings=settings)
 
     def require_token(request: Request) -> None:
         """Bearer-token gate. Disabled when no token is configured (loopback default)."""
