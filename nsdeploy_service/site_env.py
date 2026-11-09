@@ -76,19 +76,31 @@ class SiteEnv:
     @staticmethod
     def theme_key_warning(theme: bool, base: Mapping[str, str], allow: Collection[str]) -> Optional[str]:
         """
-        Explain that deploy-time theming cannot run because site builds do not receive the theming key.
+        Explain that deploy-time theming cannot run because site builds get no theming key.
 
         :param theme: Whether deploy-time theming is on for every build.
         :param base: The service's environment, such as os.environ.
         :param allow: Names to keep even when a provider rule would remove them.
-        :return: A warning for the operator, or None when theming is off, no key is set, or sites receive the key.
+        :return: A warning that names the missing steps, or None when theming is off or sites receive a non-empty key.
         """
-        if not theme or not base.get(SiteEnv.THEME_KEY) or SiteEnv.passes(SiteEnv.THEME_KEY, allow):
+        if not theme:
             return None
+        # The site build skips theming on an empty key too, so empty counts as not set.
+        key_set: bool = bool(base.get(SiteEnv.THEME_KEY))
+        key_passed: bool = SiteEnv.passes(SiteEnv.THEME_KEY, allow)
+        if key_set and key_passed:
+            return None
+        cause: str = f"site builds do not receive {SiteEnv.THEME_KEY}"
+        steps: List[str] = []
+        if not key_set:
+            cause = f"{SiteEnv.THEME_KEY} is not set"
+            steps.append(f"set {SiteEnv.THEME_KEY}")
+        if not key_passed:
+            steps.append(f"list {SiteEnv.THEME_KEY} in SITE_ENV_ALLOW")
         # Names only, never the value: /health shows this warning without authentication.
-        return (f"THEME is on, but site builds do not receive {SiteEnv.THEME_KEY}, so LLM theming cannot run and "
-                f"new sites get the default look. To theme, list {SiteEnv.THEME_KEY} in SITE_ENV_ALLOW; any "
-                f"uploaded network can then read the key (see nsdeploy_service/README.md).")
+        return (f"THEME is on, but {cause}, so LLM theming cannot run and new sites get the default look. "
+                f"To theme, {' and '.join(steps)}; any uploaded network can then read the key "
+                f"(see nsdeploy_service/README.md).")
 
     @staticmethod
     def allow_list_warning(allow: Iterable[str]) -> Optional[str]:

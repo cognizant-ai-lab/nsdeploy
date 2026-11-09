@@ -146,14 +146,26 @@ class TestSiteEnv(unittest.TestCase):
         # /health shows the warning without authentication, so it must never contain the key itself.
         self.assertNotIn("fake-openai-key", warning)
 
+    def test_theme_key_warning_when_the_key_is_missing_or_empty(self) -> None:
+        """
+        With theming on and no key, the warning says to set it, and to list it only when it is not listed yet.
+        """
+        unlisted: Optional[str] = SiteEnv.theme_key_warning(True, {}, [])
+        self.assertIsNotNone(unlisted)
+        self.assertIn("OPENAI_API_KEY is not set", unlisted)
+        self.assertIn("SITE_ENV_ALLOW", unlisted)
+        listed: Optional[str] = SiteEnv.theme_key_warning(True, {"OPENAI_API_KEY": ""}, ["OPENAI_API_KEY"])
+        self.assertIsNotNone(listed)
+        self.assertIn("OPENAI_API_KEY is not set", listed)
+        self.assertNotIn("SITE_ENV_ALLOW", listed)
+
     def test_no_theme_key_warning_when_theming_is_off_or_can_run(self) -> None:
         """
-        No warning when theming is off, no key is set, or the allow-list passes the key.
+        No warning when theming is off, or when the allow-list passes a non-empty key.
         """
         key: Dict[str, str] = {"OPENAI_API_KEY": "fake-openai-key"}
         self.assertIsNone(SiteEnv.theme_key_warning(False, key, []))
-        self.assertIsNone(SiteEnv.theme_key_warning(True, {}, []))
-        self.assertIsNone(SiteEnv.theme_key_warning(True, {"OPENAI_API_KEY": ""}, []))
+        self.assertIsNone(SiteEnv.theme_key_warning(False, {}, []))
         self.assertIsNone(SiteEnv.theme_key_warning(True, key, ["OPENAI_API_KEY"]))
 
     def test_allow_list_warning_names_ignored_service_credentials(self) -> None:

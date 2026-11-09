@@ -202,6 +202,19 @@ class SettingsTest(unittest.TestCase):
         self.assertNotIn("fake-openai-key", " ".join(warned))
         self.assertNotIn("SITE_ENV_ALLOW", " ".join(quiet))
 
+    def test_health_warns_when_theme_is_on_without_a_key(self) -> None:
+        """
+        /health warns when THEME is on and OPENAI_API_KEY is not set at all.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = Settings(work_root=Path(tmp), port_start=8900, port_end=8909, theme=True)
+            # patch.dict restores the environment on exit, including the removed key.
+            with mock.patch.dict(os.environ):
+                os.environ.pop("OPENAI_API_KEY", None)
+                with TestClient(create_app(settings)) as client:
+                    warnings: List[str] = client.get("/health").json().get("warnings")
+        self.assertIn("OPENAI_API_KEY is not set", " ".join(warnings))
+
     def test_health_warns_when_the_allow_list_names_a_service_credential(self) -> None:
         """
         /health warns when SITE_ENV_ALLOW lists one of the service's own credentials, which sites never receive.
