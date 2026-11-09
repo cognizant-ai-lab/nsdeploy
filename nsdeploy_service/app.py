@@ -102,6 +102,7 @@ from nsdeploy_service.supervisor import is_publishable
 from nsdeploy_service.supervisor import network_topology
 from nsdeploy_service.supervisor import publish_refusal
 from nsdeploy_service.trust import ensure_ca_bundle
+from nsdeploy_service.upload_upstream import UploadUpstream
 
 # Optional drop-in folder: a checkout without it still runs.
 try:
@@ -187,14 +188,6 @@ MAP_STATUSES = (DeploymentStatus.READY,)
 
 # Organization-name rules (ORG_NAME_MAX, ORG_NAME_PATTERN) live in models.py, so the
 # upload endpoints here, the /orgs endpoints and the console all enforce one rule.
-
-# The 400 detail for an upload that names its own BYOK upstream. A site's /byok/v1
-# forwards each visitor's API key to the upstream, so it is set for the whole service.
-UPSTREAM_REFUSAL = (
-    "Per-deployment upstream is not supported. Every site's /byok/v1 forwards to the "
-    "service-wide upstream (NSDEPLOY_SERVICE_UPSTREAM), and visitors choose their own "
-    "router in the site's BYOK settings. Leave upstream out and deploy again."
-)
 
 
 def _utcnow() -> datetime:
@@ -526,11 +519,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         :return: The new deployment, in status queued.
         :raises DeploymentError: If the upload names an upstream other than the service's own.
         """
-        # Blank counts as not given. The service's own upstream also passes, because
-        # the console sends it on every Launch (deploy.js) and it changes nothing.
-        wanted: str = (upstream or "").strip().rstrip("/")
-        if wanted and wanted != (settings.upstream or "").strip().rstrip("/"):
-            raise DeploymentError(UPSTREAM_REFUSAL)
+        # Checked before anything is created, so a refused upload leaves no record behind.
+        refusal: Optional[str] = UploadUpstream.refusal(upstream, settings.upstream)
+        if refusal:
+            raise DeploymentError(refusal)
         supervisor = supervisor_of(request)
         dep = supervisor.create(hocon, options)
         supervisor.start(dep)
