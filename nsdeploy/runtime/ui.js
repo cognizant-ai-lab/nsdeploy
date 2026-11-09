@@ -24,6 +24,7 @@ import { createTurnStatusController } from "./turn-status.js";
 import { reviewActions } from "./action-transport.js";
 
 export const AI_MODEL_SETTINGS_LABEL = "AI model settings";
+export const API_KEY_HELP_URL = "https://ai.google.dev/gemini-api/docs/api-key";
 export const API_KEY_PROVIDERS = [
   {
     name: "Google AI Studio",
@@ -216,6 +217,7 @@ const BASE_CSS = PRESENTATION_CSS + `
 .ns-profile-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .ns-key-help{padding:10px;border:1px solid color-mix(in srgb,var(--ns-primary,#2563eb) 30%,var(--ns-border,#ccc));border-radius:8px;background:color-mix(in srgb,var(--ns-primary,#2563eb) 6%,var(--ns-panelbg,#fff));display:flex;flex-direction:column;gap:6px}
 .ns-key-help p{margin:0;line-height:1.45}
+.ns-key-help>a{color:var(--ns-primary,#2563eb);font-weight:600}
 .ns-key-providers{display:flex;flex-wrap:wrap;gap:6px}
 .ns-key-providers a{padding:6px 9px;border:1px solid var(--ns-primary,#2563eb);border-radius:6px;color:var(--ns-primary,#2563eb);font-weight:600;text-decoration:none;background:var(--ns-panelbg,#fff)}
 .ns-settings-advanced{border-top:1px solid var(--ns-border,#e2e2e2);margin-top:2px}
@@ -264,6 +266,8 @@ export function mountApp(root, { engine, trace, manifest }) {
       <label>Saved setup <select id="ns-profile"></select></label>
       ${needsByok ? `<div class="ns-key-help">
         <strong>Don't have an API key?</strong>
+        <p>An API key is a private code from an AI provider. It lets this page use that provider for you; it is not your password.</p>
+        <a href="${API_KEY_HELP_URL}" target="_blank" rel="noopener noreferrer">What is an API key and how do I get one? <span aria-hidden="true">↗</span></a>
         <p>Choose a provider below and create a free key. Its recommended settings will be filled in for you.</p>
         <div class="ns-key-providers">${providerLinksHtml}</div>
         <div class="ns-hint">Free tiers have usage limits and may vary by region.</div>

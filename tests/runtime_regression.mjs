@@ -9,7 +9,7 @@ import { normalizeModelName } from "../nsdeploy/runtime/model.js";
 import { createTurnEventStream } from "../nsdeploy/runtime/execution-stream.js";
 import { TraceBus } from "../nsdeploy/runtime/trace.js";
 import { createTurnStatusController, statusTextForEvent } from "../nsdeploy/runtime/turn-status.js";
-import { AI_MODEL_SETTINGS_LABEL, API_KEY_PROVIDERS, providerForApiKey } from "../nsdeploy/runtime/ui.js";
+import { AI_MODEL_SETTINGS_LABEL, API_KEY_HELP_URL, API_KEY_PROVIDERS, providerForApiKey } from "../nsdeploy/runtime/ui.js";
 import {
   buildToolTable,
   consumeAgentBudget,
@@ -28,6 +28,7 @@ const manifest = {
   },
 };
 assert.equal(AI_MODEL_SETTINGS_LABEL, "AI model settings");
+assert.equal(API_KEY_HELP_URL, "https://ai.google.dev/gemini-api/docs/api-key");
 assert.deepEqual(API_KEY_PROVIDERS.map((provider) => provider.name), ["Google AI Studio", "Groq"]);
 assert.ok(API_KEY_PROVIDERS.every((provider) => provider.keyUrl.startsWith("https://")));
 assert.ok(API_KEY_PROVIDERS.every((provider) => provider.router.startsWith("https://") && provider.model));
