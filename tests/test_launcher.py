@@ -1,6 +1,7 @@
 import http.client
 import json
 import os
+import socket
 import tempfile
 import threading
 import types
@@ -10,10 +11,15 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from typing import Dict
+from typing import List
+from typing import Tuple
+from typing import Type
 from unittest.mock import patch
 
 from nsdeploy.byok import BYOK_AUTH_HEADER
 from nsdeploy.byok import BYOK_MODEL_HEADER
+from nsdeploy.launcher import DEFAULT_RUNTIME_DIR
 from nsdeploy.launcher import _facade_command
 from nsdeploy.launcher import make_handler
 from nsdeploy.launcher import scrubbed_env
@@ -21,7 +27,7 @@ from nsdeploy.launcher import scrubbed_env
 
 class StaticHeaderTests(unittest.TestCase):
     """
-    Tests for the static CORS and CSP headers the launcher serves.
+    Tests for the static files the launcher serves and their CORS and CSP headers.
     """
 
     def test_only_public_agent_data_has_static_cors(self):
@@ -48,6 +54,69 @@ class StaticHeaderTests(unittest.TestCase):
             finally:
                 server.shutdown()
                 server.server_close()
+
+    def test_static_files_are_served_only_from_inside_their_directory(self) -> None:
+        """
+        Check that a static path is served only when it resolves inside the site or runtime directory.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root: Path = Path(directory)
+            site_dir: Path = root / "site"
+            site_dir.mkdir()
+            (site_dir / "index.html").write_text("<html>site</html>", encoding="utf-8")
+            secret: Path = root / "secret.txt"
+            secret.write_text("fake-secret", encoding="utf-8")
+            (site_dir / "alias.html").symlink_to(site_dir / "index.html")
+            (site_dir / "leak.txt").symlink_to(secret)
+            served: Dict[str, bytes] = {
+                "/index.html": b"<html>site</html>",
+                "/alias.html": b"<html>site</html>",
+                "/runtime/index.js": (DEFAULT_RUNTIME_DIR / "index.js").read_bytes(),
+            }
+            # An absolute path after /runtime/, a ".." segment or a symlink must not reach a file outside.
+            blocked: List[str] = [
+                "/runtime//etc/hosts",
+                "//etc/hosts",
+                "/runtime/../launcher.py",
+                "/leak.txt",
+                "/runtime/" + str(secret),
+            ]
+            handler: Type[BaseHTTPRequestHandler] = make_handler(
+                site_dir, "https://example.invalid/v1", DEFAULT_RUNTIME_DIR, [])
+            server: ThreadingHTTPServer = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                path: str
+                expected: bytes
+                # Each served path returns the file's own bytes.
+                for path, expected in served.items():
+                    self.assertEqual(self._get(server.server_port, path), (200, expected), path)
+                # Each blocked path gets the plain 404; http.server first reduces leading slashes to one.
+                for path in blocked:
+                    expected = b"404 /" + path.lstrip("/").encode()
+                    self.assertEqual(self._get(server.server_port, path), (404, expected), path)
+                # A NUL byte cannot be resolved, so the launcher logs it and answers 404.
+                with self.assertLogs("nsdeploy.launcher", level="WARNING"):
+                    self.assertEqual(self._get(server.server_port, "/runtime/a\x00b"), (404, b"404 /runtime/a\x00b"))
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    @staticmethod
+    def _get(port: int, path: str) -> Tuple[int, bytes]:
+        """
+        Send one GET with the request line written by hand, so no client normalizes or rejects the path.
+
+        :param port: The launcher port.
+        :param path: The raw request path.
+        :return: The status code and the response body.
+        """
+        request: bytes = f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n".encode("latin-1")
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+            sock.sendall(request)
+            response: http.client.HTTPResponse = http.client.HTTPResponse(sock)
+            response.begin()
+            return response.status, response.read()
 
 
 class _SessionMcpHandler(BaseHTTPRequestHandler):
