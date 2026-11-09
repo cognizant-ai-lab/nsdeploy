@@ -110,12 +110,16 @@ export class LlmClient {
         });
         return result;
       }
+      const headers = {
+        "Content-Type": "application/json",
+        ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
+      };
+      if (hostOf(this.baseUrl) === "api.anthropic.com") {
+        headers["anthropic-dangerous-direct-browser-access"] = "true";
+      }
       const resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
-        },
+        headers,
         body: JSON.stringify(body),
         signal,
       });

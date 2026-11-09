@@ -32,6 +32,7 @@ export const API_KEY_PROVIDERS = [
     router: "https://generativelanguage.googleapis.com/v1beta/openai",
     model: "gemini-3.8-flash",
     keyPrefixes: ["AIza"],
+    accessNote: "Free tier",
   },
   {
     name: "Groq",
@@ -39,6 +40,23 @@ export const API_KEY_PROVIDERS = [
     router: "https://api.groq.com/openai/v1",
     model: "openai/gpt-oss-120b",
     keyPrefixes: ["gsk_"],
+    accessNote: "Free tier",
+  },
+  {
+    name: "OpenAI",
+    keyUrl: "https://platform.openai.com/api-keys",
+    router: "https://api.openai.com/v1",
+    model: "gpt-5.6",
+    keyPrefixes: ["sk-proj-", "sk-svcacct-"],
+    accessNote: "Billing may be required",
+  },
+  {
+    name: "Anthropic",
+    keyUrl: "https://console.anthropic.com/settings/keys",
+    router: "https://api.anthropic.com/v1",
+    model: "claude-sonnet-4-6",
+    keyPrefixes: ["sk-ant-"],
+    accessNote: "Billing may be required",
   },
 ];
 
@@ -220,6 +238,7 @@ const BASE_CSS = PRESENTATION_CSS + `
 .ns-key-help>a{color:var(--ns-primary,#2563eb);font-weight:600}
 .ns-key-providers{display:flex;flex-wrap:wrap;gap:6px}
 .ns-key-providers a{padding:6px 9px;border:1px solid var(--ns-primary,#2563eb);border-radius:6px;color:var(--ns-primary,#2563eb);font-weight:600;text-decoration:none;background:var(--ns-panelbg,#fff)}
+.ns-key-providers small{display:block;color:var(--ns-muted,#777);font-size:10px;font-weight:400;margin-top:2px}
 .ns-settings-advanced{border-top:1px solid var(--ns-border,#e2e2e2);margin-top:2px}
 .ns-settings-advanced>summary{padding:7px 0;color:var(--ns-muted,#666)}
 .ns-settings-advanced-body{display:flex;flex-direction:column;gap:6px;padding:2px 0 4px}
@@ -260,7 +279,7 @@ export function mountApp(root, { engine, trace, manifest }) {
   // the fixed shell have no such slot, so their settings stay beneath the chat.
   const settingsSlot = composed ? root.querySelector('[data-ns-slot="settings"]') : null;
   const providerLinksHtml = API_KEY_PROVIDERS.map((provider) => `
-        <a href="${provider.keyUrl}" target="_blank" rel="noopener noreferrer" data-ns-provider="${provider.name}" data-router="${provider.router}" data-model="${provider.model}">${provider.name} <span aria-hidden="true">↗</span></a>`).join("");
+        <a href="${provider.keyUrl}" target="_blank" rel="noopener noreferrer" data-ns-provider="${provider.name}" data-router="${provider.router}" data-model="${provider.model}">${provider.name} <span aria-hidden="true">↗</span><small>${provider.accessNote}</small></a>`).join("");
   const settingsBodyHtml = `
     <div class="ns-settings-body">
       <label>Saved setup <select id="ns-profile"></select></label>
@@ -268,9 +287,9 @@ export function mountApp(root, { engine, trace, manifest }) {
         <strong>Don't have an API key?</strong>
         <p>An API key is a private code from an AI provider. It lets this page use that provider for you; it is not your password.</p>
         <a href="${API_KEY_HELP_URL}" target="_blank" rel="noopener noreferrer">What is an API key and how do I get one? <span aria-hidden="true">↗</span></a>
-        <p>Choose a provider below and create a free key. Its recommended settings will be filled in for you.</p>
+        <p>Choose a provider below and create a key. Its recommended settings will be filled in for you.</p>
         <div class="ns-key-providers">${providerLinksHtml}</div>
-        <div class="ns-hint">Free tiers have usage limits and may vary by region.</div>
+        <div class="ns-hint">Free tiers have usage limits and may vary by region. Other providers may require billing.</div>
       </div>` : ""}
       <label>API key <span aria-hidden="true">*</span><input id="ns-key" type="password" autocomplete="off" placeholder="Paste your API key" required aria-required="true"></label>
       <button id="ns-apply">Save and start</button>

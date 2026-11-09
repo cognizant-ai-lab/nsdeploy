@@ -29,12 +29,14 @@ const manifest = {
 };
 assert.equal(AI_MODEL_SETTINGS_LABEL, "AI model settings");
 assert.equal(API_KEY_HELP_URL, "https://ai.google.dev/gemini-api/docs/api-key");
-assert.deepEqual(API_KEY_PROVIDERS.map((provider) => provider.name), ["Google AI Studio", "Groq"]);
+assert.deepEqual(API_KEY_PROVIDERS.map((provider) => provider.name), ["Google AI Studio", "Groq", "OpenAI", "Anthropic"]);
 assert.ok(API_KEY_PROVIDERS.every((provider) => provider.keyUrl.startsWith("https://")));
 assert.ok(API_KEY_PROVIDERS.every((provider) => provider.router.startsWith("https://") && provider.model));
 assert.equal(providerForApiKey("AIza-example").name, "Google AI Studio");
 assert.equal(providerForApiKey("gsk_example").name, "Groq");
-assert.equal(providerForApiKey("sk-example"), null);
+assert.equal(providerForApiKey("sk-proj-example").name, "OpenAI");
+assert.equal(providerForApiKey("sk-ant-example").name, "Anthropic");
+assert.equal(providerForApiKey("sk-or-v1-example"), null);
 assert.deepEqual(
   selectTopRouter(manifest, "http://127.0.0.1:8091/v1", "real-key"),
   { baseUrl: "http://127.0.0.1:8091/byok/v1", mock: false, upgradedToByok: true },
@@ -88,6 +90,27 @@ assert.equal(normalizeModelName("plain-model"), "plain-model");
     assert.equal(fetched, false);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+}
+
+// Anthropic requires an explicit opt-in header for direct browser access. Static
+// bundles add it only for Anthropic's own OpenAI-compatible endpoint.
+{
+  const realFetch = globalThis.fetch;
+  let sentHeaders;
+  globalThis.fetch = async (_url, init) => {
+    sentHeaders = init.headers;
+    return new Response("invalid key", { status: 401 });
+  };
+  try {
+    const anthropic = new LlmClient({ baseUrl: "https://api.anthropic.com/v1", apiKey: "sk-ant-test", mock: false });
+    await assert.rejects(anthropic.chat({ model: "claude-sonnet-4-6", messages: [] }), /LLM HTTP 401/);
+    assert.equal(sentHeaders["anthropic-dangerous-direct-browser-access"], "true");
+    const openai = new LlmClient({ baseUrl: "https://api.openai.com/v1", apiKey: "sk-proj-test", mock: false });
+    await assert.rejects(openai.chat({ model: "gpt-5.6", messages: [] }), /LLM HTTP 401/);
+    assert.equal(sentHeaders["anthropic-dangerous-direct-browser-access"], undefined);
+  } finally {
+    globalThis.fetch = realFetch;
   }
 }
 {
