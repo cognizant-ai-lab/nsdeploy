@@ -10,6 +10,7 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { SystemMessage, HumanMessage, AIMessage, ToolMessage } from "@langchain/core/messages";
 import { tool } from "@langchain/core/tools";
+import { ProviderError } from "./provider-error.js";
 
 function hostOf(url) {
   try { return new URL(url).host; } catch { return url || "?"; }
@@ -105,8 +106,9 @@ export async function runAgentLangChain(ctx, agentName, userText, parentSpan, ch
         const respMock = ctx.mock || /neuro-san-mock/.test(respModel || "");
         trace.end(span, { usage: ai?.usage_metadata, toolCalls: (ai?.tool_calls || []).map((t) => t.name), mock: respMock, respModel });
       } catch (err) {
-        trace.fail(span, err);
-        throw err;
+        const friendlyError = ProviderError.friendly(err, ctx.routerBaseUrl);
+        trace.fail(span, friendlyError);
+        throw friendlyError;
       }
 
       if (isTopFrontMan && ctx.turnControl?.pending.length) {

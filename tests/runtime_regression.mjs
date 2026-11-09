@@ -4,6 +4,7 @@ import { Engine, isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, se
 import { AgentNetwork } from "../nsdeploy/runtime/kernel.js";
 import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
 import { LlmClient, browserMockCompletion, isMockResponse } from "../nsdeploy/runtime/llm.js";
+import { ProviderError } from "../nsdeploy/runtime/provider-error.js";
 import { McpClient, parseMaybeSse, readJsonRpcResponse } from "../nsdeploy/runtime/mcp.js";
 import { normalizeModelName } from "../nsdeploy/runtime/model.js";
 import { createTurnEventStream } from "../nsdeploy/runtime/execution-stream.js";
@@ -65,6 +66,51 @@ assert.equal(normalizeModelName('\"gpt-5.6\"'), "gpt-5.6");
 assert.equal(normalizeModelName("'gpt-4o'"), "gpt-4o");
 assert.equal(normalizeModelName('  \"qwen/model:id\"  '), "qwen/model:id");
 assert.equal(normalizeModelName("plain-model"), "plain-model");
+{
+  const browserError = new TypeError("Failed to fetch");
+  const localError = ProviderError.friendly(
+    browserError,
+    "http://localhost:11434/v1",
+    "https://worldwideagenticweb.org/",
+  );
+  assert.equal(localError.name, "ProviderError");
+  assert.equal(localError.code, "LLM_NETWORK_ERROR");
+  assert.equal(localError.cause, browserError);
+  assert.match(localError.message, /OLLAMA_ORIGINS/);
+  assert.match(localError.message, /HTTPS page/);
+  assert.match(localError.message, /http:\/\/localhost:11434\/v1/);
+
+  const remoteError = ProviderError.friendly(
+    new TypeError("NetworkError when attempting to fetch resource."),
+    "https://router.example/v1",
+    "https://site.example/",
+  );
+  assert.match(remoteError.message, /router\.example/);
+  assert.match(remoteError.message, /https:\/\/site\.example/);
+  const sdkError = new Error("Connection error.");
+  sdkError.name = "APIConnectionError";
+  const friendlySdkError = ProviderError.friendly(
+    sdkError,
+    "http://127.0.0.1:11434/v1",
+    "https://site.example/",
+  );
+  assert.match(friendlySdkError.message, /OLLAMA_ORIGINS/);
+  const providerResponseError = new Error("model unavailable");
+  assert.equal(ProviderError.friendly(providerResponseError, "http://localhost:11434/v1"), providerResponseError);
+}
+{
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+  try {
+    const ollama = new LlmClient({ baseUrl: "http://localhost:11434/v1", apiKey: "ollama", mock: false });
+    await assert.rejects(
+      ollama.chat({ model: "gpt-oss:20b", messages: [{ role: "user", content: "hello" }] }),
+      /OLLAMA_ORIGINS/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
 {
   const tools = [{type: "function", function: {
     name: "lookup", parameters: {type: "object", properties: {request: {type: "string"}}, required: ["request"]},

@@ -1,6 +1,7 @@
 // llm.js — the LlmClient intrinsic: an OpenAI-compatible chat-completions client.
 
 import { normalizeModelName } from "./model.js";
+import { ProviderError } from "./provider-error.js";
 
 function hostOf(url) {
   try { return new URL(url).host; } catch { return url || "?"; }
@@ -143,12 +144,13 @@ export class LlmClient {
       });
       return result;
     } catch (err) {
+      const friendlyError = ProviderError.friendly(err, this.baseUrl);
       if (err?.name === "AbortError" && signal?.aborted) {
         this.trace?.end(span, { status: "steered", interrupted: true });
       } else {
-        this.trace?.fail(span, err);
+        this.trace?.fail(span, friendlyError);
       }
-      throw err;
+      throw friendlyError;
     }
   }
 
