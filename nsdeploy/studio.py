@@ -6,16 +6,18 @@ The end user should NOT have to clone neuro-san-studio. By default nsdeploy pull
 those files from the public GitHub repo on demand and mirrors them into a local cache
 that the rest of the pipeline treats exactly like a local studio checkout (pyhocon
 include base + `coded_tools` import path). A local checkout can still be used via
-`LocalStudio` for offline/dev use.
+`LocalStudio` for offline/dev use; it is mirrored the same way.
 
-Files are located by **suffix-matching the repo's git tree**, so it works regardless
+Files are located by **suffix-matching the repo's file list**, so it works regardless
 of the repo's internal layout (e.g. files under a `neuro_san_studio/` package dir):
-a logical path like `toolbox/toolbox_info.hocon` resolves to whatever tree entry ends
+a logical path like `toolbox/toolbox_info.hocon` resolves to whatever entry ends
 with it, and is cached at the logical path locally.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -26,6 +28,8 @@ RAW_URL = "https://raw.githubusercontent.com/{repo}/{ref}/{path}"
 TREE_URL = "https://api.github.com/repos/{repo}/git/trees/{ref}?recursive=1"
 DEFAULT_REPO = "cognizant-ai-lab/neuro-san-studio"
 DEFAULT_REF = "main"
+# Directories of a local checkout that hold no studio sources.
+SKIPPED_CHECKOUT_DIRS = ("venv", "node_modules", "__pycache__")
 
 
 def _http_get(url: str) -> Optional[str]:
@@ -40,7 +44,20 @@ def _http_get(url: str) -> Optional[str]:
 
 
 class StudioSource:
-    """Abstract source of studio files, materialized under a local `root`."""
+    """
+    Abstract source of studio files. Subclasses list and read the upstream files; this
+    class mirrors the ones a build asks for into a local `root` at their logical paths.
+    """
+
+    def __init__(self, cache_dir: Path):
+        """
+        Create the mirror directory.
+
+        :param cache_dir: The local directory that the requested files are mirrored into
+        """
+        self._root: Path = Path(cache_dir)
+        self._root.mkdir(parents=True, exist_ok=True)
+        self._files: Optional[List[str]] = None
 
     @property
     def root(self) -> Path:
@@ -48,9 +65,8 @@ class StudioSource:
         Return the local directory that holds the materialized studio files.
 
         :return: The local root directory.
-        :raises NotImplementedError: Always; subclasses provide the root.
         """
-        raise NotImplementedError
+        return self._root
 
     def ensure(self, rel_path: str) -> Optional[Path]:
         """Make `rel_path` available under root; return its local path or None."""
@@ -67,29 +83,146 @@ class StudioSource:
         return path.read_text(encoding="utf-8") if path else None
 
     def ensure_coded_tool(self, module_file: str) -> bool:
-        """Make `coded_tools/<module_file>` importable under root (with a package
-        __init__). Returns True if available."""
+        """
+        Make `coded_tools/<module_file>` importable under root, with a package `__init__.py`.
+
+        :param module_file: The file name of the coded-tool module, such as `web_fetch.py`
+        :return: True when the module is available under root
+        """
+        pkg_init: Path = self._root / "coded_tools" / "__init__.py"
+        if not pkg_init.exists():
+            pkg_init.parent.mkdir(parents=True, exist_ok=True)
+            pkg_init.write_text("", encoding="utf-8")
+        return self.ensure(f"coded_tools/{module_file}") is not None
+
+    def _list_files(self) -> List[str]:
+        """
+        List the upstream files, as `/`-separated paths relative to the upstream root.
+
+        :return: The file paths
+        :raises NotImplementedError: Always; subclasses list their own files.
+        """
         raise NotImplementedError
+
+    def _read_upstream(self, upstream: str) -> Optional[str]:
+        """
+        Read one upstream file as UTF-8 text.
+
+        :param upstream: The file path, as returned by `_list_files()`
+        :return: The file contents, or None when the file does not exist
+        :raises NotImplementedError: Always; subclasses read their own files.
+        """
+        raise NotImplementedError
+
+    def _resolve_upstream(self, rel_path: str) -> Optional[str]:
+        """
+        Find the upstream path for a logical path: an exact match, else the shortest
+        path that ends with it, else the shortest path with the same file name.
+
+        :param rel_path: The logical path, such as `toolbox/toolbox_info.hocon`
+        :return: The upstream path, or None when nothing matches
+        """
+        if self._files is None:
+            self._files = self._list_files()
+        if rel_path in self._files:
+            return rel_path
+        base: str = rel_path.split("/")[-1]
+        suffix_matches: List[str] = []
+        name_matches: List[str] = []
+        # Collect the paths that end with the logical path or with its file name.
+        for path in self._files:  # type: str
+            if path.endswith("/" + rel_path):
+                suffix_matches.append(path)
+            if path.endswith("/" + base) or path == base:
+                name_matches.append(path)
+        candidates: List[str] = suffix_matches or name_matches
+        if not candidates:
+            return None
+        # The shortest path is the least nested, and so the most canonical.
+        return min(candidates, key=len)
+
+    def _mirror(self, rel_path: str) -> Optional[Path]:
+        """
+        Copy the upstream file for `rel_path` to `root/rel_path`.
+
+        :param rel_path: The logical path relative to root
+        :return: The local path, or None when there is no such upstream file or the
+            path leaves root
+        """
+        dest: Path = self._root / rel_path
+        if not dest.resolve().is_relative_to(self._root.resolve()):
+            return None
+        upstream: Optional[str] = self._resolve_upstream(rel_path)
+        if not upstream:
+            return None
+        text: Optional[str] = self._read_upstream(upstream)
+        if text is None:
+            return None
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Concurrent builds share the mirror, so a reader must never see a partly written file.
+        partial: Path = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
+        partial.write_text(text, encoding="utf-8")
+        os.replace(partial, dest)
+        return dest
 
 
 class LocalStudio(StudioSource):
     """
-    Studio source backed by an existing local studio checkout.
+    Studio source backed by an existing local studio checkout. Requested files are
+    copied into a cache on every request, so edits to the checkout apply to the next build.
     """
 
-    def __init__(self, path: str | Path):
-        self._root = Path(path).resolve()
+    def __init__(self, path: str | Path, cache_dir: Optional[Path] = None):
+        """
+        Use the checkout at `path`.
 
-    @property
-    def root(self) -> Path:
-        return self._root
+        :param path: The local neuro-san-studio checkout
+        :param cache_dir: The mirror directory; defaults to one per checkout under `~/.cache/nsdeploy`
+        """
+        self._checkout: Path = Path(path).resolve()
+        digest: str = hashlib.sha256(str(self._checkout).encode("utf-8")).hexdigest()[:12]
+        default_cache: Path = Path.home() / ".cache" / "nsdeploy" / f"local_{self._checkout.name}_{digest}"
+        super().__init__(Path(cache_dir) if cache_dir else default_cache)
 
     def ensure(self, rel_path: str) -> Optional[Path]:
-        p = self._root / rel_path
-        return p if p.is_file() else None
+        """
+        Copy the checkout's file for `rel_path` into root.
 
-    def ensure_coded_tool(self, module_file: str) -> bool:
-        return (self._root / "coded_tools" / module_file).is_file()
+        :param rel_path: The logical path relative to root
+        :return: The local path, or None when the checkout has no such file
+        """
+        return self._mirror(rel_path)
+
+    def _list_files(self) -> List[str]:
+        """
+        List the checkout's files, without hidden directories or `SKIPPED_CHECKOUT_DIRS`.
+
+        :return: The file paths relative to the checkout
+        """
+        files: List[str] = []
+        # Walk the checkout, pruning directories that hold no studio sources.
+        for directory, dir_names, file_names in os.walk(self._checkout):  # type: str, List[str], List[str]
+            kept: List[str] = []
+            # Keep only the subdirectories that can hold studio sources.
+            for dir_name in dir_names:  # type: str
+                if not dir_name.startswith(".") and dir_name not in SKIPPED_CHECKOUT_DIRS:
+                    kept.append(dir_name)
+            dir_names[:] = kept
+            relative: Path = Path(directory).relative_to(self._checkout)
+            # Record each file by its path relative to the checkout.
+            for file_name in file_names:  # type: str
+                files.append((relative / file_name).as_posix())
+        return files
+
+    def _read_upstream(self, upstream: str) -> Optional[str]:
+        """
+        Read one file of the checkout.
+
+        :param upstream: The file path relative to the checkout
+        :return: The file contents, or None when the file does not exist
+        """
+        path: Path = self._checkout / upstream
+        return path.read_text(encoding="utf-8") if path.is_file() else None
 
 
 class GithubStudio(StudioSource):
@@ -101,53 +234,42 @@ class GithubStudio(StudioSource):
         self.repo = repo
         self.ref = ref
         safe = repo.replace("/", "_")
-        self._root = Path(cache_dir) if cache_dir else (Path.home() / ".cache" / "nsdeploy" / f"{safe}@{ref}")
-        self._root.mkdir(parents=True, exist_ok=True)
-        self._tree: Optional[List[str]] = None
-
-    @property
-    def root(self) -> Path:
-        return self._root
-
-    def _load_tree(self) -> List[str]:
-        if self._tree is None:
-            data = _http_get(TREE_URL.format(repo=self.repo, ref=self.ref))
-            if data is None:
-                raise RuntimeError(f"cannot read git tree for {self.repo}@{self.ref}")
-            self._tree = [t["path"] for t in json.loads(data).get("tree", []) if t.get("type") == "blob"]
-        return self._tree
-
-    def _resolve_upstream(self, rel_path: str) -> Optional[str]:
-        """Find the actual repo path for a logical rel_path via exact-or-suffix match."""
-        tree = self._load_tree()
-        if rel_path in tree:
-            return rel_path
-        cands = [p for p in tree if p.endswith("/" + rel_path)]
-        if not cands:  # fall back to basename match (e.g. coded tool module file)
-            base = rel_path.split("/")[-1]
-            cands = [p for p in tree if p.endswith("/" + base) or p == base]
-        if not cands:
-            return None
-        return min(cands, key=len)  # shortest path = least-nested / most canonical
+        super().__init__(Path(cache_dir) if cache_dir else (Path.home() / ".cache" / "nsdeploy" / f"{safe}@{ref}"))
 
     def ensure(self, rel_path: str) -> Optional[Path]:
-        dest = self._root / rel_path
+        """
+        Return the cached file for `rel_path`, downloading it first if it is not cached.
+
+        :param rel_path: The logical path relative to root
+        :return: The local path, or None when the repository has no such file
+        """
+        dest: Path = self._root / rel_path
         if dest.is_file():
             return dest
-        upstream = self._resolve_upstream(rel_path)
-        if not upstream:
-            return None
-        raw = _http_get(RAW_URL.format(repo=self.repo, ref=self.ref, path=upstream))
-        if raw is None:
-            return None
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(raw, encoding="utf-8")
-        return dest
+        return self._mirror(rel_path)
 
-    def ensure_coded_tool(self, module_file: str) -> bool:
-        # Make `coded_tools` a package in the cache, then fetch the module file.
-        pkg_init = self._root / "coded_tools" / "__init__.py"
-        if not pkg_init.exists():
-            pkg_init.parent.mkdir(parents=True, exist_ok=True)
-            pkg_init.write_text("", encoding="utf-8")
-        return self.ensure(f"coded_tools/{module_file}") is not None
+    def _list_files(self) -> List[str]:
+        """
+        List the repository's files with one GitHub API call.
+
+        :return: The file paths relative to the repository root
+        :raises RuntimeError: When the repository tree cannot be read
+        """
+        data: Optional[str] = _http_get(TREE_URL.format(repo=self.repo, ref=self.ref))
+        if data is None:
+            raise RuntimeError(f"cannot read git tree for {self.repo}@{self.ref}")
+        files: List[str] = []
+        # Keep the files; the tree also lists directories.
+        for entry in json.loads(data).get("tree", []):  # type: dict
+            if entry.get("type") == "blob":
+                files.append(entry.get("path"))
+        return files
+
+    def _read_upstream(self, upstream: str) -> Optional[str]:
+        """
+        Download one file of the repository.
+
+        :param upstream: The file path relative to the repository root
+        :return: The file contents, or None when the file does not exist
+        """
+        return _http_get(RAW_URL.format(repo=self.repo, ref=self.ref, path=upstream))
