@@ -286,14 +286,19 @@ class DeploymentBundleTest(unittest.TestCase):
         self.assertTrue(any("rebuilt from the deployment" in line for line in reported),
                         f"no rebuild warning in {reported}")
 
-    def test_the_upstream_is_the_deployments_own_unless_overridden(self):
-        """The bundle uses the deployment's own upstream when none is given."""
-        client = self._open()
+    def test_a_stored_upstream_is_not_baked_in(self) -> None:
+        """Without a query, the bundle uses the service upstream, not the record's."""
+        # An older record can still hold the upstream its uploader chose. The site
+        # ignores it, so the bundle must too, or visitors' keys would go there.
+        client = self._open(upstream="https://router.example/v1")
         row = self._deploy(client, options=DeployOptions(
-            name="hello_shop", upstream="https://llm.example.com/v1"))
+            name="hello_shop", upstream="https://uploader.example/v1"))
         response = client.get(f"/deployments/{row['id']}/bundle")
-        self.assertIn("https://llm.example.com/v1",
-                      self._text(response.content, "agent-manifest.json"))
+        self.assertEqual(response.status_code, 200)
+        manifest: Dict[str, Any] = json.loads(self._text(response.content, "agent-manifest.json"))
+        router: Dict[str, Any] = manifest.get("llm_router") or {}
+        self.assertEqual(router.get("byok_router"), "https://router.example/v1")
+        self.assertNotIn("https://uploader.example/v1", json.dumps(manifest))
 
     def test_an_upstream_query_overrides_the_deployments_own(self):
         """An upstream query parameter overrides the deployment's own upstream."""

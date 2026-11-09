@@ -1139,7 +1139,10 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             # manifests, .well-known, steward HOCON), so it must be declared now and
             # must match the URL we hand back.
             "--site-url", dep.url,
-            "--upstream", opts.upstream or s.upstream,
+            # Always the service-wide upstream. The site's /byok/v1 forwards every
+            # visitor's API key there, so a deployment does not choose it, and an
+            # `upstream` still stored in a record's options is ignored.
+            "--upstream", s.upstream,
         ]
         # `--host` is the ONE flag this service has ever needed that upstream nsdeploy
         # does not ship. Three successive engine drops have removed it, each time
