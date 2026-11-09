@@ -55,7 +55,9 @@ try {
   const manifest = { brand: "Neighbor Exchange · Test", llm_router: { base_url: location.origin + "/v1", mock: true }, welcome: { message: "Use the form or type your request below.", widget: { ...form, title: "Start a neighbor exchange" } } };
   mountApp(document.querySelector("#app"), { engine, trace: engine.trace, manifest });
   const app = document.querySelector("#app");
-  check(!!app.querySelector("#theme-settings.ns-settings #ns-key") && !app.querySelector('[data-ns-slot="chat"] .ns-settings'), "Theme-owned settings slot controls BYOK placement");
+  check(!!app.querySelector("#theme-settings.ns-settings #ns-key") && !app.querySelector('[data-ns-slot="chat"] .ns-settings'), "Theme-owned settings slot controls AI model placement");
+  check(app.querySelector("#theme-settings summary").textContent.includes("Model settings"), "Theme-owned settings use a clear public label");
+  check(app.querySelector("#ns-key").required && !app.querySelector("#ns-lg"), "Only the API key is required in the simple setup flow");
   app.querySelector("#ns-input").value = "Are there any minivans available for me to borrow next week?";
   app.querySelector("#ns-send").click();
   await tick();

@@ -9,6 +9,7 @@ import { normalizeModelName } from "../nsdeploy/runtime/model.js";
 import { createTurnEventStream } from "../nsdeploy/runtime/execution-stream.js";
 import { TraceBus } from "../nsdeploy/runtime/trace.js";
 import { createTurnStatusController, statusTextForEvent } from "../nsdeploy/runtime/turn-status.js";
+import { AI_MODEL_SETTINGS_LABEL, API_KEY_PROVIDERS, providerForApiKey } from "../nsdeploy/runtime/ui.js";
 import {
   buildToolTable,
   consumeAgentBudget,
@@ -26,6 +27,13 @@ const manifest = {
     mock: true,
   },
 };
+assert.equal(AI_MODEL_SETTINGS_LABEL, "AI model settings");
+assert.deepEqual(API_KEY_PROVIDERS.map((provider) => provider.name), ["Google AI Studio", "Groq"]);
+assert.ok(API_KEY_PROVIDERS.every((provider) => provider.keyUrl.startsWith("https://")));
+assert.ok(API_KEY_PROVIDERS.every((provider) => provider.router.startsWith("https://") && provider.model));
+assert.equal(providerForApiKey("AIza-example").name, "Google AI Studio");
+assert.equal(providerForApiKey("gsk_example").name, "Groq");
+assert.equal(providerForApiKey("sk-example"), null);
 assert.deepEqual(
   selectTopRouter(manifest, "http://127.0.0.1:8091/v1", "real-key"),
   { baseUrl: "http://127.0.0.1:8091/byok/v1", mock: false, upgradedToByok: true },
@@ -402,9 +410,9 @@ assert.throws(
   globalThis.fetch = async () => { fetched += 1; throw new Error("fetch reached"); };
   try {
     const real = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "demo", mock: false });
-    await assert.rejects(real.chat({ model: "m", messages: [] }), /API key is required/);
+    await assert.rejects(real.chat({ model: "m", messages: [] }), /provider key is required/);
     const empty = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "", mock: false });
-    await assert.rejects(empty.chat({ model: "m", messages: [] }), /API key is required/);
+    await assert.rejects(empty.chat({ model: "m", messages: [] }), /provider key is required/);
     assert.equal(fetched, 0);
     const mock = new LlmClient({ baseUrl: "http://127.0.0.1:8091/v1", apiKey: "demo", mock: true });
     await assert.rejects(mock.chat({ model: "m", messages: [] }), /fetch reached/);
