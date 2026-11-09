@@ -14,6 +14,7 @@ import {
   loadByokStore,
   portableByokRouter,
   resolveByokRouter,
+  saveTabByokSetup,
   selectByokProfile,
   upsertByokProfile,
 } from "./byok.js";
@@ -842,10 +843,9 @@ export function mountApp(root, { engine, trace, manifest }) {
     modal.hidden = false;
   }
 
-  // BYOK / router settings. The active key is never written to the URL. Saved
-  // profiles make router/model/key reusable across agent networks; explicit URL
-  // router/model params still win so links remain shareable.
-  const params = new URLSearchParams(location.search);
+  // BYOK / router settings. Router, model and key are never read from or written
+  // to the URL. Apply keeps them for this tab in session storage, and saved
+  // profiles make them reusable across agent networks.
   let profileStore = loadByokStore();
   let selectedProfile = getSelectedByokProfile(profileStore);
   const profileEl = root.querySelector("#ns-profile");
@@ -1062,25 +1062,17 @@ export function mountApp(root, { engine, trace, manifest }) {
   root.querySelector("#ns-apply").addEventListener("click", async () => {
     const p = new URLSearchParams(location.search);
     p.delete("key"); // the key must never appear in the URL
-    let router = routerEl.value.trim();
-    const key = keyEl.value.trim();
     const model = normalizeModelName(modelEl.value);
     modelEl.value = model;
-    // Safety net: a real key must never be sent to the mock router.
-    if ((key || model) && byokRouter && isMockRouter(router)) router = byokRouter;
     if (!await validateConfiguredModel(false)) return;
     const saved = saveCurrentProfile();
-    // The key is kept in browser storage, never the query string.
-    try {
-      if (key) sessionStorage.setItem("nsweb-byok-key", key);
-      else sessionStorage.removeItem("nsweb-byok-key");
-    } catch {}
-    if (router) p.set("router", router); else p.delete("router");
-    if (model) p.set("model", model); else p.delete("model");
+    // Key, router and model stay with this tab in session storage, never in the
+    // query string. Boot reads them after the reload, so a setup that another tab
+    // or port selects later cannot pair this tab's key with a different router.
+    saveTabByokSetup(saved);
     if (langchainEl.checked) p.set("runner", "langchain"); else p.delete("runner");
     const qs = p.toString();
-    // Rewrite the (key-free) query string, then reload so the change applies even
-    // when only the key changed (router/model unchanged).
+    // Rewrite the (key-free) query string, then reload so the applied setup takes effect.
     try { history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash); } catch {}
     if (saved) setProfileHint(`Saved setup "${saved.name}". Reloading...`);
     location.reload();

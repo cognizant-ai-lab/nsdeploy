@@ -3,12 +3,16 @@
 // Keys never go in URLs. Profiles are stored in localStorage, and on loopback
 // hosts only we mirror them to a host cookie so settings follow nsDeploy across
 // localhost/127.0.0.1 ports. Do not enable cookie mirroring for non-local hosts:
-// cookies are sent to the serving host on every request.
+// cookies are sent to the serving host on every request. The setup applied in a
+// tab is also kept in that tab's sessionStorage, so other tabs cannot change it.
 
 import { normalizeModelName } from "./model.js";
 
 const STORE_KEY = "nsweb-byok-profiles-v1";
 const COOKIE_NAME = "nsweb_byok_profiles_v1";
+const TAB_KEY_ITEM = "nsweb-byok-key";
+const TAB_ROUTER_ITEM = "nsweb-byok-router";
+const TAB_MODEL_ITEM = "nsweb-byok-model";
 const VERSION = 1;
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 180; // 180 days
 const COOKIE_VALUE_LIMIT = 3800;
@@ -104,6 +108,45 @@ export function canUseByokCookie() {
   if (typeof location === "undefined") return false;
   const host = location.hostname;
   return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+}
+
+// Keep the key, router and model of the setup applied in this tab. Router and
+// model are stored even when empty, so the tab never takes them from another
+// setup. A null setup clears the tab's copy, and the saved profile applies again.
+export function saveTabByokSetup(setup) {
+  try {
+    // Clear first and write the router last. A failed write then leaves the tab on
+    // the saved profile, never on a mix of two setups.
+    sessionStorage.removeItem(TAB_ROUTER_ITEM);
+    sessionStorage.removeItem(TAB_MODEL_ITEM);
+    sessionStorage.removeItem(TAB_KEY_ITEM);
+    if (!setup) return;
+    if (setup.key) sessionStorage.setItem(TAB_KEY_ITEM, setup.key);
+    sessionStorage.setItem(TAB_MODEL_ITEM, setup.model || "");
+    sessionStorage.setItem(TAB_ROUTER_ITEM, setup.router || "");
+  } catch {}
+}
+
+// Return the key, router and model this tab uses. A setup applied in this tab is
+// used as a whole, so another tab or port that selects a different saved setup
+// cannot pair this tab's key with its router. Otherwise the saved profile applies,
+// but a key already in this tab's session still comes first.
+export function loadTabByokSetup(savedProfile = getSelectedByokProfile()) {
+  let key = "";
+  let router = null;
+  let model = "";
+  try {
+    key = sessionStorage.getItem(TAB_KEY_ITEM) || "";
+    router = sessionStorage.getItem(TAB_ROUTER_ITEM);
+    model = sessionStorage.getItem(TAB_MODEL_ITEM) || "";
+  } catch {}
+  // The router item marks a setup applied in this tab, even when it is empty.
+  if (router !== null) return { key, router: resolveByokRouter(router), model };
+  return {
+    key: key || savedProfile?.key || "",
+    router: resolveByokRouter(savedProfile?.router || ""),
+    model: savedProfile?.model || "",
+  };
 }
 
 function saveByokStore(store) {
