@@ -46,7 +46,7 @@ export const API_KEY_PROVIDERS = [
     name: "OpenAI",
     keyUrl: "https://platform.openai.com/api-keys",
     router: "https://api.openai.com/v1",
-    model: "gpt-5.6",
+    model: "gpt-5.5",
     keyPrefixes: ["sk-proj-", "sk-svcacct-"],
     accessNote: "Billing may be required",
   },

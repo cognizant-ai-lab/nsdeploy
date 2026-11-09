@@ -36,6 +36,7 @@ assert.ok(API_KEY_PROVIDERS.every((provider) => provider.router.startsWith("http
 assert.equal(providerForApiKey("AIza-example").name, "Google AI Studio");
 assert.equal(providerForApiKey("gsk_example").name, "Groq");
 assert.equal(providerForApiKey("sk-proj-example").name, "OpenAI");
+assert.equal(providerForApiKey("sk-proj-example").model, "gpt-5.5");
 assert.equal(providerForApiKey("sk-ant-example").name, "Anthropic");
 assert.equal(providerForApiKey("sk-or-v1-example"), null);
 assert.deepEqual(
