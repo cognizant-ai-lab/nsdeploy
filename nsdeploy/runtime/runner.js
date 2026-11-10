@@ -402,8 +402,7 @@ export async function dispatchToolCall(ctx, entry, args, parentSpan, chain) {
 
 // The model one agent sends. effectiveModel keeps this in step with the settings panel.
 function agentModel(ctx, spec) {
-  return effectiveModel(ctx.modelOverride, spec?.llm_config?.model_name,
-    ctx.network.config?.llm_config?.model_name, ctx.defaultModel);
+  return effectiveModel(ctx.modelOverride, spec?.llm_config?.model_name, ctx.network.config?.llm_config?.model_name);
 }
 
 // Dispatcher: the LangChain.js runner when enabled, else the dependency-free

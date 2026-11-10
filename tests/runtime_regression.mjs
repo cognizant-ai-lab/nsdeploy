@@ -5,7 +5,7 @@ import { AgentNetwork } from "../nsdeploy/runtime/kernel.js";
 import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
 import { LlmClient, browserMockCompletion, isMockResponse } from "../nsdeploy/runtime/llm.js";
 import { McpClient, parseMaybeSse, readJsonRpcResponse } from "../nsdeploy/runtime/mcp.js";
-import { effectiveModel, isPlaceholderModel, normalizeModelName } from "../nsdeploy/runtime/model.js";
+import { effectiveModel, fallbackModel, isPlaceholderModel, normalizeModelName } from "../nsdeploy/runtime/model.js";
 import { createTurnEventStream } from "../nsdeploy/runtime/execution-stream.js";
 import { TraceBus } from "../nsdeploy/runtime/trace.js";
 import { createTurnStatusController, statusTextForEvent } from "../nsdeploy/runtime/turn-status.js";
@@ -445,9 +445,13 @@ assert.throws(
 assert.equal(isPlaceholderModel(""), true);
 assert.equal(isPlaceholderModel('  "mock-1" '), true);
 assert.equal(isPlaceholderModel("gpt-test"), false);
-assert.equal(effectiveModel("", "", "gpt-network", "mock-1"), "gpt-network");
-assert.equal(effectiveModel("", null, "", "mock-1"), "mock-1");
-assert.equal(effectiveModel("gpt-chosen", "gpt-agent", "gpt-network", "mock-1"), "gpt-chosen");
+assert.equal(effectiveModel("", "", "gpt-network"), "gpt-network");
+assert.equal(effectiveModel("", null, ""), "mock-1");
+assert.equal(effectiveModel("gpt-chosen", "gpt-agent", "gpt-network"), "gpt-chosen");
+// With no model anywhere, the fallback is the mock placeholder, which isPlaceholderModel rejects.
+assert.equal(fallbackModel("gpt-network"), "gpt-network");
+assert.equal(isPlaceholderModel(fallbackModel("")), true);
+assert.equal(isPlaceholderModel(fallbackModel(undefined)), true);
 
 // The same guard for a whole turn, with both runners. A real key and no model stop
 // the turn before any model request; with no key, the key error still comes first.

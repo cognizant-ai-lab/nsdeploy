@@ -19,7 +19,7 @@ import {
   selectByokProfile,
   upsertByokProfile,
 } from "./byok.js";
-import { MOCK_MODEL_NAME, effectiveModel, isPlaceholderModel, normalizeModelName } from "./model.js";
+import { effectiveModel, isPlaceholderModel, normalizeModelName } from "./model.js";
 import { normalizePresentation } from "./cruse.js";
 import { PRESENTATION_CSS, renderMarkdown, renderRichComponent } from "./cruse-render.js";
 import { createTurnStatusController } from "./turn-status.js";
@@ -873,7 +873,7 @@ export function mountApp(root, { engine, trace, manifest }) {
   // The front man and "agent" tools call a model; coded and toolbox tools do not.
   for (const spec of net?.config?.tools || []) {
     const callsModel = spec === frontSpec || net.classifyTool(spec?.name).kind === "agent";
-    const sent = effectiveModel("", spec?.llm_config?.model_name, net?.config?.llm_config?.model_name, MOCK_MODEL_NAME);
+    const sent = effectiveModel("", spec?.llm_config?.model_name, net?.config?.llm_config?.model_name);
     if (callsModel && isPlaceholderModel(sent)) everyAgentHasModel = false;
   }
 

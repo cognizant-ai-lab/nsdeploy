@@ -1,5 +1,6 @@
-// Placeholder model name for the mock routers, which ignore the model.
-export const MOCK_MODEL_NAME = "mock-1";
+// Placeholder model name for the mock routers, which ignore the model. Other modules
+// use fallbackModel and isPlaceholderModel instead of this name.
+const MOCK_MODEL_NAME = "mock-1";
 
 // Canonicalize model identifiers entered through profiles or forms.
 export function normalizeModelName(value) {
@@ -19,11 +20,17 @@ export function isPlaceholderModel(model) {
   return !name || name === MOCK_MODEL_NAME;
 }
 
+// The model an agent sends when neither the visitor nor the agent names one: the
+// network's model, or else the mock placeholder.
+export function fallbackModel(networkModel) {
+  return networkModel || MOCK_MODEL_NAME;
+}
+
 // The model an agent sends: the visitor's choice, then the agent's declared model,
-// then the network's, then the fallback. The runners and the settings panel both
-// use this, so the panel checks exactly what a turn would send.
-export function effectiveModel(override, agentModel, networkModel, fallback) {
-  return override || agentModel || networkModel || fallback;
+// then fallbackModel. The runners and the settings panel both use this, so the panel
+// checks exactly what a turn would send.
+export function effectiveModel(override, agentModel, networkModel) {
+  return override || agentModel || fallbackModel(networkModel);
 }
 
 // Fail closed before a real (non-mock) router gets an empty model or the mock
