@@ -373,6 +373,9 @@ class LinkerTests(unittest.TestCase):
         self.assertNotIn("portable_private_steward", (out.parent / "manifest.hocon").read_text())
 
     def test_static_bundle_loads_the_ts_package_runtime_unless_switched_off(self):
+        """
+        Check that a static bundle's runtime/index.js loads the TS package runtime unless the switch is off.
+        """
         plan = DeploymentPlan(
             network_name="portable", config={"tools": [{"name": "front", "instructions": "Help."}]},
             front_man="front",

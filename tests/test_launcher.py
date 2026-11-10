@@ -455,6 +455,9 @@ class ByokOnlyTests(unittest.TestCase):
         self.assertNotIn("server-secret", json.dumps(_ChatUpstreamHandler.headers_seen))
 
     def test_byok_responses_proxy_forwards_to_the_upstream_responses_endpoint(self):
+        """
+        Check that the BYOK proxy forwards a Responses API request and its key unchanged to the upstream's /responses.
+        """
         port = self._serve(_ChatUpstreamHandler, lambda p: f"http://127.0.0.1:{p}", Path("."), [])
         body = json.dumps({"model": "visitor-model", "input": "hi", "stream": True}).encode()
         request = urllib.request.Request(
@@ -467,6 +470,13 @@ class ByokOnlyTests(unittest.TestCase):
         self.assertEqual(_ChatUpstreamHandler.body_seen, body)
 
     def _mock_responses(self, port: int, body: dict) -> str:
+        """
+        Post one request to the mock router's Responses API and check it answers as the mock.
+
+        :param port: The launcher proxy port.
+        :param body: The Responses API request body.
+        :return: The response text.
+        """
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         conn.request("POST", "/v1/responses", body=json.dumps(body), headers={"Content-Type": "application/json"})
         response = conn.getresponse()
@@ -477,6 +487,9 @@ class ByokOnlyTests(unittest.TestCase):
         return text
 
     def test_mock_responses_calls_the_next_tool_then_summarizes_its_output(self):
+        """
+        Check that the mock Responses API calls the next tool, then summarizes what the tool returned.
+        """
         port = self._serve(None, "http://unused", Path("."), [])
         tools = [{"type": "function", "name": "lookup", "parameters": {"type": "object", "required": ["q"]}}]
         user = {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "find it"}]}
@@ -494,6 +507,9 @@ class ByokOnlyTests(unittest.TestCase):
         self.assertIn("found it", message["content"][0]["text"])
 
     def test_mock_responses_streams_response_events(self):
+        """
+        Check that a streamed mock Responses API answer is the response.* events OpenAI sends.
+        """
         port = self._serve(None, "http://unused", Path("."), [])
         text = self._mock_responses(port, {"model": "m", "input": "hi", "stream": True})
         events = [line[len("event: "):] for line in text.splitlines() if line.startswith("event: ")]
@@ -525,7 +541,7 @@ class ByokOnlyTests(unittest.TestCase):
         """
         Check that /runtime/index.js redirects to the TS package runtime unless the switch is off.
         """
-        temp = tempfile.TemporaryDirectory()
+        temp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; removed in cleanup
         self.addCleanup(temp.cleanup)
         runtime = Path(temp.name)
         (runtime / "index.js").write_text("// original\n")

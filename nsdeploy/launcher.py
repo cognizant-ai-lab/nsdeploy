@@ -377,20 +377,20 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             """
             try:
                 body = json.loads(raw or b"{}")
-            except Exception:
+            # Malformed JSON or bytes that aren't UTF-8; the mock answers either as an empty request.
+            except ValueError:
                 body = {}
             messages, tools = _responses_to_chat(body)
             call, summary = self._mock_decision(messages, tools)
-            response_id = f"resp_neuro_san_mock_{uuid.uuid4().hex}"
             if call:
-                name, arguments = call
                 item: Dict[str, Any] = {"type": "function_call", "id": f"fc_{uuid.uuid4().hex}", "status": "completed",
-                                        "call_id": f"call_{name}", "name": name, "arguments": arguments}
+                                        "call_id": f"call_{call[0]}", "name": call[0], "arguments": call[1]}
             else:
                 item = {"type": "message", "id": f"msg_{uuid.uuid4().hex}", "status": "completed", "role": "assistant",
                         "content": [{"type": "output_text", "text": summary, "annotations": []}]}
             response: Dict[str, Any] = {
-                "id": response_id, "object": "response", "created_at": int(time.time()), "status": "completed",
+                "id": f"resp_neuro_san_mock_{uuid.uuid4().hex}", "object": "response",
+                "created_at": int(time.time()), "status": "completed",
                 "model": "neuro-san-mock", "output": [item],
                 "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
             }
@@ -408,7 +408,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Connection", "close")
-            self.close_connection = True
+            self.close_connection = True  # pylint: disable=attribute-defined-outside-init  # base-class attribute
             self.end_headers()
             sequence = iter(range(1_000_000))
 
