@@ -54,6 +54,7 @@ from nsdeploy_service.models import NetworkSummary
 from nsdeploy_service.models import SUMMARY_SCHEMA_VERSION
 from nsdeploy_service.ports import PortPool
 from nsdeploy_service.ports import PortPoolExhausted
+from nsdeploy_service.shared_byok import shared_cookie_domain
 from nsdeploy_service.shared_byok import sync_shared_byok
 from nsdeploy_service.site_env import SiteEnv
 from nsdeploy_service.store import UNATTRIBUTED_NAME
@@ -687,8 +688,9 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
     def _sync_shared_byok_sites(self) -> List[str]:
         """Apply the reversible browser behavior to already-generated sites."""
         changed: List[str] = []
+        cookie_domain = shared_cookie_domain(self.settings)
         for row in self.store.list_deployments():
-            if sync_shared_byok(Path(row["work_dir"])):
+            if sync_shared_byok(Path(row["work_dir"]), cookie_domain=cookie_domain):
                 changed.append(row["id"])
         return changed
 
@@ -1304,7 +1306,7 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         return _served_network_name(dep.port, host) == dep.name
 
     def _mark_ready(self, dep: Deployment) -> None:
-        sync_shared_byok(dep.work_dir)
+        sync_shared_byok(dep.work_dir, cookie_domain=shared_cookie_domain(self.settings))
         log_text = dep.log_path.read_text(encoding="utf-8", errors="replace") \
             if dep.log_path.is_file() else ""
         dep.network = summarize_build(dep.out_dir, dep.name, log_text)

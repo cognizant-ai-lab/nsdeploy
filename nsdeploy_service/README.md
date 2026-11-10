@@ -460,6 +460,13 @@ while the management API stays behind `API_TOKEN`. Site traffic flows through th
 service process, so it becomes a throughput bottleneck and a single point of failure
 for the sites as well as the API.
 
+A BYOK key entered on one site is shared with the others for 48 hours in a cookie.
+With `SUBDOMAIN_TEMPLATE` set, the cookie is set on `PUBLIC_HOST`, so every site
+under it gets the key, and so does the console. Use a `PUBLIC_HOST` that serves only
+this service, because every host under it can read the key. A service restart
+applies this to sites that are already deployed. Locally, use a two-label host such
+as `agents.localhost`, since browsers refuse a cookie set on `localhost` itself.
+
 The remaining alternative, if you want per-site isolation as well, is giving each
 deployment **its own Container App** — replace `Supervisor._spawn`, the single seam,
 with an Azure API call. That also contains the arbitrary-code-execution exposure.
