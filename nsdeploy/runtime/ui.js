@@ -19,7 +19,7 @@ import {
   selectByokProfile,
   upsertByokProfile,
 } from "./byok.js";
-import { normalizeModelName } from "./model.js";
+import { effectiveModel, isPlaceholderModel, normalizeModelName } from "./model.js";
 import { normalizePresentation } from "./cruse.js";
 import { PRESENTATION_CSS, renderMarkdown, renderRichComponent } from "./cruse-render.js";
 import { createTurnStatusController } from "./turn-status.js";
@@ -867,6 +867,15 @@ export function mountApp(root, { engine, trace, manifest }) {
     || (manifest?.llm_router?.mock ? manifest?.llm_router?.base_url : "");
   const byokRouter = engine.byokRouter || "";
   const staticMode = manifest?.deployment?.mode === "static";
+  // Without a visitor-chosen model, each agent sends its declared model, then the
+  // network's, or else the mock placeholder. Check the same model the runner sends.
+  let everyAgentHasModel = true;
+  // The front man and "agent" tools call a model; coded and toolbox tools do not.
+  for (const spec of net?.config?.tools || []) {
+    const callsModel = spec === frontSpec || net.classifyTool(spec?.name).kind === "agent";
+    const sent = effectiveModel("", spec?.llm_config?.model_name, net?.config?.llm_config?.model_name);
+    if (callsModel && isPlaceholderModel(sent)) everyAgentHasModel = false;
+  }
 
   routerEl.value = engine.routerOverride || engine.top?.llm?.baseUrl || byokRouter || mockUrl;
   modelEl.value = engine.modelOverride || "";
@@ -983,6 +992,33 @@ export function mountApp(root, { engine, trace, manifest }) {
       return null;
     }
   };
+  // True when a turn would send a real router an empty model or the mock
+  // placeholder, which the runtime refuses. A chosen model is what every agent
+  // sends; without one, each agent's own model counts.
+  const lacksModel = (requireActiveKey, router, key, model) => {
+    // A send uses the applied setup.
+    if (requireActiveKey) {
+      if (engine.mockLLM) return false;
+      if (engine.modelOverride) return isPlaceholderModel(engine.modelOverride);
+      return !everyAgentHasModel;
+    }
+    // Apply checks the form it is about to save.
+    if (!key || key === "demo") return false;
+    // With a real key, Apply switches a mock router to the BYOK router.
+    const nextRouter = byokRouter && isMockRouter(router) ? byokRouter : router;
+    if (isMockRouter(nextRouter)) return false;
+    if (model) return isPlaceholderModel(model);
+    return !everyAgentHasModel;
+  };
+  // Ask for a model. Mention the Model field's suggestions only when an earlier
+  // /models lookup filled them; this adds no request of its own.
+  const modelSetupMessage = () => {
+    const choice = modelOptionsEl.options.length
+      ? "pick a suggested model in the Model field or enter another model your provider supports"
+      : "enter a model your provider supports in the Model field";
+    return "This site needs a model name before it can answer with your key. "
+      + `Open ⚙ BYOK / router settings, ${choice}, then click Apply, save & reload.`;
+  };
   validateConfiguredModel = async (requireActiveKey = true) => {
     let router = routerEl.value.trim();
     const key = keyEl.value.trim();
@@ -995,6 +1031,18 @@ export function mountApp(root, { engine, trace, manifest }) {
       setProfileHint(message, "warn");
       root.querySelector(".ns-settings").open = true;
       (key ? root.querySelector("#ns-apply") : keyEl).focus();
+      addBubble(msgs, "bot", `⚠️ ${message}`);
+      return false;
+    }
+    if (lacksModel(requireActiveKey, router, key, model)) {
+      // A usable model typed but not applied yet only needs Apply.
+      const unapplied = requireActiveKey && !!model && !isPlaceholderModel(model);
+      const message = unapplied
+        ? "Your model is ready. Click Apply, save & reload before sending a request."
+        : modelSetupMessage();
+      setProfileHint(message, "warn");
+      root.querySelector(".ns-settings").open = true;
+      (unapplied ? root.querySelector("#ns-apply") : modelEl).focus();
       addBubble(msgs, "bot", `⚠️ ${message}`);
       return false;
     }
