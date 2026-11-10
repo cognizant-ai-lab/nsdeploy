@@ -105,6 +105,17 @@ class StudioSource:
         __init__). Returns True if available."""
         raise NotImplementedError
 
+    def warm_tree(self) -> bool:
+        """Make any shared index this source needs available before it is used.
+
+        Nothing to do for a source that reads the filesystem; GithubStudio
+        overrides it. A caller can therefore warm a source without knowing which
+        kind it holds.
+
+        :return: True when the source is ready to resolve paths.
+        """
+        return True
+
 
 class LocalStudio(StudioSource):
     """
@@ -210,6 +221,30 @@ class GithubStudio(StudioSource):
             self._tree = [t["path"] for t in json.loads(data).get("tree", []) if t.get("type") == "blob"]
             self._store_tree(self._tree)
         return self._tree
+
+    def warm_tree(self) -> bool:
+        """Fetch the tree listing now, so later builds do not each fetch it.
+
+        A deployment is a separate process, so the only thing concurrent builds
+        can share is the disk cache — and a burst that starts with a cold cache
+        has every process miss it before any has written it, costing one
+        api.github.com call each. Unauthenticated that allowance is 60 an hour
+        per IP, so a large enough first burst exhausts it and later builds fail
+        to resolve their includes at all. Warming once, before any build, makes
+        that one call for all of them.
+
+        Best effort. A source that cannot be warmed is not broken: the next build
+        that needs a path it has no blob for fetches the listing itself.
+
+        :return: True when a listing is available, False when it could not be read.
+        """
+        try:
+            self._load_tree()
+        except (OSError, RuntimeError, ValueError) as exc:
+            LOGGER.warning("cannot warm the git tree for %s@%s: %s",
+                           self.repo, self.ref, exc)
+            return False
+        return True
 
     def _resolve_upstream(self, rel_path: str) -> Optional[str]:
         """Find the actual repo path for a logical rel_path via exact-or-suffix match."""

@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 
 import nsdeploy.studio as studio_module
 from nsdeploy.studio import DEFAULT_REPO, TOKEN_ENV_NAMES, TREE_CACHE_NAME
-from nsdeploy.studio import TREE_CACHE_TTL_SECONDS, GithubStudio
+from nsdeploy.studio import TREE_CACHE_TTL_SECONDS, GithubStudio, LocalStudio
 
 TREE = ["coding/aaosa.hocon", "toolbox/toolbox_info.hocon"]
 
@@ -196,6 +196,60 @@ class TestGithubStudio(unittest.TestCase):
         with mock.patch.object(studio_module.LOGGER, "warning") as warned:
             studio._store_tree(["one.hocon"])
         warned.assert_not_called()
+
+    def test_warming_caches_the_listing_for_later_builds(self):
+        """The point of warming: one call here, none in the builds that follow."""
+        self._serve_tree(self._payload(TREE))
+        self.assertTrue(GithubStudio(cache_dir=self.cache).warm_tree())
+        self.assertEqual(len(self.requested), 1)
+        self._serve_tree(self._payload(TREE))
+        # A build in its own process, as a deployment is.
+        self.assertEqual(GithubStudio(cache_dir=self.cache)._load_tree(), TREE)
+        self.assertEqual(self.requested, [])
+
+    def test_warming_an_already_warm_source_costs_nothing(self):
+        """Warming an already warm source costs nothing."""
+        self._serve_tree(self._payload(TREE))
+        GithubStudio(cache_dir=self.cache).warm_tree()
+        self._serve_tree(self._payload(TREE))
+        self.assertTrue(GithubStudio(cache_dir=self.cache).warm_tree())
+        self.assertEqual(self.requested, [])
+
+    def test_warming_reports_a_failure_without_raising(self):
+        """Start-up must not fail because GitHub is unreachable; the next build that
+        needs a listing fetches it itself."""
+        self._serve_tree(None)
+        with self.assertLogs(studio_module.LOGGER, level="WARNING") as logged:
+            self.assertFalse(GithubStudio(cache_dir=self.cache).warm_tree())
+        self.assertIn("cannot warm the git tree", "\n".join(logged.output))
+
+    def test_a_local_studio_needs_no_warming(self):
+        """So a caller can warm whatever source it holds without asking what it is."""
+        self.assertTrue(LocalStudio(self.cache).warm_tree())
+
+
+class TestStudioToken(unittest.TestCase):
+    """Which environment variable authenticates a git tree listing.
+
+    A token raises the api.github.com allowance from 60 an hour per IP to 5000,
+    which is what makes a busy deployment service able to resolve includes at all.
+    """
+
+    def setUp(self) -> None:
+        # Saved and cleared, not merely cleared: a developer's own token would
+        # otherwise decide what these tests assert, and tearDown would then take it
+        # away from every test that runs after them.
+        self._tokens: Dict[str, str] = {}
+        for name in TOKEN_ENV_NAMES:
+            if name in os.environ:
+                self._tokens[name] = os.environ.pop(name)
+
+    def tearDown(self) -> None:
+        # Whatever this test set goes, whatever the developer had comes back.
+        for name in TOKEN_ENV_NAMES:
+            os.environ.pop(name, None)
+        for name, value in self._tokens.items():
+            os.environ[name] = value
 
     def test_no_token_configured_reports_none(self):
         """No token configured reports none."""

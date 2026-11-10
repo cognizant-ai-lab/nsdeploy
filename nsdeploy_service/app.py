@@ -368,6 +368,25 @@ def _org_view(row: dict) -> OrgView:
     )
 
 
+async def _warm_studio(bundler: Bundler) -> None:
+    """Cache the studio's git tree once, before any build needs it.
+
+    Every deployment resolves its `include` lines in its own child process, so the
+    only thing a burst can share is the on-disk listing. Cold, each process misses
+    it before any has written it and spends one api.github.com call — 60 an hour
+    per IP unauthenticated, after which includes stop resolving altogether. One
+    call here serves every build that follows.
+
+    A task rather than part of start-up: the fetch can take seconds, and a service
+    that cannot answer its own health probe because GitHub is slow is worse than
+    one whose first build pays for the listing itself. Nothing waits on the result.
+
+    :param bundler: The bundler, which owns how a studio source is chosen.
+    """
+    source = bundler.studio_source()
+    await asyncio.to_thread(source.warm_tree)
+
+
 # pylint: disable-next=too-many-locals,too-many-statements  # routes are closures over settings and app
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
     """
@@ -398,12 +417,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             print(f"rebuilt the network summary for {len(app.state.supervisor.resummarized)} "
                   f"deployment record(s) from their generated bundle", file=sys.stderr)
         reaper = asyncio.create_task(_reaper(app.state.supervisor), name="ttl-reaper")
+        # Fire and forget. Held only so the task is not garbage collected while
+        # it runs, and cancelled with everything else on shutdown.
+        warming = asyncio.create_task(_warm_studio(app.state.bundler), name="warm-studio")
         try:
             yield
         finally:
             reaper.cancel()
+            warming.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await reaper
+            with contextlib.suppress(asyncio.CancelledError):
+                await warming
             # Never leave orphaned site/tool/facade processes holding ports.
             await app.state.supervisor.shutdown()
 
