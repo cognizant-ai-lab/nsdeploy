@@ -81,6 +81,25 @@ try {
   app.querySelector("#ns-apply").click();
   await tick();
   check(app.querySelector(".ns-settings-advanced").open && document.activeElement === modelInput, "Asking for a model opens the advanced settings and focuses the Model field");
+  // A page that needs a key shows provider links. Choosing another provider clears a key
+  // recognized as a different provider's, so that key is never sent to it.
+  const keyed = document.createElement("div");
+  document.body.append(keyed);
+  // Keep the link's own handler but stop it opening the provider's site.
+  keyed.addEventListener("click", (event) => event.preventDefault(), true);
+  const keyedEngine = new Engine({ originUrl: location.origin });
+  keyedEngine.top = { network, base: location.origin };
+  keyedEngine.mockLLM = false;
+  mountApp(keyed, { engine: keyedEngine, trace: keyedEngine.trace, manifest: { brand: "Keyed fixture", llm_router: { base_url: "https://router.example/v1" } } });
+  const keyedKey = keyed.querySelector("#ns-key");
+  keyedKey.value = "AIza-fixture";
+  keyedKey.dispatchEvent(new Event("input"));
+  keyed.querySelector(`[data-ns-provider="${groq.name}"]`).click();
+  check(keyedKey.value === "" && keyed.querySelector("#ns-router").value === groq.router, "Choosing another provider clears a key that belongs to a different provider");
+  keyedKey.value = "sk-fixture-unrecognized";
+  keyed.querySelector(`[data-ns-provider="${google.name}"]`).click();
+  check(keyedKey.value === "sk-fixture-unrecognized", "Choosing a provider keeps a key it cannot attribute to another provider");
+  keyed.remove();
   // Restore the form, so the chat checks below send nothing to a real provider.
   typeKey("");
   routerInput.value = formBefore.router;

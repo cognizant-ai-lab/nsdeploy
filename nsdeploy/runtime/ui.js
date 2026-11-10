@@ -1185,7 +1185,11 @@ export function mountApp(root, { engine, trace, manifest }) {
   providerLinks.forEach((link) => {
     link.addEventListener("click", () => {
       const provider = API_KEY_PROVIDERS.find((candidate) => candidate.name === link.dataset.nsProvider);
-      if (provider) applyProviderDefaults(provider, `${provider.name} selected. Create a key in the new tab, then paste it here.`);
+      if (!provider) return;
+      // A key recognized as another provider's must not be sent to this provider.
+      const keyProvider = providerForApiKey(keyEl.value.trim());
+      if (keyProvider && keyProvider !== provider) keyEl.value = "";
+      applyProviderDefaults(provider, `${provider.name} selected. Create a key in the new tab, then paste it here.`);
     });
   });
   profileEl.addEventListener("change", () => {
@@ -1235,7 +1239,6 @@ export function mountApp(root, { engine, trace, manifest }) {
     // query string. Boot reads them after the reload, so a setup that another tab
     // or port selects later cannot pair this tab's key with a different router.
     saveTabByokSetup(saved);
-    p.delete("runner");
     const qs = p.toString();
     // Rewrite the (key-free) query string, then reload so the applied setup takes effect.
     try { history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash); } catch {}
