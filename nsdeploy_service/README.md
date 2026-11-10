@@ -119,7 +119,7 @@ site, so there is no pin that could carry that message.
 > and an open tab compares it with its own and offers a **Reload to update** bar. If
 > the console ever seems not to respond to a click, hard-reload it first (Ctrl+Shift+R).
 
-Everything else `POST /deployments` accepts (network name, TTL, BYOK upstream, CRUSE,
+Everything else `POST /deployments` accepts (network name, TTL, CRUSE,
 theming) comes from the service defaults rather than the screen — the API still takes
 all of it for scripted callers. Stop, restart and remove live in the
 Manage-deployments view, off the main path but one click away in the footer.
@@ -183,7 +183,7 @@ before it can serve. Expect **~20s warm**, considerably longer on a cold cache.
 | `GET` | `/directory` | every organization and the networks it deployed |
 | `GET` | `/graph` | the same records as a network map: nodes, resolved links, and inferred relations |
 | `GET` | `/relations` | relations between deployed networks, inferred from their descriptions (`strategy=heuristic\|llm`) |
-| `POST` | `/deployments` | multipart upload (`file`, plus optional `org_id`, `org_name`, `name`, `upstream`, `theme`, `theme_model`, `cruse`, `ttl_seconds`) → `202`. `org_name` is created on first use |
+| `POST` | `/deployments` | multipart upload (`file`, plus optional `org_id`, `org_name`, `name`, `theme`, `theme_model`, `cruse`, `ttl_seconds`) → `202`. `org_name` is created on first use. `upstream` is not settable: a value other than the service's own `UPSTREAM` is refused with `400` |
 | `POST` | `/deployments/raw?name=…` | same, with the HOCON as the raw request body |
 | `GET` | `/deployments?org_id=…` | list all, plus pool capacity |
 | `GET` | `/deployments/{id}` | poll one |
@@ -195,7 +195,7 @@ before it can serve. Expect **~20s warm**, considerably longer on a cold cache.
 | `DELETE` | `/deployments/{id}?purge=false` | kill the process tree, free the port; `purge=true` also drops the record, and is refused while the deployment is live |
 | `POST` | `/bundles` | multipart upload (`file`, plus optional `name`, `site_url`, `upstream`, `theme`, `theme_model`, `theme_refresh`, `theme_prompt`, `cruse`) → `200 application/gzip`. Builds a static bundle and returns it in the same request; nothing is kept |
 | `POST` | `/bundles/raw?name=…` | same, with the HOCON as the raw request body |
-| `GET` | `/deployments/{id}/bundle?site_url=…` | `200 application/gzip`. Rebuilds a `ready` or `stopped` deployment as a static bundle, inheriting its name, upstream, CRUSE setting and look; `409` while `queued`, `building` or `failed`, `410` if its HOCON is gone |
+| `GET` | `/deployments/{id}/bundle?site_url=…` | `200 application/gzip`. Rebuilds a `ready` or `stopped` deployment as a static bundle, inheriting its name, CRUSE setting and look, with the service's `UPSTREAM` as its BYOK target unless `upstream` is given; `409` while `queued`, `building` or `failed`, `410` if its HOCON is gone |
 | `GET` | `/health` | capacity, environment, warnings, console `ui_version` — unauthenticated for probes |
 <!-- pyml enable md013 -->
 
@@ -328,7 +328,7 @@ everything (see [config.py](nsdeploy_service/config.py)).
 | `WORK_ROOT` | `.nsdeploy/service` | per-deployment HOCON, bundle, and log |
 | `DB_PATH` | `<work_root>/service.db` | SQLite file holding organizations and deployment records |
 | `UI_DIR` | `nsdeploy_service/ui` | the console's static files; point elsewhere to serve it from a CDN |
-| `UPSTREAM` | `https://api.openai.com/v1` | each site's BYOK proxy target |
+| `UPSTREAM` | `https://api.openai.com/v1` | every site's BYOK proxy target; a deployment cannot choose its own |
 | `STUDIO` | *(empty)* | local neuro-san-studio checkout; avoids per-build GitHub fetches |
 | `THEME` | `off` | deploy-time LLM theming; needs `OPENAI_API_KEY` listed in `SITE_ENV_ALLOW` (see below) and adds minutes |
 | `AUTOPUBLISH` | `on` | put a new deployment on the map the moment it is created; `off` restores the draft → publish workflow |

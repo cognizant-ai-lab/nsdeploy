@@ -260,7 +260,7 @@ default 120). It is advice, not a rule — a client may poll at its own cadence.
 | `org_id` | string | no | `Unattributed` | owning organization by id; `400` if unknown. Wins over `org_name` |
 | `org_name` | string | no | — | owning organization by name, **created on first use** (§3); ignored when `org_id` is given |
 | `name` | string | no | `file`'s basename | becomes the HOCON filename stem, so nsdeploy derives the network name from it |
-| `upstream` | string | no | service `UPSTREAM` | the site's `/byok/v1` forwarding target |
+| `upstream` | string | no | always the service's `UPSTREAM` | **not settable per deployment.** Every site's `/byok/v1` forwards visitors' keys to the service's `UPSTREAM`. Leave it out: a different value is refused with `400` |
 | `theme` | bool | no | service `THEME` (off) | deploy-time LLM theming; needs `OPENAI_API_KEY` in the *service* env, listed in `SITE_ENV_ALLOW`, and adds minutes |
 | `theme_model` | string | no | service `THEME_MODEL` | only meaningful with `theme=true` |
 | `theme_prompt` | string, ≤ 4000 chars | no | service `THEME_PROMPT` (empty) | extra design instructions folded into the theming prompt (nsdeploy's own `--theme-prompt`); only meaningful with `theme=true` |
@@ -358,8 +358,9 @@ Three guarantees worth relying on:
   relaunch. The origin is baked into the generated bundle, so a different port means a
   different URL — if something else has taken the port meanwhile, any free port is used
   and `url` changes. Always re-read `url` from the response.
-- **The caller's original options are replayed** (`upstream`, `theme`, `cruse`,
-  `ttl_seconds`, `org_id`), not re-derived from whatever the service defaults are now.
+- **The caller's original options are replayed** (`theme`, `cruse`, `ttl_seconds`,
+  `org_id`), not re-derived from whatever the service defaults are now. The BYOK
+  upstream is the exception: a site always forwards to the service's current `UPSTREAM`.
 
 The previous attempt's log is kept and the new run is appended after a
 `=== nsdeploy-service: new run ===` separator. Everything that parses the log is scoped
@@ -616,12 +617,13 @@ Authorization: Bearer <token>
 | Query | Default | Notes |
 | --- | --- | --- |
 | `site_url` | *(empty)* | where the client will host the bundle; see §4a.4. **Never defaults to the deployment's own URL**, which is this service's loopback port and would be useless anywhere a bundle is hosted |
-| `upstream` | the deployment's own | BYOK upstream for this bundle only |
+| `upstream` | the service's `UPSTREAM` | BYOK upstream for this bundle only; one stored in the record is never used |
 <!-- pyml enable md013 -->
 
-There is nothing else to pass. The network name, the BYOK upstream, the CRUSE setting
-and the look all come from the deployment, so the bundle matches the site that is
-already running.
+There is nothing else to pass. The network name, the CRUSE setting and the look come
+from the deployment, and the BYOK upstream is the service's `UPSTREAM`, which every
+deployed site is launched with (§4.1). So the bundle matches the site that is already
+running.
 
 **`ready` and `stopped` deployments can both be bundled.** A network does not stop
 being worth packaging when its process is torn down: the HOCON and the editable
@@ -704,7 +706,7 @@ bound from `MAX_CONCURRENT_BUILDS`, so a bundle never queues behind a cold deplo
 | --- | --- | --- |
 | `site` | `/` | the agent-network website |
 | `mock_llm` | `/v1/chat/completions` | keyless deterministic mock; makes no outbound calls |
-| `byok_proxy` | `/byok/v1/chat/completions` | forwards the *visitor's* `Authorization` to `upstream` |
+| `byok_proxy` | `/byok/v1/chat/completions` | forwards the *visitor's* `Authorization` to the service's `UPSTREAM` |
 | `mcp_facade` | `/mcp` | machine-facing MCP server (`invoke_network`), for private stewards |
 | `agent_manifest` | `/agent-manifest.json` | brand, routers, linking metadata |
 | `well_known` | `/.well-known/nsdeploy-agent.json` | MCP discovery document |
@@ -766,6 +768,8 @@ Present on a **successful** deployment to flag silent degradation. Never a failu
   usually not the one who can raise the limit or stop somebody else's network.
 - `no free port in 8100-8199; stop an existing deployment first`
 - `no organization '<id>'` (unknown `org_id` on a deploy)
+- `Per-deployment upstream is not supported…` — the upload named an `upstream` other
+  than the service's own (§4.1)
 - `invalid network name '<raw>': use 1-64 characters of letters, digits, '_' or '-'
   (optionally with a .hocon/.conf suffix), and no path separators`
 

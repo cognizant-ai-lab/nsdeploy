@@ -102,6 +102,7 @@ from nsdeploy_service.supervisor import is_publishable
 from nsdeploy_service.supervisor import network_topology
 from nsdeploy_service.supervisor import publish_refusal
 from nsdeploy_service.trust import ensure_ca_bundle
+from nsdeploy_service.upload_upstream import UploadUpstream
 
 # Optional drop-in folder: a checkout without it still runs.
 try:
@@ -506,7 +507,22 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     # --- create ----------------------------------------------------------
-    async def _accept(request: Request, hocon: bytes, options: DeployOptions) -> DeploymentView:
+    async def _accept(request: Request, hocon: bytes, options: DeployOptions,
+                      upstream: Optional[str]) -> DeploymentView:
+        """
+        Create a deployment from an upload and schedule its build.
+
+        :param request: The incoming request.
+        :param hocon: The uploaded HOCON.
+        :param options: The deploy options from the request.
+        :param upstream: The BYOK upstream the upload named, if any.
+        :return: The new deployment, in status queued.
+        :raises DeploymentError: If the upload names an upstream other than the service's own.
+        """
+        # Checked before anything is created, so a refused upload leaves no record behind.
+        refusal: Optional[str] = UploadUpstream.refusal(upstream, settings.upstream)
+        if refusal:
+            raise DeploymentError(refusal)
         supervisor = supervisor_of(request)
         dep = supervisor.create(hocon, options)
         supervisor.start(dep)
@@ -534,7 +550,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                         "when org_id is given. Letters, digits and & ' ( ) . , - / + # "
                         f"only, {ORG_NAME_MAX} characters maximum")] = None,
         name: Annotated[Optional[str], Form()] = None,
-        upstream: Annotated[Optional[str], Form()] = None,
+        upstream: Annotated[Optional[str], Form(
+            description="not supported; leave it out. Every site forwards BYOK requests "
+                        "to the service-wide upstream, and any other value is refused "
+                        "with 400")] = None,
         theme: Annotated[Optional[bool], Form()] = None,
         theme_model: Annotated[Optional[str], Form()] = None,
         theme_refresh: Annotated[Optional[bool], Form()] = None,
@@ -549,11 +568,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             (file.filename or "network").replace("\\", "/")).name
         options = DeployOptions(
             name=candidate, org_id=org_id, org_name=org_name,
-            upstream=upstream, theme=theme, theme_model=theme_model,
+            theme=theme, theme_model=theme_model,
             theme_refresh=theme_refresh, theme_prompt=theme_prompt,
             cruse=cruse, ttl_seconds=ttl_seconds,
         )
-        view = await _accept(request, await file.read(), options)
+        view = await _accept(request, await file.read(), options, upstream)
         response.headers["Location"] = f"/deployments/{view.id}"
         return view
 
@@ -570,17 +589,20 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             description="owning organization by name, created on first use. Letters, "
                         "digits and & ' ( ) . , - / + # only, "
                         f"{ORG_NAME_MAX} characters maximum")] = None,
-        upstream: Annotated[Optional[str], Query()] = None,
+        upstream: Annotated[Optional[str], Query(
+            description="not supported; leave it out. Every site forwards BYOK requests "
+                        "to the service-wide upstream, and any other value is refused "
+                        "with 400")] = None,
         theme: Annotated[Optional[bool], Query()] = None,
         theme_model: Annotated[Optional[str], Query()] = None,
         cruse: Annotated[Optional[bool], Query()] = None,
         ttl_seconds: Annotated[Optional[int], Query(ge=0)] = None,
     ) -> DeploymentView:
         options = DeployOptions(name=name, org_id=org_id, org_name=org_name,
-                                upstream=upstream, theme=theme,
+                                theme=theme,
                                 theme_model=theme_model, cruse=cruse,
                                 ttl_seconds=ttl_seconds)
-        view = await _accept(request, await request.body(), options)
+        view = await _accept(request, await request.body(), options, upstream)
         response.headers["Location"] = f"/deployments/{view.id}"
         return view
 
@@ -1128,7 +1150,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                         "own URL, which is this service's loopback port")] = None,
         upstream: Annotated[Optional[str], Query(
             description="BYOK upstream for this bundle only; defaults to the "
-                        "deployment's own")] = None,
+                        "service-wide upstream, which deployed sites also use")] = None,
     ) -> Response:
         row = find_row(request, deployment_id)
         status = DeploymentStatus(row.get("status"))

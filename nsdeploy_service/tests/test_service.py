@@ -597,12 +597,10 @@ class SupervisorCreateTest(unittest.TestCase):
 
     def test_per_deployment_options_override_service_defaults(self):
         """Per-deployment options override the service defaults in the command."""
-        supervisor = self._supervisor(upstream="https://default/v1")
+        supervisor = self._supervisor()
         dep = supervisor.create(b"x", DeployOptions(
-            name="demo", upstream="https://override/v1", theme=True,
-            theme_model="gpt-5.5", cruse=False))
+            name="demo", theme=True, theme_model="gpt-5.5", cruse=False))
         cmd = supervisor._command(dep)  # pylint: disable=protected-access; the test inspects internals
-        self.assertEqual(cmd[cmd.index("--upstream") + 1], "https://override/v1")
         self.assertEqual(cmd[cmd.index("--theme-model") + 1], "gpt-5.5")
         self.assertIn("--no-cruse", cmd)
 
@@ -630,6 +628,16 @@ class SupervisorCreateTest(unittest.TestCase):
         self.assertEqual(env.get("ANTHROPIC_API_KEY"), "fake-anthropic-key")
         self.assertEqual(env.get("NSDEPLOY_SERVICE_STUDIO"), "/fake/studio")
         self.assertEqual(env.get("PYTHONUNBUFFERED"), "1")
+
+    def test_command_always_passes_the_service_upstream(self) -> None:
+        """The command passes the service upstream even when the options name another."""
+        # The site's /byok/v1 forwards every visitor's key to this URL, so a
+        # deployment's own value must never reach the command.
+        supervisor = self._supervisor(upstream="https://router.example/v1")
+        dep = supervisor.create(b"x", DeployOptions(name="demo", upstream="https://uploader.example/v1"))
+        cmd = supervisor._command(dep)  # pylint: disable=protected-access; the test inspects internals
+        self.assertEqual(cmd[cmd.index("--upstream") + 1], "https://router.example/v1")
+        self.assertNotIn("https://uploader.example/v1", cmd)
 
 
 if __name__ == "__main__":
