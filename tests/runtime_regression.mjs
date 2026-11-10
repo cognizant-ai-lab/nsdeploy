@@ -462,14 +462,19 @@ assert.equal(isPlaceholderModel(fallbackModel(undefined)), true);
     "mock.example": { base_url: "https://mock.example/v1", byok_router: "https://byok.example/v1", mock: true },
     "real.example": { base_url: "https://byok.example/v1", byok_router: "https://byok.example/v1", mock: false },
     "netmodel.example": { base_url: "https://byok.example/v1", byok_router: "https://byok.example/v1", mock: false },
+    "spacemodel.example": { base_url: "https://byok.example/v1", byok_router: "https://byok.example/v1", mock: false },
+    "quotedmodel.example": { base_url: "https://byok.example/v1", byok_router: "https://byok.example/v1", mock: false },
   };
-  // On netmodel.example the network names a model and the agent's own is blank, so
-  // the agent falls back to the network's model.
+  // On these sites the network names a model and the agent's own is blank (empty,
+  // spaces, or quoted-empty), so the agent falls back to the network's model.
+  const blankAgentNetwork = (modelName) => ({
+    llm_config: { model_name: "gpt-network" },
+    tools: [{ name: "front", instructions: "Help.", llm_config: { model_name: modelName } }],
+  });
   const networks = {
-    "netmodel.example": {
-      llm_config: { model_name: "gpt-network" },
-      tools: [{ name: "front", instructions: "Help.", llm_config: { model_name: "" } }],
-    },
+    "netmodel.example": blankAgentNetwork(""),
+    "spacemodel.example": blankAgentNetwork("  "),
+    "quotedmodel.example": blankAgentNetwork('""'),
   };
   const jsonResponse = (body, ok = true) => ({ ok, json: async () => body, text: async () => JSON.stringify(body) });
   const mockAnswer = `data: ${JSON.stringify({ model: "neuro-san-mock", choices: [{ index: 0, delta: { content: "(mock) ok" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`;
@@ -519,6 +524,17 @@ assert.equal(isPlaceholderModel(fallbackModel(undefined)), true);
     await assert.rejects(netModel.run("hello"), (error) => !/model is required/.test(String(error?.message)));
     assert.equal(sent[1], "gpt-network");
     assert.ok(!sent.slice(1).includes("mock-1"));
+    // A model_name of spaces or a quoted-empty string falls back the same way, with
+    // both runners, because the config is normalized when the network is loaded.
+    for (const host of ["spacemodel.example", "quotedmodel.example"]) {
+      for (const runner of ["manual", "langchain"]) {
+        const engine = new Engine({ originUrl: `https://${host}`, byokKey: "fixture-key" });
+        if (runner === "langchain") await engine.enableLangChain();
+        const before = sent.length;
+        await assert.rejects(engine.run("hello"), (error) => !/model is required/.test(String(error?.message)));
+        assert.equal(sent[before], "gpt-network", `${host} with the ${runner} runner`);
+      }
+    }
   } finally {
     globalThis.fetch = realFetch;
   }
