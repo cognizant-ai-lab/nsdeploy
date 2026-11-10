@@ -22,6 +22,8 @@ node_modules/
 
 # IDE files
 .idea/
+# CodeGraph's local symbol index; rebuilt per checkout by `codegraph init`
+.codegraph/
 
 # local credentials
 .env
