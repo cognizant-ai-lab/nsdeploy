@@ -4,7 +4,7 @@ Take a neuro-san(-studio) agent-network **HOCON**, check its dependencies, host 
 tools as **MCP servers**, generate a static **index.html**, and **serve the network
 as a website** — with **no neuro-san server** and no runtime dependency on neuro-san.
 
-This is a reference implementation for the [wwaw mvp spec](docs/Worldwide_Agentic_Web_MVP_Spec_v0.1.pdf).
+This is a reference implementation for the [wwaw mvp spec](https://github.com/cognizant-ai-labs/agentic-web/tree/main/docs).
 
 This is a standalone project. **No neuro-san-studio checkout is required** — by
 default nsdeploy pulls just the files it needs (`aaosa.hocon`, `toolbox_info.hocon`,
