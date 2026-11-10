@@ -12,7 +12,7 @@ import { ChatMessageType, filterSlyData, allowedDownstreamSly, parseExternalAgen
 import { actionContext, proposalRefs } from "./actions.js";
 import { parseAgentResponse, agentPresentationContext } from "./cruse.js";
 import { applyPendingSteering, runInterruptibleModelCall } from "./turn-control.js";
-import { assertModelForRouter } from "./model.js";
+import { assertModelForRouter, effectiveModel } from "./model.js";
 
 let invocationSequence = 0;
 
@@ -400,11 +400,10 @@ export async function dispatchToolCall(ctx, entry, args, parentSpan, chain) {
   return `Error: unsupported tool kind '${entry.kind}'`;
 }
 
-// The model one agent sends: the visitor's choice, then the agent's or the
-// network's declared model, then the engine default.
+// The model one agent sends. effectiveModel keeps this in step with the settings panel.
 function agentModel(ctx, spec) {
-  return ctx.modelOverride || spec?.llm_config?.model_name
-    || ctx.network.config?.llm_config?.model_name || ctx.defaultModel;
+  return effectiveModel(ctx.modelOverride, spec?.llm_config?.model_name,
+    ctx.network.config?.llm_config?.model_name, ctx.defaultModel);
 }
 
 // Dispatcher: the LangChain.js runner when enabled, else the dependency-free

@@ -19,7 +19,7 @@ import {
   selectByokProfile,
   upsertByokProfile,
 } from "./byok.js";
-import { normalizeModelName } from "./model.js";
+import { MOCK_MODEL_NAME, effectiveModel, isPlaceholderModel, normalizeModelName } from "./model.js";
 import { normalizePresentation } from "./cruse.js";
 import { PRESENTATION_CSS, renderMarkdown, renderRichComponent } from "./cruse-render.js";
 import { createTurnStatusController } from "./turn-status.js";
@@ -867,14 +867,14 @@ export function mountApp(root, { engine, trace, manifest }) {
     || (manifest?.llm_router?.mock ? manifest?.llm_router?.base_url : "");
   const byokRouter = engine.byokRouter || "";
   const staticMode = manifest?.deployment?.mode === "static";
-  // Without a visitor-chosen model, each agent sends its declared model, or else
-  // the mock placeholder. The kernel has already copied the network's llm_config
-  // down to every agent, so checking the agents also covers a network model.
+  // Without a visitor-chosen model, each agent sends its declared model, then the
+  // network's, or else the mock placeholder. Check the same model the runner sends.
   let everyAgentHasModel = true;
   // The front man and "agent" tools call a model; coded and toolbox tools do not.
   for (const spec of net?.config?.tools || []) {
     const callsModel = spec === frontSpec || net.classifyTool(spec?.name).kind === "agent";
-    if (callsModel && !normalizeModelName(spec?.llm_config?.model_name)) everyAgentHasModel = false;
+    const sent = effectiveModel("", spec?.llm_config?.model_name, net?.config?.llm_config?.model_name, MOCK_MODEL_NAME);
+    if (callsModel && isPlaceholderModel(sent)) everyAgentHasModel = false;
   }
 
   routerEl.value = engine.routerOverride || engine.top?.llm?.baseUrl || byokRouter || mockUrl;
@@ -992,16 +992,23 @@ export function mountApp(root, { engine, trace, manifest }) {
       return null;
     }
   };
-  // True when an agent would send no chosen model to a real router. The runtime
-  // then falls back to the mock placeholder, which a real provider rejects.
+  // True when a turn would send a real router an empty model or the mock
+  // placeholder, which the runtime refuses. A chosen model is what every agent
+  // sends; without one, each agent's own model counts.
   const lacksModel = (requireActiveKey, router, key, model) => {
-    if (everyAgentHasModel) return false;
-    // A send uses the applied setup. Apply checks the form it is about to save.
-    if (requireActiveKey) return !engine.mockLLM && !engine.modelOverride;
-    if (!key || key === "demo" || model) return false;
+    // A send uses the applied setup.
+    if (requireActiveKey) {
+      if (engine.mockLLM) return false;
+      if (engine.modelOverride) return isPlaceholderModel(engine.modelOverride);
+      return !everyAgentHasModel;
+    }
+    // Apply checks the form it is about to save.
+    if (!key || key === "demo") return false;
     // With a real key, Apply switches a mock router to the BYOK router.
     const nextRouter = byokRouter && isMockRouter(router) ? byokRouter : router;
-    return !isMockRouter(nextRouter);
+    if (isMockRouter(nextRouter)) return false;
+    if (model) return isPlaceholderModel(model);
+    return !everyAgentHasModel;
   };
   // Ask for a model. Mention the Model field's suggestions only when an earlier
   // /models lookup filled them; this adds no request of its own.
@@ -1028,8 +1035,8 @@ export function mountApp(root, { engine, trace, manifest }) {
       return false;
     }
     if (lacksModel(requireActiveKey, router, key, model)) {
-      // A model typed but not applied yet only needs Apply.
-      const unapplied = requireActiveKey && !!model;
+      // A usable model typed but not applied yet only needs Apply.
+      const unapplied = requireActiveKey && !!model && !isPlaceholderModel(model);
       const message = unapplied
         ? "Your model is ready. Click Apply, save & reload before sending a request."
         : modelSetupMessage();

@@ -13,11 +13,24 @@ export function normalizeModelName(value) {
   return model;
 }
 
-// Fail closed before a real (non-mock) router gets the mock placeholder model.
-// A real provider rejects it (for example with 404 model_not_found), so the
-// visitor gets a setup error instead and no request is sent.
+// True for a model a real provider cannot use: an empty name, or the mock placeholder.
+export function isPlaceholderModel(model) {
+  const name = normalizeModelName(model);
+  return !name || name === MOCK_MODEL_NAME;
+}
+
+// The model an agent sends: the visitor's choice, then the agent's declared model,
+// then the network's, then the fallback. The runners and the settings panel both
+// use this, so the panel checks exactly what a turn would send.
+export function effectiveModel(override, agentModel, networkModel, fallback) {
+  return override || agentModel || networkModel || fallback;
+}
+
+// Fail closed before a real (non-mock) router gets an empty model or the mock
+// placeholder. A real provider rejects both (for example with 404 model_not_found),
+// so the visitor gets a setup error instead and no request is sent.
 export function assertModelForRouter(model, mock, routerHost) {
-  if (mock || normalizeModelName(model) !== MOCK_MODEL_NAME) return;
+  if (mock || !isPlaceholderModel(model)) return;
   throw new Error(`A model is required for ${routerHost || "the configured provider"}. `
     + "Open ⚙ BYOK / router settings, enter a model your provider supports in the Model field, "
     + "then click Apply, save & reload.");
