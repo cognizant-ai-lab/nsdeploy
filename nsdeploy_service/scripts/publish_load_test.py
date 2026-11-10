@@ -312,22 +312,32 @@ class PublishLoadTest:
 
     async def sample_health(self, client: httpx.AsyncClient) -> None:
         """
-        Read `/health` every 10 seconds until the publishes finish.
+        Read `/health` every 10 seconds until the publishes finish, then once more,
+        so a run shorter than the interval still records its peak.
 
         :param client: The HTTP client
         """
         # Sample until the run sets the stop event.
         while not self._stop_sampling.is_set():
-            try:
-                health: Dict[str, Any] = await self.get_json(client, "/health")
-                self._health_samples.append({"t": time.time(), "deployments": health.get("deployments"),
-                                             "reserved": len(health.get("port_pool", {}).get("reserved", []))})
-            except (httpx.HTTPError, ValueError) as error:
-                logger.warning("Health read failed: %r", error)
+            await self.record_health(client)
             try:
                 await asyncio.wait_for(self._stop_sampling.wait(), timeout=10.0)
             except asyncio.TimeoutError:
                 pass
+        await self.record_health(client)
+
+    async def record_health(self, client: httpx.AsyncClient) -> None:
+        """
+        Read `/health` once and keep its deployment counts and reserved ports.
+
+        :param client: The HTTP client
+        """
+        try:
+            health: Dict[str, Any] = await self.get_json(client, "/health")
+            self._health_samples.append({"t": time.time(), "deployments": health.get("deployments"),
+                                         "reserved": len(health.get("port_pool", {}).get("reserved", []))})
+        except (httpx.HTTPError, ValueError) as error:
+            logger.warning("Health read failed: %r", error)
 
     async def cleanup(self, client: httpx.AsyncClient, org_start: str, baseline: Dict[str, Any]) -> bool:
         """
