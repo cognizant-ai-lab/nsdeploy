@@ -11,7 +11,7 @@ import { TraceBus } from "./trace.js";
 import { fetchManifest, fetchText, resolveUrl, RemoteRegistry } from "./remote.js";
 import { runAgent } from "./runner.js";
 import { McpClient } from "./mcp.js";
-import { normalizeModelName } from "./model.js";
+import { MOCK_MODEL_NAME, normalizeModelName } from "./model.js";
 import { interactionMessage } from "./cruse.js";
 import { createTurnEventStream } from "./execution-stream.js";
 import { TurnControl } from "./turn-control.js";
@@ -354,7 +354,7 @@ export class Engine {
       // Prior conversation turns ([{role,content}]), only for the top front-man.
       history: history || [],
       turnControl: turnControl || null,
-      defaultModel: network.config.llm_config?.model_name || "mock-1",
+      defaultModel: network.config.llm_config?.model_name || MOCK_MODEL_NAME,
       isTop: !!isTop,
       frontMan: network.findFrontMan(),
       onAnswerDelta: isTop ? (t) => self.onAnswerDelta?.(t) : undefined,

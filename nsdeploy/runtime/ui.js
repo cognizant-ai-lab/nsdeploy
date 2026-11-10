@@ -867,6 +867,15 @@ export function mountApp(root, { engine, trace, manifest }) {
     || (manifest?.llm_router?.mock ? manifest?.llm_router?.base_url : "");
   const byokRouter = engine.byokRouter || "";
   const staticMode = manifest?.deployment?.mode === "static";
+  // Without a visitor-chosen model, each agent sends its declared model, or else
+  // the mock placeholder. The kernel has already copied the network's llm_config
+  // down to every agent, so checking the agents also covers a network model.
+  let everyAgentHasModel = true;
+  // The front man and "agent" tools call a model; coded and toolbox tools do not.
+  for (const spec of net?.config?.tools || []) {
+    const callsModel = spec === frontSpec || net.classifyTool(spec?.name).kind === "agent";
+    if (callsModel && !normalizeModelName(spec?.llm_config?.model_name)) everyAgentHasModel = false;
+  }
 
   routerEl.value = engine.routerOverride || engine.top?.llm?.baseUrl || byokRouter || mockUrl;
   modelEl.value = engine.modelOverride || "";
@@ -983,6 +992,26 @@ export function mountApp(root, { engine, trace, manifest }) {
       return null;
     }
   };
+  // True when an agent would send no chosen model to a real router. The runtime
+  // then falls back to the mock placeholder, which a real provider rejects.
+  const lacksModel = (requireActiveKey, router, key, model) => {
+    if (everyAgentHasModel) return false;
+    // A send uses the applied setup. Apply checks the form it is about to save.
+    if (requireActiveKey) return !engine.mockLLM && !engine.modelOverride;
+    if (!key || key === "demo" || model) return false;
+    // With a real key, Apply switches a mock router to the BYOK router.
+    const nextRouter = byokRouter && isMockRouter(router) ? byokRouter : router;
+    return !isMockRouter(nextRouter);
+  };
+  // Ask for a model. Mention the Model field's suggestions only when an earlier
+  // /models lookup filled them; this adds no request of its own.
+  const modelSetupMessage = () => {
+    const choice = modelOptionsEl.options.length
+      ? "pick a suggested model in the Model field or enter another model your provider supports"
+      : "enter a model your provider supports in the Model field";
+    return "This site needs a model name before it can answer with your key. "
+      + `Open ⚙ BYOK / router settings, ${choice}, then click Apply, save & reload.`;
+  };
   validateConfiguredModel = async (requireActiveKey = true) => {
     let router = routerEl.value.trim();
     const key = keyEl.value.trim();
@@ -995,6 +1024,18 @@ export function mountApp(root, { engine, trace, manifest }) {
       setProfileHint(message, "warn");
       root.querySelector(".ns-settings").open = true;
       (key ? root.querySelector("#ns-apply") : keyEl).focus();
+      addBubble(msgs, "bot", `⚠️ ${message}`);
+      return false;
+    }
+    if (lacksModel(requireActiveKey, router, key, model)) {
+      // A model typed but not applied yet only needs Apply.
+      const unapplied = requireActiveKey && !!model;
+      const message = unapplied
+        ? "Your model is ready. Click Apply, save & reload before sending a request."
+        : modelSetupMessage();
+      setProfileHint(message, "warn");
+      root.querySelector(".ns-settings").open = true;
+      (unapplied ? root.querySelector("#ns-apply") : modelEl).focus();
       addBubble(msgs, "bot", `⚠️ ${message}`);
       return false;
     }

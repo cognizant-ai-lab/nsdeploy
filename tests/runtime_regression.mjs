@@ -414,6 +414,84 @@ assert.throws(
   }
 }
 
+// Model guard: a real (non-mock) router never receives the mock placeholder model.
+// A missing key is still reported first, a real model is still sent, and the mock
+// router still accepts the placeholder.
+{
+  const realFetch = globalThis.fetch;
+  const sent = [];
+  globalThis.fetch = async (_url, init) => { sent.push(JSON.parse(init.body).model); throw new Error("fetch reached"); };
+  try {
+    const real = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "fixture-key", mock: false });
+    await assert.rejects(real.chat({ model: "mock-1", messages: [] }), /model is required for router\.example/);
+    await assert.rejects(real.chat({ model: '"mock-1"', messages: [] }), /model is required/);
+    const keyless = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "", mock: false });
+    await assert.rejects(keyless.chat({ model: "mock-1", messages: [] }), /API key is required/);
+    assert.deepEqual(sent, []);
+    await assert.rejects(real.chat({ model: "gpt-test", messages: [] }), /fetch reached/);
+    const mock = new LlmClient({ baseUrl: "http://127.0.0.1:8091/v1", apiKey: "demo", mock: true });
+    await assert.rejects(mock.chat({ model: "mock-1", messages: [] }), /fetch reached/);
+    assert.deepEqual(sent, ["gpt-test", "mock-1"]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// The same guard for a whole turn, with both runners. A real key and no model stop
+// the turn before any model request; with no key, the key error still comes first.
+{
+  const realFetch = globalThis.fetch;
+  const sent = [];
+  const routers = {
+    "mock.example": { base_url: "https://mock.example/v1", byok_router: "https://byok.example/v1", mock: true },
+    "real.example": { base_url: "https://byok.example/v1", byok_router: "https://byok.example/v1", mock: false },
+  };
+  const jsonResponse = (body, ok = true) => ({ ok, json: async () => body, text: async () => JSON.stringify(body) });
+  const mockAnswer = `data: ${JSON.stringify({ model: "neuro-san-mock", choices: [{ index: 0, delta: { content: "(mock) ok" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`;
+  globalThis.fetch = async (url, init) => {
+    const href = String(url);
+    if (href.endsWith("/chat/completions")) {
+      sent.push(JSON.parse(init.body).model);
+      // The mock router answers any model. A real provider rejects the placeholder
+      // with a 404, which fails fast because the LangChain client does not retry it.
+      if (href.startsWith("https://mock.example/")) {
+        return new Response(mockAnswer, { headers: { "Content-Type": "text/event-stream" } });
+      }
+      return new Response(JSON.stringify({ error: { code: "model_not_found" } }), { status: 404 });
+    }
+    if (href.endsWith("/agent-manifest.json")) {
+      return jsonResponse({ networks: [{ name: "plain", hocon: "plain.json" }], llm_router: routers[new URL(href).host] });
+    }
+    if (href.endsWith("/plain.json")) {
+      return { ok: true, text: async () => JSON.stringify({ tools: [{ name: "front", instructions: "Help." }] }) };
+    }
+    if (href.endsWith("/links.json")) return jsonResponse({}, false);
+    throw new Error(`unexpected fetch: ${href}`);
+  };
+  try {
+    // Run each case with the manual loop, then with the prebuilt LangChain runner.
+    for (const runner of ["manual", "langchain"]) {
+      // A real key switches the mock site to its BYOK router. No model is set anywhere.
+      const keyed = new Engine({ originUrl: "https://mock.example", byokKey: "fixture-key" });
+      const keyless = new Engine({ originUrl: "https://real.example" });
+      if (runner === "langchain") {
+        await keyed.enableLangChain();
+        await keyless.enableLangChain();
+      }
+      await assert.rejects(keyed.run("hello"), /model is required for byok\.example/);
+      assert.equal(keyed.top.llm.mock, false);
+      await assert.rejects(keyless.run("hello"), /API key is required for byok\.example/);
+    }
+    assert.deepEqual(sent, []);
+    // Without a key, the mock site keeps its mock router, which gets the placeholder.
+    const mock = new Engine({ originUrl: "https://mock.example" });
+    assert.match(await mock.run("hello"), /\(mock\) ok/);
+    assert.deepEqual(sent, ["mock-1"]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 // Steering aborts an SSE response that has already started, so a provider stream
 // cannot linger in the background while the replacement model call begins.
 {
