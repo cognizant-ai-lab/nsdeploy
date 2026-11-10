@@ -8,10 +8,18 @@ that the rest of the pipeline treats exactly like a local studio checkout (pyhoc
 include base + `coded_tools` import path). A local checkout can still be used via
 `LocalStudio` for offline/dev use.
 
-Files are located by **suffix-matching the repo's git tree**, so it works regardless
-of the repo's internal layout (e.g. files under a `neuro_san_studio/` package dir):
-a logical path like `toolbox/toolbox_info.hocon` resolves to whatever tree entry ends
-with it, and is cached at the logical path locally.
+Two things are fetched and cached, and they are not the same thing. The **listing**
+is the repo's recursive index of paths — no contents — and the **files** are the
+bytes of the paths that turn out to be needed. A logical path such as
+`toolbox/toolbox_info.hocon` is resolved by suffix-matching it against the listing,
+so this works regardless of the repo's internal layout (e.g. files under a
+`neuro_san_studio/` package dir), and the file is then cached locally at the
+logical path.
+
+The two have different costs. The listing comes from api.github.com and spends one
+of a limited hourly allowance; the files come from raw.githubusercontent.com and
+spend none of it. A cached file is returned without consulting the listing at all,
+so the listing is only needed for a path this cache has never fetched.
 """
 from __future__ import annotations
 
@@ -27,7 +35,7 @@ from typing import List
 from typing import Optional
 
 RAW_URL = "https://raw.githubusercontent.com/{repo}/{ref}/{path}"
-TREE_URL = "https://api.github.com/repos/{repo}/git/trees/{ref}?recursive=1"
+LISTING_URL = "https://api.github.com/repos/{repo}/git/trees/{ref}?recursive=1"
 DEFAULT_REPO = "cognizant-ai-lab/neuro-san-studio"
 DEFAULT_REF = "main"
 
@@ -35,20 +43,20 @@ DEFAULT_REF = "main"
 # stdout, but this module also runs in process inside the deployment service,
 # where a print would land in the middle of that service's own output.
 LOGGER = logging.getLogger(__name__)
-# The recursive tree listing is one API call per process, and a deployment service
-# runs one process per build. Unauthenticated api.github.com allows 60 calls an
-# hour per IP, so a busy service stops being able to resolve includes at all —
-# the failure is a hard RuntimeError, not a slow build. The listing is cached on
-# disk beside the blobs it indexes, so every later build in the TTL reads a file.
-TREE_CACHE_NAME = ".git-tree.json"
-TREE_CACHE_TTL_SECONDS = 900
+# The listing is one API call per process, and a deployment service runs one process
+# per build. Unauthenticated api.github.com allows 60 calls an hour per IP, so a busy
+# service stops being able to resolve includes at all — the failure is a hard
+# RuntimeError, not a slow build. The listing is cached on disk beside the files it
+# indexes, so every later build within the TTL reads it from there.
+LISTING_CACHE_NAME = ".listing.json"
+LISTING_CACHE_TTL_SECONDS = 900
 # A token raises the limit from 60 to 5000 calls an hour. Read from the standard
 # names so an existing CI or container secret is picked up without new config.
 TOKEN_ENV_NAMES = ("NSDEPLOY_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN")
 
 
 def _github_token() -> str:
-    """The GitHub token to authenticate tree listings with, if one is set."""
+    """The GitHub token to authenticate a listing request with, if one is set."""
     # First name that holds a value wins, so a deployment can override the
     # ambient CI token without unsetting it.
     for name in TOKEN_ENV_NAMES:
@@ -105,7 +113,7 @@ class StudioSource:
         __init__). Returns True if available."""
         raise NotImplementedError
 
-    def warm_tree(self) -> bool:
+    def warm_listing(self) -> bool:
         """Make any shared index this source needs available before it is used.
 
         Nothing to do for a source that reads the filesystem; GithubStudio
@@ -148,22 +156,22 @@ class GithubStudio(StudioSource):
         safe = repo.replace("/", "_")
         self._root = Path(cache_dir) if cache_dir else (Path.home() / ".cache" / "nsdeploy" / f"{safe}@{ref}")
         self._root.mkdir(parents=True, exist_ok=True)
-        self._tree: Optional[List[str]] = None
+        self._listing: Optional[List[str]] = None
 
     @property
     def root(self) -> Path:
         return self._root
 
-    def _tree_cache_path(self) -> Path:
-        """Where this repo+ref's tree listing is cached between processes."""
-        return self._root / TREE_CACHE_NAME
+    def _listing_cache_path(self) -> Path:
+        """Where this repo+ref's path listing is cached between processes."""
+        return self._root / LISTING_CACHE_NAME
 
-    def _cached_tree(self) -> Optional[List[str]]:
-        """The tree listing from disk, or None when it is absent or stale."""
-        path = self._tree_cache_path()
+    def _cached_listing(self) -> Optional[List[str]]:
+        """The path listing from disk, or None when it is absent or stale."""
+        path = self._listing_cache_path()
         try:
             age = time.time() - path.stat().st_mtime
-            if age > TREE_CACHE_TTL_SECONDS:
+            if age > LISTING_CACHE_TTL_SECONDS:
                 return None
             paths = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -178,8 +186,8 @@ class GithubStudio(StudioSource):
                 return None
         return paths
 
-    def _store_tree(self, paths: List[str]) -> None:
-        """Cache a tree listing for the next process. A failure is not fatal.
+    def _store_listing(self, paths: List[str]) -> None:
+        """Cache the path listing for the next process. A failure is not fatal.
 
         The temporary name comes from mkstemp rather than the pid: a deployment
         service builds several bundles at once in worker threads of ONE process,
@@ -189,21 +197,21 @@ class GithubStudio(StudioSource):
         """
         tmp: Optional[Path] = None
         try:
-            handle, raw = tempfile.mkstemp(prefix=f"{TREE_CACHE_NAME}.", dir=self._root)
+            handle, raw = tempfile.mkstemp(prefix=f"{LISTING_CACHE_NAME}.", dir=self._root)
             tmp = Path(raw)
             with os.fdopen(handle, "w", encoding="utf-8") as stream:
                 stream.write(json.dumps(paths))
             # Replaced atomically: several builds race here, and a half-written
             # listing would be read as a corrupt cache by all of them.
-            tmp.replace(self._tree_cache_path())
+            tmp.replace(self._listing_cache_path())
         except OSError as exc:
             # Non-fatal: this build already has the listing it just fetched. It is
             # reported because the consequence is otherwise invisible — a cache
             # directory that has turned unwritable, or a full disk, makes every
             # later build spend another api.github.com call until the hourly
             # allowance is gone, with nothing anywhere saying why.
-            LOGGER.warning("cannot cache the git tree for %s@%s at %s: %s",
-                           self.repo, self.ref, self._tree_cache_path(), exc)
+            LOGGER.warning("cannot cache the path listing for %s@%s at %s: %s",
+                           self.repo, self.ref, self._listing_cache_path(), exc)
             if tmp is not None:
                 try:
                     tmp.unlink(missing_ok=True)
@@ -211,19 +219,22 @@ class GithubStudio(StudioSource):
                     LOGGER.warning("cannot remove the temporary cache file %s: %s",
                                    tmp, cleanup)
 
-    def _load_tree(self) -> List[str]:
-        if self._tree is None:
-            self._tree = self._cached_tree()
-        if self._tree is None:
-            data = _http_get(TREE_URL.format(repo=self.repo, ref=self.ref))
+    def _load_listing(self) -> List[str]:
+        if self._listing is None:
+            self._listing = self._cached_listing()
+        if self._listing is None:
+            data = _http_get(LISTING_URL.format(repo=self.repo, ref=self.ref))
             if data is None:
-                raise RuntimeError(f"cannot read git tree for {self.repo}@{self.ref}")
-            self._tree = [t["path"] for t in json.loads(data).get("tree", []) if t.get("type") == "blob"]
-            self._store_tree(self._tree)
-        return self._tree
+                raise RuntimeError(
+                    f"cannot read the path listing for {self.repo}@{self.ref}")
+            # "tree" and "blob" here are GitHub's own names for a directory entry
+            # and a file entry; only the file paths are wanted.
+            self._listing = [t["path"] for t in json.loads(data).get("tree", []) if t.get("type") == "blob"]
+            self._store_listing(self._listing)
+        return self._listing
 
-    def warm_tree(self) -> bool:
-        """Fetch the tree listing now, so later builds do not each fetch it.
+    def warm_listing(self) -> bool:
+        """Fetch the path listing now, so later builds do not each fetch it.
 
         A deployment is a separate process, so the only thing concurrent builds
         can share is the disk cache — and a burst that starts with a cold cache
@@ -234,27 +245,27 @@ class GithubStudio(StudioSource):
         that one call for all of them.
 
         Best effort. A source that cannot be warmed is not broken: the next build
-        that needs a path it has no blob for fetches the listing itself.
+        that needs a path it has no file for fetches the listing itself.
 
         :return: True when a listing is available, False when it could not be read.
         """
         try:
-            self._load_tree()
+            self._load_listing()
         except (OSError, RuntimeError, ValueError) as exc:
-            LOGGER.warning("cannot warm the git tree for %s@%s: %s",
+            LOGGER.warning("cannot warm the path listing for %s@%s: %s",
                            self.repo, self.ref, exc)
             return False
         return True
 
     def _resolve_upstream(self, rel_path: str) -> Optional[str]:
         """Find the actual repo path for a logical rel_path via exact-or-suffix match."""
-        tree = self._load_tree()
-        if rel_path in tree:
+        listing = self._load_listing()
+        if rel_path in listing:
             return rel_path
-        cands = [p for p in tree if p.endswith("/" + rel_path)]
+        cands = [p for p in listing if p.endswith("/" + rel_path)]
         if not cands:  # fall back to basename match (e.g. coded tool module file)
             base = rel_path.split("/")[-1]
-            cands = [p for p in tree if p.endswith("/" + base) or p == base]
+            cands = [p for p in listing if p.endswith("/" + base) or p == base]
         if not cands:
             return None
         return min(cands, key=len)  # shortest path = least-nested / most canonical

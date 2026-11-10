@@ -8,18 +8,18 @@ from unittest import mock
 from typing import Dict, List, Optional
 
 import nsdeploy.studio as studio_module
-from nsdeploy.studio import DEFAULT_REPO, TOKEN_ENV_NAMES, TREE_CACHE_NAME
-from nsdeploy.studio import TREE_CACHE_TTL_SECONDS, GithubStudio, LocalStudio
+from nsdeploy.studio import DEFAULT_REPO, TOKEN_ENV_NAMES, LISTING_CACHE_NAME
+from nsdeploy.studio import LISTING_CACHE_TTL_SECONDS, GithubStudio, LocalStudio
 
-TREE = ["coding/aaosa.hocon", "toolbox/toolbox_info.hocon"]
+LISTING = ["coding/aaosa.hocon", "toolbox/toolbox_info.hocon"]
 
 # The cache and the token are internals on purpose: nothing public exposes the
-# tree listing, and these tests exist to pin exactly that behaviour.
+# path listing, and these tests exist to pin exactly that behaviour.
 # pylint: disable=protected-access
 
 
 class TestGithubStudio(unittest.TestCase):
-    """The git tree listing: cached between processes, and authenticated when a
+    """The repo's path listing: cached between processes, and authenticated when a
     token is available.
 
     The listing is one api.github.com call, and a deployment service runs one
@@ -50,7 +50,7 @@ class TestGithubStudio(unittest.TestCase):
             os.environ[name] = value
         self._tmp.cleanup()
 
-    def _serve_tree(self, payload: Optional[str]) -> None:
+    def _serve_listing(self, payload: Optional[str]) -> None:
         """
         Answer every HTTP call with `payload`, recording the URLs asked for.
 
@@ -77,75 +77,76 @@ class TestGithubStudio(unittest.TestCase):
     @staticmethod
     def _payload(paths: List[str]) -> str:
         """
-        Render a git tree response.
+        Render a GitHub tree response.
 
-        :param paths: The blob paths it should list.
+        :param paths: The file paths it should list.
         :return: The JSON body.
         """
         entries = []
-        # One blob entry per path, plus a tree entry the loader must ignore.
+        # GitHub's own names: a "blob" entry per file, plus a "tree" entry for a
+        # directory, which the loader must ignore.
         for path in paths:
             entries.append({"path": path, "type": "blob"})
         entries.append({"path": "coding", "type": "tree"})
         return json.dumps({"tree": entries})
 
-    def test_the_first_build_fetches_the_tree(self):
-        """The first build fetches the tree."""
-        self._serve_tree(self._payload(TREE))
+    def test_the_first_build_fetches_the_listing(self):
+        """The first build fetches the listing."""
+        self._serve_listing(self._payload(LISTING))
         studio = GithubStudio(cache_dir=self.cache)
-        self.assertEqual(studio._load_tree(), TREE)
+        self.assertEqual(studio._load_listing(), LISTING)
         self.assertEqual(len(self.requested), 1)
 
     def test_a_later_process_reads_the_cache_instead_of_the_api(self):
         """This is the whole point: a second deployment must not spend a second API
         call, because the hourly allowance is what runs out first."""
-        self._serve_tree(self._payload(TREE))
-        GithubStudio(cache_dir=self.cache)._load_tree()
-        self._serve_tree(self._payload(TREE))
-        self.assertEqual(GithubStudio(cache_dir=self.cache)._load_tree(), TREE)
+        self._serve_listing(self._payload(LISTING))
+        GithubStudio(cache_dir=self.cache)._load_listing()
+        self._serve_listing(self._payload(LISTING))
+        self.assertEqual(GithubStudio(cache_dir=self.cache)._load_listing(), LISTING)
         self.assertEqual(self.requested, [])
 
     def test_an_expired_cache_is_refetched(self):
         """The ref moves, so a cache that never expired would pin every later build
-        to the tree as it was the first time anything deployed."""
-        self._serve_tree(self._payload(TREE))
-        GithubStudio(cache_dir=self.cache)._load_tree()
-        stale = time.time() - TREE_CACHE_TTL_SECONDS - 60
-        os.utime(self.cache / TREE_CACHE_NAME, (stale, stale))
-        self._serve_tree(self._payload(TREE))
-        self.assertEqual(GithubStudio(cache_dir=self.cache)._load_tree(), TREE)
+        to the listing as it was the first time anything deployed."""
+        self._serve_listing(self._payload(LISTING))
+        GithubStudio(cache_dir=self.cache)._load_listing()
+        stale = time.time() - LISTING_CACHE_TTL_SECONDS - 60
+        os.utime(self.cache / LISTING_CACHE_NAME, (stale, stale))
+        self._serve_listing(self._payload(LISTING))
+        self.assertEqual(GithubStudio(cache_dir=self.cache)._load_listing(), LISTING)
         self.assertEqual(len(self.requested), 1)
 
     def test_a_corrupt_cache_is_ignored_rather_than_raised(self):
         """Several builds write this file concurrently. A half-written one must cost
         an API call, not a failed deployment."""
-        (self.cache / TREE_CACHE_NAME).write_text("{not json", encoding="utf-8")
-        self._serve_tree(self._payload(TREE))
-        self.assertEqual(GithubStudio(cache_dir=self.cache)._load_tree(), TREE)
+        (self.cache / LISTING_CACHE_NAME).write_text("{not json", encoding="utf-8")
+        self._serve_listing(self._payload(LISTING))
+        self.assertEqual(GithubStudio(cache_dir=self.cache)._load_listing(), LISTING)
         self.assertEqual(len(self.requested), 1)
 
     def test_a_cache_holding_the_wrong_shape_is_ignored(self):
         """A cache holding the wrong shape is ignored."""
-        (self.cache / TREE_CACHE_NAME).write_text('{"tree": []}', encoding="utf-8")
-        self._serve_tree(self._payload(TREE))
-        self.assertEqual(GithubStudio(cache_dir=self.cache)._load_tree(), TREE)
+        (self.cache / LISTING_CACHE_NAME).write_text('{"tree": []}', encoding="utf-8")
+        self._serve_listing(self._payload(LISTING))
+        self.assertEqual(GithubStudio(cache_dir=self.cache)._load_listing(), LISTING)
         self.assertEqual(len(self.requested), 1)
 
-    def test_an_unreadable_tree_is_still_an_error(self):
-        """An unreadable tree is still an error."""
-        self._serve_tree(None)
+    def test_an_unreadable_listing_is_still_an_error(self):
+        """An unreadable listing is still an error."""
+        self._serve_listing(None)
         with self.assertRaises(RuntimeError) as caught:
-            GithubStudio(cache_dir=self.cache)._load_tree()
-        self.assertIn("cannot read git tree", str(caught.exception))
+            GithubStudio(cache_dir=self.cache)._load_listing()
+        self.assertIn("cannot read the path listing", str(caught.exception))
 
     def test_a_cache_holding_a_non_string_entry_is_ignored(self):
         """_resolve_upstream calls endswith() on every entry, so [null] would raise
         AttributeError instead of falling back to a fetch."""
         for payload in ("[null]", "[{}]", '["ok", 7]'):
             with self.subTest(payload=payload):
-                (self.cache / TREE_CACHE_NAME).write_text(payload, encoding="utf-8")
-                self._serve_tree(self._payload(TREE))
-                self.assertEqual(GithubStudio(cache_dir=self.cache)._load_tree(), TREE)
+                (self.cache / LISTING_CACHE_NAME).write_text(payload, encoding="utf-8")
+                self._serve_listing(self._payload(LISTING))
+                self.assertEqual(GithubStudio(cache_dir=self.cache)._load_listing(), LISTING)
                 self.assertEqual(len(self.requested), 1)
 
     def test_concurrent_writers_do_not_share_a_temporary_path(self):
@@ -155,8 +156,8 @@ class TestGithubStudio(unittest.TestCase):
         first = GithubStudio(cache_dir=self.cache)
         second = GithubStudio(cache_dir=self.cache)
         with mock.patch.object(Path, "replace", autospec=True) as replace:
-            first._store_tree(["one.hocon"])
-            second._store_tree(["two.hocon"])
+            first._store_listing(["one.hocon"])
+            second._store_listing(["two.hocon"])
             written = [call.args[0] for call in replace.call_args_list]
         self.assertEqual(len(written), 2)
         self.assertNotEqual(written[0], written[1])
@@ -165,7 +166,7 @@ class TestGithubStudio(unittest.TestCase):
         """A failed write leaves no temporary file behind."""
         with mock.patch.object(Path, "replace", autospec=True, side_effect=OSError("nope")):
             with self.assertLogs(studio_module.LOGGER, level="WARNING"):
-                GithubStudio(cache_dir=self.cache)._store_tree(["one.hocon"])
+                GithubStudio(cache_dir=self.cache)._store_listing(["one.hocon"])
         leftovers = sorted(item.name for item in self.cache.iterdir())
         self.assertEqual(leftovers, [])
 
@@ -174,9 +175,9 @@ class TestGithubStudio(unittest.TestCase):
         hourly allowance is gone, with nothing saying why."""
         with mock.patch.object(Path, "replace", autospec=True, side_effect=OSError("disk full")):
             with self.assertLogs(studio_module.LOGGER, level="WARNING") as logged:
-                GithubStudio(cache_dir=self.cache)._store_tree(["one.hocon"])
+                GithubStudio(cache_dir=self.cache)._store_listing(["one.hocon"])
         report = "\n".join(logged.output)
-        self.assertIn(TREE_CACHE_NAME, report)
+        self.assertIn(LISTING_CACHE_NAME, report)
         self.assertIn("disk full", report)
         self.assertIn(DEFAULT_REPO, report)
 
@@ -187,49 +188,49 @@ class TestGithubStudio(unittest.TestCase):
             with mock.patch.object(Path, "unlink", autospec=True,
                                    side_effect=OSError("read-only")):
                 with self.assertLogs(studio_module.LOGGER, level="WARNING") as logged:
-                    GithubStudio(cache_dir=self.cache)._store_tree(["one.hocon"])
+                    GithubStudio(cache_dir=self.cache)._store_listing(["one.hocon"])
         self.assertIn("read-only", "\n".join(logged.output))
 
     def test_a_successful_write_says_nothing(self):
         """Caching is the normal path; a line per build would be noise."""
         studio = GithubStudio(cache_dir=self.cache)
         with mock.patch.object(studio_module.LOGGER, "warning") as warned:
-            studio._store_tree(["one.hocon"])
+            studio._store_listing(["one.hocon"])
         warned.assert_not_called()
 
     def test_warming_caches_the_listing_for_later_builds(self):
         """The point of warming: one call here, none in the builds that follow."""
-        self._serve_tree(self._payload(TREE))
-        self.assertTrue(GithubStudio(cache_dir=self.cache).warm_tree())
+        self._serve_listing(self._payload(LISTING))
+        self.assertTrue(GithubStudio(cache_dir=self.cache).warm_listing())
         self.assertEqual(len(self.requested), 1)
-        self._serve_tree(self._payload(TREE))
+        self._serve_listing(self._payload(LISTING))
         # A build in its own process, as a deployment is.
-        self.assertEqual(GithubStudio(cache_dir=self.cache)._load_tree(), TREE)
+        self.assertEqual(GithubStudio(cache_dir=self.cache)._load_listing(), LISTING)
         self.assertEqual(self.requested, [])
 
     def test_warming_an_already_warm_source_costs_nothing(self):
         """Warming an already warm source costs nothing."""
-        self._serve_tree(self._payload(TREE))
-        GithubStudio(cache_dir=self.cache).warm_tree()
-        self._serve_tree(self._payload(TREE))
-        self.assertTrue(GithubStudio(cache_dir=self.cache).warm_tree())
+        self._serve_listing(self._payload(LISTING))
+        GithubStudio(cache_dir=self.cache).warm_listing()
+        self._serve_listing(self._payload(LISTING))
+        self.assertTrue(GithubStudio(cache_dir=self.cache).warm_listing())
         self.assertEqual(self.requested, [])
 
     def test_warming_reports_a_failure_without_raising(self):
         """Start-up must not fail because GitHub is unreachable; the next build that
         needs a listing fetches it itself."""
-        self._serve_tree(None)
+        self._serve_listing(None)
         with self.assertLogs(studio_module.LOGGER, level="WARNING") as logged:
-            self.assertFalse(GithubStudio(cache_dir=self.cache).warm_tree())
-        self.assertIn("cannot warm the git tree", "\n".join(logged.output))
+            self.assertFalse(GithubStudio(cache_dir=self.cache).warm_listing())
+        self.assertIn("cannot warm the path listing", "\n".join(logged.output))
 
     def test_a_local_studio_needs_no_warming(self):
         """So a caller can warm whatever source it holds without asking what it is."""
-        self.assertTrue(LocalStudio(self.cache).warm_tree())
+        self.assertTrue(LocalStudio(self.cache).warm_listing())
 
 
 class TestStudioToken(unittest.TestCase):
-    """Which environment variable authenticates a git tree listing.
+    """Which environment variable authenticates a listing request.
 
     A token raises the api.github.com allowance from 60 an hour per IP to 5000,
     which is what makes a busy deployment service able to resolve includes at all.

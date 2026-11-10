@@ -369,7 +369,7 @@ def _org_view(row: dict) -> OrgView:
 
 
 async def _warm_studio(bundler: Bundler) -> None:
-    """Cache the studio's git tree once, before any build needs it.
+    """Cache the studio's path listing once, before any build needs it.
 
     Every deployment resolves its `include` lines in its own child process, so the
     only thing a burst can share is the on-disk listing. Cold, each process misses
@@ -384,7 +384,7 @@ async def _warm_studio(bundler: Bundler) -> None:
     :param bundler: The bundler, which owns how a studio source is chosen.
     """
     source = bundler.studio_source()
-    await asyncio.to_thread(source.warm_tree)
+    await asyncio.to_thread(source.warm_listing)
 
 
 # pylint: disable-next=too-many-locals,too-many-statements  # routes are closures over settings and app
