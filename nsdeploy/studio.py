@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -152,21 +153,38 @@ class GithubStudio(StudioSource):
             return None
         if not isinstance(paths, list):
             return None
+        # Every entry, not just the outer list: _resolve_upstream calls endswith()
+        # on each one, so a cache holding [null] or [{}] would raise AttributeError
+        # instead of falling back to a fetch.
+        for item in paths:
+            if not isinstance(item, str):
+                return None
         return paths
 
     def _store_tree(self, paths: List[str]) -> None:
-        """Cache a tree listing for the next process. A failure is not fatal."""
-        tmp = self._root / f"{TREE_CACHE_NAME}.{os.getpid()}"
+        """Cache a tree listing for the next process. A failure is not fatal.
+
+        The temporary name comes from mkstemp rather than the pid: a deployment
+        service builds several bundles at once in worker threads of ONE process,
+        so a pid-based name is shared, and one writer could replace the file while
+        another still held it open — which is exactly what the atomic replace is
+        meant to prevent.
+        """
+        tmp: Optional[Path] = None
         try:
-            tmp.write_text(json.dumps(paths), encoding="utf-8")
+            handle, raw = tempfile.mkstemp(prefix=f"{TREE_CACHE_NAME}.", dir=self._root)
+            tmp = Path(raw)
+            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                stream.write(json.dumps(paths))
             # Replaced atomically: several builds race here, and a half-written
             # listing would be read as a corrupt cache by all of them.
             tmp.replace(self._tree_cache_path())
         except OSError:
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+            if tmp is not None:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def _load_tree(self) -> List[str]:
         if self._tree is None:

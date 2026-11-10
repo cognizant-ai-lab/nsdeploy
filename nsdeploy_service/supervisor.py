@@ -1318,37 +1318,43 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             log_handle.close()
 
     async def _build(self, dep: Deployment) -> None:
-        # One deadline for both phases, so splitting the slot cannot let a
-        # deployment take twice as long as BUILD_TIMEOUT_SECONDS to settle.
-        deadline: datetime = _now() + timedelta(seconds=self.settings.build_timeout_seconds)
         generated: bool = False
+        deadline: Optional[datetime] = None
         async with self._build_slots:
             if dep.status is not DeploymentStatus.QUEUED:
                 return  # cancelled while queued
+            # Counted from here, not from when the task was scheduled: the wait for
+            # a slot is unbounded, so a deadline set before it would spend a
+            # queued deployment's whole budget on queueing and fail it the moment
+            # its child started. One deadline for both phases, so splitting the
+            # slot cannot let a deployment take twice BUILD_TIMEOUT_SECONDS.
+            deadline = _now() + timedelta(seconds=self.settings.build_timeout_seconds)
             dep.status = DeploymentStatus.BUILDING
             self._persist(dep)
-            # Before the child starts, so the readiness test below can only pass
-            # on output this build produced.
-            try:
-                await asyncio.to_thread(self._clear_readiness, dep)
-            except DeploymentError as exc:
-                self._fail(dep, str(exc))
-                return
-            try:
-                dep.process = await asyncio.to_thread(self._spawn, dep)
-            except OSError as exc:
-                self._fail(dep, f"could not start nsdeploy: {exc}")
-                return
-            self._persist(dep)  # record the pid now that the child exists
+            # Counted for the whole time the slot is held, clearing and spawning
+            # included, or /health reports free capacity while every slot is busy.
             self._slots_in_use += 1
             try:
+                # Cleared before the child starts, so the readiness test can only
+                # pass on output this build produced.
+                try:
+                    await asyncio.to_thread(self._clear_readiness, dep)
+                except DeploymentError as exc:
+                    self._fail(dep, str(exc))
+                    return
+                try:
+                    dep.process = await asyncio.to_thread(self._spawn, dep)
+                except OSError as exc:
+                    self._fail(dep, f"could not start nsdeploy: {exc}")
+                    return
+                self._persist(dep)  # record the pid now that the child exists
                 generated = await self._await_generated(dep, deadline)
             except asyncio.CancelledError:
                 self._teardown(dep, DeploymentStatus.STOPPED, "service shutting down")
                 raise
             finally:
                 self._slots_in_use -= 1
-        if not generated:
+        if not generated or deadline is None:
             return
         # Outside the slot. The child has written its bundle and is only binding
         # a port now, so it needs no build capacity — and holding one here is what

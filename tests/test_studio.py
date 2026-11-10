@@ -4,10 +4,11 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from typing import List, Optional
+from unittest import mock
+from typing import Dict, List, Optional
 
 import nsdeploy.studio as studio_module
-from nsdeploy.studio import TREE_CACHE_NAME, TREE_CACHE_TTL_SECONDS, GithubStudio
+from nsdeploy.studio import TOKEN_ENV_NAMES, TREE_CACHE_NAME, TREE_CACHE_TTL_SECONDS, GithubStudio
 
 TREE = ["coding/aaosa.hocon", "toolbox/toolbox_info.hocon"]
 
@@ -31,11 +32,21 @@ class TestGithubStudio(unittest.TestCase):
         self.cache = Path(self._tmp.name)
         self._http_get = studio_module._http_get
         self.requested: List[str] = []
+        # Saved and cleared, not merely cleared: a developer's own token would
+        # otherwise decide what these tests assert, and tearDown would then take
+        # it away from every test that runs after them.
+        self._tokens: Dict[str, str] = {}
+        for name in TOKEN_ENV_NAMES:
+            if name in os.environ:
+                self._tokens[name] = os.environ.pop(name)
 
     def tearDown(self) -> None:
         studio_module._http_get = self._http_get
-        for name in ("NSDEPLOY_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
+        # Whatever this test set goes, whatever the developer had comes back.
+        for name in TOKEN_ENV_NAMES:
             os.environ.pop(name, None)
+        for name, value in self._tokens.items():
+            os.environ[name] = value
         self._tmp.cleanup()
 
     def _serve_tree(self, payload: Optional[str]) -> None:
@@ -126,6 +137,36 @@ class TestGithubStudio(unittest.TestCase):
             GithubStudio(cache_dir=self.cache)._load_tree()
         self.assertIn("cannot read git tree", str(caught.exception))
 
+    def test_a_cache_holding_a_non_string_entry_is_ignored(self):
+        """_resolve_upstream calls endswith() on every entry, so [null] would raise
+        AttributeError instead of falling back to a fetch."""
+        for payload in ("[null]", "[{}]", '["ok", 7]'):
+            with self.subTest(payload=payload):
+                (self.cache / TREE_CACHE_NAME).write_text(payload, encoding="utf-8")
+                self._serve_tree(self._payload(TREE))
+                self.assertEqual(GithubStudio(cache_dir=self.cache)._load_tree(), TREE)
+                self.assertEqual(len(self.requested), 1)
+
+    def test_concurrent_writers_do_not_share_a_temporary_path(self):
+        """A deployment service builds several bundles at once in worker threads of
+        one process, so a pid-based temporary name would be shared and one writer
+        could replace the file while another still held it open."""
+        first = GithubStudio(cache_dir=self.cache)
+        second = GithubStudio(cache_dir=self.cache)
+        with mock.patch.object(Path, "replace", autospec=True) as replace:
+            first._store_tree(["one.hocon"])
+            second._store_tree(["two.hocon"])
+            written = [call.args[0] for call in replace.call_args_list]
+        self.assertEqual(len(written), 2)
+        self.assertNotEqual(written[0], written[1])
+
+    def test_a_failed_write_leaves_no_temporary_file_behind(self):
+        """A failed write leaves no temporary file behind."""
+        with mock.patch.object(Path, "replace", autospec=True, side_effect=OSError("nope")):
+            GithubStudio(cache_dir=self.cache)._store_tree(["one.hocon"])
+        leftovers = sorted(item.name for item in self.cache.iterdir())
+        self.assertEqual(leftovers, [])
+
     def test_no_token_configured_reports_none(self):
         """No token configured reports none."""
         self.assertEqual(studio_module._github_token(), "")
@@ -133,7 +174,7 @@ class TestGithubStudio(unittest.TestCase):
     def test_each_token_name_is_honoured(self):
         """Each token name is honoured."""
         # Checked one at a time, so a deployment setting any of them is covered.
-        for name in ("NSDEPLOY_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
+        for name in TOKEN_ENV_NAMES:
             with self.subTest(name=name):
                 os.environ[name] = f"token-for-{name}"
                 self.assertEqual(studio_module._github_token(), f"token-for-{name}")
