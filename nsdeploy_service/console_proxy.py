@@ -111,12 +111,10 @@ class ConsoleProxy:
         """
         Check whether a request is one the console makes.
 
-        :param method: The HTTP method. HEAD is treated as GET.
+        :param method: The HTTP method.
         :param api_path: The path after `/console-api`.
         :return: True if the method and path are on `ALLOWED_REQUESTS`.
         """
-        if method == "HEAD":
-            method = "GET"
         # Look for an entry with this method whose pattern matches the whole path.
         allowed_method: str
         allowed_path: Pattern[str]
@@ -134,12 +132,13 @@ class ConsoleProxy:
         including the form posts that need no CORS preflight.
 
         :param headers: The request headers as ASGI byte pairs.
-        :return: True if `Sec-Fetch-Site` names another origin, or `Origin` matches neither `X-Forwarded-Host` nor
-            `Host`.
+        :return: True if `Sec-Fetch-Site` names another origin, or, without `Sec-Fetch-Site`, `Origin` matches neither
+            `X-Forwarded-Host` nor `Host`.
         """
+        # The browser sets Sec-Fetch-Site and a page cannot change it, so Origin is only compared without it.
         fetch_site: Optional[str] = self.header(headers, b"sec-fetch-site")
-        if fetch_site is not None and fetch_site.lower() not in self.SAME_ORIGIN_FETCH_SITES:
-            return True
+        if fetch_site is not None:
+            return fetch_site.lower() not in self.SAME_ORIGIN_FETCH_SITES
         origin: Optional[str] = self.header(headers, b"origin")
         if origin is None:
             return False

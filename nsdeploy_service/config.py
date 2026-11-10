@@ -249,6 +249,8 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
         "API_TOKEN, through /console-api. That includes uploading a network, which can execute arbitrary Python "
         "on this host (see nsdeploy_service/README.md)."
     )
+    # /health needs no token and the console shows its warnings to every visitor, so it gets a neutral line.
+    CONSOLE_PROXY_HEALTH_WARNING: ClassVar[str] = "CONSOLE_PROXY is on, so console requests don't need API_TOKEN"
 
     # Origins allowed to call this API from a browser on another host. Empty — the
     # default — installs no CORS middleware at all, so the service answers exactly as

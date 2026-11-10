@@ -1171,7 +1171,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # cover: any page a user visits can drive this service from their browser,
         # loopback included, because the browser reaches 127.0.0.1 for them.
         if settings.console_proxy:
-            warnings.append(settings.CONSOLE_PROXY_WARNING)
+            warnings.append(settings.CONSOLE_PROXY_HEALTH_WARNING)
         if "*" in settings.cors_origins and not settings.api_token:
             warnings.append(
                 "CORS_ORIGINS is '*' with no API_TOKEN set; any web page a user "
@@ -1332,6 +1332,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             for field, value in payload.items() if field in SETTINGS_BOOL_KEYS
         })
 
+        # A blank token would turn authentication off for the whole API, and keep it off after a restart.
+        if "NSDEPLOY_SERVICE_API_TOKEN" in updates and not updates.get("NSDEPLOY_SERVICE_API_TOKEN"):
+            raise HTTPException(status_code=400, detail="the API token can't be blank")
         if not Settings.is_valid_api_token(updates.get("NSDEPLOY_SERVICE_API_TOKEN", "")):
             raise HTTPException(status_code=400, detail="the API token must be printable ASCII")
         if updates:

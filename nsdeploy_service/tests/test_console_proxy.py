@@ -1,8 +1,10 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Dict
 from typing import Optional
+from unittest import mock
 
 from fastapi.testclient import TestClient
 from httpx import Response
@@ -23,7 +25,8 @@ class TestConsoleProxy(unittest.TestCase):
         """
         Start one service with the proxy on and one with it off, both requiring `TOKEN`.
         """
-        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up by addCleanup
+        self.addCleanup(self._tmp.cleanup)
         work = Path(self._tmp.name)
         on_settings = Settings(work_root=work / "on", port_start=8730, port_end=8739, api_token=self.TOKEN,
                                console_proxy=True)
@@ -31,16 +34,10 @@ class TestConsoleProxy(unittest.TestCase):
                                 cors_origins=[self.CORS_ORIGIN])
         self.on_client = TestClient(create_app(on_settings))
         self.off_client = TestClient(create_app(off_settings))
-        self.on_client.__enter__()  # pylint: disable=unnecessary-dunder-call; left in tearDown
-        self.off_client.__enter__()  # pylint: disable=unnecessary-dunder-call; left in tearDown
-
-    def tearDown(self) -> None:
-        """
-        Stop both services and remove their work directories.
-        """
-        self.on_client.__exit__(None, None, None)
-        self.off_client.__exit__(None, None, None)
-        self._tmp.cleanup()
+        self.on_client.__enter__()  # pylint: disable=unnecessary-dunder-call; left by addCleanup
+        self.addCleanup(self.on_client.__exit__, None, None, None)
+        self.off_client.__enter__()  # pylint: disable=unnecessary-dunder-call; left by addCleanup
+        self.addCleanup(self.off_client.__exit__, None, None, None)
 
     def _call(self, method: str, path: str, console_proxy: bool = True, token: Optional[str] = None,
               headers: Optional[Dict[str, str]] = None) -> Response:
@@ -114,12 +111,6 @@ class TestConsoleProxy(unittest.TestCase):
                 self.assertEqual(response.status_code, 403)
                 self.assertTrue(response.json().get("detail").endswith("isn't a console request"))
 
-    def test_head_is_treated_as_get(self) -> None:
-        """
-        HEAD on a GET the console makes is passed on rather than refused.
-        """
-        self.assertNotEqual(self._call("HEAD", "/console-api/health").status_code, 403)
-
     def test_cross_site_requests_are_refused(self) -> None:
         """
         A browser request from another site gets a 403, including one that needs no CORS preflight.
@@ -141,7 +132,8 @@ class TestConsoleProxy(unittest.TestCase):
         # Each of these is how a browser marks a request from the same origin.
         headers: Dict[str, str]
         for headers in ({"Origin": "http://testserver"}, {"Sec-Fetch-Site": "same-origin"},
-                        {"Origin": "http://testserver", "Sec-Fetch-Site": "same-origin"}):
+                        {"Origin": "http://testserver", "Sec-Fetch-Site": "same-origin"},
+                        {"Origin": "http://testserver:8080", "Sec-Fetch-Site": "same-origin"}):
             with self.subTest(headers=headers):
                 self.assertEqual(self._call("GET", "/console-api/orgs", headers=headers).status_code, 200)
 
@@ -149,7 +141,7 @@ class TestConsoleProxy(unittest.TestCase):
         """
         Behind a proxy that rewrites Host, a request whose Origin matches X-Forwarded-Host is passed on.
         """
-        headers: Dict[str, str] = {"Origin": "https://agents.example.com", "Sec-Fetch-Site": "same-origin",
+        headers: Dict[str, str] = {"Origin": "https://agents.example.com",
                                    "X-Forwarded-Host": "agents.example.com, edge.example.net"}
         self.assertEqual(self._call("GET", "/console-api/orgs", headers=headers).status_code, 200)
         headers["X-Forwarded-Host"] = "other.example.com"
@@ -168,9 +160,11 @@ class TestConsoleProxy(unittest.TestCase):
         """
         /health warns while the proxy is on, and not while it is off.
         """
-        self.assertIn(Settings.CONSOLE_PROXY_WARNING, self._call("GET", "/health").json().get("warnings"))
+        on_warnings = self._call("GET", "/health").json().get("warnings")
+        self.assertIn(Settings.CONSOLE_PROXY_HEALTH_WARNING, on_warnings)
+        self.assertNotIn(Settings.CONSOLE_PROXY_WARNING, on_warnings)
         off_warnings = self._call("GET", "/health", console_proxy=False).json().get("warnings")
-        self.assertNotIn(Settings.CONSOLE_PROXY_WARNING, off_warnings)
+        self.assertNotIn(Settings.CONSOLE_PROXY_HEALTH_WARNING, off_warnings)
 
     def test_off_passes_the_callers_token_through(self) -> None:
         """
@@ -202,7 +196,16 @@ class TestConsoleProxy(unittest.TestCase):
         """
         POST /settings refuses a token the proxy could not put in a header.
         """
-        response = self.off_client.post("/settings", json={"nsdeploy_api_token": "s3crèt"},
-                                        headers={"Authorization": f"Bearer {self.TOKEN}"})
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json().get("detail"), "the API token must be printable ASCII")
+        # Point ENV_FILE at the work directory, so a regression cannot write into the checkout's .env.
+        env_file: Dict[str, str] = {"NSDEPLOY_SERVICE_ENV_FILE": str(Path(self._tmp.name) / ".env")}
+        token: str
+        detail: str
+        # A token outside printable ASCII, and a blank one, which would turn authentication off.
+        for token, detail in (("s3crèt", "the API token must be printable ASCII"),
+                              (" ", "the API token can't be blank")):
+            with self.subTest(token=token), mock.patch.dict(os.environ, env_file):
+                response = self.off_client.post("/settings", json={"nsdeploy_api_token": token},
+                                                headers={"Authorization": f"Bearer {self.TOKEN}"})
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json().get("detail"), detail)
+        self.assertFalse((Path(self._tmp.name) / ".env").exists())

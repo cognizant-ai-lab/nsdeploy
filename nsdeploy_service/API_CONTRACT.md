@@ -51,12 +51,13 @@ PATCH  /orgs/{id}
 DELETE /orgs/{id}  /deployments/{id}
 ```
 
-`HEAD` is treated as `GET`. Everything else under `/console-api` gets
+Everything else under `/console-api` gets
 `403` `{"detail": "<method> <path> isn't a console request"}`, so `POST /settings`,
 `/bundles` and the other routes still need the caller's own token. A request whose
-`Sec-Fetch-Site` is not `same-origin` or `none`, or whose `Origin` matches neither the
-first `X-Forwarded-Host` entry nor `Host`, gets `403` `{"detail": "/console-api refuses requests from another site"}`, so
-another page cannot use a visitor's browser to make them, CORS preflights included.
+`Sec-Fetch-Site` is not `same-origin` or `none`, or, without `Sec-Fetch-Site`, whose
+`Origin` matches neither the first `X-Forwarded-Host` entry nor `Host`, gets `403`
+`{"detail": "/console-api refuses requests from another site"}`, so another page cannot
+use a visitor's browser to make them, CORS preflights included.
 `GET /console-api/settings` returns an empty `last4` for every key.
 
 ### Cross-origin callers (CORS)
