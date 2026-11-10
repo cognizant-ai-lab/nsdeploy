@@ -71,18 +71,25 @@ class BuildSlotTest(unittest.IsolatedAsyncioTestCase):
         self.supervisor = Supervisor(settings)
         self.generated = set()
         self.processes = []
-        # Never answers, so every deployment stays in the readiness phase and only
-        # the slot can let the next one start.
-        # The three seams this test drives. Patched rather than mocked so the real
+        # The seams these tests drive. Patched rather than mocked so the real
         # _build coroutine runs: the slot handover is what is under test.
+        # _site_is_ours never answers, so a deployment stays in the readiness
+        # phase and only the slot can let the next one start.
         # pylint: disable=protected-access
         self.supervisor._spawn = self._spawn
         self.supervisor._site_is_ready_to_summarize = self._has_generated
         self.supervisor._site_is_ours = self._never_ready
         # pylint: enable=protected-access
 
+    async def asyncTearDown(self) -> None:
+        # Retired first, so _terminate_tree returns before it signals anything.
+        # Here rather than at the end of each test, so a failed assertion still
+        # stops the build tasks instead of leaving the suite to hang on them.
+        for process in self.processes:
+            process.retire()
+        await self.supervisor.shutdown()
+
     def tearDown(self) -> None:
-        self.supervisor.store.close()
         self._tmp.cleanup()
 
     def _spawn(self, _dep) -> FakeProcess:
@@ -142,10 +149,38 @@ class BuildSlotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(queue.get("waiting"), 0)
         self.assertEqual(queue.get("building"), 2)
         self.assertEqual(queue.get("slots_in_use"), 1)
-        # Retired before shutdown, so teardown has nothing to signal.
-        for process in self.processes:
-            process.retire()
-        await self.supervisor.shutdown()
+
+    def _leave_previous_build(self, dep) -> None:
+        """
+        Write the artifacts a finished build leaves in the output directory.
+
+        :param dep: The deployment whose output directory to seed.
+        """
+        dep.out_dir.mkdir(parents=True, exist_ok=True)
+        # The two files bundle_ready() tests for, as a previous build left them.
+        for name in ("agent-manifest.json", f"{dep.name}.network.json"):
+            (dep.out_dir / name).write_text("{}", encoding="utf-8")
+
+    async def test_a_previous_builds_artifacts_do_not_release_the_slot(self):
+        """A restart or a re-upload keeps the deployment's output directory, so the
+        last build's manifest and network JSON are already there when the next child
+        starts. bundle_ready() tests only that they exist, so releasing the slot on
+        them would hand it back before this build has resolved anything — and
+        concurrent restarts would then resolve and generate with no bound at all.
+        """
+        # The real readiness test, against real files on disk.
+        del self.supervisor._site_is_ready_to_summarize  # pylint: disable=protected-access
+        first = self.supervisor.create(b'{"tools": []}', DeployOptions(name="first"))
+        self._leave_previous_build(first)
+        second = self.supervisor.create(b'{"tools": []}', DeployOptions(name="second"))
+        self.supervisor.start(first)
+        await self._settle()
+        self.supervisor.start(second)
+        await self._settle()
+        # One slot. The first has generated nothing of its own yet, so it must still
+        # hold it and the second must still be queued.
+        self.assertEqual(self.supervisor.build_queue().get("slots_in_use"), 1)
+        self.assertEqual(second.status, DeploymentStatus.QUEUED)
 
 
 if __name__ == "__main__":

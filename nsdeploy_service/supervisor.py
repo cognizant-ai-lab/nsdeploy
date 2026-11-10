@@ -351,14 +351,31 @@ def engine_supports_host(python_exe: str) -> bool:
     return "--host" in (result.stdout or "")
 
 
+def readiness_artifacts(out_dir: Path, name: str) -> List[Path]:
+    """The files a finished build leaves behind, which `summarize_build` reads.
+
+    Named in one place because two things depend on the same list: `bundle_ready`
+    tests for them, and `Supervisor._clear_readiness` removes them before a
+    rebuild so that the test cannot pass on the last build's output.
+    """
+    return [out_dir / "agent-manifest.json", out_dir / f"{name}.network.json"]
+
+
 def bundle_ready(out_dir: Path, name: str) -> bool:
     """True once nsdeploy has written the artifacts `summarize_build` reads.
 
     Gating readiness on this keeps a deployment out of `ready` until the values the
     directory and the network map are built from actually exist on disk.
+
+    Existence only, deliberately: the files are written by another process and
+    there is no moment at which this one can read them atomically. What makes that
+    safe is that a rebuild clears them first — see `Supervisor._clear_readiness`.
     """
-    return ((out_dir / "agent-manifest.json").is_file()
-            and (out_dir / f"{name}.network.json").is_file())
+    # Both have to exist; the first missing one answers the question.
+    for path in readiness_artifacts(out_dir, name):
+        if not path.is_file():
+            return False
+    return True
 
 
 MAX_ERROR_CHARS = 600
@@ -1235,6 +1252,34 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             cmd.append("--no-cruse")
         return cmd
 
+    def _clear_readiness(self, dep: Deployment) -> None:
+        """
+        Remove the artifacts a previous build of this deployment left behind.
+
+        A restart and a re-upload both keep the deployment's work directory, so the
+        last build's `agent-manifest.json` and network JSON are still in `out_dir`
+        when the next child starts. `bundle_ready` tests only that those files
+        exist, so without this the build slot is handed back on the first poll —
+        before the new child has resolved anything — and concurrent restarts would
+        run their resolution and generation with no bound at all.
+
+        One visible consequence: `/graph` and the inferred relations read the
+        network JSON from `out_dir` (relations.py), so this deployment contributes
+        nothing to them until the rebuild writes it again. It is `building` for that
+        whole window, which is what the directory already reports.
+
+        :param dep: The deployment about to be built.
+        :raises DeploymentError: If an artifact cannot be removed. Continuing would
+                                 report a stale bundle as this build's own.
+        """
+        # Both files, so a half-cleared directory cannot read as a finished build.
+        for path in readiness_artifacts(dep.out_dir, dep.name):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                raise DeploymentError(
+                    f"cannot clear the previous build's {path.name}: {exc}") from exc
+
     def _spawn(self, dep: Deployment) -> subprocess.Popen:
         env = dict(os.environ)
         env["PYTHONUNBUFFERED"] = "1"
@@ -1282,6 +1327,13 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
                 return  # cancelled while queued
             dep.status = DeploymentStatus.BUILDING
             self._persist(dep)
+            # Before the child starts, so the readiness test below can only pass
+            # on output this build produced.
+            try:
+                await asyncio.to_thread(self._clear_readiness, dep)
+            except DeploymentError as exc:
+                self._fail(dep, str(exc))
+                return
             try:
                 dep.process = await asyncio.to_thread(self._spawn, dep)
             except OSError as exc:
