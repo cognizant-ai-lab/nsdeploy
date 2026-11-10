@@ -134,7 +134,8 @@ class ConsoleProxy:
         including the form posts that need no CORS preflight.
 
         :param headers: The request headers as ASGI byte pairs.
-        :return: True if `Sec-Fetch-Site` names another origin or `Origin` does not match `Host`.
+        :return: True if `Sec-Fetch-Site` names another origin, or `Origin` matches neither `X-Forwarded-Host` nor
+            `Host`.
         """
         fetch_site: Optional[str] = self.header(headers, b"sec-fetch-site")
         if fetch_site is not None and fetch_site.lower() not in self.SAME_ORIGIN_FETCH_SITES:
@@ -142,8 +143,14 @@ class ConsoleProxy:
         origin: Optional[str] = self.header(headers, b"origin")
         if origin is None:
             return False
+        origin_host: str = urlsplit(origin.lower()).netloc
+        # A proxy such as Azure Front Door rewrites Host and keeps the browser's host in X-Forwarded-Host, as
+        # SiteProxy expects. A page on another site cannot set that header without a preflight, which is refused.
+        forwarded_host: str = (self.header(headers, b"x-forwarded-host") or "").split(",")[0].strip().lower()
         host: str = (self.header(headers, b"host") or "").lower()
-        return urlsplit(origin.lower()).netloc != host
+        if not origin_host:
+            return True
+        return origin_host not in (forwarded_host, host)
 
     @staticmethod
     def header(headers: List[Tuple[bytes, bytes]], name: bytes) -> Optional[str]:

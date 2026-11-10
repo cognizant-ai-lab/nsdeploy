@@ -145,6 +145,16 @@ class TestConsoleProxy(unittest.TestCase):
             with self.subTest(headers=headers):
                 self.assertEqual(self._call("GET", "/console-api/orgs", headers=headers).status_code, 200)
 
+    def test_requests_through_a_host_rewriting_proxy_are_passed_on(self) -> None:
+        """
+        Behind a proxy that rewrites Host, a request whose Origin matches X-Forwarded-Host is passed on.
+        """
+        headers: Dict[str, str] = {"Origin": "https://agents.example.com", "Sec-Fetch-Site": "same-origin",
+                                   "X-Forwarded-Host": "agents.example.com, edge.example.net"}
+        self.assertEqual(self._call("GET", "/console-api/orgs", headers=headers).status_code, 200)
+        headers["X-Forwarded-Host"] = "other.example.com"
+        self.assertEqual(self._call("GET", "/console-api/orgs", headers=headers).status_code, 403)
+
     def test_settings_leave_out_the_key_endings(self) -> None:
         """
         GET /console-api/settings says the token is set without showing any of it.
