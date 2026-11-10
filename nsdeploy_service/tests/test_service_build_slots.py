@@ -11,16 +11,10 @@ from nsdeploy_service.supervisor import Supervisor
 
 
 class FakeProcess:
-    """A child that is alive until the test retires it, standing in for nsdeploy.
-
-    `pid` is deliberately 0: teardown calls os.killpg(os.getpgid(pid)), and any
-    plausible-looking pid here would signal a real process group on the machine
-    running the tests. Retiring the process first makes _terminate_tree return
-    before it signals anything, and 0 keeps that harmless if it ever does not.
-    """
+    """A fake child whose invalid PID cannot identify a real process group."""
 
     def __init__(self) -> None:
-        self.pid = 0
+        self.pid = -1
         self.returncode = 0
         self.exited = False
 
