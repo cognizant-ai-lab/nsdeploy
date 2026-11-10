@@ -97,21 +97,20 @@ def main(argv: list[str] | None = None) -> int:
           f"   TTL {settings.ttl_seconds or 'disabled'}"
           f"   auth {'bearer token' if settings.api_token else 'open'}"
           f"{'   console proxy on' if settings.console_proxy else ''}")
-    if settings.console_proxy:
-        print(f"\n  WARNING: {settings.CONSOLE_PROXY_WARNING}\n", file=sys.stderr)
     if not settings.api_token and settings.host not in ("127.0.0.1", "localhost", "::1"):
         print("\n  WARNING: bound off-loopback with no --api-token. An uploaded HOCON can "
               "execute\n           arbitrary Python on this host. See nsdeploy_service/README.md.\n",
               file=sys.stderr)
     # Theming runs in each site's build, which receives the key only when SITE_ENV_ALLOW lists it, and
     # SITE_ENV_ALLOW can never pass the service's own credentials.
-    site_env_warnings: list[str | None] = [
+    start_warnings: list[str | None] = [
+        settings.CONSOLE_PROXY_WARNING if settings.console_proxy else None,
         SiteEnv.theme_key_warning(settings.theme, os.environ, settings.site_env_allow),
         SiteEnv.allow_list_warning(settings.site_env_allow),
     ]
     warning: str | None
     # Print each warning that applies, wrapped to the banner's width.
-    for warning in site_env_warnings:
+    for warning in start_warnings:
         if warning:
             text: str = textwrap.fill(warning, width=88, initial_indent="  WARNING: ", subsequent_indent=" " * 11)
             print(f"\n{text}\n", file=sys.stderr)
