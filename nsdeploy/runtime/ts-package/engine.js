@@ -116,6 +116,24 @@ export function assertRouterKey(llm, apiKey) {
   }
 }
 
+// With a real router and no model chosen, each partner agent that calls a model has to
+// name one, itself or through its network. neuro-san would otherwise send its default
+// model, which the visitor's router may not have. This matches the settings panel,
+// which asks for a model when an agent of the top network has none.
+export function assertPartnerModels(network, { mock, modelOverride, routerHost } = {}) {
+  if (mock || normalizeModelName(modelOverride)) return;
+  const networkModel = normalizeModelName(network.config?.llm_config?.model_name);
+  const frontMan = network.findFrontMan();
+  for (const spec of network.config?.tools || []) {
+    const callsModel = spec?.name === frontMan || network.classifyTool(spec?.name).kind === "agent";
+    if (callsModel && !normalizeModelName(spec?.llm_config?.model_name) && !networkModel) {
+      throw new Error(`A model is required for ${routerHost || "the configured provider"}. `
+        + "Open ⚙ BYOK / router settings, enter a model your provider supports in the Model field, "
+        + "then click Apply, save & reload.");
+    }
+  }
+}
+
 export class Engine {
   constructor({ originUrl, trace, byokKey, routerOverride, maxAgentCalls = 24 } = {}) {
     this.originUrl = (originUrl || (typeof location !== "undefined" ? location.origin : "")).replace(/\/$/, "");
@@ -684,6 +702,9 @@ export class Engine {
       const fetchedUrls = { manifest: `${peerBase}/agent-manifest.json`, hocon: resolveUrl(peerBase, entry.hocon) };
       compiled = await this._compile(peerBase, manifest, entry);
       compiled.base = peerBase;
+      assertPartnerModels(compiled.network, {
+        mock: this.mockLLM, modelOverride: this.modelOverride, routerHost: hostOf(this.top.llm?.baseUrl),
+      });
       await registerRemoteActions(this.actions, { base: peerBase, network: compiled.network.name }, manifest);
       this.peerNetworks.set(url, { base: peerBase, network: compiled.network });
       this.registry.set(site, lastSeg, { base: peerBase, network: compiled.network, brand: manifest.brand });
