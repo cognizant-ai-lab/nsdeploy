@@ -1,4 +1,4 @@
-// Canonicalize model identifiers entered through URLs, profiles, or forms.
+// Canonicalize model identifiers entered through profiles or forms.
 export function normalizeModelName(value) {
   let model = String(value ?? "").trim();
   while (model.length >= 2) {

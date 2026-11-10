@@ -272,6 +272,9 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
     # with a bearer header, never a cookie, so there is nothing for a browser to
     # attach automatically and no reason to let it.
     cors_origins: List[str] = field(default_factory=list)
+    # Environment variables a site process still receives although SiteEnv would remove
+    # them, such as a provider key a coded tool reads. Never the service's own credentials.
+    site_env_allow: List[str] = field(default_factory=list)
 
     # --- deployment environment ---
     # `/health` warns that https site URLs cannot resolve when the scheme is https and
@@ -337,6 +340,7 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
             api_token=_env("API_TOKEN", default.api_token),
             console_proxy=_env_bool("CONSOLE_PROXY", default.console_proxy, strict=True),
             cors_origins=_env_list("CORS_ORIGINS", default.cors_origins),
+            site_env_allow=_env_list("SITE_ENV_ALLOW", default.site_env_allow),
             tls_terminated_externally=_env_bool("TLS_TERMINATED_EXTERNALLY",
                                                 default.tls_terminated_externally),
         )
