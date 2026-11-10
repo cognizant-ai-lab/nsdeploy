@@ -35,7 +35,8 @@ def render_result(result):
                 f"Total: ${receipt['paid_cents']/100:,.2f}. Receipt: {receipt['reservation']}. "
                 "No real money moved and no real room was reserved.")
     if state == "NO_AGREEMENT":
-        return "The arbiter found no offer within your maximum. Nothing was booked or charged. You can give me a different budget to try again."
+        return ("The arbiter found no offer within your maximum. Nothing was booked or charged. "
+                "You can give me a different budget to try again.")
     if state in ("CANCELLED", "EXPIRED"):
         return f"Your simulated booking is {state.lower()}. Nothing was charged and any hold was released."
     offers = result.get("offers", [])
@@ -46,7 +47,8 @@ def render_result(result):
                 f"{offer['scope']}\n\n{offer['cancellation']}\n\n"
                 "Nothing is booked or charged yet. Reply ‘Confirm booking’ to approve this exact offer, "
                 "or ask me to cancel. The offer expires 15 minutes after negotiation.")
-    return "Your private mandate is recorded. The Inn has not returned a completed offer yet; ask me to retry negotiation."
+    return ("Your private mandate is recorded. The Inn has not returned a completed offer yet; "
+            "ask me to retry negotiation.")
 
 
 class ButterpinkCommerceBoundary(AgentMiddleware):

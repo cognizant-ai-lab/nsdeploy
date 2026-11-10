@@ -1,0 +1,35 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "RESTful API public test records",
+    "version": "1.0.0",
+    "description": "nsDeploy-maintained description of public operations documented at https://restful-api.dev/. This is not a provider-published specification. Use synthetic data only; these are test objects, not restaurant reservations."
+  },
+  "servers": [{"url": "https://api.restful-api.dev"}],
+  "paths": {
+    "/objects": {
+      "post": {
+        "summary": "Create a public test record; no real table reservation is made",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"type": "object", "required": ["name", "data"], "properties": {
+            "name": {"type": "string", "minLength": 1, "maxLength": 200, "description": "A descriptive test-record name"},
+            "data": {"type": "object", "additionalProperties": true, "description": "Synthetic reservation details such as date, time, party_size and notes. Never put real contact details here."}
+          }}}}
+        },
+        "responses": {"200": {"description": "Created object with server-assigned id and createdAt"}}
+      }
+    },
+    "/objects/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 128}}],
+      "get": {
+        "summary": "Retrieve a test record using its actual server-assigned id",
+        "responses": {"200": {"description": "Stored object"}, "404": {"description": "Object not found"}}
+      },
+      "delete": {
+        "summary": "Delete a test record created by this test; requires explicit confirmation",
+        "responses": {"200": {"description": "Deletion response"}, "404": {"description": "Object not found"}}
+      }
+    }
+  }
+}

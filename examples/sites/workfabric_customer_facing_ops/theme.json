@@ -1,0 +1,56 @@
+{
+  "brand": "WorkFabric Command Ops",
+  "icon": "\ud83e\udded",
+  "tagline": "Customer operations with executive rigor",
+  "hero": "A command dossier for turning customer signals into owned priorities, governed handoffs, and board-ready execution.",
+  "font": "'Trebuchet MS', 'Segoe UI', Arial, sans-serif",
+  "radius": 18,
+  "colors": {
+    "primary": "#294CFF",
+    "accent": "#FFB547",
+    "bg": "#F7F4EC",
+    "bg_tint": "#E9EEFF",
+    "fg": "#111827",
+    "muted": "#5F6673",
+    "border": "#D8D0BF",
+    "msgbg": "#FFFCF4",
+    "panelbg": "#FFFFFF"
+  },
+  "welcome": {
+    "widget": {
+      "title": "Customer ops intake",
+      "icon": "\ud83e\udded",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "string",
+            "title": "What happened?",
+            "description": "Paste the chat, escalation, exec update need, questionnaire, or customer situation."
+          },
+          "urgency": {
+            "type": "string",
+            "title": "Urgency and deadline",
+            "description": "Share timing, severity, SLA, meeting date, or external deadline."
+          },
+          "account": {
+            "type": "string",
+            "title": "Customer or prospect",
+            "description": "Name the account, stage, segment, owner, and any known commercial context."
+          },
+          "outcome": {
+            "type": "string",
+            "title": "Needed outcome",
+            "description": "Describe the handoff, plan, narrative, routing, KPI view, or decision you need."
+          }
+        },
+        "required": [
+          "request",
+          "outcome"
+        ]
+      },
+      "submitLabel": "Create ops brief"
+    },
+    "message": "Start with the customer signal, deadline, and desired operating outcome. I will route owners, risks, KPIs, and next actions."
+  }
+}

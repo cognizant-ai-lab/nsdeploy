@@ -1,0 +1,65 @@
+{
+  "brand": "Capital One Card Desk",
+  "icon": "\u25c8",
+  "tagline": "Official terms. Clear tradeoffs. Confident choices.",
+  "hero": "Compare Capital One cards through verified terms, precise citations, and recommendations shaped around your finances.",
+  "font": "Arial, Helvetica, sans-serif",
+  "radius": 12,
+  "colors": {
+    "primary": "#17324d",
+    "accent": "#a7193f",
+    "bg": "#f4f1ec",
+    "bg_tint": "#e9edf1",
+    "fg": "#172331",
+    "muted": "#5c6875",
+    "border": "#d6d9dd",
+    "msgbg": "#f7f9fb",
+    "panelbg": "#fffdf9"
+  },
+  "welcome": {
+    "widget": {
+      "title": "Build your card brief",
+      "icon": "\ud83d\udcdd",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "goal": {
+            "type": "string",
+            "title": "Primary goal",
+            "description": "Cash back, travel rewards, credit building, balance management, or business spending"
+          },
+          "monthlySpend": {
+            "type": "string",
+            "title": "Typical monthly spending",
+            "description": "Share approximate totals or categories such as groceries, dining, gas, travel, and business expenses"
+          },
+          "creditProfile": {
+            "type": "string",
+            "title": "Credit profile",
+            "description": "Excellent, good, fair, rebuilding, unsure, or prefer not to say"
+          },
+          "annualFee": {
+            "type": "string",
+            "title": "Annual fee preference",
+            "description": "No annual fee, open to a fee for value, or unsure"
+          },
+          "balancePlans": {
+            "type": "string",
+            "title": "Balance plans",
+            "description": "Usually pay in full, may carry a balance, seeking an intro APR, or unsure"
+          },
+          "cardType": {
+            "type": "string",
+            "title": "Card use",
+            "description": "Personal, small business, or compare both"
+          }
+        },
+        "required": [
+          "goal"
+        ]
+      },
+      "submitLabel": "Prepare my brief"
+    },
+    "message": "Start with the optional brief, or describe what you need in chat. You can add or correct details at any time."
+  }
+}

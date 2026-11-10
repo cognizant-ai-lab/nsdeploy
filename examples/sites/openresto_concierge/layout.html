@@ -1,0 +1,35 @@
+<div id="app" data-ns-layout="composed">
+  <section class="editorial-rail" aria-labelledby="concierge-heading">
+    <div class="rail-content">
+      <p class="rail-kicker">A test-service dining desk</p>
+      <h1 class="rail-title" id="concierge-heading">Your table,<em>considered.</em></h1>
+      <p class="rail-copy">From first request to final receipt, every detail is reviewed before anything is confirmed.</p>
+      <div class="service-ledger" aria-label="Concierge process">
+        <div class="ledger-item"><span class="ledger-no">01</span><span class="ledger-label">Request &amp; clarify</span></div>
+        <div class="ledger-item"><span class="ledger-no">02</span><span class="ledger-label">Validate details</span></div>
+        <div class="ledger-item"><span class="ledger-no">03</span><span class="ledger-label">Review together</span></div>
+        <div class="ledger-item"><span class="ledger-no">04</span><span class="ledger-label">Approve explicitly</span></div>
+      </div>
+      <p class="rail-note">Test reservations only · Tool receipts are reported verbatim · Approval is always required</p>
+    </div>
+  </section>
+  <section class="work-surface" aria-label="OpenResto concierge workspace">
+    <div data-ns-slot="header"></div>
+    <div class="surface-intro">
+      <p>Describe a new booking, update, cancellation, or pizza order. The concierge will gather what is missing and pause for your approval before creating a test reservation record.</p>
+      <span class="service-mark">Concierge desk<br />Now receiving</span>
+    </div>
+    <main data-ns-slot="chat"></main>
+    <details class="agent-drawer" open="">
+      <summary>Agents working behind the pass</summary>
+      <aside data-ns-slot="agents"></aside>
+    </details>
+    <footer class="surface-footer">
+      <span>Careful coordination, clear review, no surprise confirmations.</span>
+      <details class="model-settings">
+        <summary aria-label="Model settings">⚙ Model settings</summary>
+        <div data-ns-slot="settings"></div>
+      </details>
+    </footer>
+  </section>
+</div>

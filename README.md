@@ -4,6 +4,8 @@ Take a neuro-san(-studio) agent-network **HOCON**, check its dependencies, host 
 tools as **MCP servers**, generate a static **index.html**, and **serve the network
 as a website** — with **no neuro-san server** and no runtime dependency on neuro-san.
 
+This is a reference implementation for the [wwaw mvp spec](docs/Worldwide_Agentic_Web_MVP_Spec_v0.1.pdf).
+
 This is a standalone project. **No neuro-san-studio checkout is required** — by
 default nsdeploy pulls just the files it needs (`aaosa.hocon`, `toolbox_info.hocon`,
 coded-tool `.py` sources, …) from the public
@@ -26,7 +28,7 @@ Python or nsDeploy runtime dependency.
 ## Install & run
 
 ```bash
-pip install "mcp>=1.0.0" uvicorn starlette pyhocon neuro-san
+pip install -r requirements.txt    # or `uv sync` if you use uv; pyproject.toml reads the same file
 
 # Build the browser runtime before the first run, and after each neuro-san package update.
 # It is build output, so it is not checked in (see The agent loop).
@@ -56,9 +58,9 @@ instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
 `--site-dir` (editable HTML/CSS/JS source),
 `--site-url` (public origin), `--link`/`--links` (outbound network bindings),
 `--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime),
-`--no-cruse` (skip generative-UI injection), `--use-ts-package true|false` (run the agents
-on the neuro-san TS package, true by default; false, or `USE_TS_PACKAGE=0` for
-Cailville, runs the original runtime),
+`--no-cruse` (skip generative-UI injection), `--mock-llm` (developer-only keyless
+mock mode), `--use-ts-package true|false` (run the agents on the neuro-san TS package,
+true by default; false, or `USE_TS_PACKAGE=0` for Cailville, runs the original runtime),
 and the theming flags below.
 
 ## Shared subdomain gateway
@@ -94,10 +96,11 @@ single internal port, start the gateway with `--bind 0.0.0.0`, and give each sit
 external origin such as `--site-url https://link-demo-airline.agents.example.com`.
 The gateway itself speaks HTTP; TLS can terminate at the platform ingress.
 
-By default it runs on a deterministic **mock** LLM (no key needed). For real output,
-open **⚙ BYOK settings** in the page and enter your API key + model — calls route
-through the same-origin `/byok/v1` CORS proxy to your provider. A saved profile with
-a real key is automatically moved off the site's mock `/v1` route. The header reports
+By default the site requires BYOK. Open **⚙ BYOK settings** in the page and enter
+your API key + model — calls route through the same-origin `/byok/v1` CORS proxy to
+your provider. Without a key, the UI explains how to configure one and does not make
+an LLM request. Developers who need deterministic, keyless test behavior can deploy
+with `--mock-llm`; this makes the local `/v1` mock the default for that build. The header reports
 a real LLM only after the endpoint returns a verifiable, non-mock model response;
 routing errors are shown as errors rather than silently falling back to mock.
 
@@ -130,14 +133,21 @@ python -m nsdeploy examples/link_demo_travel_agency.hocon \
   --static-bundle --out ./dist/travel
 ```
 
+Theme design can run in that same command. Set `OPENAI_API_KEY` (or pass
+`--theme-key`) and add `--theme`. If an editable `sites/<network>/` package was
+already created by an earlier run, add `--theme-refresh` to replace its generated
+layout, CSS, and theme metadata; without `--theme-refresh`, nsDeploy deliberately
+reuses the existing editable design. The `(+CRUSE generative UI)` build message is
+about runtime UI support and does not indicate that an AI theme was generated.
+
 Preview that bundle with any ordinary static server:
 
 ```bash
 python -m http.server 8080 --directory ./dist/travel
 ```
 
-Then open <http://127.0.0.1:8080/>. To publish a canonical identity for links and
-private stewards, include the final webroot URL when building:
+Then open <http://127.0.0.1:8080/>. To publish a canonical identity for links,
+include the final webroot URL when building:
 
 ```bash
 python -m nsdeploy examples/link_demo_travel_agency.hocon \
@@ -152,20 +162,6 @@ After uploading `./dist/travel/` as that webroot, the public network URL is:
 https://agents.example.com/travel/link_demo_travel_agency
 ```
 
-A generated private steward calls the static network with the equivalent coded-tool
-arguments:
-
-```json
-{
-  "site_url": "https://agents.example.com/travel/link_demo_travel_agency",
-  "request": "Find me a flight from San Francisco to New York next Friday."
-}
-```
-
-The steward fetches `agent-manifest.json` and the selected network JSON, then runs
-the network privately. Its LLM key is sent only to the steward's configured LLM
-upstream, never to the static host.
-
 The output includes the browser runtime, a browser-native deterministic mock,
 relative page assets, browser-local unresolved links, and optional `_headers` /
 `.htaccess` hosting configuration. Python coded tools are intentionally omitted.
@@ -173,19 +169,24 @@ External MCP servers are contacted directly and therefore must permit browser CO
 Real BYOK calls go directly to the OpenAI-compatible router selected in settings;
 that router must likewise permit browser CORS. The public MCP facade is marked
 unavailable because accepting inbound MCP calls requires an application server.
-The generated private steward remains usable: it downloads the public network JSON
-and runs it in the private Neuro-SAN environment, so the static host needs no MCP
-facade or other server-side process.
+Static bundles do not include a private-steward HOCON; that operator-side Neuro-SAN
+configuration is generated only for application-hosted deployments.
 
 When `--site-url` is omitted, the static bundle is origin-neutral and can be moved
 between hosts. Supplying `--site-url` publishes a canonical URL for link discovery.
 The static host only needs to serve files over HTTP(S). When a browser-hosted agent
-on another domain will load the network, responses must include
-`Access-Control-Allow-Origin: *`; server-side private stewards do not require CORS.
+on another domain will load the network, its public manifest, network JSON and
+link/discovery JSON responses must include `Access-Control-Allow-Origin: *`.
+Action JavaScript and bridge pages do not need CORS. Same-origin business endpoints
+do not need CORS either; an external API or form used via `--action-site` must
+already permit browser access from the agent site's origin. Remote
+actions run on their own origin through validated iframe/popup messages.
 The sandbox worker also needs the CSP shown in the generated `STATIC_HOSTING.md`.
 The included `_headers` and `.htaccess` cover hosts that support those standard
 configuration formats. Hosts that ignore both files need the equivalent headers
-configured in their control panel.
+configured in their control panel. For subpath deployments, merge `_headers` into
+the host's root configuration; its paths include the `--site-url` path prefix.
+If relocating a bundle, adjust that prefix. `.htaccess` remains in the bundle directory.
 
 ## Cailville multi-site demo
 
@@ -492,9 +493,11 @@ additions from the private-steward manifest.
    removes any assumption of a local neuro-san server—tools are reached over MCP or
    by loading a public agent network into the browser.
 5. **Generate** `index.html` + `theme.css` + `site.js` + `agent-manifest.json` +
-   `<network>.network.json` + `agent-mcp.json` + `<network>_private_steward.hocon` +
-   `theme.json` from the editable site source and network.
-6. **Serve** one static origin (site + the browser runtime), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
+   `<network>.network.json` + `agent-mcp.json` + `theme.json` from the editable site
+   source and network. Application-hosted deployments also generate
+   `<network>_private_steward.hocon`; static bundles do not.
+6. **Serve** one static origin (site + the browser runtime, with the
+   sandbox-worker CSP), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
    local-MCP proxy at `/_mcp/<i>/mcp`, an external-MCP proxy at
    `/ext-mcp/<i>/mcp`, plus the private local MCP server subprocesses. Every site
    also publishes a server-side MCP facade at `/mcp` for legacy private stewards.
@@ -506,8 +509,10 @@ additions from the private-steward manifest.
 
 ## Private stewards and open-web reachability
 
-Every generated public site includes `<network>_private_steward.hocon`. It is a standard
-Neuro-SAN network for the site's operator, backed by the reusable
+Application-hosted deployments include `<network>_private_steward.hocon`. Static
+bundles omit it because it is operator-side Neuro-SAN configuration, not a browser
+or static-host asset. The file is a standard Neuro-SAN network for the site's
+operator, backed by the reusable
 `nsdeploy.steward.PublicAgentNetworkGateway` coded tool. The gateway accepts any
 public nsDeploy network URL, downloads `agent-manifest.json` and the selected
 `<network>.network.json`, validates that they contain data-only agents, and runs the
@@ -690,6 +695,433 @@ not exercise semantic consolidation. Regenerate a deployment to install updated
 CRUSE prompts. Theme prompt version 9 describes optional forms and rich responses;
 existing editable themes are preserved until explicitly refreshed.
 
+## Browser actions: ANDe → nsDeploy → CRUSE
+
+CRUSE can now propose and execute site-owned JavaScript actions without extending
+the source HOCON. Child and remote networks return structured proposals; their
+parents can merge the fields and action bindings into one final form. Nothing is
+executed while agents reason or while a widget renders. Submitting a widget shows
+a runtime-owned review of the actual actions, destination origins and arguments.
+
+For native HTML forms, supply `--action-page /booking` to discover an existing
+same-origin application route, or `--action-host-page` to discover native forms
+beside an embedded widget. No handwritten adapter is needed for those forms.
+There is no implicit discovery route: `--site-url` identifies the bundle location,
+not the business application. Builds without action sources explicitly report
+that chat/forms can only collect information.
+For a separately hosted public website, `--action-site URL` discovers native forms
+and linked JSON OpenAPI 3 descriptions at build time. It generates a declarative
+catalog for the generic executor; no `actions.js` is needed for supported operations.
+See the build-time discovery example below. JavaScript-only applications without a
+documented HTTP interface can supply an `actions.js` adapter. nsDeploy copies it into the bundle,
+publishes its bridge location in `agent-manifest.json`, and loads its public action
+descriptions/schemas into the agents' CRUSE context at runtime. Local actions run
+on the local page. Remote action code runs on its own site, never imported into
+the caller. Remote writes require a second confirmation in a window on the owning
+site; read actions can use a hidden iframe. All agent reasoning still runs in the
+caller browser using the caller's LLM settings.
+
+### 1. Ask ANDe for an ordinary network
+
+Example prompt (replace the restaurant workflow with your website's workflow):
+
+> Generate a valid neuro-SAN HOCON network for a restaurant concierge. Output
+> HOCON only. Design agents to understand the user's visit, collect missing
+> requirements, and propose a reservation request. Do not invent availability or
+> claim a reservation is complete without an execution receipt. Do not define or
+> reference demo_mode or instruct any agent to fabricate results. The website uses
+> nsDeploy and CRUSE. At runtime nsDeploy will supply the exact catalog of browser
+> actions, their input schemas and the CRUSE proposal format. These browser actions
+> are not HOCON tools: do not create coded tools, HTTP endpoints or tool references
+> for them. Agents should use the supplied catalog, preserve exact action references
+> and pass structured proposals upward. Parents should consolidate compatible
+> forms, retaining every action's input mappings and destination. The final user
+> interaction may combine local and remote actions. Treat action execution receipts
+> as results and report partial failures accurately. Include only genuine agents
+> and available data sources in tools. If no grounded search source is available,
+> describe the operation as a request, not a confirmed booking.
+
+For a caller network, additionally ask ANDe to include a leaf named `venue` and
+delegate restaurant questions to it. Bind that leaf to the deployed venue using
+`--link`, as in the example below. The caller does not duplicate the venue's action
+schema or implementation. Existing HOCONs also work: the action protocol is injected
+at runtime, though domain instructions can improve how agents choose proposals.
+
+### 2. Connect an existing website
+
+#### Discover a public site while bundling
+
+`--action-site URL` performs a bounded, read-only inspection of the supplied page
+and same-origin links explicitly resembling form or API documentation pages
+(six pages by default; `--action-max-pages 1` inspects only the supplied page).
+It reads native forms and JSON OpenAPI 3 descriptions. Use `--action-spec FILE_OR_URL`
+when documentation does not link a machine-readable specification. It does not run
+website JavaScript, guess private endpoints, log in, or submit forms to explore a site.
+
+Discovery writes `<site-dir>/discovered-actions.json`, including schemas, fixed
+destinations, source evidence, unsupported items and OPTIONS-based CORS checks.
+The first build stops with candidates disabled so the **publisher** can review
+them. Set selected `enabled` fields to `true`, or rerun with `--action-allow NAME`.
+For public test services, `--action-include-all` enables all supported candidates
+in that build. Authentication, credentials and unsupported interfaces remain excluded.
+The browser still requires execution confirmation for each proposed submission.
+
+Later builds automatically reuse the lock, even when `--action-site` is omitted.
+`--action-lock FILE` selects another lock. `--action-refresh --action-site URL`
+rediscovers and resets selections for review; retain `--action-spec` when applicable.
+The lock is editable source: keep it in version control after reviewing it.
+Keep `--action-caller-origin` on remote-capable builds; caller permission is a
+separate deployment setting and is not inferred from a HOCON link.
+
+Supported external forms are stateless, URL-encoded native GET/POST forms with
+named fields. Before submission the browser fetches the source again, checks its
+pinned form definition and validates the real HTML constraints. Changes stop the
+submission and require rediscovery. Forms with hidden state, login, uploads,
+inline handlers, named submit buttons or unsupported controls are reported as
+unsupported; use same-origin `--action-page` or a site-owned adapter for those.
+
+API discovery supports fixed HTTP(S) servers, scalar path/query fields, JSON object
+bodies with scalar fields, and explicit free-form JSON object fields. Free-form
+objects appear in CRUSE as JSON text, which the executor parses before sending.
+Only local specification references are resolved. Unsupported schema constraints,
+authentication and credential fields are reported rather than silently dropped.
+These are supported subsets, not a promise to discover every possible website action.
+
+All external requests omit cookies/credentials and reject redirects. Both the
+external form page and its submission response must permit CORS; API responses
+and preflight requests must permit it where needed. Build checks use OPTIONS only
+and are **not execution verification**. The iframe/popup bridge remains between
+the two agent sites; it cannot bypass restrictions on a third-party website.
+Receipts contain HTTP status and sanitized response data, with business acceptance
+left unverified for the agents to interpret. Errors may have unknown outcomes and
+are never retried automatically. A combined form is sequential, not transactional:
+one action can succeed while the next fails.
+
+#### Build the two hosted-service examples
+
+The example names are retained, but `kitchenasty_ordering_agent` uses the
+[httpbin pizza form](https://httpbin.org/forms/post), and `openresto_concierge`
+uses [RESTful API public test records](https://restful-api.dev/).
+Neither makes real restaurant orders or reservations. Use synthetic details only.
+RESTful API does not expose a specification linked from its documentation, so
+[`examples/actions/restful-api.openapi.json`](examples/actions/restful-api.openapi.json)
+is an nsDeploy-maintained description of its documented create, retrieve and delete
+operations. It is declarative data, not executable adapter code.
+
+From the repository root, with your existing themes:
+
+```sh
+python -m nsdeploy examples/kitchenasty_ordering_agent.hocon \
+  --static-bundle --theme \
+  --out ./dist/kitchenasty_ordering_agent \
+  --site-url http://agent-a.evolution.ml/kitchenasty_ordering_agent \
+  --action-site https://httpbin.org/forms/post \
+  --action-max-pages 1 --action-refresh --action-include-all \
+  --action-caller-origin http://cors.decisionai.ml
+
+python -m nsdeploy examples/openresto_concierge.hocon \
+  --static-bundle --theme \
+  --out ./dist/openresto_concierge \
+  --site-url http://cors.decisionai.ml/openresto_concierge \
+  --action-site https://restful-api.dev/ \
+  --action-spec examples/actions/restful-api.openapi.json \
+  --action-max-pages 1 --action-refresh --action-include-all
+```
+
+`--theme-refresh --theme-model ...` is optional if you want to regenerate the design;
+it is unrelated to actions. The commands above preserve the existing designs.
+Expect one pizza-form action and three record actions. Review each
+`discovered-actions.json`, `agent-manifest.json` and `STATIC_HOSTING.md` before
+publishing. A zero-action build fails instead of silently producing a chat-only demo.
+Use `--action-refresh` to rerun discovery after changing the source specification.
+
+Test each site in isolation first. Ask KitchenAsty to prepare one large cheese-and-onion
+pizza at 20:00 with `nsdeploy-test` in the comments, then confirm the browser action.
+Check the receipt's actual `data.form` echo. Ask OpenResto to create a synthetic record
+for four guests on 2026-11-14 at 19:00; check the returned server-assigned `id`.
+In the next turn ask it to retrieve that exact id and compare the stored values.
+
+The deployed example is available at
+`http://cors.decisionai.ml/openresto_concierge`; its remote KitchenAsty site is
+`http://agent-a.evolution.ml/kitchenasty_ordering_agent`. The KitchenAsty HOCON
+reference includes both the bundle path and the exported network name:
+`http://agent-a.evolution.ml/kitchenasty_ordering_agent/kitchenasty_ordering_agent`.
+The repeated name is intentional. The caller passed to `--action-caller-origin`
+is only the exact origin (`http://cors.decisionai.ml`), without a path.
+
+Then ask OpenResto:
+
+> Use only the exact website actions currently supplied by the runtime. Prepare
+> these two synthetic test operations: (1) create an OpenResto test reservation
+> record named `nsdeploy-e2e-2026-10-31` for 4 guests on November 14, 2026 at
+> 7:00 PM; no real restaurant, availability search, or contact information is
+> needed; and (2) ask the KitchenAsty network to submit one large pizza with cheese
+> and onion, delivery time 8:00 PM, and comments `nsdeploy cross-site test only`.
+> Present both operations as executable CRUSE browser actions using their exact
+> runtime references and field schemas. Do not merely summarize them or ask for
+> textual confirmation. Do not claim either operation succeeded until browser
+> execution receipts are returned.
+
+Authorize the remote network. The model may produce one consolidated widget or two
+action widgets in the same response. Review and confirm the OpenResto action. For
+KitchenAsty, verify `large`, `cheese`, `onion`, `20:00`, and the test comment in
+the generated form, submit it, approve the caller-side review, and confirm the
+owning-site popup.
+
+Successful end-to-end execution produces two independent receipts:
+
+- `.../openresto_concierge#post_objects_317fea20` reports HTTP 200 and a
+  server-assigned `data.id` from `https://api.restful-api.dev/objects`.
+- `.../kitchenasty_ordering_agent#post_forms_post_76079b9e` reports HTTP 200
+  from `https://httpbin.org/post`; `data.form` echoes the pizza fields. Its echoed
+  `Origin` is `http://agent-a.evolution.ml`, demonstrating that the remote action
+  ran in its owning site's bridge rather than being imitated by OpenResto.
+
+`state: "response_received"` proves that the browser received an HTTP response.
+`businessOutcome: "unverified"` is deliberate: a generic executor cannot infer
+that an arbitrary response means a reservation or order was accepted. Text claiming
+success is not verification. Use the returned record id with the registered GET
+action to verify the stored values, then use the registered DELETE action—with
+confirmation—to remove only that synthetic test record. Public test services can
+have outages and request limits; their HTTP errors must remain visible in receipts.
+
+The action runtime supports plain-HTTP static demos even when secure-context APIs
+such as `crypto.randomUUID()` and `crypto.subtle` are unavailable. Use HTTPS for
+real deployments: these pages accept a browser-local BYOK API key, and plain HTTP
+cannot protect the delivered JavaScript or key from network tampering.
+
+The deterministic integration test builds real static bundles and tests isolated
+and combined CRUSE submissions against a separate HTTP service that records every
+write, including CORS failures, changed forms, validation and record readback:
+
+```sh
+node tests/discovered-actions-browser.mjs
+```
+
+It requires Playwright and Chromium (`NSDEPLOY_PLAYWRIGHT_MODULE`, `NSDEPLOY_CHROME`
+and `NSDEPLOY_PYTHON` can select existing installations). It does not use an LLM;
+the hosted test above additionally checks your chosen model's action proposals.
+
+#### Discover forms on the application's own origin
+
+For an existing **native HTML form page**, publish the bundle on the application's
+origin and specify the real form route:
+
+```sh
+python -m nsdeploy examples/openresto_concierge.hocon --static-bundle \
+  --site-url https://restaurant.example/agents/openresto \
+  --action-page /booking \
+  --out .nsdeploy/restaurant-agents
+```
+
+Repeat `--action-page` for other existing routes. No pages are guessed from
+`--site-url`. `--no-action-discovery` explicitly disables form discovery and cannot
+be combined with form discovery flags; registered modules remain available.
+Publish the generated directory at `/agents/openresto/` **on the existing application's
+origin**. The original application and its backend must already exist there.
+Generating a themed agent page from a HOCON does not install OpenResto/KitchenAsty,
+create their menus or reservation databases, or grant access to another website.
+
+Repeat `--action-page` for additional pages. For the remote KitchenAsty build,
+also add `--action-caller-origin https://your-openresto-origin.example` to allow
+OpenResto to use its discovered forms. This is separate from `--link` (which
+connects the networks) and from permission to contact a network. Use exact origins,
+including the port during local testing. Discovery runs on the owning origin in
+both local and remote cases; hidden fields and cookies never enter the catalog.
+
+The runtime reads named fields, choices and constraints; refreshes hidden fields
+such as CSRF tokens before executing; validates the populated form; and sends its
+native GET/POST request after review. It supports URL-encoded and multipart forms,
+radio buttons, checkboxes, selects, and submit-button values/overrides. All forms
+default to write actions; site owners can mark a genuinely read-only form with
+`data-nsdeploy-effect="read"`. `data-nsdeploy-ignore` excludes a form.
+
+The page shows how many actions connected and explains skipped forms. A form
+without an explicit action, sensitive/file controls, or inline JavaScript is
+skipped. Discovery reads server-rendered HTML and does not run page scripts;
+scripts on configured routes are not run. For native forms rendered into the
+visible host page, use the embedding option below. JavaScript event handlers
+require explicit registration.
+Redirect-dependent workflows need an adapter. See [limits and receipts](docs/actions.md#automatic-native-form-discovery).
+
+For an existing JavaScript module that exports `registerActions`, use
+`--action-module /js/restaurant-actions.js`; it stays on its owning site and is
+loaded by both the local page and remote bridge. Arbitrary JavaScript functions
+cannot reliably be inferred from HOCON or DOM names. Use the adapter below when
+the application does not already expose this registration interface.
+
+To embed in an existing page, build with `--action-host-page`, then add a dedicated
+mount beside the site's existing forms (do not replace the application page with
+the generated `index.html`):
+
+```html
+<div id="agent-widget"></div>
+<script type="module">
+  import { boot } from "/agents/openresto/runtime/index.js";
+  const agent = await boot("#agent-widget", {
+    originUrl: location.origin + "/agents/openresto",
+    sandboxWorkerUrl: "/agents/openresto/runtime/sandbox-worker.js"
+  });
+  // If your app changes control properties without DOM mutations:
+  // agent.actions.refreshHostForms();
+</script>
+```
+
+Host discovery observes native forms added or changed in the live document,
+excludes agent UI, and preserves the user's draft when submitting a detached copy.
+It uses native endpoints, without invoking JavaScript submit listeners. Only enable
+it for forms whose native endpoints work independently of those listeners.
+Host forms are local-only. To expose the same capability remotely, additionally
+configure `--action-page` for its server-rendered route or register a module that
+works in the bridge's fresh document. `--action-caller-origin` permits only
+configured route forms; modules declare their own caller policy.
+
+For the OpenResto/KitchenAsty deployment, keep your theme/model/output flags and add
+the actual application routes to each build. Add
+`--action-caller-origin https://agent-b.decisionai.ml` to KitchenAsty if OpenResto
+is hosted on that origin. These agent domains must also host their corresponding
+real applications and backends. An unrelated original website cannot be inspected
+or operated just by naming it in HOCON. The routes must be taken from your actual
+installation; `/booking` above is illustrative.
+
+After submission, a native form receipt contains `outcome: "response_received"`
+and `businessOutcome: "unverified"`, plus the HTTP status and response evidence.
+HTTP 200 alone is not a booking confirmation: validate returned business IDs or
+check the application's records. No automatic retries occur. After a read receipt,
+send a follow-up such as “Use the returned results to propose the next step.”
+
+To test the full form path without any adapter or model key:
+
+```sh
+node tests/form-actions-browser.mjs
+```
+
+This starts two temporary local sites and verifies real HTTP submissions from one
+combined CRUSE widget, local/remote confirmation, fresh CSRF values and cookies,
+cancellation, field validation, receipts and missing-integration diagnostics.
+It requires Playwright/Chromium (or the `NSDEPLOY_PLAYWRIGHT_MODULE` and
+`NSDEPLOY_CHROME` overrides described below). These are test sites, not the actual
+OpenResto or KitchenAsty applications.
+
+For ANDe, keep ordinary agent definitions and add: “Do not include demo_mode or
+instructions to fabricate data. Browser capabilities will be supplied at runtime.
+When the catalog is empty, report missing integration explicitly. A server response
+is evidence to interpret, not automatic proof that a booking or order succeeded.”
+
+### 2a. JavaScript applications: add the site's action adapter
+
+Place `actions.js` in the editable site directory, or pass `--actions FILE`:
+
+```js
+export function registerActions(actions) {
+  actions.register({
+    name: "reserve_table",
+    description: "Request a restaurant reservation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        date: { type: "string", format: "date", title: "Visit date" },
+        partySize: { type: "integer", minimum: 1, maximum: 12, title: "Guests" }
+      },
+      required: ["date", "partySize"]
+    },
+    effect: "write",
+    availability: "bridge",
+    callerOrigins: ["https://concierge.example"],
+    async execute(values, { requestId, signal }) {
+      const response = await fetch("/api/reservations", {
+        method: "POST", credentials: "same-origin", signal,
+        headers: { "Content-Type": "application/json", "Idempotency-Key": requestId },
+        body: JSON.stringify(values)
+      });
+      if (!response.ok) throw new Error(`Reservation failed: ${response.status}`);
+      return response.json();
+    }
+  });
+}
+```
+
+Use your existing endpoint or call an existing exported JavaScript function in
+`execute`. The example endpoint is not created by nsDeploy. If the site uses a
+form-encoded POST, the adapter can send `new URLSearchParams(values)` with the
+endpoint's expected fields and CSRF token. Keep authentication and CSRF handling
+inside the site adapter/backend, outside model-visible schemas and arguments.
+
+For functions dependent on the visible page's DOM, use `availability: "local-only"`.
+Those functions are intentionally absent from remote catalogs. To expose them
+remotely, move their submission logic into a shared function that can run on the
+bridge page. `availability: "top-level"` forces a separate window for remote reads
+as well. A bridge popup is a fresh document, not a copy of the original page DOM.
+Site adapters are trusted application code and must be reviewed before deployment.
+
+### 3. Build and run the included two-site example
+
+From the repository root, using the Python environment where nsdeploy is installed:
+
+```sh
+python -m nsdeploy examples/actions_demo/venue.hocon \
+  --static-bundle --actions examples/actions_demo/venue-actions.js \
+  --out .nsdeploy/actions-demo/venue
+
+python -m nsdeploy examples/actions_demo/caller.hocon \
+  --static-bundle --actions examples/actions_demo/caller-actions.js \
+  --link venue=http://127.0.0.1:8122/venue \
+  --out .nsdeploy/actions-demo/caller
+
+python examples/actions_demo/serve.py
+```
+
+The demo server serves both static bundles with CORS and supplies one demonstration
+reservation endpoint. Its records live only in memory; it never books anything.
+The caller's seating preference is stored in localStorage. The adapters explicitly
+identify their results as demonstrations. For production, the bundles remain static
+and the existing site's backend supplies any server-side functions.
+
+### 4. Test on the same site
+
+Open <http://127.0.0.1:8122/>. Configure a real CORS-enabled model router through
+BYOK settings; the ordinary built-in mock does not synthesize action proposals.
+Ask: “Request a restaurant visit for three people on December 15, 2026.”
+Review the proposed form/action and submit it. Cancel once to verify no request is
+sent, then confirm. The result should include `succeeded` and a demonstration
+receipt. Ask a follow-up question to verify the model receives that receipt.
+
+### 5. Test through a caller with local actions
+
+Open <http://127.0.0.1:8121/> and configure its model router. Ask: “Arrange a
+restaurant visit for three people on December 15, 2026, and save my preference for
+outside seating. Combine the inputs into one form.” Allow contact with the venue.
+
+The caller loads and runs the venue network. Its final CRUSE form should combine
+the local seating preference with the remote date/guest fields. Submit and review
+the exact field routing. Choose **Open action site**, then confirm on the venue's
+own origin. You should receive separate local and remote receipts. Only date and
+party size are sent to the venue; the local seating preference stays local. A
+failed remote action can leave the local preference saved: these are separate
+operations, not a distributed transaction. Network errors are reported as
+`unknown`, and unstarted operations as `not_started`; the runtime does not retry.
+
+For repeatable testing without a model/key, leave the demo server running, install
+Playwright and its Chromium browser in your development environment, then run:
+
+```sh
+node tests/actions-browser.mjs
+npm test
+python -m unittest discover -s tests -p 'test_*.py'
+```
+
+The browser test supplies deterministic model replies but uses the real agent
+loops, CRUSE renderer, cross-origin bridge, first-party confirmation and HTTP
+endpoint. It verifies same-site execution, cancellation, combined local/remote
+execution, field isolation, duplicate submission prevention and rejection of a
+remote write attempted through an iframe. It does not measure a model's ability
+to synthesize good forms; use the manual prompts above for that check.
+For an existing browser installation, set `NSDEPLOY_CHROME` to its executable;
+`NSDEPLOY_PLAYWRIGHT_MODULE` can point to Playwright's `index.mjs`.
+
+See [the action adapter and protocol reference](docs/actions.md) for supported
+schemas, existing-site embedding, hosting requirements and limitations.
+
 ## Look & feel (optional LLM-designed layout)
 
 By default the site uses a fixed template. With a key, the LLM **designs a distinctive
@@ -733,10 +1165,12 @@ curl http://localhost:12434/engines/v1/models
 The LLM authors the page's **CSS + HTML composition**, but it's treated as untrusted
 and **strictly sanitized**: only safe presentational tags/attributes survive (no
 `<script>`, `on*` handlers, `<iframe>`/`<form>`/`<svg>`; CSS stripped of `@import`,
-`expression()`, unsafe `url()`). A generated layout places three empty runtime mounts
-inside `#app`: the compact header, the primary chat, and agent activity. This lets the
-designer choose an inline rail, stacked panel, overlay, or native `<details>` pull-out
-instead of inheriting one fixed split. The runtime fills those mounts and protects page
+`expression()`, unsafe `url()`). A generated layout places four empty runtime mounts
+inside `#app`: the compact header, the primary chat, agent activity, and BYOK/router
+settings. The designer chooses whether settings live under a gear disclosure, in a
+utility rail, footer, or another suitable location, as well as whether agents use an
+inline rail, stacked panel, overlay, or native `<details>` pull-out. The runtime fills
+those mounts and protects page
 scrolling and CRUSE form reachability. Older cached themes with one empty `#app` keep
 the legacy resizable split layout. On any problem (no key, error, invalid/unsafe output,
 missing or incomplete mounts), nsdeploy **falls back to the default template**, so a
@@ -755,9 +1189,10 @@ sites/<network>/
 
 Use `--site-dir DIR` to put it elsewhere. Normal deploys read these files and never
 overwrite them; `.nsdeploy/<source-dir>/<network>/` remains disposable build output.
-The containing `.nsdeploy/<source-dir>/manifest.hocon` is regenerated to list every
-generated private steward in that bundle group. Set `AGENT_MANIFEST_FILE` directly to
-that file when running the standard Neuro-SAN server. A normal
+For application-hosted deployments, the containing
+`.nsdeploy/<source-dir>/manifest.hocon` is regenerated to list every generated
+private steward in that bundle group. Set `AGENT_MANIFEST_FILE` directly to that
+file when running the standard Neuro-SAN server. A normal
 `--theme` run also uses an existing package instead of calling the model again. The
 LLM result is therefore a starting point: edit the source package and redeploy. The
 generated `site.js` exports an optional `customize({ root, runtime })` hook, and any
@@ -954,9 +1389,9 @@ resolve. The point is the report tells you precisely what is grounded vs not.)
 
 ## Notes / limits
 
-- The mock router is a deterministic, name-agnostic stand-in (it calls each
+- The opt-in mock router is a deterministic, name-agnostic stand-in (it calls each
   advertised tool once, then summarizes); orchestration quality is only meaningful
-  with a real LLM via BYOK. The mock exists so the site runs end-to-end with no key.
+  with a real LLM via BYOK. Use `--mock-llm` only for developer demos and tests.
 - Hosting a studio tool imports its `CodedTool` class (a lightweight neuro-san
   interface) — that's a build/host-time library import, **not** a neuro-san server.
 - One MCP server per hostable tool preserves per-agent tool scoping. Private ports are

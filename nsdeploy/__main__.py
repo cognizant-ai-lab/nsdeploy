@@ -76,6 +76,32 @@ def main() -> int:
                     help="output site dir (default: ./.nsdeploy/<source-dir>/<name>)")
     ap.add_argument("--site-dir", default=None,
                     help="editable site source dir (default: <hocon-dir>/sites/<name>)")
+    ap.add_argument("--actions", default=None, metavar="FILE",
+                    help="site-owned JavaScript action adapter (otherwise <site-dir>/actions.js)")
+    ap.add_argument("--action-page", action="append", default=None, metavar="PATH",
+                    help="discover native HTML forms on this same-origin page at runtime (repeatable; "
+                         "no implicit page default)")
+    ap.add_argument("--action-host-page", action="store_true",
+                    help="discover native forms in the page embedding the widget (local only)")
+    ap.add_argument("--action-site", metavar="URL",
+                    help="discover public native forms and linked JSON OpenAPI 3 descriptions while bundling")
+    ap.add_argument("--action-spec", metavar="FILE_OR_URL",
+                    help="explicit OpenAPI 3 JSON description for --action-site")
+    ap.add_argument("--action-lock", metavar="FILE",
+                    help="reviewed discovery lock (default: <site-dir>/discovered-actions.json)")
+    ap.add_argument("--action-refresh", action="store_true", help="rediscover actions; reset selections for review")
+    ap.add_argument("--action-allow", action="append", default=[], metavar="NAME",
+                    help="enable a discovered operation by exact name (repeatable)")
+    ap.add_argument("--action-include-all", action="store_true",
+                    help="enable every supported discovered operation; intended for public test sites")
+    ap.add_argument("--action-max-pages", type=int, default=6,
+                    help="maximum documentation/form pages to inspect (1–20, default 6)")
+    ap.add_argument("--no-action-discovery", action="store_true",
+                    help="disable automatic native-form discovery")
+    ap.add_argument("--action-module", action="append", default=[], metavar="PATH",
+                    help="existing same-origin module exporting registerActions (repeatable; not copied)")
+    ap.add_argument("--action-caller-origin", action="append", default=[], metavar="ORIGIN",
+                    help="allow this caller origin to use discovered forms remotely (repeatable)")
     ap.add_argument("--upstream", default="https://api.openai.com/v1",
                     help="RUNTIME BYOK proxy upstream — where the page's key is forwarded (default OpenAI)")
     ap.add_argument("--facade-upstream", default=None,
@@ -83,7 +109,8 @@ def main() -> int:
     ap.add_argument("--facade-key", default=None,
                     help="accepted for backward compatibility and IGNORED: a served site never uses a "
                          "host-side LLM key; the facade only uses the caller's BYOK credentials")
-    ap.add_argument("--runtime-dir", default=None, help="neuro-san-web runtime dir (default: vendored nsdeploy/runtime)")
+    ap.add_argument("--runtime-dir", default=None,
+                    help="neuro-san-web runtime dir (default: vendored nsdeploy/runtime)")
     ap.add_argument("--use-ts-package", type=_on_off, default=True, metavar="true|false",
                     help="run agents on the neuro-san TS package (default true); "
                          "false runs them on the original runtime")
@@ -117,9 +144,25 @@ def main() -> int:
                     help="re-ask the LLM and replace editable layout/CSS/theme metadata")
     ap.add_argument("--no-serve", action="store_true", help="generate the site but don't launch")
     ap.add_argument("--static-bundle", action="store_true",
-                    help="emit a self-contained static webroot (browser mock, direct-CORS "
+                    help="emit a self-contained static webroot (direct-CORS "
                          "BYOK/MCP, no Python tools or public MCP facade)")
+    ap.add_argument("--mock-llm", action="store_true",
+                    help="developer mode: make the deterministic keyless mock LLM the default")
     args = ap.parse_args()
+    if args.actions and not Path(args.actions).is_file():
+        ap.error("--actions must name an existing JavaScript adapter")
+    from nsdeploy.form_actions import action_discovery_config
+    if args.no_action_discovery and (args.action_page or args.action_host_page or args.action_caller_origin
+                                     or args.action_site or args.action_spec or args.action_lock
+                                     or args.action_refresh or args.action_allow or args.action_include_all):
+        ap.error("--no-action-discovery cannot be combined with form discovery options")
+    action_pages = args.action_page or []
+    try:
+        # The conventional discovery lock can also supply these capabilities.
+        action_discovery_config(action_pages, args.action_module, args.action_caller_origin, args.action_host_page,
+                                discovered=True)
+    except ValueError as exc:
+        ap.error(str(exc))
 
     if args.cailville_base_map and not args.add_to_cailville:
         ap.error("--cailville-base-map requires --add-to-cailville")
@@ -142,6 +185,23 @@ def main() -> int:
     network_name = hocon_path.stem
     site_dir = (Path(args.site_dir).resolve() if args.site_dir
                 else hocon_path.parent / "sites" / network_name)
+    from nsdeploy.action_discovery import prepare_actions
+    action_lock = Path(args.action_lock) if args.action_lock else site_dir / "discovered-actions.json"
+    discovered_actions = None
+    if not args.no_action_discovery and (args.action_site or args.action_spec or args.action_lock
+                                         or args.action_refresh or args.action_allow or args.action_include_all
+                                         or action_lock.exists()):
+        try:
+            discovered_actions = prepare_actions(action_lock, args.action_site, args.action_spec,
+                                                 args.site_url or "", args.action_refresh, args.action_include_all,
+                                                 args.action_allow, args.action_max_pages)
+        except (ValueError, OSError) as exc:
+            ap.error(str(exc))
+    try:
+        action_discovery_config(action_pages, args.action_module, args.action_caller_origin, args.action_host_page,
+                                bool(discovered_actions))
+    except ValueError as exc:
+        ap.error(str(exc))
     config, missing_includes = resolve_hocon(hocon_path, source)
     cailville_draft = None
     cailville = None
@@ -279,7 +339,12 @@ def main() -> int:
                   theme=theme, site_source_dir=site_dir,
                   private_steward_sites=private_steward_sites or None,
                   static_bundle=args.static_bundle, runtime_dir=runtime_dir,
-                  ts_package=args.use_ts_package)
+                  actions_file=Path(args.actions).resolve() if args.actions else None,
+                  action_pages=action_pages, action_modules=args.action_module,
+                  action_host_page=args.action_host_page,
+                  action_caller_origins=args.action_caller_origin,
+                  discovered_actions=discovered_actions,
+                  mock_llm=args.mock_llm, ts_package=args.use_ts_package)
     bundle_label = "static bundle" if args.static_bundle else "site"
     print(f"✅ Generated {bundle_label} → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))
     if args.static_bundle:
@@ -289,8 +354,9 @@ def main() -> int:
             print(f"   static bundle: omitted Python tools: {omitted}")
         if plan.external_mcps:
             print("   static bundle: external MCP servers will be called directly and must allow CORS")
-        print("   static bundle: public MCP facade unavailable; private stewards use fetch-and-run")
-    print(f"   private steward manifest → {out_dir.parent / 'manifest.hocon'}")
+        print("   static bundle: public MCP facade and private steward are not included")
+    else:
+        print(f"   private steward manifest → {out_dir.parent / 'manifest.hocon'}")
 
     if cailville_draft is not None:
         try:
@@ -307,7 +373,7 @@ def main() -> int:
     serve(out_dir, plan, source.root, port=args.port, site_base=site_base,
           upstream=args.upstream,
           runtime_dir=runtime_dir, ext_mcps=plan.external_mcps,
-          facade_upstream=args.facade_upstream, ts_package=args.use_ts_package)
+          facade_upstream=args.facade_upstream, mock_llm=args.mock_llm, ts_package=args.use_ts_package)
     return 0
 
 

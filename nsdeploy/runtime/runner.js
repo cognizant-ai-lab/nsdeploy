@@ -9,6 +9,7 @@
 // identically regardless of which loop drives it. The engine selects via ctx.useLangGraph.
 
 import { ChatMessageType, filterSlyData, allowedDownstreamSly, parseExternalAgent } from "./kernel.js";
+import { actionContext, proposalRefs } from "./actions.js";
 import { parseAgentResponse, agentPresentationContext } from "./cruse.js";
 import { applyPendingSteering, runInterruptibleModelCall } from "./turn-control.js";
 
@@ -390,7 +391,9 @@ export async function dispatchToolCall(ctx, entry, args, parentSpan, chain) {
       sly_data: downstreamSly,
       chat_filter: { chat_filter_type: "MINIMAL" },
     };
-    return session.invoke(request, { parentSpan, chain, composition: ctx.composition });
+    const result = await session.invoke(request, { parentSpan, chain, composition: ctx.composition });
+    for (const ref of proposalRefs(result)) ctx.allowedActionRefs?.add(ref);
+    return result;
   }
 
   return `Error: unsupported tool kind '${entry.kind}'`;
@@ -410,13 +413,15 @@ export async function runAgent(ctx, agentName, userText, parentSpan, chain) {
   }
   // Scope prompt context to this invocation. Never mutate a shared agent spec or
   // ctx: siblings and remote networks can be running concurrently.
-  const context = agentPresentationContext(ctx, agentName);
+  const catalog = ctx.actions?.catalog({ base: ctx.baseOrigin, network: ctx.network.name }) || [];
+  const presentationContext = agentPresentationContext(ctx, agentName);
+  const context = presentationContext + (presentationContext && ctx.actions ? actionContext(catalog) : "");
   const network = Object.create(ctx.network);
   network.getAgentSpec = (name) => {
     const spec = ctx.network.getAgentSpec(name);
     return name === agentName && spec && context ? { ...spec, instructions: `${spec.instructions || ""}\n\n${context}` } : spec;
   };
-  const local = { ...ctx, network, invocation: source.invocation };
+  const local = { ...ctx, network, invocation: source.invocation, allowedActionRefs: new Set(catalog.map(a => a.ref)) };
   const raw = ctx.externalRunner
     ? await ctx.externalRunner(local, agentName, userText, parentSpan, chain, {
       buildToolTable, dispatchToolCall, executeToolCalls, schemaFor, argsToText,
@@ -424,6 +429,8 @@ export async function runAgent(ctx, agentName, userText, parentSpan, chain) {
     })
     : await runAgentManual(local, agentName, userText, parentSpan, chain);
   const result = parseAgentResponse(raw, source);
+  ctx.actions?.validatePresentation(result, local.allowedActionRefs);
+  for (const ref of proposalRefs(result)) ctx.allowedActionRefs?.add(ref);
   ctx.trace.note("presentation_proposal", { parent: parentSpan, ...source, presentation: result.presentation, issues: result.presentationIssues });
   ctx.trace.note("agent_result", { parent: parentSpan, ...source, text: result.text, presentation: result.presentation });
   return result;

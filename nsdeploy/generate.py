@@ -67,19 +67,24 @@ quoted Response. Omit the block when chat alone is best. A composition can inclu
 several complementary components; do not repeat the same content in every channel.
 Keep stable, meaningful component IDs and form property keys across revisions.
 ```cruse-ui
-{"version":1,"components":[{"id":"availability","kind":"table","title":"Available options","columns":["Option","Availability"],"rows":[["Known option","Known availability"]]}]}
+{"version":1,"components":[{"id":"availability","kind":"table","title":"Available options","columns":["Option",\
+"Availability"],"rows":[["Known option","Known availability"]]}]}
 ```
 Supported component shapes (examples of structure, not factual data):
-{"id":"details","kind":"form","title":"…","schema":{"type":"object","properties":{"start_date":{"type":"string","format":"date","title":"Start date"}},"required":["start_date"]},"submitLabel":"Continue"}
+{"id":"details","kind":"form","title":"…","schema":{"type":"object","properties":{"start_date":{"type":"string",\
+"format":"date","title":"Start date"}},"required":["start_date"]},"submitLabel":"Continue"}
 Field types: string, integer/number (minimum/maximum), boolean, string format date,
 enum dropdown, x-ui:{widget:textarea} or {widget:radio}, array with items.enum for
 multiple selections. Use default only for known values. Mark only essential fields required.
 {"id":"options","kind":"choice","title":"…","options":[{"title":"…","subtitle":"…","meta":"…","value":"stable-option-id"}]}
-{"id":"approval","kind":"confirm","title":"…","confirmLabel":"Yes","cancelLabel":"No","confirmText":"Explicit action being approved"}
+{"id":"approval","kind":"confirm","title":"…","confirmLabel":"Yes","cancelLabel":"No","confirmText":"Explicit action \
+being approved"}
 {"id":"facts","kind":"info","title":"…","fields":{"Label":"Value"}}
-{"id":"report","kind":"report","title":"…","markdown":"## Findings\\n\\nStructured explanation with **emphasis**, lists and links."}
+{"id":"report","kind":"report","title":"…","markdown":"## Findings\\n\\nStructured explanation with **emphasis**, \
+lists and links."}
 {"id":"comparison","kind":"table","title":"…","columns":["Label","Value"],"rows":[["A","Known value"]]}
-{"id":"trend","kind":"chart","title":"…","chartType":"bar","unit":"Units","labels":["A","B"],"series":[{"name":"Series","values":[10,20]}],"summary":"Text explanation of the actual data."}
+{"id":"trend","kind":"chart","title":"…","chartType":"bar","unit":"Units","labels":["A","B"],\
+"series":[{"name":"Series","values":[10,20]}],"summary":"Text explanation of the actual data."}
 Charts support bar or line, up to 8 series and 120 labels. Values must be finite numbers;
 each series must match labels. Include a useful summary. Chart data is also accessible as a table.
 {"id":"visual","kind":"html","title":"…","html":"<article><h2>Findings</h2><p>Context</p></article>"}
@@ -326,7 +331,8 @@ def build_private_steward_hocon(
     {
       "name": "private_steward",
       "function": {
-        "description": "Represent the site operator in the public agent web. Delegate public-site work through the MCP gateway."
+        "description": "Represent the site operator in the public agent web. Delegate public-site work through the MCP \
+gateway."
       },
       "instructions": %s,
       "tools": ["public_agent_mcp_gateway"]
@@ -334,7 +340,8 @@ def build_private_steward_hocon(
     {
       "name": "public_agent_mcp_gateway",
       "function": {
-        "description": "Fetch and run any trusted public nsDeploy agent network locally. The site URL is checked against the local deny policy; MCP is a legacy fallback.",
+        "description": "Fetch and run any trusted public nsDeploy agent network locally. The site URL is checked \
+against the local deny policy; MCP is a legacy fallback.",
         "parameters": %s
       },
       "class": "nsdeploy.steward.PublicAgentNetworkGateway"
@@ -413,7 +420,8 @@ def write_private_steward_manifest(
 
 def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
                    mock_router: str, byok_router: str, site_base: str, theme: ThemeSpec,
-                   mcp_host: str = "127.0.0.1", static_bundle: bool = False) -> Dict[str, Any]:
+                   mcp_host: str = "127.0.0.1", static_bundle: bool = False,
+                   mock_llm: bool = False) -> Dict[str, Any]:
     meta = plan.config.get("metadata", {}) or {}
     front_fn = next((a.get("function", {}) for a in plan.agents if a.get("name") == plan.front_man), {})
     description = theme.tagline or (front_fn.get("description") or meta.get("description") or plan.network_name).strip()
@@ -438,10 +446,13 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
                 "sample_queries": meta.get("sample_queries", []) or [],
             }
         ],
+        # Real BYOK is the safe production default. The deterministic mock remains
+        # available only when the developer explicitly enables it for this build.
         "llm_router": {
-            "base_url": mock_router,
-            "mock": True,
+            "base_url": mock_router if mock_llm else byok_router,
+            "mock": mock_llm,
             "byok_router": byok_router,
+            **({"mock_router": mock_router} if mock_llm else {}),
         },
         "allowed_peers": allowed_peers,
         "peer_policy": {
@@ -457,7 +468,7 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
         manifest["deployment"] = {
             "mode": "static",
             "self_contained_runtime": True,
-            "browser_mock": True,
+            "browser_mock": mock_llm,
             "direct_byok": True,
             "direct_mcp_requires_cors": True,
             "public_mcp_facade": False,
@@ -569,7 +580,10 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
                   private_steward_sites: Optional[Dict[str, str]] = None,
                   static_bundle: bool = False,
                   runtime_dir: Optional[Path] = None,
-                  ts_package: bool = True) -> Dict[str, Any]:
+                  actions_file: Optional[Path] = None,
+                  action_pages=None, action_modules=None, action_caller_origins=None,
+                  action_host_page=False, discovered_actions=None,
+                  mock_llm: bool = False, ts_package: bool = True) -> Dict[str, Any]:
     """Build the disposable static output from network data and editable site source."""
     theme = theme or ThemeSpec()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -582,8 +596,45 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     )
     manifest = build_manifest(
         plan, network_config, mock_router, byok_router, site_base, theme,
-        mcp_host=mcp_host, static_bundle=static_bundle,
+        mcp_host=mcp_host, static_bundle=static_bundle, mock_llm=mock_llm,
     )
+    # Site-owned JavaScript is loaded only on its own origin. Peer callers learn
+    # schemas through the bridge, never by importing foreign executable code.
+    action_source = actions_file or (site_source_dir / "actions.js" if site_source_dir else None)
+    from nsdeploy.form_actions import action_discovery_config
+    discovery = action_discovery_config(action_pages, action_modules, action_caller_origins, action_host_page,
+                                        bool(discovered_actions))
+    if discovery:
+        manifest["actions"] = {"version": 1, "bridge": "./action-bridge.html", **discovery}
+    if discovered_actions:
+        manifest["actions"]["catalog"] = "./discovered-actions.json"
+        (out_dir / "discovered-actions.json").write_text(json.dumps(discovered_actions, indent=2), encoding="utf-8")
+    if action_source and action_source.is_file():
+        manifest.setdefault("actions", {"version": 1, "bridge": "./action-bridge.html"})["module"] = "./actions.js"
+        if action_source.resolve() != (out_dir / "actions.js").resolve():
+            shutil.copyfile(action_source, out_dir / "actions.js")
+    if "actions" in manifest:
+        enabled_count = (sum(a.get('enabled') is True for a in discovered_actions['actions'])
+                         if discovered_actions else 0)
+        print("   browser actions: " + ("adapter; " if action_source and action_source.is_file() else "")
+              + (f"{enabled_count} discovered operation(s); " if discovered_actions else "")
+              + f"{len(action_pages or [])} form page(s), {len(action_modules or [])} existing module(s); "
+              + "capabilities checked on the owning origin at runtime")
+        if action_host_page:
+            print("   host-page forms: local only; embed the widget beside existing native forms. "
+                  "Remote callers need --action-page routes or a registered module.")
+        if (action_pages or discovered_actions) and not action_caller_origins:
+            print("   form actions: remote access disabled; use --action-caller-origin to allow a caller.")
+        (out_dir / "action-bridge.html").write_text(
+            '<!doctype html><html><head><meta charset="utf-8"><title>Review site action</title>'
+            '<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+            '<body><p>Site action connection. You may sign in on this site in another tab, then return here.</p>'
+            '<script type="module" src="./runtime/action-bridge.js"></script></body></html>', encoding="utf-8")
+    else:
+        print("   browser actions: NONE configured. Chat/forms collect information only. "
+              "Use --action-site for public external forms/APIs, --action-page for existing routes, "
+              "--action-host-page for an embedded widget, "
+              "or --actions/--action-module for JavaScript. --site-url does not identify an action source.")
 
     (out_dir / f"{plan.network_name}.network.json").write_text(
         json.dumps(network_config, indent=2), encoding="utf-8")
@@ -598,13 +649,26 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     (well_known / "nsdeploy-agent.json").write_text(json.dumps(agent_mcp, indent=2), encoding="utf-8")
     steward_path = out_dir / f"{plan.network_name}_private_steward.hocon"
     legacy_steward_path = out_dir / "private-steward.hocon"
-    if legacy_steward_path.is_file() and not steward_path.is_file():
-        legacy_steward_path.replace(steward_path)
-    elif legacy_steward_path.is_file():
-        legacy_steward_path.unlink()
-    steward_path.write_text(
-        build_private_steward_hocon(plan, site_base, private_steward_sites), encoding="utf-8")
-    write_private_steward_manifest(out_dir.parent)
+    if static_bundle:
+        # A private steward is an operator-side Neuro-SAN configuration, not a
+        # browser asset. Keep static webroots limited to files the browser or
+        # static host actually consumes, and clean up outputs regenerated from
+        # older nsDeploy releases.
+        for obsolete_steward in (steward_path, legacy_steward_path):
+            if obsolete_steward.is_file():
+                obsolete_steward.unlink()
+        # Do not create an empty operator manifest as a side effect of a fresh
+        # static build. If one already exists, refresh it to drop stale entries.
+        if (out_dir.parent / "manifest.hocon").is_file():
+            write_private_steward_manifest(out_dir.parent)
+    else:
+        if legacy_steward_path.is_file() and not steward_path.is_file():
+            legacy_steward_path.replace(steward_path)
+        elif legacy_steward_path.is_file():
+            legacy_steward_path.unlink()
+        steward_path.write_text(
+            build_private_steward_hocon(plan, site_base, private_steward_sites), encoding="utf-8")
+        write_private_steward_manifest(out_dir.parent)
 
     # Preserve valid runtime-created bindings across regeneration. Each site owns
     # only its own outbound map; this file is not a registry or discovery service.
@@ -621,6 +685,15 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     links_doc = {"version": 1, "networks": {plan.network_name: bindings}}
     links_path.write_text(json.dumps(links_doc, indent=2), encoding="utf-8")
     index_html = _index_html(theme, _brand_display(plan, theme), static_bundle=static_bundle)
+    if action_pages:
+        import re
+        from urllib.parse import urlsplit
+        generated_path = urlsplit(site_base).path.rstrip("/")
+        for page in action_pages:
+            path = urlsplit(page).path.rstrip("/")
+            if path in (generated_path, generated_path + "/index.html") and not re.search(r"<form\b", index_html, re.I):
+                print(f"   WARNING: --action-page {page} targets the generated agent page, which has no native forms. "
+                      "Point discovery at an existing application route on this origin.")
     (out_dir / "index.html").write_text(index_html, encoding="utf-8")
     (out_dir / "theme.css").write_text(_theme_css(theme), encoding="utf-8")
     site_js = DEFAULT_SITE_JS
@@ -636,30 +709,33 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
             # bundle's copy of it loads the runtime on the neuro-san TS package instead.
             (out_dir / "runtime" / "index.js").write_text(
                 'export * from "./ts-package/index.js";\n', encoding="utf-8")
-        _write_static_hosting_files(out_dir)
+        _write_static_hosting_files(out_dir, plan.network_name, site_base)
     return manifest
 
 
-def _write_static_hosting_files(out_dir: Path) -> None:
+def _write_static_hosting_files(out_dir: Path, network_name: str, site_base: str = "") -> None:
     """Emit optional header files for common static hosts.
 
     The bundle still loads on a plain server. These headers are needed when another
     domain fetches the published agent files and to retain the coded-tool worker's
     hard CSP boundary.
     """
+    from urllib.parse import urlsplit
+    import re
+    prefix = urlsplit(site_base).path.rstrip("/")
+    public_files = ["agent-manifest.json", f"{network_name}.network.json", "links.json",
+                    "agent-mcp.json", ".well-known/nsdeploy.json", ".well-known/nsdeploy-agent.json"]
+    cors_headers = "".join(f"{prefix}/{path}\n  Access-Control-Allow-Origin: *\n" for path in public_files)
     (out_dir / "_headers").write_text(
-        "/*\n"
-        "  Access-Control-Allow-Origin: *\n"
-        "  Access-Control-Allow-Methods: GET, HEAD, OPTIONS\n"
-        "  Access-Control-Allow-Headers: Content-Type\n"
-        "/runtime/sandbox-worker.js\n"
+        cors_headers + f"{prefix}/runtime/sandbox-worker.js\n"
         f"  Content-Security-Policy: {WORKER_CSP}\n",
         encoding="utf-8",
     )
     (out_dir / ".htaccess").write_text(
         "<IfModule mod_headers.c>\n"
-        "  Header always set Access-Control-Allow-Origin \"*\"\n"
-        "  Header always set Access-Control-Allow-Methods \"GET, HEAD, OPTIONS\"\n"
+        '  <FilesMatch "^(' + '|'.join(re.escape(Path(path).name) for path in public_files) + ')$">\n'
+        '    Header always set Access-Control-Allow-Origin "*"\n'
+        "  </FilesMatch>\n"
         "  <Files \"sandbox-worker.js\">\n"
         f"    Header always set Content-Security-Policy \"{WORKER_CSP}\"\n"
         "  </Files>\n"
@@ -668,19 +744,32 @@ def _write_static_hosting_files(out_dir: Path) -> None:
     )
     (out_dir / "STATIC_HOSTING.md").write_text(
         "# Static nsDeploy bundle\n\n"
-        "Publish this directory as the web root. The site, browser runtime, local mock "
-        "router, and browser-local links require no application server.\n\n"
-        "For cross-domain agent loading, configure all responses with "
-        "`Access-Control-Allow-Origin: *`. The included `_headers` file is used by "
+        f"Publish this directory at `{prefix or '/'}` on the application's origin. The site, browser runtime, and "
+        "browser-local links require no application server.\n\n"
+        "For cross-domain agent loading, configure only these public data files with "
+        "`Access-Control-Allow-Origin: *`:\n\n" + "".join(f"- `{prefix}/{path}`\n" for path in public_files) + "\n"
+        "Action JavaScript and bridge pages do not need CORS: they load on their owning "
+        "origin and exchange validated messages with callers. Do not apply these CORS "
+        "headers to business endpoints. The included `_headers` file is used by "
         "Netlify and compatible hosts; Apache can use the included `.htaccess` when "
-        "`mod_headers` and overrides are enabled.\n\n"
+        "`mod_headers` and overrides are enabled. `_headers` paths are host-root-relative: "
+        "merge them into the host's root configuration when deploying under a subpath; "
+        "adjust the prefix if relocating the bundle. `.htaccess` stays beside the bundle.\n\n"
+        "For same-origin actions, this origin must also serve the real application and its backend. "
+        "Use explicit --action-page routes, --action-host-page when embedding the widget, "
+        "or registered JavaScript modules. Build-time --action-site discovery can instead call "
+        "existing public external forms/APIs that already allow CORS from this agent origin. "
+        "Review discovered-actions.json; OPTIONS checks do not verify execution. External "
+        "requests omit credentials. A themed agent page does not create business "
+        "capabilities. The host must allow approved callers to frame action-bridge.html "
+        "(CSP frame-ancestors / X-Frame-Options); a user-opened popup is the fallback. "
+        "Writes require the owning-site popup confirmation. Authenticated iframe reads "
+        "may be restricted by browser cookie policy; use top-level actions when needed.\n\n"
         "Serve `runtime/sandbox-worker.js` with:\n\n"
         f"    Content-Security-Policy: {WORKER_CSP}\n\n"
         "Real BYOK calls go directly from the browser to the router selected in settings, "
         "so that router must allow browser CORS. External MCP servers are also contacted "
         "directly and must allow browser CORS. Python tools and the public MCP facade are "
-        "not included. The generated private steward can fetch and run the published "
-        "network JSON from its private Neuro-SAN host; its LLM router does not need browser "
-        "CORS. Unresolved links are stored in this browser's local storage.\n",
+        "not included. Unresolved links are stored in this browser's local storage.\n",
         encoding="utf-8",
     )

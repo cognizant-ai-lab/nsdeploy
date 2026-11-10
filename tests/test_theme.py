@@ -54,7 +54,8 @@ class ThemeChatTests(unittest.TestCase):
 ===STYLE===
 .page { color: navy; }
 ===BODY===
-<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div><main data-ns-slot="chat"></main><aside data-ns-slot="agents"></aside></div>
+<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div><main data-ns-slot="chat"></main>\
+<aside data-ns-slot="agents"></aside><div data-ns-slot="settings"></div></div>
 """
         with tempfile.TemporaryDirectory() as tmp, \
                 patch("nsdeploy.theme.CACHE_DIR", Path(tmp)), \
@@ -69,13 +70,40 @@ class ThemeChatTests(unittest.TestCase):
         self.assertIn("Additional theme instructions from the deployer:\nUse cool ocean tones",
                       chat.call_args_list[1].args[4])
 
+    def test_fresh_generated_layout_must_place_settings(self):
+        plan = SimpleNamespace(
+            config={"metadata": {"description": "A test network"}},
+            network_name="test_network",
+            front_man="front",
+            agents=[{"name": "front", "function": {"description": "Helps users"}}],
+        )
+        response = """===META===
+{"brand":"Test"}
+===STYLE===
+.page { color: navy; }
+===BODY===
+<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div><main data-ns-slot="chat"></main>\
+<aside data-ns-slot="agents"></aside></div>
+"""
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch("nsdeploy.theme.CACHE_DIR", Path(tmp)), \
+                patch("nsdeploy.theme._chat", return_value=response):
+            spec = propose_theme(
+                plan, model="test-model", api_key="key", upstream="https://example.test/v1",
+            )
+
+        self.assertEqual(spec.brand, "Test")
+        self.assertEqual(spec.body, "")
+        self.assertEqual(spec.style, "")
+
 
 class ThemeLayoutTests(unittest.TestCase):
     def test_prompt_requests_composed_runtime_slots(self):
-        self.assertEqual(PROMPT_VERSION, "12")
+        self.assertEqual(PROMPT_VERSION, "13")
         self.assertIn('data-ns-layout="composed"', _SYSTEM_PROMPT)
         self.assertIn('data-ns-slot="chat"', _SYSTEM_PROMPT)
         self.assertIn('data-ns-slot="agents"', _SYSTEM_PROMPT)
+        self.assertIn('data-ns-slot="settings"', _SYSTEM_PROMPT)
         self.assertNotIn('data-ns-slot="activity"', _SYSTEM_PROMPT)
         self.assertIn(".ns-turn-status-spinner", _SYSTEM_PROMPT)
         self.assertIn(".ns-turn-status-text", _SYSTEM_PROMPT)
@@ -88,6 +116,8 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertIn("OPTIONAL starting point", _SYSTEM_PROMPT)
         self.assertIn("supplement/correct submitted information through chat", _SYSTEM_PROMPT)
         self.assertIn("reports, comparison tables, charts", _SYSTEM_PROMPT)
+        self.assertIn("YOU choose where and how it appears", _SYSTEM_PROMPT)
+        self.assertIn("automatically opens it when an API key is required", _SYSTEM_PROMPT)
 
     def test_composed_layout_and_native_drawer_survive_sanitizing(self):
         spec = ThemeSpec.coerce({
@@ -100,6 +130,10 @@ class ThemeLayoutTests(unittest.TestCase):
                     <aside data-ns-slot="agents"></aside>
                   </details>
                   <section class="timeline" data-ns-slot="activity"></section>
+                  <details class="model-settings">
+                    <summary aria-label="Model settings">⚙</summary>
+                    <div data-ns-slot="settings"></div>
+                  </details>
                 </div>
                 <div id="app">duplicate</div>
             """,
@@ -112,6 +146,7 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertIn('data-ns-slot="chat"', spec.body)
         self.assertIn('data-ns-slot="agents"', spec.body)
         self.assertIn('data-ns-slot="activity"', spec.body)
+        self.assertIn('data-ns-slot="settings"', spec.body)
         self.assertIn("<details", spec.body)
         self.assertIn("<summary>Agents working</summary>", spec.body)
         self.assertNotIn("onclick", spec.body)
@@ -160,6 +195,23 @@ class ThemeLayoutTests(unittest.TestCase):
                   <aside data-ns-slot="agents"></aside>
                   <section data-ns-slot="activity"></section>
                   <section data-ns-slot="activity"></section>
+                </div>
+            """,
+            "style": "body { color: red; }",
+        })
+
+        self.assertEqual(spec.body, "")
+        self.assertEqual(spec.style, "")
+
+    def test_duplicate_settings_slot_falls_back_to_default(self):
+        spec = ThemeSpec.coerce({
+            "body": """
+                <div id="app" data-ns-layout="composed">
+                  <div data-ns-slot="header"></div>
+                  <main data-ns-slot="chat"></main>
+                  <aside data-ns-slot="agents"></aside>
+                  <div data-ns-slot="settings"></div>
+                  <div data-ns-slot="settings"></div>
                 </div>
             """,
             "style": "body { color: red; }",

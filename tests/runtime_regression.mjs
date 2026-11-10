@@ -33,6 +33,17 @@ assert.deepEqual(
   { baseUrl: "http://127.0.0.1:8091/byok/v1", mock: false, upgradedToByok: true },
 );
 assert.equal(selectTopRouter(manifest, "http://localhost:8091/v1", "", "").mock, true);
+const byokDefaultManifest = {
+  llm_router: {
+    base_url: "http://127.0.0.1:8091/byok/v1",
+    byok_router: "http://127.0.0.1:8091/byok/v1",
+    mock: false,
+  },
+};
+assert.deepEqual(
+  selectTopRouter(byokDefaultManifest, "", ""),
+  { baseUrl: "http://127.0.0.1:8091/byok/v1", mock: false, upgradedToByok: false },
+);
 assert.equal(isMockResponse(false, "byok", "model.gguf"), false);
 assert.equal(isMockResponse(false, "mock", ""), true);
 assert.equal(isMockResponse(false, "byok", "neuro-san-mock"), true);
@@ -217,8 +228,8 @@ assert.match(consumeAgentBudget(agentBudget, 100), /agent invocations/);
 
 // BYOK guard: a real (non-mock) router is never contacted without a visitor-entered
 // key. The "demo" sentinel and an empty key are both rejected; the mock needs none.
-assert.throws(() => assertRouterKey({ baseUrl: "http://router.example/v1", mock: false }, "demo"), /needs your API key/);
-assert.throws(() => assertRouterKey({ baseUrl: "http://router.example/v1", mock: false }, ""), /needs your API key/);
+assert.throws(() => assertRouterKey({ baseUrl: "http://router.example/v1", mock: false }, "demo"), /API key is required/);
+assert.throws(() => assertRouterKey({ baseUrl: "http://router.example/v1", mock: false }, ""), /API key is required/);
 assert.doesNotThrow(() => assertRouterKey({ baseUrl: "http://router.example/v1", mock: false }, "sk-real"));
 assert.doesNotThrow(() => assertRouterKey({ baseUrl: "http://127.0.0.1:8091/v1", mock: true }, "demo"));
 

@@ -10,8 +10,12 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+output/
+.codex-*/
 venv/
 .venv/
+# uv sync writes one locally; the repo resolves fresh from requirements.txt on purpose.
+uv.lock
 node_modules/
 
 # misc
@@ -19,3 +23,7 @@ node_modules/
 
 # IDE files
 .idea/
+
+# local credentials
+.env
+.env.*

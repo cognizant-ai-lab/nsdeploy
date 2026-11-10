@@ -58,6 +58,7 @@ try {
   const manifest = { brand: "Neighbor Exchange · Test", llm_router: { base_url: location.origin + "/v1", mock: true }, welcome: { message: "Use the form or type your request below.", widget: { ...form, title: "Start a neighbor exchange" } } };
   mountApp(document.querySelector("#app"), { engine, trace: engine.trace, manifest });
   const app = document.querySelector("#app");
+  check(!!app.querySelector("#theme-settings.ns-settings #ns-key") && !app.querySelector('[data-ns-slot="chat"] .ns-settings'), "Theme-owned settings slot controls BYOK placement");
   app.querySelector("#ns-input").value = "Are there any minivans available for me to borrow next week?";
   app.querySelector("#ns-send").click();
   await tick();

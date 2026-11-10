@@ -1,0 +1,20 @@
+{
+  "brand": "OpenResto Concierge",
+  "icon": "\ud83c\udf7d\ufe0f",
+  "tagline": "Reservations handled with care and clear confirmation",
+  "hero": "Plan, review, and explicitly approve every test reservation from one attentive concierge.",
+  "font": "Georgia, 'Times New Roman', serif",
+  "radius": 14,
+  "colors": {
+    "primary": "#8F2D34",
+    "accent": "#D58A32",
+    "bg": "#F3EBDD",
+    "bg_tint": "#E9DDCC",
+    "fg": "#2C211C",
+    "muted": "#6F625A",
+    "border": "#D8C8B5",
+    "msgbg": "#FFFDF8",
+    "panelbg": "#F8F2E8"
+  },
+  "welcome": null
+}

@@ -1,0 +1,253 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Design tokens.
+
+   Colors come from a validated palette. Two groups, with different rules:
+
+   • Status (ready / building / failed) is the FIXED status palette — never themed,
+     never reused as a decorative accent. It was validated and the report is the
+     reason for the icon+label rule in components.css: `good` vs `critical` measure
+     ΔE 4.1 under deuteranopia, i.e. ready and failed are indistinguishable by hue
+     for red-green colorblind readers. Hue is reinforcement here, never the signal.
+     On the light surface `warning` sits at 1.79 contrast by design; the visible
+     text label is the required relief.
+
+   • Accent/ink come from the categorical slot-1 blue and the neutral ink ramp,
+     stepped separately for each surface.
+
+   Dark values are declared twice on purpose: the media query follows the OS, the
+   [data-theme] scope follows the in-app toggle, and the :not() guard lets an
+   explicit light choice beat OS dark.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: light;
+
+  /* surfaces & ink */
+  --surface-page: #f4f4f2;
+  --surface-1: #fcfcfb;
+  --surface-2: #f0f0ed;
+  --surface-sunken: #e9e9e5;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #77766f;
+  --border: #dcdcd6;
+  --border-strong: #c4c4bc;
+
+  /* accent — categorical slot 1 */
+  --accent: #2f5fe0;
+  --accent-hover: #1f47bd;
+  --accent-active: #163a94;
+  --accent-ink: #ffffff;
+  --accent-wash: #e7edfc;
+  --accent-soft: #cfe0f7;
+
+  /* brand chrome — fixed navy header, not swapped by theme. This is the
+     Cognizant Neuro AI product-shell navy, not a themed surface. */
+  --brand-navy: #0a1042;
+  --brand-navy-2: #131c5c;
+  --brand-ink: #ffffff;
+  --brand-ink-muted: rgb(255 255 255 / 0.68);
+
+  /* app shell geometry */
+  --sidebar-w: 15.5rem;
+  --sidebar-w-rail: 4.5rem;
+
+  /* status — fixed, never themed */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-critical: #d03b3b;
+  /* Inert, not a status hue: a stopped deployment is not an error. */
+  --status-inert: #77766f;
+
+  /* text-safe status ink for the light surface, where the raw status hues are
+     sub-3:1 and would be unreadable as small text */
+  --status-good-ink: #006300;
+  --status-warning-ink: #7a5300;
+  --status-critical-ink: #a32020;
+
+  /* Map terrain. These are scenery, not data encodings — the pins and edges drawn
+     on top stay the subject. They are not categorical slots and must never be
+     reused to encode a category. Saturated illustrative palette, matching the
+     brochure-style street-map reference (tan ground, bright river, gold roads,
+     saturated parkland) rather than a low-chroma print map. */
+  --map-land: #f2ddb0;
+  --map-sea: #6fc3e4;
+  --map-sea-deep: #3f9ac2;
+  --map-shore: #f6e8ba;
+  --map-park: #86c85f;
+  --map-block: #eec98a;
+  --map-road: #fffdf5;
+  --map-road-edge: #d8d4c4;
+  --map-pier: #a67c46;
+  --map-wave: #bfe8f5;
+  --map-water-label: #1f6f8f;
+  --map-pin-ring: #f2ddb0;
+
+  /* The street map (see components/mapArt.js): a flat plan, read from directly
+     above. Arterials are the one warm note in the scenery and the thing that
+     gives the plan its grid; everything else recedes so the markers own the
+     page. Still scenery: never a data encoding. */
+  --map-arterial: #ffcb3d;
+  --map-arterial-edge: #e8a723;
+  --map-street: #fffdf5;
+  --map-footprint: #d98f52;
+  --map-tree: #4f9e42;
+
+  /* Edges are structure: a recessive neutral, with a distinct focus tone for the
+     relationship being traced. */
+  --map-edge: #8a8a80;
+  --map-edge-active: #0f5665;
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas,
+    "Liberation Mono", monospace;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05), 0 1px 1px rgb(0 0 0 / 0.04);
+  --shadow: 0 1px 3px rgb(0 0 0 / 0.07), 0 4px 12px rgb(0 0 0 / 0.05);
+  --shadow-lg: 0 2px 6px rgb(0 0 0 / 0.08), 0 12px 32px rgb(0 0 0 / 0.10);
+
+  --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+
+  /* Decorative-only extras layered on top of the validated set above: a larger
+     corner radius for hero surfaces, and a coloured (not just dark) shadow for the
+     handful of primary actions/brand marks that should visibly carry the accent
+     rather than a generic drop shadow. Never used anywhere contrast is measured. */
+  --radius-xl: 20px;
+  --shadow-brand: 0 1px 0 rgb(255 255 255 / 0.5) inset,
+    0 14px 30px -12px color-mix(in srgb, var(--accent) 45%, transparent);
+  --shadow-brand-lg: 0 20px 48px -16px color-mix(in srgb, var(--accent) 50%, transparent),
+    0 4px 14px -6px rgb(0 0 0 / 0.12);
+}
+
+/* Dark steps are selected for the dark surface, not an automatic inversion. */
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+
+    --surface-page: #121211;
+    --surface-1: #1a1a19;
+    --surface-2: #222220;
+    --surface-sunken: #0e0e0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #94938a;
+    --border: #32322e;
+    --border-strong: #45453f;
+
+    --accent: #4c7cf0;
+    --accent-hover: #6f97f5;
+    --accent-active: #86a9f7;
+    --accent-ink: #0b0b0b;
+    --accent-wash: #16233d;
+    --accent-soft: #1c2c4d;
+
+    /* All four status steps clear 3:1 on the dark surface, so the ink tokens
+       can be the status hues themselves here. */
+    --status-good-ink: #0ca30c;
+    --status-warning-ink: #fab219;
+    --status-critical-ink: #e66767;
+    --status-inert: #94938a;
+
+    /* Dark terrain is a selected set stepped for the dark surface, not an
+       inversion of the light one. */
+    --map-land: #1f2422;
+    --map-sea: #16303a;
+    --map-sea-deep: #102730;
+    --map-shore: #2c2c24;
+    --map-park: #1e2e22;
+    --map-block: #262b28;
+    --map-road: #3a3f3b;
+    --map-road-edge: #2a2e2b;
+    --map-pier: #4a4234;
+    --map-wave: #2b4f5b;
+    --map-water-label: #5e8b97;
+    --map-pin-ring: #1f2422;
+
+    /* Dark street map. The arterial keeps its warmth but drops most of its
+       chroma: at full saturation on a near-black ground it read as a live
+       route rather than as scenery. */
+    --map-arterial: #6b5227;
+    --map-arterial-edge: #4d3a1a;
+    --map-street: #34342f;
+    --map-footprint: #2b2f2b;
+    --map-tree: #3d6b3f;
+
+    --map-edge: #8f8f85;
+    --map-edge-active: #4fb3c7;
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow: 0 1px 3px rgb(0 0 0 / 0.45), 0 4px 12px rgb(0 0 0 / 0.35);
+    --shadow-lg: 0 2px 6px rgb(0 0 0 / 0.5), 0 12px 32px rgb(0 0 0 / 0.45);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface-page: #121211;
+  --surface-1: #1a1a19;
+  --surface-2: #222220;
+  --surface-sunken: #0e0e0d;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #94938a;
+  --border: #32322e;
+  --border-strong: #45453f;
+
+  --accent: #4c7cf0;
+  --accent-hover: #6f97f5;
+  --accent-active: #86a9f7;
+  --accent-ink: #0b0b0b;
+  --accent-wash: #16233d;
+  --accent-soft: #1c2c4d;
+
+  --status-good-ink: #0ca30c;
+  --status-warning-ink: #fab219;
+  --status-critical-ink: #e66767;
+  --status-inert: #94938a;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow: 0 1px 3px rgb(0 0 0 / 0.45), 0 4px 12px rgb(0 0 0 / 0.35);
+  --shadow-lg: 0 2px 6px rgb(0 0 0 / 0.5), 0 12px 32px rgb(0 0 0 / 0.45);
+
+  /* The map terrain, which this block was missing entirely: the dark values
+     existed only under @media (prefers-color-scheme: dark), so a reader on a
+     light OS who used the in-app toggle got a dark console with a fully LIT
+     map — dark panels, dark balloons, daylight city. It went unnoticed while
+     the terrain was a few flat fills; a massed city makes it unmissable.
+     These must stay in step with the media block above; the file already
+     duplicates every other token across the two, and CSS cannot OR a media
+     query with an attribute selector. */
+  --map-land: #1f2422;
+  --map-sea: #16303a;
+  --map-sea-deep: #102730;
+  --map-shore: #2c2c24;
+  --map-park: #1e2e22;
+  --map-block: #262b28;
+  --map-road: #3a3f3b;
+  --map-road-edge: #2a2e2b;
+  --map-pier: #4a4234;
+  --map-wave: #2b4f5b;
+  --map-water-label: #5e8b97;
+  --map-pin-ring: #1f2422;
+  --map-arterial: #6b5227;
+  --map-arterial-edge: #4d3a1a;
+  --map-street: #34342f;
+  --map-footprint: #2b2f2b;
+  --map-tree: #3d6b3f;
+  --map-edge: #8f8f85;
+  --map-edge-active: #4fb3c7;
+}

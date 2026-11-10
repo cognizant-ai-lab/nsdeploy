@@ -1,7 +1,7 @@
 // CRUSE's wire contract. Proposals are returned to the caller, never published
 // directly to the user by a child agent. This module is shared by both runners.
 const object = (v) => !!v && typeof v === "object" && !Array.isArray(v);
-const kinds = new Set(["form", "choice", "confirm", "info", "report", "table", "chart", "html"]);
+const kinds = new Set(["form", "choice", "confirm", "info", "report", "table", "chart", "html", "action"]);
 
 export function parseJson(text) {
   try { return JSON.parse(text); } catch {}
@@ -15,6 +15,8 @@ export function isPresentation(value) {
 
 function validComponent(c) {
   if (!object(c) || !kinds.has(c.kind)) return false;
+  if (c.submit && (c.kind !== "form" || !Array.isArray(c.submit.actions) || !c.submit.actions.length)) return false;
+  if (c.kind === "action") return typeof c.action === "string" && (!c.arguments || object(c.arguments));
   if (c.kind === "form") {
     const p = c.schema?.properties;
     return object(p) && Object.keys(p).length > 0 && Object.keys(p).length <= 40 &&

@@ -193,10 +193,12 @@ class CommerceSite:
         try:
             if handler.command == "GET" and operation == "info":
                 return self._json(handler, 200, {"role": self.role, "arbiter_url": self.arbiter_url,
-                    "seller_url": self.seller_url, "catalog": public_catalog(PROVIDER, default_trip())})
+                                                 "seller_url": self.seller_url,
+                                                 "catalog": public_catalog(PROVIDER, default_trip())})
             allowed = {"negotiate", "status", "approve", "cancel", "seller-bid", "provider-bid"}
             if not operation or operation not in allowed:
-                return self._json(handler, 404, {"error": "No commerce web interface. Use your private steward in nsFlow."})
+                return self._json(handler, 404,
+                                  {"error": "No commerce web interface. Use your private steward in nsFlow."})
             if handler.command != "POST":
                 return self._json(handler, 405, {"error": "Method not allowed."})
             if handler.headers.get("Origin") is not None:
@@ -215,7 +217,8 @@ class CommerceSite:
                 handler.close_connection = True
                 raise ValueError("Invalid commerce request size.")
             body = json.loads(handler.rfile.read(length))
-            result = self._provider_action(operation, body) if provider_action else self._steward_action(operation, body)
+            result = (self._provider_action(operation, body) if provider_action
+                      else self._steward_action(operation, body))
             return self._json(handler, 200, result)
         except PermissionError as exc:
             return self._json(handler, 403, {"error": str(exc)})
@@ -224,7 +227,8 @@ class CommerceSite:
         except (ValueError, TypeError, KeyError) as exc:
             return self._json(handler, 400, {"error": str(exc)})
         except (urllib.error.URLError, TimeoutError, OSError):
-            return self._json(handler, 502, {"error": "Commerce peer unavailable. Retry or inspect booking status; no receipt is fabricated."})
+            return self._json(handler, 502, {"error": "Commerce peer unavailable. Retry or inspect booking status; "
+                                                      "no receipt is fabricated."})
 
     @staticmethod
     def _json(handler, status, body):

@@ -77,6 +77,28 @@ class LinkerTests(unittest.TestCase):
             ThemeSpec(),
         )
         self.assertIn("http://127.0.0.1:8093", manifest["allowed_peers"])
+        self.assertEqual(manifest["llm_router"]["base_url"], "http://127.0.0.1:8094/byok/v1")
+        self.assertFalse(manifest["llm_router"]["mock"])
+        self.assertNotIn("mock_router", manifest["llm_router"])
+
+    def test_mock_llm_is_an_explicit_developer_opt_in(self):
+        plan = DeploymentPlan(
+            network_name="demo",
+            config={"tools": [{"name": "front", "instructions": "Help."}]},
+            front_man="front",
+        )
+        config = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
+        manifest = build_manifest(
+            plan, config,
+            "http://127.0.0.1:8091/v1",
+            "http://127.0.0.1:8091/byok/v1",
+            "http://127.0.0.1:8091",
+            ThemeSpec(),
+            mock_llm=True,
+        )
+        self.assertEqual(manifest["llm_router"]["base_url"], "http://127.0.0.1:8091/v1")
+        self.assertEqual(manifest["llm_router"]["mock_router"], "http://127.0.0.1:8091/v1")
+        self.assertTrue(manifest["llm_router"]["mock"])
 
     def test_mcp_url_is_not_classified_as_public_agent_network(self):
         remote = "https://tools.example/mcp"
@@ -272,7 +294,9 @@ class LinkerTests(unittest.TestCase):
         config = json.loads((out / "portable.network.json").read_text())
         self.assertEqual(config["tools"][0]["tools"], [direct_mcp])
         self.assertEqual(config["deployment"]["omitted_python_tools"], ["search"])
-        self.assertEqual(manifest["llm_router"]["base_url"], "browser://mock")
+        self.assertEqual(manifest["llm_router"]["base_url"], "https://api.example/v1")
+        self.assertFalse(manifest["llm_router"]["mock"])
+        self.assertFalse(manifest["deployment"]["browser_mock"])
         self.assertEqual(manifest["networks"][0]["front_man"], "front")
         self.assertFalse(manifest["agent_mcp"]["available"])
         self.assertEqual(manifest["linking"]["link_updates"]["mode"], "browser-local")
@@ -280,18 +304,46 @@ class LinkerTests(unittest.TestCase):
         self.assertTrue((out / "_headers").is_file())
         self.assertTrue((out / ".htaccess").is_file())
         self.assertTrue((out / "STATIC_HOSTING.md").is_file())
-        self.assertTrue((out / "portable_private_steward.hocon").is_file())
-        self.assertIn(
-            '"class": "nsdeploy.steward.PublicAgentNetworkGateway"',
-            (out / "portable_private_steward.hocon").read_text(),
-        )
-        self.assertIn(
-            "private steward can fetch and run",
-            (out / "STATIC_HOSTING.md").read_text(),
-        )
+        self.assertFalse((out / "portable_private_steward.hocon").exists())
+        self.assertNotIn("private steward", (out / "STATIC_HOSTING.md").read_text())
+        self.assertFalse((out.parent / "manifest.hocon").exists())
         index = (out / "index.html").read_text()
         self.assertIn('from "./runtime/index.js"', index)
         self.assertIn('href="./theme.css"', index)
+
+        mock_manifest = generate_site(
+            plan, self.root / "portable-mock", "browser://mock", "https://api.example/v1", "",
+            cruse=False, static_bundle=True, runtime_dir=runtime, mock_llm=True,
+        )
+        self.assertEqual(mock_manifest["llm_router"]["base_url"], "browser://mock")
+        self.assertTrue(mock_manifest["deployment"]["browser_mock"])
+
+    def test_static_bundle_removes_stale_private_stewards(self):
+        plan = DeploymentPlan(
+            network_name="portable",
+            config={"tools": [{"name": "front", "instructions": "Help."}]},
+            front_man="front",
+        )
+        out = self.root / "portable"
+        out.mkdir()
+        (out / "portable_private_steward.hocon").write_text("stale")
+        (out / "private-steward.hocon").write_text("legacy")
+        (out.parent / "manifest.hocon").write_text(
+            '{\n  "portable/portable_private_steward.hocon": true,\n}\n'
+        )
+        runtime = self.root / "runtime-source"
+        runtime.mkdir()
+        (runtime / "index.js").write_text("export const boot = () => {};\n")
+        (runtime / "sandbox-worker.js").write_text("// worker\n")
+
+        generate_site(
+            plan, out, "browser://mock", "https://api.example/v1", "",
+            cruse=False, static_bundle=True, runtime_dir=runtime,
+        )
+
+        self.assertFalse((out / "portable_private_steward.hocon").exists())
+        self.assertFalse((out / "private-steward.hocon").exists())
+        self.assertNotIn("portable_private_steward", (out.parent / "manifest.hocon").read_text())
 
     def test_static_bundle_loads_the_ts_package_runtime_unless_switched_off(self):
         plan = DeploymentPlan(

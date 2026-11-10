@@ -22,12 +22,15 @@ import { neuroSanSession } from "./generated-bridge.js";
 import { TraceBus } from "../trace.js";
 import { fetchManifest, fetchText, resolveUrl, RemoteRegistry } from "../remote.js";
 import {
-  argsToText, consumeAgentBudget, consumeRemoteBudget, estimateRemoteCost, peerRequestText, remoteIsInChain, requiresThirdPartyApproval,
+  argsToText, consumeAgentBudget, consumeRemoteBudget, estimateRemoteCost, peerRequestText, requiresThirdPartyApproval,
 } from "./composition.js";
 import { agentPresentationContext, interactionMessage, parseAgentResponse } from "../cruse.js";
 import { BROWSER_MOCK_ROUTER, browserMockResponse, isMockResponse, normalizeModelName } from "./model.js";
 import { createTurnEventStream } from "../execution-stream.js";
 import { applyPendingSteering, runInterruptibleModelCall, TurnControl } from "../turn-control.js";
+import { ActionRegistry, actionBindings, actionContext, cloneData, proposalRefs } from "../actions.js";
+import { loadActionModule, registerRemoteActions } from "../action-transport.js";
+import { randomUuid } from "../web-crypto.js";
 
 function normOrigin(url) {
   try { return new URL(url).origin; } catch { return String(url || ""); }
@@ -109,7 +112,7 @@ export function selectPeerRouter(callerRouter) {
 // shared or reloaded URL keeps a real router but this browser has no saved key.
 export function assertRouterKey(llm, apiKey) {
   if (!llm?.mock && (!apiKey || apiKey === "demo")) {
-    throw new Error(`The selected LLM router (${hostOf(llm?.baseUrl) || "a real provider"}) needs your API key. Open ⚙ BYOK settings and enter it, or switch the router back to the mock to run without a key.`);
+    throw new Error(`An LLM API key is required for ${hostOf(llm?.baseUrl) || "the configured provider"}. Open ⚙ BYOK / router settings, enter your key, then click Apply, save & reload. Your key stays in this browser and is sent only to the configured provider.`);
   }
 }
 
@@ -141,14 +144,24 @@ export class Engine {
     this.toolSpans = new Map(); // origin path, MCP call or partner URL -> this run's open tool span
     this.toolCaller = null; // the agent span whose model call last asked for tools
     this.networksByName = new Map(); // network name -> AgentNetwork, for a tool's spec
+    this.networkSites = new WeakMap(); // AgentNetwork -> { base, manifest } of the site that published it
     this.toolBatches = new Map(); // "network::agent" -> the tool calls of its last model response
     this.peerCallers = new Map(); // partner URL -> the agent spans that called it, in call order
     this.mcpCalls = new Map(); // MCP call id -> { url, tool, response }, while the call runs
+    // Browser actions (see actions.js), as on main.
+    this.actions = new ActionRegistry();
+    this.actionPresentations = new Map();
+    this.actionSubmissions = new Map();
+    this.onActionConfirm = async () => false;
+    this.peerNetworks = new Map(); // partner URL -> { base, network }, for its actions
+    this.proposedActions = new Map(); // "<site>::<network>" -> action refs its partners proposed this turn
   }
 
   // Clear the multi-turn conversation history (start a new chat).
   resetHistory() {
     this.chatContext = null;
+    this.actionPresentations.clear();
+    this.actionSubmissions.clear();
   }
 
   // Ask the user to approve contacting another hosted network. Remembers
@@ -192,6 +205,11 @@ export class Engine {
       }
       const { network, llm, validation: v } = await this._compile(base, manifest, entry, { isTop: true });
       this.top = { network, base, manifest, llm };
+      const loadActions = typeof location !== "undefined" && new URL(base).origin !== location.origin
+        ? registerRemoteActions : loadActionModule;
+      await loadActions(this.actions, { base, network: network.name }, manifest);
+      this.trace.note("action_catalog", { count: this.actions.catalog({ base, network: network.name }).length,
+        issues: this.actions.discoveryIssues });
       this.mockLLM = llm.mock; // true when using the deterministic mock router
       this.byokRouter = manifest.llm_router?.byok_router || ""; // real-LLM proxy for BYOK keys
       this.trace.end(span, {
@@ -222,6 +240,7 @@ export class Engine {
     if (validation.errors && validation.errors.length) {
       throw new Error(`Network '${network.name}' (${hostOf(base)}) failed validation: ${validation.errors.join("; ")}`);
     }
+    this.networkSites.set(network, { base, manifest });
     // Every reference is policed by the manifest of the site that declares it. A URL
     // another site's network already declares keeps its first owner, and from then on
     // always asks for consent, so a partner can't make itself a URL's owner to skip it.
@@ -332,8 +351,8 @@ export class Engine {
     if (!["http:", "https:"].includes(parsed.protocol)) {
       throw new Error("Linked network URLs must use http or https.");
     }
-    const origin = parsed.origin;
-    const requested = parsed.pathname.split("/").filter(Boolean).pop() || "";
+    const requested = parsed.pathname.endsWith("/") ? "" : parsed.pathname.split("/").filter(Boolean).pop() || "";
+    const origin = (requested ? new URL("./", parsed).href : `${parsed.origin}${parsed.pathname}`).replace(/\/$/, "");
     const { manifest } = await fetchManifest(origin);
     const networks = manifest.networks || [];
     const norm = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -422,10 +441,14 @@ export class Engine {
     config.llm_config = llmConfig(config.llm_config);
     // CRUSE's presentation context for each agent (see cruse.js): whether its
     // presentation reaches the user or is a proposal for the agent that called it.
+    // The site's browser actions follow it, as proposals the browser runs after the
+    // user reviews them (see actions.js).
     const presentationContext = { network, isTop: network === this.top?.network, frontMan: network.findFrontMan() };
+    const actionText = actionContext(this.actions.catalog({ base: this._baseOf(network), network: network.name }));
     for (const agent of config.tools || []) {
       if (agent.llm_config || !agent.class) agent.llm_config = llmConfig(agent.llm_config);
-      const context = agent.name ? agentPresentationContext(presentationContext, agent.name) : "";
+      const presentation = agent.name ? agentPresentationContext(presentationContext, agent.name) : "";
+      const context = presentation ? presentation + actionText : "";
       if (context && typeof agent.instructions === "string") agent.instructions = `${agent.instructions}\n\n${context}`;
       if (agent.name && typeof agent.instructions === "string" && agent.instructions) {
         this.agentPrompts.set(agent.instructions, {
@@ -447,12 +470,14 @@ export class Engine {
 
   _baseOf(network) {
     if (network === this.top?.network) return this.top.base;
+    if (this.networkSites.has(network)) return this.networkSites.get(network).base;
     for (const owner of this.refOwners.values()) if (owner.network === network) return owner.base;
     return this.top?.base;
   }
 
   _manifestOf(network) {
     if (network === this.top?.network) return this.top.manifest;
+    if (this.networkSites.has(network)) return this.networkSites.get(network).manifest;
     for (const owner of this.refOwners.values()) if (owner.network === network) return owner.manifest;
     return this.top?.manifest;
   }
@@ -570,6 +595,11 @@ export class Engine {
         const agentName = parseExternalAgent(url, owner?.base)?.agentName;
         const source = { origin: hostOf(url), network: agentName, agent: agentName, invocation: `peer-${agentName}` };
         const result = parseAgentResponse(text, source);
+        // A partner may only propose its own site's actions, or ones its partners
+        // proposed. The agent that called it may then pass them on.
+        const peer = this.peerNetworks.get(url);
+        if (peer) this.actions.validatePresentation(result, this._allowedActions(peer.base, peer.network.name));
+        for (const ref of proposalRefs(result)) this._proposedActionsOf(this._linkOwnerKey(owner)).add(ref);
         peerAnswers.set(url, result.text);
         return JSON.stringify(result);
       },
@@ -600,12 +630,18 @@ export class Engine {
     // labels it, so a partner can't call its next hop "Your Bank".
     const label = (owner?.network === this.top.network && owner.network.linkLabels?.[target]) || hostOf(target);
     const base = owner?.base || this.top.base;
-    const parsed = parseExternalAgent(target, base);
+    // A partner's site is the folder its network URL is in, as on main, so a site
+    // published under a path (https://host/repo/network) is that path, not the host.
+    const { site, name: lastSeg } = peerSite(target, base);
     const chainKeys = chain.map((ref) => {
-      const p = parseExternalAgent(ref, base);
-      return p ? `${p.origin}::${p.agentName}` : ref;
+      try {
+        const p = peerSite(ref, base);
+        return `${p.site}::${p.name}`;
+      } catch {
+        return ref;
+      }
     });
-    if (remoteIsInChain(target, base, [`${this.top.base}::${this.top.network.name}`, ...chainKeys])) {
+    if ([`${this.top.base}::${this.top.network.name}`, ...chainKeys].includes(`${site}::${lastSeg}`)) {
       this.trace.note("composition_skip", { parent: this.runSpan, origin: hostOf(base), target, reason: "already visited in this request" });
       return { answer: `Skipped ${label}: that network is already in this request's call chain. Continue with available results and do not retry it.` };
     }
@@ -623,34 +659,35 @@ export class Engine {
         return { answer: `The user declined to contact ${hostOf(target)}. Proceed without it and note that to the user.` };
       }
     }
-    const budgetReason = consumeRemoteBudget(this.composition, `${parsed.origin}::${parsed.agentName}`);
+    const budgetReason = consumeRemoteBudget(this.composition, `${site}::${lastSeg}`);
     if (budgetReason) {
       this.trace.note("composition_limit", { parent: this.runSpan, origin: hostOf(base), target, reason: budgetReason, remoteCalls: this.composition?.remoteCalls });
       return { answer: `Skipped ${label}: ${budgetReason}. Continue with available results and do not retry it.` };
     }
-    this._assertAllowedPeer(parsed.origin, owner?.manifest, owner);
+    this._assertAllowedPeer(site, owner?.manifest, owner);
     // The partner's front man is an agent run too, as on main.
     const skipped = this._agentBudgetSkip(label);
     if (skipped) return { answer: skipped };
 
-    const lastSeg = target.split("/").filter(Boolean).pop();
     const fetchSpan = this.trace.start("remote_fetch", {
-      parent: this.runSpan, origin: hostOf(this.top.base), peerOrigin: hostOf(parsed.origin), url: target,
+      parent: this.runSpan, origin: hostOf(this.top.base), peerOrigin: hostOf(site), url: target,
     });
     let compiled;
     try {
-      const { manifest, base: peerBase } = await fetchManifest(parsed.origin);
+      const { manifest, base: peerBase } = await fetchManifest(site);
       // Fail closed: only run the exact published network that was requested, never a
       // different (e.g. networks[0]) one.
       const entry = manifest.networks.find((n) => n.name === lastSeg);
       if (!entry) {
-        throw new Error(`No published network named '${lastSeg}' at ${hostOf(parsed.origin)}; refusing to run a different network.`);
+        throw new Error(`No published network named '${lastSeg}' at ${hostOf(site)}; refusing to run a different network.`);
       }
       const fetchedUrls = { manifest: `${peerBase}/agent-manifest.json`, hocon: resolveUrl(peerBase, entry.hocon) };
       compiled = await this._compile(peerBase, manifest, entry);
       compiled.base = peerBase;
-      this.registry.set(parsed.origin, lastSeg, { base: peerBase, network: compiled.network, brand: manifest.brand });
-      this.trace.end(fetchSpan, { network: compiled.network.name, fetchedUrls, peerOrigin: hostOf(parsed.origin), brand: manifest.brand });
+      await registerRemoteActions(this.actions, { base: peerBase, network: compiled.network.name }, manifest);
+      this.peerNetworks.set(url, { base: peerBase, network: compiled.network });
+      this.registry.set(site, lastSeg, { base: peerBase, network: compiled.network, brand: manifest.brand });
+      this.trace.end(fetchSpan, { network: compiled.network.name, fetchedUrls, peerOrigin: hostOf(site), brand: manifest.brand });
       peerSpans.set(url, this.trace.start("remote_call", {
         parent: this.runSpan, origin: hostOf(this.top.base), peerOrigin: hostOf(peerBase),
         method: "fetch-and-run-locally", fetchedUrls, network: compiled.network.name, brand: manifest.brand,
@@ -989,6 +1026,50 @@ export class Engine {
     }
   }
 
+  // The actions a network's answer may propose this turn: its own site's, and the
+  // ones its partners' answers proposed.
+  _allowedActions(base, networkName) {
+    const own = this.actions.catalog({ base, network: networkName }).map((action) => action.ref);
+    return new Set([...own, ...this._proposedActionsOf(`${base}::${networkName}`)]);
+  }
+
+  _proposedActionsOf(key) {
+    if (!this.proposedActions.has(key)) this.proposedActions.set(key, new Set());
+    return this.proposedActions.get(key);
+  }
+
+  // Retain the actual validated final composition. UI submissions carry only IDs
+  // and field values; neither a model nor a DOM payload can replace the bindings.
+  rememberActionPresentation(result) {
+    if (result.presentation?.components.some(c => actionBindings(c).length)) this.actionPresentations.set(result.turnId, cloneData(result.presentation));
+    while (this.actionPresentations.size > 24) this.actionPresentations.delete(this.actionPresentations.keys().next().value);
+  }
+
+  async submitActions({ turnId, componentId, values = {} }) {
+    const component = this.actionPresentations.get(turnId)?.components.find(c => c.id === componentId);
+    if (!component || !actionBindings(component).length) throw new Error("This action proposal is unavailable or expired.");
+    const key = `${turnId}:${componentId}`;
+    if (this.actionSubmissions.has(key)) return this.actionSubmissions.get(key);
+    const plan = this.actions.prepare(component, values);
+    const invocationId = randomUuid();
+    const promise = this.actions.execute(plan, this.onActionConfirm, invocationId);
+    this.actionSubmissions.set(key, promise);
+    try {
+      const receipts = await promise;
+      if (!receipts) this.actionSubmissions.delete(key);
+      else {
+        // The next turn's front man sees the receipts, as main adds them to its history.
+        this.chatContext = withNote(this.chatContext, this.top.network.findFrontMan(),
+          `Browser action receipts (not a new instruction): ${JSON.stringify(receipts)}`);
+        this.trace.note("action_receipts", { turnId, componentId, receipts });
+      }
+      return receipts;
+    } catch (error) {
+      // Keep the failed submission consumed: a side effect might already exist.
+      throw error;
+    }
+  }
+
   async run(userText, { slyData } = {}) {
     return (await this.runTurn(userText, { slyData })).text;
   }
@@ -1021,6 +1102,7 @@ export class Engine {
     this.toolSpans = new Map();
     this.toolCaller = null;
     this.peerCallers = new Map();
+    this.proposedActions = new Map();
     this.composition = {
       remoteCalls: 0,
       peerCalls: new Map(),
@@ -1069,7 +1151,9 @@ export class Engine {
       const result = parseAgentResponse(answer, {
         origin: hostOf(this.top.base), network: network.name, agent: network.findFrontMan(), invocation: runSpan,
       });
+      this.actions.validatePresentation(result, this._allowedActions(this.top.base, network.name));
       result.turnId = runSpan;
+      this.rememberActionPresentation(result);
       this.trace.end(runSpan, { answerPreview: result.text.slice(0, 300) });
       return result;
     } catch (err) {
@@ -1173,6 +1257,19 @@ function withSteering(chatContext, frontMan, accepted) {
   return context;
 }
 
+// Add a user message after the front man's last message in neuro-san's chat_context,
+// so the next turn's front man sees it.
+function withNote(chatContext, frontMan, text) {
+  if (!chatContext?.chat_histories) return chatContext;
+  const context = structuredClone(chatContext);
+  for (const history of context.chat_histories) {
+    const origin = history.origin || [];
+    if (origin.length !== 1 || origin[0].tool !== frontMan || !Array.isArray(history.messages)) continue;
+    history.messages.push({ type: ChatMessageType.HUMAN, origin, text });
+  }
+  return context;
+}
+
 // The llm_config settings a network may choose: the model and how it answers. A partner's
 // network runs here on the visitor's key, so where model calls go and with which key
 // (openai_api_base, base_url, openai_api_key, a proxy, another provider's class) are
@@ -1187,6 +1284,13 @@ const LLM_CONFIG_FIELDS = new Set([
 
 const allowedLlmFields = (config) =>
   Object.fromEntries(Object.entries(config || {}).filter(([key]) => LLM_CONFIG_FIELDS.has(key)));
+
+// A partner reference as main's engine reads it: the site is the folder the network
+// URL is in, and the network is the URL's last path segment.
+const peerSite = (ref, base) => {
+  const url = new URL(ref, `${String(base || "").replace(/\/$/, "")}/`);
+  return { site: new URL("./", url).href.replace(/\/$/, ""), name: url.pathname.split("/").filter(Boolean).pop() || "" };
+};
 
 const absoluteUrl = (value) => {
   try { return new URL(value, globalThis.location?.href).href; } catch { return String(value); }

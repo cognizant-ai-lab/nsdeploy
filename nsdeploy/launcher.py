@@ -114,7 +114,10 @@ def _responses_to_chat(body: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List
     the call it answers, and tools as {"function": {...}}.
     """
     raw_input = body.get("input", [])
-    items = [{"type": "message", "role": "user", "content": raw_input}] if isinstance(raw_input, str) else raw_input or []
+    if isinstance(raw_input, str):
+        items = [{"type": "message", "role": "user", "content": raw_input}]
+    else:
+        items = raw_input or []
     names_by_call: Dict[str, str] = {}
     messages: List[Dict[str, Any]] = []
     for item in items:
@@ -276,7 +279,8 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             self.close_connection = True
             self.end_headers()
             if tool_call:
-                self.wfile.write(_sse({"choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [tool_call]}}]}))
+                delta = {"role": "assistant", "tool_calls": [tool_call]}
+                self.wfile.write(_sse({"choices": [{"index": 0, "delta": delta}]}))
                 self.wfile.write(_sse({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}))
             else:
                 for i, piece in enumerate(summary.split(" ")):
@@ -363,15 +367,20 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             sequence = iter(range(1_000_000))
 
             def event(kind: str, **fields):
-                self.wfile.write(f"event: {kind}\ndata: {json.dumps({'type': kind, 'sequence_number': next(sequence), **fields})}\n\n".encode("utf-8"))
+                data = json.dumps({"type": kind, "sequence_number": next(sequence), **fields})
+                self.wfile.write(f"event: {kind}\ndata: {data}\n\n".encode("utf-8"))
 
             event("response.created", response={**response, "status": "in_progress", "output": []})
             if call:
-                event("response.output_item.added", output_index=0, item={**item, "status": "in_progress", "arguments": ""})
-                event("response.function_call_arguments.delta", item_id=item["id"], output_index=0, delta=item["arguments"])
-                event("response.function_call_arguments.done", item_id=item["id"], output_index=0, arguments=item["arguments"])
+                event("response.output_item.added", output_index=0,
+                      item={**item, "status": "in_progress", "arguments": ""})
+                event("response.function_call_arguments.delta", item_id=item["id"], output_index=0,
+                      delta=item["arguments"])
+                event("response.function_call_arguments.done", item_id=item["id"], output_index=0,
+                      arguments=item["arguments"])
             else:
-                event("response.output_item.added", output_index=0, item={**item, "status": "in_progress", "content": []})
+                event("response.output_item.added", output_index=0,
+                      item={**item, "status": "in_progress", "content": []})
                 part = {"type": "output_text", "text": "", "annotations": []}
                 event("response.content_part.added", item_id=item["id"], output_index=0, content_index=0, part=part)
                 for i, piece in enumerate(summary.split(" ")):
@@ -527,12 +536,15 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             else:
                 file_path = site_dir / path.lstrip("/")
             if ".." in path or not file_path.is_file():
-                return self._send(404, b"404 " + path.encode(), "text/plain")
+                return self._send(404, b"404 " + path.encode(), "text/plain", cors=False)
             data = file_path.read_bytes()
             extra = {}
             if path == "/runtime/sandbox-worker.js":
                 extra["Content-Security-Policy"] = WORKER_CSP
-            self._send(200, data, MIME.get(file_path.suffix, "application/octet-stream"), extra)
+            public_data = path in ("/agent-manifest.json", "/links.json", "/agent-mcp.json",
+                                   "/.well-known/nsdeploy.json", "/.well-known/nsdeploy-agent.json") or (
+                                       path.count("/") == 1 and path.endswith(".network.json"))
+            self._send(200, data, MIME.get(file_path.suffix, "application/octet-stream"), extra, cors=public_data)
 
         def _byok_models_proxy(self):
             """Expose the active upstream catalog for browser-side model validation."""
@@ -558,9 +570,10 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 detail = json.dumps({"error": f"model catalog unavailable: {exc}"}).encode("utf-8")
                 return self._send(502, detail, "application/json")
 
-        def _send(self, code: int, body: bytes, ctype: str, extra: Optional[Dict[str, str]] = None):
+        def _send(self, code: int, body: bytes, ctype: str, extra: Optional[Dict[str, str]] = None, *, cors=True):
             self.send_response(code)
-            self._cors()
+            if cors:
+                self._cors()
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             for k, v in (extra or {}).items():
@@ -644,7 +657,7 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
           site_base: Optional[str] = None,
           upstream: str = "https://api.openai.com/v1", python_exe: Optional[str] = None,
           runtime_dir: Optional[Path] = None, ext_mcps: Optional[List[str]] = None,
-          facade_upstream: Optional[str] = None, ts_package: bool = True) -> None:
+          facade_upstream: Optional[str] = None, mock_llm: bool = False, ts_package: bool = True) -> None:
     python_exe = python_exe or sys.executable
     runtime_dir = runtime_dir or DEFAULT_RUNTIME_DIR
     generated = runtime_dir / TS_PACKAGE_DIR / "generated"
@@ -673,15 +686,17 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
         commerce = from_plan(plan, site_dir, site_base or f"http://127.0.0.1:{port}")
         httpd = ThreadingHTTPServer(
             ("127.0.0.1", port), make_handler(site_dir, upstream, runtime_dir, ext_mcps,
-                                               local_mcps, f"http://127.0.0.1:{facade_port}/mcp", commerce,
-                                               ts_package))
+                                              local_mcps, f"http://127.0.0.1:{facade_port}/mcp", commerce,
+                                              ts_package))
         url = (site_base or f"http://127.0.0.1:{port}").rstrip("/") + "/"
         print(f"\n🌐  {plan.network_name} is live:  {url}")
         if site_base:
             print(f"    Loopback backend: 127.0.0.1:{port}")
         print(f"    Runtime: {'neuro-san TS package' if ts_package else 'original (--use-ts-package false)'}")
-        print(f"    LLM: mock router (no key) at /v1  ·  BYOK proxy at /byok/v1 → {upstream}")
-        print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: caller BYOK → {facade_upstream}  ·  steward: {plan.network_name}_private_steward.hocon")
+        llm_default = "mock /v1 (developer mode)" if mock_llm else "BYOK /byok/v1 (API key required)"
+        print(f"    LLM default: {llm_default}  ·  BYOK upstream → {upstream}")
+        print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: caller BYOK → {facade_upstream}  "
+              f"·  steward: {plan.network_name}_private_steward.hocon")
         if plan.hostable_tools:
             print("    MCP tool servers (same-origin proxy → private subprocess):")
             for i, (tool, (_, private_port)) in enumerate(zip(plan.hostable_tools, bindings)):
