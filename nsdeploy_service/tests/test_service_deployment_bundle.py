@@ -300,8 +300,8 @@ class DeploymentBundleTest(unittest.TestCase):
         self.assertEqual(router.get("byok_router"), "https://router.example/v1")
         self.assertNotIn("https://uploader.example/v1", json.dumps(manifest))
 
-    def test_an_upstream_query_overrides_the_deployments_own(self):
-        """An upstream query parameter overrides the deployment's own upstream."""
+    def test_an_upstream_query_sets_the_bundles_upstream(self):
+        """An upstream query parameter sets the bundle's BYOK target, and a stored upstream is not used."""
         client = self._open()
         row = self._deploy(client, options=DeployOptions(
             name="hello_shop", upstream="https://llm.example.com/v1"))
