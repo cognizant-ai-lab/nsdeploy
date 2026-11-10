@@ -6,7 +6,7 @@ import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
 import { LlmClient, browserMockCompletion, isMockResponse } from "../nsdeploy/runtime/llm.js";
 import { ProviderError } from "../nsdeploy/runtime/provider-error.js";
 import { McpClient, parseMaybeSse, readJsonRpcResponse } from "../nsdeploy/runtime/mcp.js";
-import { normalizeModelName } from "../nsdeploy/runtime/model.js";
+import { effectiveModel, fallbackModel, isPlaceholderModel, normalizeModelName } from "../nsdeploy/runtime/model.js";
 import { createTurnEventStream } from "../nsdeploy/runtime/execution-stream.js";
 import { TraceBus } from "../nsdeploy/runtime/trace.js";
 import { createTurnStatusController, statusTextForEvent } from "../nsdeploy/runtime/turn-status.js";
@@ -488,6 +488,132 @@ assert.throws(
     const mock = new LlmClient({ baseUrl: "http://127.0.0.1:8091/v1", apiKey: "demo", mock: true });
     await assert.rejects(mock.chat({ model: "m", messages: [] }), /fetch reached/);
     assert.equal(fetched, 1);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// Model guard: a real (non-mock) router never receives the mock placeholder model.
+// A missing key is still reported first, a real model is still sent, and the mock
+// router still accepts the placeholder.
+{
+  const realFetch = globalThis.fetch;
+  const sent = [];
+  globalThis.fetch = async (_url, init) => { sent.push(JSON.parse(init.body).model); throw new Error("fetch reached"); };
+  try {
+    const real = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "fixture-key", mock: false });
+    await assert.rejects(real.chat({ model: "mock-1", messages: [] }), /model is required for router\.example/);
+    await assert.rejects(real.chat({ model: '"mock-1"', messages: [] }), /model is required/);
+    // A blank or quoted-empty name normalizes to "", which a real provider cannot use either.
+    await assert.rejects(real.chat({ model: "   ", messages: [] }), /model is required/);
+    await assert.rejects(real.chat({ model: '""', messages: [] }), /model is required/);
+    const keyless = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "", mock: false });
+    await assert.rejects(keyless.chat({ model: "mock-1", messages: [] }), /AI provider key is required/);
+    assert.deepEqual(sent, []);
+    await assert.rejects(real.chat({ model: "gpt-test", messages: [] }), /fetch reached/);
+    const mock = new LlmClient({ baseUrl: "http://127.0.0.1:8091/v1", apiKey: "demo", mock: true });
+    await assert.rejects(mock.chat({ model: "mock-1", messages: [] }), /fetch reached/);
+    assert.deepEqual(sent, ["gpt-test", "mock-1"]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// The shared helpers the runners and the settings panel use: an empty name and the
+// placeholder are both unusable, and a blank agent model falls back to the network's.
+assert.equal(isPlaceholderModel(""), true);
+assert.equal(isPlaceholderModel('  "mock-1" '), true);
+assert.equal(isPlaceholderModel("gpt-test"), false);
+assert.equal(effectiveModel("", "", "gpt-network"), "gpt-network");
+assert.equal(effectiveModel("", null, ""), "mock-1");
+assert.equal(effectiveModel("gpt-chosen", "gpt-agent", "gpt-network"), "gpt-chosen");
+// With no model anywhere, the fallback is the mock placeholder, which isPlaceholderModel rejects.
+assert.equal(fallbackModel("gpt-network"), "gpt-network");
+assert.equal(isPlaceholderModel(fallbackModel("")), true);
+assert.equal(isPlaceholderModel(fallbackModel(undefined)), true);
+
+// The same guard for a whole turn, with both runners. A real key and no model stop
+// the turn before any model request; with no key, the key error still comes first.
+{
+  const realFetch = globalThis.fetch;
+  const sent = [];
+  const routers = {
+    "mock.example": { base_url: "https://mock.example/v1", byok_router: "https://byok.example/v1", mock: true },
+    "real.example": { base_url: "https://byok.example/v1", byok_router: "https://byok.example/v1", mock: false },
+    "netmodel.example": { base_url: "https://byok.example/v1", byok_router: "https://byok.example/v1", mock: false },
+    "spacemodel.example": { base_url: "https://byok.example/v1", byok_router: "https://byok.example/v1", mock: false },
+    "quotedmodel.example": { base_url: "https://byok.example/v1", byok_router: "https://byok.example/v1", mock: false },
+  };
+  // On these sites the network names a model and the agent's own is blank (empty,
+  // spaces, or quoted-empty), so the agent falls back to the network's model.
+  const blankAgentNetwork = (modelName) => ({
+    llm_config: { model_name: "gpt-network" },
+    tools: [{ name: "front", instructions: "Help.", llm_config: { model_name: modelName } }],
+  });
+  const networks = {
+    "netmodel.example": blankAgentNetwork(""),
+    "spacemodel.example": blankAgentNetwork("  "),
+    "quotedmodel.example": blankAgentNetwork('""'),
+  };
+  const jsonResponse = (body, ok = true) => ({ ok, json: async () => body, text: async () => JSON.stringify(body) });
+  const mockAnswer = `data: ${JSON.stringify({ model: "neuro-san-mock", choices: [{ index: 0, delta: { content: "(mock) ok" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`;
+  globalThis.fetch = async (url, init) => {
+    const href = String(url);
+    if (href.endsWith("/chat/completions")) {
+      sent.push(JSON.parse(init.body).model);
+      // The mock router answers any model. A real provider rejects the placeholder
+      // with a 404, which fails fast because the LangChain client does not retry it.
+      if (href.startsWith("https://mock.example/")) {
+        return new Response(mockAnswer, { headers: { "Content-Type": "text/event-stream" } });
+      }
+      return new Response(JSON.stringify({ error: { code: "model_not_found" } }), { status: 404 });
+    }
+    if (href.endsWith("/agent-manifest.json")) {
+      return jsonResponse({ networks: [{ name: "plain", hocon: "plain.json" }], llm_router: routers[new URL(href).host] });
+    }
+    if (href.endsWith("/plain.json")) {
+      const network = networks[new URL(href).host] || { tools: [{ name: "front", instructions: "Help." }] };
+      return { ok: true, text: async () => JSON.stringify(network) };
+    }
+    if (href.endsWith("/links.json")) return jsonResponse({}, false);
+    throw new Error(`unexpected fetch: ${href}`);
+  };
+  try {
+    // Run each case with the manual loop, then with the prebuilt LangChain runner.
+    for (const runner of ["manual", "langchain"]) {
+      // A real key switches the mock site to its BYOK router. No model is set anywhere.
+      const keyed = new Engine({ originUrl: "https://mock.example", byokKey: "fixture-key" });
+      const keyless = new Engine({ originUrl: "https://real.example" });
+      if (runner === "langchain") {
+        await keyed.enableLangChain();
+        await keyless.enableLangChain();
+      }
+      await assert.rejects(keyed.run("hello"), /model is required for byok\.example/);
+      assert.equal(keyed.top.llm.mock, false);
+      await assert.rejects(keyless.run("hello"), /AI provider key is required for byok\.example/);
+    }
+    assert.deepEqual(sent, []);
+    // Without a key, the mock site keeps its mock router, which gets the placeholder.
+    const mock = new Engine({ originUrl: "https://mock.example" });
+    assert.match(await mock.run("hello"), /\(mock\) ok/);
+    assert.deepEqual(sent, ["mock-1"]);
+    // A blank agent model is not a missing model when the network names one: the turn
+    // is not blocked, and the network's model is what gets sent.
+    const netModel = new Engine({ originUrl: "https://netmodel.example", byokKey: "fixture-key" });
+    await assert.rejects(netModel.run("hello"), (error) => !/model is required/.test(String(error?.message)));
+    assert.equal(sent[1], "gpt-network");
+    assert.ok(!sent.slice(1).includes("mock-1"));
+    // A model_name of spaces or a quoted-empty string falls back the same way, with
+    // both runners, because the config is normalized when the network is loaded.
+    for (const host of ["spacemodel.example", "quotedmodel.example"]) {
+      for (const runner of ["manual", "langchain"]) {
+        const engine = new Engine({ originUrl: `https://${host}`, byokKey: "fixture-key" });
+        if (runner === "langchain") await engine.enableLangChain();
+        const before = sent.length;
+        await assert.rejects(engine.run("hello"), (error) => !/model is required/.test(String(error?.message)));
+        assert.equal(sent[before], "gpt-network", `${host} with the ${runner} runner`);
+      }
+    }
   } finally {
     globalThis.fetch = realFetch;
   }

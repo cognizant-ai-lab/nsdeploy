@@ -12,6 +12,11 @@ import { auth } from './auth.js';
 // need CORSMiddleware with an explicit origin allowlist).
 export const BASE = '';
 
+// Requests go through the server's console proxy, which adds the API token when
+// NSDEPLOY_SERVICE_CONSOLE_PROXY is on. POST /settings is not on its allowlist, so
+// it goes to the API directly and still asks for the token.
+const CONSOLE_BASE = `${BASE}/console-api`;
+
 export class ApiError extends Error {
   constructor(message, status, payload) {
     super(message);
@@ -41,7 +46,7 @@ function detailOf(payload, fallback) {
   return fallback;
 }
 
-async function request(path, { method = 'GET', body, json, allow = [], retry = true } = {}) {
+async function request(path, { method = 'GET', body, json, allow = [], retry = true, direct = false } = {}) {
   const init = { method, headers: { ...auth.headers() } };
   if (json !== undefined) {
     init.headers['Content-Type'] = 'application/json';
@@ -52,13 +57,13 @@ async function request(path, { method = 'GET', body, json, allow = [], retry = t
 
   let response;
   try {
-    response = await fetch(BASE + path, init);
+    response = await fetch((direct ? BASE : CONSOLE_BASE) + path, init);
   } catch (cause) {
     throw new ApiError('Cannot reach the deployment service. Is it still running?', 0, null);
   }
 
   if (response.status === 401 && retry && await auth.challenge()) {
-    return request(path, { method, body, json, allow, retry: false });
+    return request(path, { method, body, json, allow, retry: false, direct });
   }
 
   if (response.status === 204) return { status: 204, data: null };
@@ -81,7 +86,7 @@ export const api = {
   getSettings: () => request('/settings').then((r) => r.data),
   /** Only send fields the operator actually retyped; see SettingsUpdate server-side. */
   updateSettings: (patch) =>
-    request('/settings', { method: 'POST', json: patch }).then((r) => r.data),
+    request('/settings', { method: 'POST', json: patch, direct: true }).then((r) => r.data),
 
   listOrgs: () => request('/orgs').then((r) => r.data.organizations || []),
   createOrg: (org) => request('/orgs', { method: 'POST', json: org }).then((r) => r.data),

@@ -61,8 +61,9 @@ CREATE TABLE IF NOT EXISTS deployments (
     log_path      TEXT NOT NULL,
     work_dir      TEXT NOT NULL,
     -- The DeployOptions the caller chose. Restart replays them, so a relaunched
-    -- deployment keeps its original upstream/theme/cruse/ttl instead of silently
-    -- falling back to whatever the service defaults happen to be now.
+    -- deployment keeps its original theme/cruse/ttl instead of silently
+    -- falling back to whatever the service defaults happen to be now. A stored
+    -- upstream is not replayed: every site uses the service-wide upstream.
     options_json  TEXT,
     hocon_path    TEXT,
     -- Map coordinates as {"x": pct, "y": pct}. Assigned at deploy time and never

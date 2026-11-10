@@ -12,12 +12,14 @@ import {
   getSelectedByokProfile,
   guessByokProfileName,
   loadByokStore,
+  loadTabByokSetup,
   portableByokRouter,
   resolveByokRouter,
+  saveTabByokSetup,
   selectByokProfile,
   upsertByokProfile,
 } from "./byok.js";
-import { normalizeModelName } from "./model.js";
+import { effectiveModel, isPlaceholderModel, normalizeModelName } from "./model.js";
 import { normalizePresentation } from "./cruse.js";
 import { PRESENTATION_CSS, renderMarkdown, renderRichComponent } from "./cruse-render.js";
 import { createTurnStatusController } from "./turn-status.js";
@@ -911,10 +913,9 @@ export function mountApp(root, { engine, trace, manifest }) {
     modal.hidden = false;
   }
 
-  // BYOK / router settings. The active key is never written to the URL. Saved
-  // profiles make router/model/key reusable across agent networks; explicit URL
-  // router/model params still win so links remain shareable.
-  const params = new URLSearchParams(location.search);
+  // AI model settings. Router, model and key are never read from or written
+  // to the URL. Apply keeps them for this tab in session storage, and saved
+  // profiles make them reusable across agent networks.
   let profileStore = loadByokStore();
   let selectedProfile = getSelectedByokProfile(profileStore);
   const profileEl = root.querySelector("#ns-profile");
@@ -935,12 +936,21 @@ export function mountApp(root, { engine, trace, manifest }) {
     || (manifest?.llm_router?.mock ? manifest?.llm_router?.base_url : "");
   const byokRouter = engine.byokRouter || "";
   const staticMode = manifest?.deployment?.mode === "static";
+  // Without a visitor-chosen model, each agent sends its declared model, then the
+  // network's, or else the mock placeholder. Check the same model the runner sends.
+  let everyAgentHasModel = true;
+  // The front man and "agent" tools call a model; coded and toolbox tools do not.
+  for (const spec of net?.config?.tools || []) {
+    const callsModel = spec === frontSpec || net.classifyTool(spec?.name).kind === "agent";
+    const sent = effectiveModel("", spec?.llm_config?.model_name, net?.config?.llm_config?.model_name);
+    if (callsModel && isPlaceholderModel(sent)) everyAgentHasModel = false;
+  }
 
   routerEl.value = engine.routerOverride || engine.top?.llm?.baseUrl || byokRouter || mockUrl;
   modelEl.value = engine.modelOverride || "";
-  let storedKey = "";
-  try { storedKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
-  keyEl.value = storedKey || selectedProfile?.key || "";
+  // The key shown comes from the same source as the router and model the engine
+  // uses, so it never shows another setup's key next to this tab's router.
+  keyEl.value = loadTabByokSetup(selectedProfile).key;
   profileNameEl.value = selectedProfile?.name || "";
 
   const profileStorageText = canUseByokCookie()
@@ -1061,6 +1071,33 @@ export function mountApp(root, { engine, trace, manifest }) {
       return null;
     }
   };
+  // True when a turn would send a real router an empty model or the mock
+  // placeholder, which the runtime refuses. A chosen model is what every agent
+  // sends; without one, each agent's own model counts.
+  const lacksModel = (requireActiveKey, router, key, model) => {
+    // A send uses the applied setup.
+    if (requireActiveKey) {
+      if (engine.mockLLM) return false;
+      if (engine.modelOverride) return isPlaceholderModel(engine.modelOverride);
+      return !everyAgentHasModel;
+    }
+    // Apply checks the form it is about to save.
+    if (!key || key === "demo") return false;
+    // With a real key, Apply switches a mock router to the BYOK router.
+    const nextRouter = byokRouter && isMockRouter(router) ? byokRouter : router;
+    if (isMockRouter(nextRouter)) return false;
+    if (model) return isPlaceholderModel(model);
+    return !everyAgentHasModel;
+  };
+  // Ask for a model. Mention the Model field's suggestions only when an earlier
+  // /models lookup filled them; this adds no request of its own.
+  const modelSetupMessage = () => {
+    const choice = modelOptionsEl.options.length
+      ? "pick a suggested model in the Model field or enter another model your provider supports"
+      : "enter a model your provider supports in the Model field";
+    return "This site needs a model name before it can answer with your key. "
+      + `Open ⚙ ${AI_MODEL_SETTINGS_LABEL}, ${choice}, then select Save and start.`;
+  };
   validateConfiguredModel = async (requireActiveKey = true) => {
     let router = routerEl.value.trim();
     const key = keyEl.value.trim();
@@ -1073,6 +1110,18 @@ export function mountApp(root, { engine, trace, manifest }) {
       setProfileHint(message, "warn");
       root.querySelector(".ns-settings").open = true;
       (key ? root.querySelector("#ns-apply") : keyEl).focus();
+      addBubble(msgs, "bot", `⚠️ ${message}`);
+      return false;
+    }
+    if (lacksModel(requireActiveKey, router, key, model)) {
+      // A usable model typed but not applied yet only needs Apply.
+      const unapplied = requireActiveKey && !!model && !isPlaceholderModel(model);
+      const message = unapplied
+        ? "Your model is ready. Select Save and start before sending a request."
+        : modelSetupMessage();
+      setProfileHint(message, "warn");
+      root.querySelector(".ns-settings").open = true;
+      (unapplied ? root.querySelector("#ns-apply") : modelEl).focus();
       addBubble(msgs, "bot", `⚠️ ${message}`);
       return false;
     }
@@ -1153,7 +1202,6 @@ export function mountApp(root, { engine, trace, manifest }) {
   root.querySelector("#ns-apply").addEventListener("click", async () => {
     const p = new URLSearchParams(location.search);
     p.delete("key"); // the key must never appear in the URL
-    let router = routerEl.value.trim();
     const key = keyEl.value.trim();
     const model = normalizeModelName(modelEl.value);
     modelEl.value = model;
@@ -1163,21 +1211,15 @@ export function mountApp(root, { engine, trace, manifest }) {
       keyEl.focus();
       return;
     }
-    // Safety net: a real key must never be sent to the mock router.
-    if ((key || model) && byokRouter && isMockRouter(router)) router = byokRouter;
     if (!await validateConfiguredModel(false)) return;
     const saved = saveCurrentProfile();
-    // The key is kept in browser storage, never the query string.
-    try {
-      if (key) sessionStorage.setItem("nsweb-byok-key", key);
-      else sessionStorage.removeItem("nsweb-byok-key");
-    } catch {}
-    if (router) p.set("router", router); else p.delete("router");
-    if (model) p.set("model", model); else p.delete("model");
+    // Key, router and model stay with this tab in session storage, never in the
+    // query string. Boot reads them after the reload, so a setup that another tab
+    // or port selects later cannot pair this tab's key with a different router.
+    saveTabByokSetup(saved);
     p.delete("runner");
     const qs = p.toString();
-    // Rewrite the (key-free) query string, then reload so the change applies even
-    // when only the key changed (router/model unchanged).
+    // Rewrite the (key-free) query string, then reload so the applied setup takes effect.
     try { history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash); } catch {}
     if (saved) setProfileHint(`Saved setup "${saved.name}". Reloading...`);
     location.reload();

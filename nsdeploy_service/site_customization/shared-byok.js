@@ -24,15 +24,22 @@
     const applyButton = document.querySelector("#ns-apply");
     const sharedKey = readSharedKey();
     let sessionKey = "";
-    try { sessionKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
+    // nsdeploy marks a setup applied in this tab with this item, even when its key
+    // is empty. That setup keeps its own key, so the shared key must not replace it
+    // or fill the key field.
+    let tabSetupApplied = false;
+    try {
+      sessionKey = sessionStorage.getItem("nsweb-byok-key") || "";
+      tabSetupApplied = sessionStorage.getItem("nsweb-byok-router") !== null;
+    } catch {}
 
-    if (sharedKey && sharedKey !== sessionKey) {
+    if (sharedKey && !tabSetupApplied && sharedKey !== sessionKey) {
       // boot() has already created this page's engine. Seed the storage it reads
       // and reload once so the engine selects /byok/v1 with the shared key.
       try { sessionStorage.setItem("nsweb-byok-key", sharedKey); } catch {}
       if (keyInput) keyInput.value = sharedKey;
       location.reload();
-    } else if (sharedKey && keyInput && !keyInput.value) {
+    } else if (sharedKey && !tabSetupApplied && keyInput && !keyInput.value) {
       keyInput.value = sharedKey;
     }
 

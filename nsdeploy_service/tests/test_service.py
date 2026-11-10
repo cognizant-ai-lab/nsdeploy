@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import socket
 import subprocess
@@ -6,6 +7,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Dict
+from typing import List
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -170,6 +174,57 @@ class SettingsTest(unittest.TestCase):
         """An inverted port pool is rejected."""
         with self.assertRaises(ValueError):
             Settings(port_start=8200, port_end=8100).validate()
+
+    def test_reads_the_site_env_allow_list_from_the_environment(self) -> None:
+        """
+        NSDEPLOY_SERVICE_SITE_ENV_ALLOW is read as a comma-separated list of names.
+        """
+        with mock.patch.dict(os.environ, {"NSDEPLOY_SERVICE_SITE_ENV_ALLOW": "OPENAI_API_KEY, GEMINI_API_KEY"}):
+            settings = Settings.from_env()
+        self.assertEqual(settings.site_env_allow, ["OPENAI_API_KEY", "GEMINI_API_KEY"])
+        self.assertEqual(Settings().site_env_allow, [])
+
+    def test_health_warns_when_theming_cannot_get_the_key(self) -> None:
+        """
+        /health warns when THEME is on but site builds do not get OPENAI_API_KEY, and not once it is listed.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            withheld = Settings(work_root=Path(tmp) / "withheld", port_start=8900, port_end=8909, theme=True)
+            listed = Settings(work_root=Path(tmp) / "listed", port_start=8900, port_end=8909, theme=True,
+                              site_env_allow=["OPENAI_API_KEY"])
+            with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "fake-openai-key"}):
+                with TestClient(create_app(withheld)) as client:
+                    warned: List[str] = client.get("/health").json().get("warnings")
+                with TestClient(create_app(listed)) as client:
+                    quiet: List[str] = client.get("/health").json().get("warnings")
+        self.assertIn("SITE_ENV_ALLOW", " ".join(warned))
+        # /health needs no token, so its warnings must never contain the key itself.
+        self.assertNotIn("fake-openai-key", " ".join(warned))
+        self.assertNotIn("SITE_ENV_ALLOW", " ".join(quiet))
+
+    def test_health_warns_when_theme_is_on_without_a_key(self) -> None:
+        """
+        /health warns when THEME is on and OPENAI_API_KEY is not set at all.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = Settings(work_root=Path(tmp), port_start=8900, port_end=8909, theme=True)
+            # patch.dict restores the environment on exit, including the removed key.
+            with mock.patch.dict(os.environ):
+                os.environ.pop("OPENAI_API_KEY", None)
+                with TestClient(create_app(settings)) as client:
+                    warnings: List[str] = client.get("/health").json().get("warnings")
+        self.assertIn("OPENAI_API_KEY is not set", " ".join(warnings))
+
+    def test_health_warns_when_the_allow_list_names_a_service_credential(self) -> None:
+        """
+        /health warns when SITE_ENV_ALLOW lists one of the service's own credentials, which sites never receive.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = Settings(work_root=Path(tmp), port_start=8900, port_end=8909,
+                                site_env_allow=["NSDEPLOY_SERVICE_API_TOKEN"])
+            with TestClient(create_app(settings)) as client:
+                warnings: List[str] = client.get("/health").json().get("warnings")
+        self.assertIn("NSDEPLOY_SERVICE_API_TOKEN", " ".join(warnings))
 
 
 class UiVersionTest(unittest.TestCase):
@@ -542,14 +597,47 @@ class SupervisorCreateTest(unittest.TestCase):
 
     def test_per_deployment_options_override_service_defaults(self):
         """Per-deployment options override the service defaults in the command."""
-        supervisor = self._supervisor(upstream="https://default/v1")
+        supervisor = self._supervisor()
         dep = supervisor.create(b"x", DeployOptions(
-            name="demo", upstream="https://override/v1", theme=True,
-            theme_model="gpt-5.5", cruse=False))
+            name="demo", theme=True, theme_model="gpt-5.5", cruse=False))
         cmd = supervisor._command(dep)  # pylint: disable=protected-access; the test inspects internals
-        self.assertEqual(cmd[cmd.index("--upstream") + 1], "https://override/v1")
         self.assertEqual(cmd[cmd.index("--theme-model") + 1], "gpt-5.5")
         self.assertIn("--no-cruse", cmd)
+
+    def test_spawn_gives_the_site_no_service_secrets(self) -> None:
+        """
+        _spawn hands Popen an environment without the service's secrets, honouring SITE_ENV_ALLOW.
+        """
+        supervisor = self._supervisor(site_env_allow=["ANTHROPIC_API_KEY"])
+        dep = supervisor.create(b"x", DeployOptions(name="demo"))
+        fake_env: Dict[str, str] = {
+            "NSDEPLOY_SERVICE_API_TOKEN": "fake-service-token",
+            "NSDEPLOY_SERVICE_STUDIO": "/fake/studio",
+            "OPENAI_API_KEY": "fake-openai-key",
+            "ANTHROPIC_API_KEY": "fake-anthropic-key",
+        }
+        with mock.patch.dict(os.environ, fake_env):
+            with mock.patch("nsdeploy_service.supervisor.subprocess.Popen") as popen:
+                supervisor._spawn(dep)  # pylint: disable=protected-access; the test inspects internals
+        popen.assert_called_once()
+        env: Dict[str, str] = popen.call_args.kwargs.get("env")
+        self.assertIsInstance(env, dict)
+        # Compared by name only, so a failure never prints the real environment's values.
+        self.assertNotIn("NSDEPLOY_SERVICE_API_TOKEN", env.keys())
+        self.assertNotIn("OPENAI_API_KEY", env.keys())
+        self.assertEqual(env.get("ANTHROPIC_API_KEY"), "fake-anthropic-key")
+        self.assertEqual(env.get("NSDEPLOY_SERVICE_STUDIO"), "/fake/studio")
+        self.assertEqual(env.get("PYTHONUNBUFFERED"), "1")
+
+    def test_command_always_passes_the_service_upstream(self) -> None:
+        """The command passes the service upstream even when the options name another."""
+        # The site's /byok/v1 forwards every visitor's key to this URL, so a
+        # deployment's own value must never reach the command.
+        supervisor = self._supervisor(upstream="https://router.example/v1")
+        dep = supervisor.create(b"x", DeployOptions(name="demo", upstream="https://uploader.example/v1"))
+        cmd = supervisor._command(dep)  # pylint: disable=protected-access; the test inspects internals
+        self.assertEqual(cmd[cmd.index("--upstream") + 1], "https://router.example/v1")
+        self.assertNotIn("https://uploader.example/v1", cmd)
 
 
 if __name__ == "__main__":
