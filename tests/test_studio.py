@@ -8,7 +8,8 @@ from unittest import mock
 from typing import Dict, List, Optional
 
 import nsdeploy.studio as studio_module
-from nsdeploy.studio import TOKEN_ENV_NAMES, TREE_CACHE_NAME, TREE_CACHE_TTL_SECONDS, GithubStudio
+from nsdeploy.studio import DEFAULT_REPO, TOKEN_ENV_NAMES, TREE_CACHE_NAME
+from nsdeploy.studio import TREE_CACHE_TTL_SECONDS, GithubStudio
 
 TREE = ["coding/aaosa.hocon", "toolbox/toolbox_info.hocon"]
 
@@ -163,9 +164,38 @@ class TestGithubStudio(unittest.TestCase):
     def test_a_failed_write_leaves_no_temporary_file_behind(self):
         """A failed write leaves no temporary file behind."""
         with mock.patch.object(Path, "replace", autospec=True, side_effect=OSError("nope")):
-            GithubStudio(cache_dir=self.cache)._store_tree(["one.hocon"])
+            with self.assertLogs(studio_module.LOGGER, level="WARNING"):
+                GithubStudio(cache_dir=self.cache)._store_tree(["one.hocon"])
         leftovers = sorted(item.name for item in self.cache.iterdir())
         self.assertEqual(leftovers, [])
+
+    def test_a_failed_write_is_reported_with_its_destination(self):
+        """A silent failure means every later build spends another API call until the
+        hourly allowance is gone, with nothing saying why."""
+        with mock.patch.object(Path, "replace", autospec=True, side_effect=OSError("disk full")):
+            with self.assertLogs(studio_module.LOGGER, level="WARNING") as logged:
+                GithubStudio(cache_dir=self.cache)._store_tree(["one.hocon"])
+        report = "\n".join(logged.output)
+        self.assertIn(TREE_CACHE_NAME, report)
+        self.assertIn("disk full", report)
+        self.assertIn(DEFAULT_REPO, report)
+
+    def test_a_failed_cleanup_is_reported_too(self):
+        """The leftover is what a later write has to work around, so it is worth
+        naming even though neither failure stops the build."""
+        with mock.patch.object(Path, "replace", autospec=True, side_effect=OSError("nope")):
+            with mock.patch.object(Path, "unlink", autospec=True,
+                                   side_effect=OSError("read-only")):
+                with self.assertLogs(studio_module.LOGGER, level="WARNING") as logged:
+                    GithubStudio(cache_dir=self.cache)._store_tree(["one.hocon"])
+        self.assertIn("read-only", "\n".join(logged.output))
+
+    def test_a_successful_write_says_nothing(self):
+        """Caching is the normal path; a line per build would be noise."""
+        studio = GithubStudio(cache_dir=self.cache)
+        with mock.patch.object(studio_module.LOGGER, "warning") as warned:
+            studio._store_tree(["one.hocon"])
+        warned.assert_not_called()
 
     def test_no_token_configured_reports_none(self):
         """No token configured reports none."""

@@ -16,6 +16,7 @@ with it, and is cached at the logical path locally.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import time
@@ -29,6 +30,11 @@ RAW_URL = "https://raw.githubusercontent.com/{repo}/{ref}/{path}"
 TREE_URL = "https://api.github.com/repos/{repo}/git/trees/{ref}?recursive=1"
 DEFAULT_REPO = "cognizant-ai-lab/neuro-san-studio"
 DEFAULT_REF = "main"
+
+# A diagnostic channel, not the build report. nsdeploy prints its report to
+# stdout, but this module also runs in process inside the deployment service,
+# where a print would land in the middle of that service's own output.
+LOGGER = logging.getLogger(__name__)
 # The recursive tree listing is one API call per process, and a deployment service
 # runs one process per build. Unauthenticated api.github.com allows 60 calls an
 # hour per IP, so a busy service stops being able to resolve includes at all —
@@ -179,12 +185,20 @@ class GithubStudio(StudioSource):
             # Replaced atomically: several builds race here, and a half-written
             # listing would be read as a corrupt cache by all of them.
             tmp.replace(self._tree_cache_path())
-        except OSError:
+        except OSError as exc:
+            # Non-fatal: this build already has the listing it just fetched. It is
+            # reported because the consequence is otherwise invisible — a cache
+            # directory that has turned unwritable, or a full disk, makes every
+            # later build spend another api.github.com call until the hourly
+            # allowance is gone, with nothing anywhere saying why.
+            LOGGER.warning("cannot cache the git tree for %s@%s at %s: %s",
+                           self.repo, self.ref, self._tree_cache_path(), exc)
             if tmp is not None:
                 try:
                     tmp.unlink(missing_ok=True)
-                except OSError:
-                    pass
+                except OSError as cleanup:
+                    LOGGER.warning("cannot remove the temporary cache file %s: %s",
+                                   tmp, cleanup)
 
     def _load_tree(self) -> List[str]:
         if self._tree is None:

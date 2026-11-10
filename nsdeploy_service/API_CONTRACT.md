@@ -477,12 +477,36 @@ deployment is a no-op that returns its current state, still `200`.
   "platform": "Windows-11-10.0.26100-SP0",
   "deployments": { "queued": 0, "building": 0, "ready": 1, "failed": 0, "stopped": 2 },
   "port_pool": { "range": "8100-8199", "capacity": 100, "reserved": [8100] },
+  "build_queue": { "slots": 8, "slots_in_use": 8, "building": 11, "waiting": 5,
+                   "oldest_wait_seconds": 42 },
   "reconciled_at_startup": 2,
   "warnings": [] }
 ```
 
 Suitable as a liveness/readiness probe. `status` is always `"ok"` when the process is
 serving.
+
+**`build_queue` is live build capacity**, read per request rather than persisted,
+because only this process can have a queue.
+
+| Field | Meaning |
+| --- | --- |
+| `slots` | `MAX_CONCURRENT_BUILDS` |
+| `slots_in_use` | slots held right now. **This is the occupancy metric** |
+| `building` | deployments in the `building` status |
+| `waiting` | deployments in `queued`, waiting for a slot |
+| `oldest_wait_seconds` | the longest any of them has waited, or `null` when none does |
+
+A slot covers generating the bundle, not waiting for the site to answer, so a
+deployment stays `building` after it releases its slot: **`building` can exceed
+`slots_in_use`**, and the example above shows exactly that — eight slots held, eleven
+deployments building, so three have generated and are waiting for their listener.
+Read `slots_in_use` against `slots` to tell saturation; `building` alone cannot.
+
+Nothing times a deployment out while it waits for a slot — `BUILD_TIMEOUT_SECONDS`
+starts once a slot is acquired. So `slots_in_use` at `slots` with a rising
+`oldest_wait_seconds` is a stalled queue rather than a busy one, and is the shape
+worth alerting on.
 
 **`warnings` are ongoing conditions**, expected to persist until an operator fixes the
 underlying cause — currently only "bound off-loopback with no `API_TOKEN`". Because a
