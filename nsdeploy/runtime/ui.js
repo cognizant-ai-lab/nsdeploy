@@ -286,14 +286,14 @@ export function mountApp(root, { engine, trace, manifest }) {
   const settingsBodyHtml = `
     <div class="ns-settings-body">
       <label>Saved setup <select id="ns-profile"></select></label>
-      ${needsByok ? `<div class="ns-key-help">
+      <div class="ns-key-help"${needsByok ? "" : " hidden"}>
         <strong>Don't have an API key?</strong>
         <p>An API key is a private code from an AI provider. It lets this page use that provider for you; it is not your password.</p>
         <a href="${API_KEY_HELP_URL}" target="_blank" rel="noopener noreferrer">What is an API key and how do I get one? <span aria-hidden="true">↗</span></a>
         <p>Choose a provider below and create a key. Its recommended settings will be filled in for you.</p>
         <div class="ns-key-providers">${providerLinksHtml}</div>
         <div class="ns-hint">Free tiers have usage limits and may vary by region. Other providers may require billing.</div>
-      </div>` : ""}
+      </div>
       <label><span>API key <span aria-hidden="true">*</span></span><input id="ns-key" type="password" autocomplete="off" placeholder="Paste your API key" required aria-required="true"></label>
       <button id="ns-apply">Save and start</button>
       <details class="ns-settings-advanced">

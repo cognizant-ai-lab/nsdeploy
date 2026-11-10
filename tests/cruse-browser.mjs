@@ -67,6 +67,9 @@ try {
   const typeKey = (value) => { keyInput.value = value; keyInput.dispatchEvent(new Event("input")); };
   const google = API_KEY_PROVIDERS.find((provider) => provider.keyPrefixes.includes("AIza"));
   const groq = API_KEY_PROVIDERS.find((provider) => provider.keyPrefixes.includes("gsk_"));
+  // This page starts without needing a key, so the key help is built but hidden.
+  const keyHelp = app.querySelector(".ns-key-help");
+  check(!!keyHelp && getComputedStyle(keyHelp).display === "none", "A page that needs no key builds the key help hidden");
   typeKey("AIza-fixture");
   check(modelInput.value === google.model, "A recognized key fills in its provider's model");
   modelInput.value = "gemini-fixture-choice";
@@ -111,6 +114,7 @@ try {
   keyed.remove();
   // Restore the form, so the chat checks below send nothing to a real provider.
   typeKey("");
+  check(getComputedStyle(keyHelp).display !== "none", "Clearing the key shows the key help, even on a page that started with no need for one");
   routerInput.value = formBefore.router;
   modelInput.value = formBefore.model;
   app.querySelector("#ns-input").value = "Are there any minivans available for me to borrow next week?";
