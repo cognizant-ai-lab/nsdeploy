@@ -1,3 +1,6 @@
+# Store and check out every text file with LF endings, on every OS.
+* text=auto eol=lf
+
 # Vendored, prebuilt minified runtime bundle — trailing whitespace lives inside
 # template literals; exclude from whitespace checks and mark generated.
 nsdeploy/runtime/generated/agent-runner.bundle.js -whitespace linguist-generated=true

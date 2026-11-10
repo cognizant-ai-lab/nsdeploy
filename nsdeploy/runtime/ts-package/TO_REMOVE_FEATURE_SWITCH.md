@@ -15,7 +15,10 @@ Once the original runtime is no longer needed:
 
 1. Delete the original runtime from `nsdeploy/runtime/`: `kernel.js`, `runner.js`,
    `llm.js`, `mcp.js`, `sandbox.js`, `sandbox-worker.js`, `langchain-runner.mjs`,
-   `generated/`, `engine.js` and `index.js`.
+   `generated/`, `engine.js` and `index.js`. Its LangChain bundle goes too:
+   `scripts/bundle-runner.mjs`, and in the root `package.json` the `build:runner` script
+   and the `@langchain/core`, `@langchain/openai` and `esbuild` dev dependencies, then
+   update `pnpm-lock.yaml` and the `build:runner` steps in `docs/cruse.md`.
 2. Move this folder's files up into `nsdeploy/runtime/` and change their `../` imports to
    `./`. This `model.js` replaces the one there, with `normalizeModelName` moved back into
    it. Delete this file.

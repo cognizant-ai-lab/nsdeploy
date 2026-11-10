@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import contextvars
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any
+from typing import Mapping
+from typing import Optional
 
 
 BYOK_AUTH_HEADER = "X-Nsdeploy-BYOK-Authorization"
@@ -12,11 +14,20 @@ BYOK_MODEL_HEADER = "X-Nsdeploy-BYOK-Model"
 
 @dataclass(frozen=True, repr=False)
 class ByokCredentials:
+    """
+    Caller-owned LLM credentials whose authorization value is redacted from repr.
+    """
+
     authorization: str = ""
     model: str = ""
 
     @property
     def available(self) -> bool:
+        """
+        Report whether an authorization value is present.
+
+        :return: True when the credentials carry an authorization value.
+        """
         return bool(self.authorization)
 
     def __repr__(self) -> str:
@@ -30,6 +41,12 @@ _CURRENT_BYOK: contextvars.ContextVar[Optional[ByokCredentials]] = contextvars.C
 
 
 def authorization_for_key(api_key: str) -> str:
+    """
+    Convert an API key into an HTTP Bearer authorization value.
+
+    :param api_key: The raw API key, optionally already prefixed with "Bearer ".
+    :return: The authorization value, or an empty string when no key is given.
+    """
     value = str(api_key or "").strip()
     if not value:
         return ""
@@ -39,6 +56,13 @@ def authorization_for_key(api_key: str) -> str:
 
 
 def byok_headers(api_key: str, model: str = "") -> dict[str, str]:
+    """
+    Build the BYOK request headers for an API key and optional model.
+
+    :param api_key: The caller's API key.
+    :param model: The optional model name.
+    :return: The BYOK headers, or an empty dict when no key is given.
+    """
     authorization = authorization_for_key(api_key)
     if not authorization:
         return {}
@@ -49,6 +73,12 @@ def byok_headers(api_key: str, model: str = "") -> dict[str, str]:
 
 
 def forwarding_headers(credentials: Optional[ByokCredentials] = None) -> dict[str, str]:
+    """
+    Build the BYOK headers that forward credentials to the next facade hop.
+
+    :param credentials: The credentials to forward; defaults to those bound to the current context.
+    :return: The BYOK headers, or an empty dict when no credentials are available.
+    """
     credentials = credentials or current_byok_credentials()
     if not credentials or not credentials.available:
         return {}
@@ -59,6 +89,11 @@ def forwarding_headers(credentials: Optional[ByokCredentials] = None) -> dict[st
 
 
 def current_byok_credentials() -> Optional[ByokCredentials]:
+    """
+    Return the BYOK credentials bound to the current context.
+
+    :return: The bound credentials, or None when none are bound.
+    """
     return _CURRENT_BYOK.get()
 
 

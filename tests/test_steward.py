@@ -4,8 +4,10 @@ import unittest
 from unittest.mock import patch
 
 from nsdeploy.byok import ByokCredentials
-from nsdeploy.facade import NetworkRunner, load_published_network
-from nsdeploy.steward import PublicAgentMcpGateway, PublicAgentNetworkGateway
+from nsdeploy.facade import NetworkRunner
+from nsdeploy.facade import load_published_network
+from nsdeploy.steward import PublicAgentMcpGateway
+from nsdeploy.steward import PublicAgentNetworkGateway
 
 
 class _Response:
@@ -15,9 +17,19 @@ class _Response:
         self.content = json.dumps(body).encode()
 
     def json(self):
+        """
+        Return the decoded body.
+
+        :return: The response body.
+        """
         return self.body
 
     def raise_for_status(self):
+        """
+        Raise when the status code is an HTTP error.
+
+        :raises RuntimeError: If the status code is 400 or above.
+        """
         if self.status_code >= 400:
             raise RuntimeError(f"HTTP {self.status_code}")
 
@@ -37,12 +49,27 @@ class _StaticSiteClient:
         pass
 
     async def get(self, url):
+        """
+        Return the canned response for a known route.
+
+        :param url: The requested URL.
+        :return: The canned response.
+        :raises RuntimeError: If the URL is not a known route.
+        """
         type(self).requests.append(url)
         if url not in type(self).routes:
             raise RuntimeError(f"unexpected request: {url}")
         return _Response(type(self).routes[url])
 
     async def post(self, url, content, headers):
+        """
+        Record the post and return a canned chat completion.
+
+        :param url: The requested URL.
+        :param content: The JSON request body.
+        :param headers: The request headers.
+        :return: The canned response.
+        """
         type(self).posts.append((url, json.loads(content), dict(headers)))
         return _Response({"choices": [{"message": {
             "role": "assistant", "content": "private runner result",
@@ -63,12 +90,15 @@ def _site(name, tools, front_man=None):
 
 
 class PublishedNetworkRunnerTests(unittest.IsolatedAsyncioTestCase):
+    """Tests for loading and running published static networks."""
+
     def setUp(self):
         _StaticSiteClient.routes = {}
         _StaticSiteClient.requests = []
         _StaticSiteClient.posts = []
 
     async def test_loader_fetches_exact_static_network_and_rejects_server_code(self):
+        """Check loader fetches exact static network and rejects server code."""
         _StaticSiteClient.routes.update(_site("harbor", [
             {"name": "helper", "instructions": "Assist."},
             {"name": "front", "instructions": "Help."},
@@ -87,6 +117,7 @@ class PublishedNetworkRunnerTests(unittest.IsolatedAsyncioTestCase):
                 await load_published_network("https://unsafe.example/unsafe")
 
     async def test_loader_supports_static_bundle_below_domain_root(self):
+        """Check loader supports static bundle below domain root."""
         _StaticSiteClient.routes.update({
             "https://cdn.example/agents/agent-manifest.json": {
                 "networks": [{
@@ -106,6 +137,7 @@ class PublishedNetworkRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(published.front_man, "front")
 
     async def test_deny_policy_blocks_before_fetching_public_data(self):
+        """Check deny policy blocks before fetching public data."""
         _StaticSiteClient.routes.update(_site("blocked", [
             {"name": "front", "instructions": "Help."},
         ]))
@@ -118,6 +150,7 @@ class PublishedNetworkRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_StaticSiteClient.requests, [])
 
     async def test_runner_recursively_fetches_public_network_without_mcp_facade(self):
+        """Check runner recursively fetches public network without mcp facade."""
         child_tools = [{"name": "child_front", "instructions": "Answer."}]
         _StaticSiteClient.routes.update(_site("child", child_tools))
         root_config = {"tools": [{
@@ -140,6 +173,7 @@ class PublishedNetworkRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(url.endswith("/mcp") for url in _StaticSiteClient.requests))
 
     async def test_recursive_fetch_stops_a_public_network_cycle(self):
+        """Check recursive fetch stops a public network cycle."""
         _StaticSiteClient.routes.update(_site("child", [{
             "name": "child_front",
             "instructions": "Delegate back.",
@@ -160,6 +194,7 @@ class PublishedNetworkRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Skipped recursive call", result)
 
     async def test_private_steward_runs_static_site_and_old_class_remains_compatible(self):
+        """Check private steward runs static site and old class remains compatible."""
         _StaticSiteClient.routes.update(_site("harbor", [
             {"name": "front", "instructions": "Help."},
         ]))
@@ -180,6 +215,7 @@ class PublishedNetworkRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(PublicAgentMcpGateway(), PublicAgentNetworkGateway)
 
     async def test_private_steward_uses_its_llm_credentials_not_the_public_site(self):
+        """Check private steward uses its llm credentials not the public site."""
         _StaticSiteClient.routes.update(_site("harbor", [
             {"name": "front", "instructions": "Help."},
         ]))
@@ -200,6 +236,7 @@ class PublishedNetworkRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_StaticSiteClient.posts[0][2]["Authorization"], "Bearer private-key")
 
     async def test_private_steward_falls_back_for_an_older_mcp_only_site(self):
+        """Check private steward falls back for an older mcp only site."""
         gateway = PublicAgentNetworkGateway()
         env = {
             "NSDEPLOY_STEWARD_BYOK_API_KEY": "private-key",

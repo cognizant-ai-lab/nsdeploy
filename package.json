@@ -3,11 +3,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/runtime_regression.mjs && node --test tests/cruse.test.mjs tests/engine_stream.test.mjs",
+    "build:runner": "node scripts/bundle-runner.mjs",
+    "test": "node tests/runtime_regression.mjs && node --test tests/cruse.test.mjs tests/actions.test.mjs tests/accelerator_link.test.mjs tests/link_prompt.test.mjs tests/map_refresh.test.mjs tests/network_list.test.mjs tests/scatter.test.mjs tests/shared_byok.test.mjs tests/byok_tab_setup.test.mjs tests/zoom.test.mjs tests/engine_stream.test.mjs",
     "test:cailville": "node tests/cailville_browser.ts"
   },
   "devDependencies": {
+    "@langchain/core": "1.2.12",
+    "@langchain/openai": "1.5.13",
     "@types/node": "26.6.3",
+    "esbuild": "0.28.2",
     "playwright": "1.62.1"
   }
 }

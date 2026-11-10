@@ -5,10 +5,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from nsdeploy.generate import _index_html, _theme_css
-from nsdeploy.theme import (
-    DEFAULT_THEME_MODEL, PROMPT_VERSION, ThemeSpec, _SYSTEM_PROMPT, _chat, propose_theme,
-)
+from nsdeploy.generate import _index_html
+from nsdeploy.generate import _theme_css
+from nsdeploy.theme import DEFAULT_THEME_MODEL
+from nsdeploy.theme import PROMPT_VERSION
+from nsdeploy.theme import ThemeSpec
+from nsdeploy.theme import _SYSTEM_PROMPT
+from nsdeploy.theme import _chat
+from nsdeploy.theme import propose_theme
 
 
 class _Response:
@@ -19,15 +23,28 @@ class _Response:
         return False
 
     def read(self):
+        """
+        Return a canned chat completion body.
+
+        :return: The encoded JSON response body.
+        """
         return json.dumps({"choices": [{"message": {"content": "theme"}}]}).encode()
 
 
 class ThemeChatTests(unittest.TestCase):
+    """Tests for the theme chat request payload and prompt caching."""
+
     def test_default_theme_model_is_gpt_5_6(self):
+        """Check default theme model is gpt 5 6."""
         self.assertEqual(DEFAULT_THEME_MODEL, "gpt-5.6")
 
     @patch("nsdeploy.theme.urllib.request.urlopen", return_value=_Response())
     def test_gpt_5_payload_omits_temperature(self, urlopen):
+        """
+        Check GPT-5 payload omits temperature.
+
+        :param urlopen: The patched urlopen mock.
+        """
         self.assertEqual(_chat("https://api.openai.com/v1", "key", "gpt-5.6", "system", "user"), "theme")
 
         request = urlopen.call_args.args[0]
@@ -37,25 +54,28 @@ class ThemeChatTests(unittest.TestCase):
 
     @patch("nsdeploy.theme.urllib.request.urlopen", return_value=_Response())
     def test_other_models_keep_low_temperature(self, urlopen):
+        """
+        Check other models keep low temperature.
+
+        :param urlopen: The patched urlopen mock.
+        """
         _chat("http://127.0.0.1:11434/v1", "key", "qwen2.5:7b", "system", "user")
 
         request = urlopen.call_args.args[0]
         self.assertEqual(json.loads(request.data)["temperature"], 0.2)
 
     def test_custom_prompt_is_appended_and_part_of_cache_identity(self):
+        """Check custom prompt is appended and part of cache identity."""
         plan = SimpleNamespace(
             config={"metadata": {"description": "A test network"}},
             network_name="test_network",
             front_man="front",
             agents=[{"name": "front", "function": {"description": "Helps users"}}],
         )
-        response = """===META===
-{"brand":"Test"}
-===STYLE===
-.page { color: navy; }
-===BODY===
-<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div><main data-ns-slot="chat"></main><aside data-ns-slot="agents"></aside></div>
-"""
+        response = ('===META===\n{"brand":"Test"}\n===STYLE===\n.page { color: navy; }\n===BODY===\n'
+                    '<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div>'
+                    '<main data-ns-slot="chat"></main><aside data-ns-slot="agents"></aside>'
+                    '<div data-ns-slot="settings"></div></div>\n')
         with tempfile.TemporaryDirectory() as tmp, \
                 patch("nsdeploy.theme.CACHE_DIR", Path(tmp)), \
                 patch("nsdeploy.theme._chat", return_value=response) as chat:
@@ -69,13 +89,40 @@ class ThemeChatTests(unittest.TestCase):
         self.assertIn("Additional theme instructions from the deployer:\nUse cool ocean tones",
                       chat.call_args_list[1].args[4])
 
+    def test_fresh_generated_layout_must_place_settings(self):
+        """Check fresh generated layout must place settings."""
+        plan = SimpleNamespace(
+            config={"metadata": {"description": "A test network"}},
+            network_name="test_network",
+            front_man="front",
+            agents=[{"name": "front", "function": {"description": "Helps users"}}],
+        )
+        response = ('===META===\n{"brand":"Test"}\n===STYLE===\n.page { color: navy; }\n===BODY===\n'
+                    '<div id="app" data-ns-layout="composed"><div data-ns-slot="header"></div>'
+                    '<main data-ns-slot="chat"></main><aside data-ns-slot="agents"></aside>'
+                    '</div>\n')
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch("nsdeploy.theme.CACHE_DIR", Path(tmp)), \
+                patch("nsdeploy.theme._chat", return_value=response):
+            spec = propose_theme(
+                plan, model="test-model", api_key="key", upstream="https://example.test/v1",
+            )
+
+        self.assertEqual(spec.brand, "Test")
+        self.assertEqual(spec.body, "")
+        self.assertEqual(spec.style, "")
+
 
 class ThemeLayoutTests(unittest.TestCase):
+    """Tests for theme layout prompts and generated page composition."""
+
     def test_prompt_requests_composed_runtime_slots(self):
-        self.assertEqual(PROMPT_VERSION, "12")
+        """Check prompt requests composed runtime slots."""
+        self.assertEqual(PROMPT_VERSION, "13")
         self.assertIn('data-ns-layout="composed"', _SYSTEM_PROMPT)
         self.assertIn('data-ns-slot="chat"', _SYSTEM_PROMPT)
         self.assertIn('data-ns-slot="agents"', _SYSTEM_PROMPT)
+        self.assertIn('data-ns-slot="settings"', _SYSTEM_PROMPT)
         self.assertNotIn('data-ns-slot="activity"', _SYSTEM_PROMPT)
         self.assertIn(".ns-turn-status-spinner", _SYSTEM_PROMPT)
         self.assertIn(".ns-turn-status-text", _SYSTEM_PROMPT)
@@ -88,8 +135,11 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertIn("OPTIONAL starting point", _SYSTEM_PROMPT)
         self.assertIn("supplement/correct submitted information through chat", _SYSTEM_PROMPT)
         self.assertIn("reports, comparison tables, charts", _SYSTEM_PROMPT)
+        self.assertIn("YOU choose where and how it appears", _SYSTEM_PROMPT)
+        self.assertIn("automatically opens it when an API key is required", _SYSTEM_PROMPT)
 
     def test_composed_layout_and_native_drawer_survive_sanitizing(self):
+        """Check composed layout and native drawer survive sanitizing."""
         spec = ThemeSpec.coerce({
             "body": """
                 <div id="app" data-ns-layout="composed" onclick="bad()">
@@ -100,6 +150,10 @@ class ThemeLayoutTests(unittest.TestCase):
                     <aside data-ns-slot="agents"></aside>
                   </details>
                   <section class="timeline" data-ns-slot="activity"></section>
+                  <details class="model-settings">
+                    <summary aria-label="Model settings">⚙</summary>
+                    <div data-ns-slot="settings"></div>
+                  </details>
                 </div>
                 <div id="app">duplicate</div>
             """,
@@ -112,12 +166,14 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertIn('data-ns-slot="chat"', spec.body)
         self.assertIn('data-ns-slot="agents"', spec.body)
         self.assertIn('data-ns-slot="activity"', spec.body)
+        self.assertIn('data-ns-slot="settings"', spec.body)
         self.assertIn("<details", spec.body)
         self.assertIn("<summary>Agents working</summary>", spec.body)
         self.assertNotIn("onclick", spec.body)
         self.assertNotIn("<script", spec.body)
 
     def test_generated_composed_page_uses_flexible_scroll_and_widget_guards(self):
+        """Check generated composed page uses flexible scroll and widget guards."""
         spec = ThemeSpec.coerce({
             "body": """
                 <div id="app" data-ns-layout="composed">
@@ -138,6 +194,7 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertIn('boot("#app")', page)
 
     def test_incomplete_composed_layout_falls_back_to_default(self):
+        """Check incomplete composed layout falls back to default."""
         spec = ThemeSpec.coerce({
             "body": """
                 <div id="app" data-ns-layout="composed">
@@ -152,6 +209,7 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertEqual(spec.style, "")
 
     def test_duplicate_optional_activity_slot_falls_back_to_default(self):
+        """Check duplicate optional activity slot falls back to default."""
         spec = ThemeSpec.coerce({
             "body": """
                 <div id="app" data-ns-layout="composed">
@@ -168,7 +226,26 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertEqual(spec.body, "")
         self.assertEqual(spec.style, "")
 
+    def test_duplicate_settings_slot_falls_back_to_default(self):
+        """Check duplicate settings slot falls back to default."""
+        spec = ThemeSpec.coerce({
+            "body": """
+                <div id="app" data-ns-layout="composed">
+                  <div data-ns-slot="header"></div>
+                  <main data-ns-slot="chat"></main>
+                  <aside data-ns-slot="agents"></aside>
+                  <div data-ns-slot="settings"></div>
+                  <div data-ns-slot="settings"></div>
+                </div>
+            """,
+            "style": "body { color: red; }",
+        })
+
+        self.assertEqual(spec.body, "")
+        self.assertEqual(spec.style, "")
+
     def test_legacy_empty_mount_remains_supported(self):
+        """Check legacy empty mount remains supported."""
         spec = ThemeSpec.coerce({"body": '<div class="frame"><div id="app"></div></div>'})
         page = _index_html(spec, "Legacy network")
 
@@ -176,6 +253,7 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertIn('#app:not([data-ns-layout="composed"])', _theme_css(spec))
 
     def test_fixed_editable_layout_keeps_default_full_viewport_shell(self):
+        """Check fixed editable layout keeps default full viewport shell."""
         spec = ThemeSpec.coerce({
             "body": '<div id="app" data-ns-layout="fixed">Loading...</div>',
             "style": ".site-note { color: green; }",
@@ -187,6 +265,7 @@ class ThemeLayoutTests(unittest.TestCase):
         self.assertNotIn('#app:not([data-ns-layout="composed"])', css)
 
     def test_relative_site_assets_survive_css_sanitizing(self):
+        """Check relative site assets survive css sanitizing."""
         spec = ThemeSpec.coerce({
             "body": '<div id="app"></div>',
             "style": '.hero{background:url("./assets/harbor.jpg")}',

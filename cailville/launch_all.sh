@@ -7,7 +7,7 @@ LOG_DIR="${NSDEPLOY_LOG_DIR:-$PROJECT_DIR/.nsdeploy/cailville-logs}"
 RUN_DIR="${NSDEPLOY_RUN_DIR:-$PROJECT_DIR/.nsdeploy/cailville-pids}"
 UPSTREAM="${NSDEPLOY_UPSTREAM:-https://api.openai.com/v1}"
 FACADE_UPSTREAM="${NSDEPLOY_FACADE_UPSTREAM:-$UPSTREAM}"
-PRIVATE_STUDIO_DIR="${NSDEPLOY_PRIVATE_STUDIO_DIR:-/Users/754339/projects/cailville-private}"
+PRIVATE_STUDIO_DIR="${NSDEPLOY_PRIVATE_STUDIO_DIR:-$PROJECT_DIR/../neuro-san-studio}"
 PRIVATE_STUDIO_MANIFEST="${NSDEPLOY_PRIVATE_STUDIO_MANIFEST:-$PROJECT_DIR/.nsdeploy/cailville/manifest.hocon}"
 STEWARD_SITES_FILE="$PROJECT_DIR/.nsdeploy/cailville/community-public-sites.json"
 PRIVATE_STUDIO_HTTP_PORT="${NSDEPLOY_PRIVATE_STUDIO_HTTP_PORT:-8181}"
@@ -24,6 +24,7 @@ THEME_REFRESH="${NSDEPLOY_THEME_REFRESH:-0}"
 OPEN_BROWSER="${NSDEPLOY_OPEN_BROWSER:-1}"
 PRIVATE_STUDIO_ENABLED="${NSDEPLOY_PRIVATE_STUDIO:-1}"
 USE_TS_PACKAGE="${USE_TS_PACKAGE:-1}"
+MOCK_LLM="${NSDEPLOY_MOCK_LLM:-0}"
 private_studio_ports=("$PRIVATE_STUDIO_HTTP_PORT" "$PRIVATE_STUDIO_GRPC_PORT" "$PRIVATE_STUDIO_NSFLOW_PORT")
 ROUTING="${NSDEPLOY_ROUTING:-port}"
 BASE_DOMAIN="${NSDEPLOY_BASE_DOMAIN:-localhost}"
@@ -53,6 +54,10 @@ fi
 runtime_args=()
 if [[ "$USE_TS_PACKAGE" =~ ^(0|false|no|off)$ ]]; then
   runtime_args=(--use-ts-package false)
+fi
+# The keyless mock LLM, for demos and the browser test. Sites otherwise need a visitor's key.
+if [[ "$MOCK_LLM" =~ ^(1|true|yes|on)$ ]]; then
+  runtime_args+=(--mock-llm)
 fi
 
 if [[ -n "${NSDEPLOY_PYTHON:-}" ]]; then

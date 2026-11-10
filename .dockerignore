@@ -1,0 +1,30 @@
+**/__pycache__
+**/*.pyc
+# Excluded to keep it out of the image, and because `az acr build` dies packing the
+# source tar when it cannot read it: "[WinError 5] Access is denied: '.\.pytest_cache'".
+# pytest leaves directories here that the CLI has no rights to open, and the failure
+# looked like a successful deploy — the build never queued, the previous image rolled
+# out instead, and the version on the VM did not change.
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.git
+.nsdeploy
+cailville
+docs
+tests
+nsdeploy_service/tests
+nsdeploy_service/nsdeploy_service.egg-info
+*.egg-info
+build/
+dist/
+venv/
+.venv/
+**/node_modules/
+# No credentials in the build context. The Dockerfile does not copy .env any more, so
+# no key stays in an image layer. The service reads its settings from container env
+# vars, or from a file named by NSDEPLOY_SERVICE_ENV_FILE on a mounted volume.
+**/.env
+**/.env.*
+.DS_Store
+.idea/

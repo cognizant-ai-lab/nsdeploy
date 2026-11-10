@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "source": "https://restful-api.dev/",
+  "spec": "examples/actions/restful-api.openapi.json",
+  "siteOrigin": "http://agent-b.example.com",
+  "visited": [
+    "https://restful-api.dev/"
+  ],
+  "actions": [
+    {
+      "name": "post_objects_317fea20",
+      "description": "Create a public test record; no real table reservation is made (POST https://api.restful-api.dev/objects)",
+      "effect": "write",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "A descriptive test-record name"
+          },
+          "data": {
+            "type": "string",
+            "maxLength": 16000,
+            "description": "JSON object text. Synthetic reservation details such as date, time, party_size and notes. Never put real contact details here.",
+            "x-json": true
+          }
+        },
+        "required": [
+          "name",
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "request": {
+        "kind": "http",
+        "url": "https://api.restful-api.dev/objects",
+        "method": "POST",
+        "bindings": [
+          {
+            "name": "name",
+            "in": "body"
+          },
+          {
+            "name": "data",
+            "in": "body"
+          }
+        ],
+        "jsonFields": [
+          "data"
+        ],
+        "body": true
+      },
+      "evidence": {
+        "source": "examples/actions/restful-api.openapi.json",
+        "kind": "openapi"
+      },
+      "enabled": true,
+      "cors": {
+        "checks": [
+          {
+            "url": "https://api.restful-api.dev/objects",
+            "status": "preflight-permitted",
+            "httpStatus": 200
+          }
+        ],
+        "note": "OPTIONS only; actual browser execution and response CORS remain unverified. No business operation was run."
+      }
+    },
+    {
+      "name": "get_objects_id_b1e1bc7c",
+      "description": "Retrieve a test record using its actual server-assigned id (GET https://api.restful-api.dev/objects/{id})",
+      "effect": "read",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "request": {
+        "kind": "http",
+        "url": "https://api.restful-api.dev/objects/{id}",
+        "method": "GET",
+        "bindings": [
+          {
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "jsonFields": [],
+        "body": false
+      },
+      "evidence": {
+        "source": "examples/actions/restful-api.openapi.json",
+        "kind": "openapi"
+      },
+      "enabled": true,
+      "cors": {
+        "checks": [
+          {
+            "url": "https://api.restful-api.dev/objects/{id}",
+            "status": "preflight-permitted",
+            "httpStatus": 200
+          }
+        ],
+        "note": "OPTIONS only; actual browser execution and response CORS remain unverified. No business operation was run."
+      }
+    },
+    {
+      "name": "delete_objects_id_08ad4d24",
+      "description": "Delete a test record created by this test; requires explicit confirmation (DELETE https://api.restful-api.dev/objects/{id})",
+      "effect": "irreversible",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "request": {
+        "kind": "http",
+        "url": "https://api.restful-api.dev/objects/{id}",
+        "method": "DELETE",
+        "bindings": [
+          {
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "jsonFields": [],
+        "body": false
+      },
+      "evidence": {
+        "source": "examples/actions/restful-api.openapi.json",
+        "kind": "openapi"
+      },
+      "enabled": true,
+      "cors": {
+        "checks": [
+          {
+            "url": "https://api.restful-api.dev/objects/{id}",
+            "status": "preflight-permitted",
+            "httpStatus": 200
+          }
+        ],
+        "note": "OPTIONS only; actual browser execution and response CORS remain unverified. No business operation was run."
+      }
+    }
+  ],
+  "issues": [
+    {
+      "source": "https://restful-api.dev/",
+      "reason": "Page JavaScript was not executed. JS-only actions require a documented API or site-owned adapter."
+    }
+  ]
+}

@@ -84,6 +84,8 @@ interface Answers {
   // The most agents one query may run. The site's limit is 24, as on main, but the mock
   // calls every tool, so on the mock the test lifts it to check every agent runs.
   agentLimit?: number;
+  // Set a real router with no key for this tab, as a visitor who hasn't entered one.
+  noKey?: boolean;
 }
 
 interface Run {
@@ -108,6 +110,8 @@ interface Run {
   steered: boolean;
   steeringMessages: number;
   steeredRequests: number;
+  // With answers.noKey: whether the chat asked for an API key after Send.
+  keyPrompt: boolean;
 }
 
 interface Result {
@@ -171,7 +175,10 @@ const ARGS = process.argv.slice(2);
 function sitePorts(): string[] {
   const requested = ARGS.filter((arg) => arg !== "scenarios" && arg !== "mcp" && arg !== "live");
   if (ARGS.length) return requested;
-  const community: Community = JSON.parse(readFileSync(path.join(ROOT, "cailville", "community.json"), "utf8"));
+  // The local community.json once a site is added, as the launcher reads it, else the base.
+  const active = path.join(ROOT, "cailville", "community.json");
+  const file = existsSync(active) ? active : path.join(ROOT, "cailville", "community.base.json");
+  const community: Community = JSON.parse(readFileSync(file, "utf8"));
   const examples = EXAMPLES.filter((example) => !example.fresh).map((example) => String(example.port));
   return [...community.sites.map((site) => String(site.port)), ...examples];
 }
@@ -205,6 +212,8 @@ async function startExamples(requested: string[]): Promise<void> {
       continue;
     }
     const args = ["-m", "nsdeploy", example.hocon, "--port", String(example.port), ...example.args];
+    // nsdeploy only runs on its mock LLM with --mock-llm. A real LLM run uses the BYOK router.
+    if (!REAL_LLM) args.push("--mock-llm");
     if (example.fresh) {
       // The built site and its editable source both go under the test's own folder,
       // emptied first, so no link saved by an earlier run is left.
@@ -270,21 +279,32 @@ async function answerPrompts(page: Page, answers: Answers, run: Run): Promise<vo
 }
 
 // Opens a site, sends a query, answers the prompts and returns what happened.
-async function runPage(browser: Browser, port: string, answers: Answers, label = "", search = ""): Promise<Run> {
+async function runPage(browser: Browser, port: string, answers: Answers, label = ""): Promise<Run> {
   const base = `http://127.0.0.1:${port}`;
   const manifest: Manifest = await (await fetch(`${base}/agent-manifest.json`)).json();
   const network = manifest.networks[0];
   const query = (network.sample_queries || [])[0] || "What can you help me with?";
 
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-  if (REAL_LLM) {
-    await page.addInitScript((value) => sessionStorage.setItem("nsweb-byok-key", value), process.env.OPENAI_API_KEY || "");
+  // The page reads key, router and model from the setup applied in this tab, never the URL.
+  if (REAL_LLM || MODEL || answers.noKey) {
+    const setup = {
+      key: answers.noKey ? "" : REAL_LLM ? process.env.OPENAI_API_KEY || "" : "",
+      router: answers.noKey ? manifest.llm_router?.byok_router || "" : "",
+      model: MODEL || "",
+    };
+    await page.addInitScript((value) => {
+      sessionStorage.setItem("nsweb-byok-tab-key", value.key);
+      sessionStorage.setItem("nsweb-byok-router", value.router);
+      sessionStorage.setItem("nsweb-byok-model", value.model);
+    }, setup);
   }
   const agentLimit = answers.agentLimit ?? (REAL_LLM ? undefined : 1000);
   if (agentLimit != null) await page.addInitScript((value) => { (window as any).__nsdeployMaxAgentCalls = value; }, agentLimit);
   const run: Run = {
     seconds: 0, events: [], errors: [], links: [], approvals: 0, declines: 0, finished: false, routerRequests: 0, mcpRequests: 0,
     outsideMcpRequests: 0, statusTexts: [], statusLeft: false, steered: false, steeringMessages: 0, steeredRequests: 0,
+    keyPrompt: false,
   };
   // Every text the status line shows, however briefly.
   await page.addInitScript(() => {
@@ -338,9 +358,7 @@ async function runPage(browser: Browser, port: string, answers: Answers, label =
 
   const started = Date.now();
   try {
-    const params = new URLSearchParams(search);
-    if (MODEL) params.set("model", MODEL);
-    await page.goto(`${base}/${params.size ? "?" + params : ""}`);
+    await page.goto(`${base}/`);
     await page.waitForSelector("#ns-input", { timeout: 30000 });
     await page.fill("#ns-input", query);
     await page.click("#ns-send");
@@ -352,7 +370,15 @@ async function runPage(browser: Browser, port: string, answers: Answers, label =
       run.steered = true;
       release();
     }
-    await answerPrompts(page, answers, run);
+    if (answers.noKey) {
+      // The chat asks for a key instead of starting a run, so there is no run to wait for.
+      const prompt = page.locator(".ns-msg.bot", { hasText: "needs your LLM API key" }).last();
+      run.keyPrompt = await prompt.waitFor({ timeout: 10000 }).then(() => true, () => false);
+      await page.waitForTimeout(2000);
+      run.finished = true;
+    } else {
+      await answerPrompts(page, answers, run);
+    }
     run.events = await readTrace(page);
     run.statusTexts = await page.evaluate(() => (window as any).__statusTexts || []);
     run.statusLeft = (await page.locator(".ns-turn-status").count()) > 0;
@@ -549,17 +575,13 @@ async function checkScenarios(browser: Browser): Promise<Result[]> {
   }
   add("stop at the agent limit", run, problems);
 
-  // A real router with no key: nothing may reach the router, and the run ends with an
-  // error that tells the user to add a key.
-  const byok = (await (await fetch(`${AIRLINE}/agent-manifest.json`)).json() as Manifest).llm_router?.byok_router || "";
-  run = await runPage(browser, "8192", { consent: "always" }, "no-key", `router=${encodeURIComponent(byok)}`);
+  // A real router with no key: the chat asks for a key, no run starts, and nothing
+  // reaches the router.
+  run = await runPage(browser, "8192", { consent: "always", noKey: true }, "no-key");
   problems = run.errors.filter((error) => !error.startsWith("console:"));
-  if (!run.finished) problems.push("the run didn't end");
+  if (!run.keyPrompt) problems.push("the chat never asked for an API key");
+  if (run.events.some((event) => event.kind === "run")) problems.push("a run started without a key");
   if (run.routerRequests) problems.push(`sent ${run.routerRequests} requests to the router without a key`);
-  const runEnd = ended(run, "run")[0];
-  if (runEnd?.status !== "error" || !String(runEnd.error || "").includes("needs your API key")) {
-    problems.push(`expected the run to end asking for a key, got ${runEnd?.status} ${runEnd?.error || ""}`.trim());
-  }
   add("no key for a real router", run, problems);
   return results;
 }

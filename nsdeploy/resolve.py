@@ -29,12 +29,18 @@ import re
 import subprocess
 import sys
 from contextlib import redirect_stderr
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from urllib.parse import urlparse
 
 from pyhocon import ConfigFactory
 
+from nsdeploy.coded_tool_module import CodedToolModule
 from nsdeploy.studio import StudioSource
 
 # Substring that marks an agent as running in non-grounded "demo mode" (it is told
@@ -67,7 +73,10 @@ class HostableTool:
 
 
 @dataclass
-class DeploymentPlan:
+class DeploymentPlan:  # pylint: disable=too-many-instance-attributes
+    """
+    The flat, dependency-checked deployment plan for one agent network.
+    """
     network_name: str
     config: Dict[str, Any]               # fully-resolved network config
     front_man: str
@@ -200,7 +209,7 @@ def expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
     aliases: Dict[str, str] = {}
     expanded: set[str] = set()
 
-    def expand_ref(ref: str) -> Optional[str]:
+    def expand_ref(ref: str) -> Optional[str]:  # pylint: disable=too-many-return-statements
         if ref in aliases:
             return aliases[ref]
         rel_path = _network_ref_to_rel_path(ref)
@@ -282,7 +291,6 @@ def _is_url(ref: Any) -> bool:
 
 def _looks_like_mcp(url: str) -> bool:
     """A URL pointing at an MCP server — by path (ignoring any query string)."""
-    from urllib.parse import urlparse
     path = urlparse(url).path.lower()
     return path.endswith("/mcp") or "/mcp/" in path or path.endswith("/sse")
 
@@ -310,6 +318,7 @@ def _import_with_autoinstall(module: str):
             missing = e.name
             # Only install the tool's deps, and only once each; never the tool itself.
             if (not AUTO_INSTALL_TOOL_DEPS or not missing
+                    # pylint: disable-next=no-member  # false positive: ModuleNotFoundError.name is a str here
                     or missing.startswith(("coded_tools", "neuro_san_studio")) or missing in tried):
                 return None
             tried.add(missing)
@@ -319,7 +328,7 @@ def _import_with_autoinstall(module: str):
                                check=True)
             except subprocess.CalledProcessError:
                 return None
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught; any tool import failure means not hostable
             return None
     return None
 
@@ -349,18 +358,23 @@ def _resolve_class(class_path: str, source: StudioSource) -> Optional[tuple[str,
         return None
     module_part, class_name = class_path.rsplit(".", 1)
     module_leaf = module_part.split(".")[-1]
+    if not module_leaf.isidentifier() or not class_name.isidentifier():
+        return None
     if not source.ensure_coded_tool(f"{module_leaf}.py"):
         return None
     if str(source.root) not in sys.path:
         sys.path.insert(0, str(source.root))
-    module = f"coded_tools.{module_leaf}"
+    module = CodedToolModule.find(source.root, module_leaf)
+    if module is None:
+        return None
     mod = _import_with_autoinstall(module)
     if mod and hasattr(mod, class_name) and _can_construct_with_no_args(getattr(mod, class_name)):
         return module, class_name
     return None
 
 
-def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
+# pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],  # pylint: disable=too-many-statements
                network_name: str, missing_includes: List[str], source: StudioSource,
                include_python_tools: bool = True) -> DeploymentPlan:
     """Classify the resolved config into a DeploymentPlan."""
@@ -486,6 +500,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],
     return plan
 
 
+# pylint: disable-next=too-many-branches,too-many-statements  # one section per plan field
 def format_report(plan: DeploymentPlan, static_bundle: bool = False) -> str:
     """Human-readable dependency + grounding report."""
     out: List[str] = []

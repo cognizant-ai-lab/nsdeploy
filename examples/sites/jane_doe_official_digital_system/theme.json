@@ -1,0 +1,56 @@
+{
+  "brand": "Jane Doe Digital Atelier",
+  "icon": "\ud83d\udcbf",
+  "tagline": "Launches, links, drops, and fan journeys in sync.",
+  "hero": "The backstage OS for Jane Doe digital launches, unifying music, content, merch, analytics, and approvals.",
+  "font": "Avenir Next, Segoe UI, Helvetica Neue, Arial, sans-serif",
+  "radius": 18,
+  "colors": {
+    "primary": "#7b2f5b",
+    "accent": "#c88a38",
+    "bg": "#f7f0ea",
+    "bg_tint": "#efe0dd",
+    "fg": "#241822",
+    "muted": "#755d68",
+    "border": "#e5d4cd",
+    "msgbg": "#fffdfb",
+    "panelbg": "#fff8f4"
+  },
+  "welcome": {
+    "widget": {
+      "title": "Campaign Intake",
+      "icon": "\ud83d\udcdd",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "initiative": {
+            "type": "string",
+            "title": "Initiative",
+            "description": "Single launch, catalog audit, gallery drop, merch issue, or another digital priority."
+          },
+          "goal": {
+            "type": "string",
+            "title": "Goal",
+            "description": "The measurable outcome you want to achieve."
+          },
+          "deadline": {
+            "type": "string",
+            "title": "Deadline",
+            "description": "Key date or launch window."
+          },
+          "channels": {
+            "type": "string",
+            "title": "Channels",
+            "description": "Web, smart links, DSPs, social, merch, support, analytics, or legal review."
+          }
+        },
+        "required": [
+          "initiative",
+          "goal"
+        ]
+      },
+      "submitLabel": "Open the runbook"
+    },
+    "message": "Tell the atelier what you are preparing for Jane Doe official digital channels."
+  }
+}

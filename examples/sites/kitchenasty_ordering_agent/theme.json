@@ -1,0 +1,20 @@
+{
+  "brand": "Kitchenasty Order Desk",
+  "icon": "\ud83c\udf55",
+  "tagline": "Build it. Review it. Confirm it.",
+  "hero": "Craft every pizza, schedule delivery, and confirm the complete ticket before it reaches the oven.",
+  "font": "'Trebuchet MS', Arial, sans-serif",
+  "radius": 16,
+  "colors": {
+    "primary": "#B83A2E",
+    "accent": "#E8A72B",
+    "bg": "#F5F0E7",
+    "bg_tint": "#E9DFD0",
+    "fg": "#251D19",
+    "muted": "#6D5B51",
+    "border": "#CDBEAE",
+    "msgbg": "#FFFCF7",
+    "panelbg": "#F8F3EA"
+  },
+  "welcome": null
+}

@@ -1,0 +1,51 @@
+{
+  "brand": "Doe Presence Desk",
+  "icon": "\ud83d\udee1\ufe0f",
+  "tagline": "Public clarity with privacy at the center",
+  "hero": "A calm review desk for shaping family-facing public messages with consent, accuracy, and discretion before anything goes live.",
+  "font": "Georgia, 'Times New Roman', Times, serif",
+  "radius": 18,
+  "colors": {
+    "primary": "#176b68",
+    "accent": "#a85624",
+    "bg": "#f6efe3",
+    "bg_tint": "#efe1cc",
+    "fg": "#182522",
+    "muted": "#627069",
+    "border": "#d7c6aa",
+    "msgbg": "#fffaf2",
+    "panelbg": "#fbf2e6"
+  },
+  "welcome": {
+    "widget": {
+      "title": "Start a privacy-safe review",
+      "icon": "\ud83d\udcdd",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "string",
+            "title": "What needs help?",
+            "description": "Paste the inquiry, draft, page idea, caption, bio, or question to triage."
+          },
+          "channel": {
+            "type": "string",
+            "title": "Where will it appear?",
+            "description": "Website, email, LinkedIn, Instagram, journalist reply, FAQ, or another channel."
+          },
+          "sensitivities": {
+            "type": "string",
+            "title": "Privacy or accuracy concerns",
+            "description": "Kids, precise location, photos, claims, consent, timing, names, metadata, or anything sensitive."
+          }
+        },
+        "required": [
+          "request",
+          "channel"
+        ]
+      },
+      "submitLabel": "Begin review"
+    },
+    "message": "Share the public request, draft, page plan, or media concern you want reviewed. The desk will triage for voice, privacy, consent, facts, and publishing readiness."
+  }
+}

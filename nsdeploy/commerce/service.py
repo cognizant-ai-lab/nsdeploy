@@ -16,8 +16,11 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from .arbiter import Arbiter, CommerceError
-from .catalog import default_trip, public_catalog, validate_trip
+from nsdeploy.commerce.arbiter import Arbiter
+from nsdeploy.commerce.arbiter import CommerceError
+from nsdeploy.commerce.catalog import default_trip
+from nsdeploy.commerce.catalog import public_catalog
+from nsdeploy.commerce.catalog import validate_trip
 
 PROVIDER = "seabreeze_inn"
 ARBITER = "commerce_arbiter"
@@ -27,6 +30,13 @@ KEY_HEADER = "X-Commerce-Steward-Key"
 
 
 def origin(url):
+    """
+    Return the origin of an HTTP(S) commerce endpoint.
+
+    :param url: The endpoint URL.
+    :return: The origin string, e.g. "https://example.com".
+    :raises ValueError: If the URL is not an HTTP(S) URL without credentials.
+    """
     parsed = urllib.parse.urlsplit(url)
     if (parsed.scheme not in ("http", "https") or not parsed.hostname
             or parsed.username or parsed.password):
@@ -35,6 +45,11 @@ def origin(url):
 
 
 def credential_path():
+    """
+    Return the path of the private steward credential file.
+
+    :return: The credential path, from NSDEPLOY_COMMERCE_KEY_FILE or the default location.
+    """
     return Path(os.environ.get("NSDEPLOY_COMMERCE_KEY_FILE", str(
         Path(__file__).resolve().parents[2] / ".nsdeploy/cailville/.commerce/steward.key")))
 
@@ -51,16 +66,37 @@ def provision_key(path):
         with os.fdopen(fd, "w") as handle:
             handle.write(secrets.token_urlsafe(48))
     path.chmod(0o600)
-    value = path.read_text().strip()
+    value = path.read_text(encoding="utf-8").strip()
     if len(value) < 32:
         raise ValueError("Invalid private commerce credential file.")
     return value
 
 
 def post_json(url, body, headers=None):
+    """
+    POST a JSON body to a commerce peer without following redirects.
+
+    :param url: The peer endpoint URL.
+    :param body: The JSON-serializable request body.
+    :param headers: Optional extra request headers.
+    :return: The decoded JSON object response.
+    :raises ValueError: If the response is not a JSON object.
+    """
     class NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, *args, **kwargs):
+        """
+        Redirect handler that refuses every redirect.
+        """
+
+        def redirect_request(self, *args, **kwargs):  # pylint: disable=unused-argument; base-class signature
+            """
+            Refuse the redirect.
+
+            :param args: The base-class positional arguments, ignored.
+            :param kwargs: The base-class keyword arguments, ignored.
+            :return: None, so the redirect is not followed.
+            """
             return None
+
     request = urllib.request.Request(url, json.dumps(body).encode(),
                                      {"Content-Type": "application/json", **(headers or {})})
     with urllib.request.build_opener(NoRedirect).open(request, timeout=15) as response:
@@ -70,8 +106,24 @@ def post_json(url, body, headers=None):
         return result
 
 
-class CommerceSite:
+class CommerceSite:  # pylint: disable=too-many-instance-attributes; site configuration
+    """
+    Server-to-server commerce endpoint for either the arbiter or the seller role.
+    """
+
+    # pylint: disable-next=too-many-arguments,too-many-positional-arguments  # public constructor
     def __init__(self, config, site_base, links, database=None, clock=time.time, steward_key=None):
+        """
+        Initialize the commerce site.
+
+        :param config: The commerce configuration, including its role and peer backend.
+        :param site_base: The public base URL of this site.
+        :param links: The resolved network links by name.
+        :param database: The arbiter database path; used only by the arbiter role.
+        :param clock: The time source.
+        :param steward_key: The private steward credential; required by the arbiter role.
+        :raises ValueError: If the role is unknown, an endpoint is invalid, or the arbiter lacks a credential.
+        """
         self.role = config["role"]
         if self.role not in ("arbiter", "seller"):
             raise ValueError("Commerce role must be arbiter or seller.")
@@ -141,7 +193,8 @@ class CommerceSite:
             if operation == "negotiate":
                 trip = validate_trip(body["trip"])
                 budget = body["budget_cents"]
-                if type(budget) is not int or not 1 <= budget <= 10000000:
+                # An exact type check rejects bool, which isinstance(..., int) would accept.
+                if type(budget) is not int or not 1 <= budget <= 10000000:  # pylint: disable=unidiomatic-typecheck
                     raise ValueError("Budget must be positive integer USD cents, at most $100,000.")
                 if chat:
                     previous = self._view(chat)
@@ -154,6 +207,7 @@ class CommerceSite:
                         "buyer": deal["buyer_token"], "expires": self.clock() + 86400}
                 with self.engine.db() as db:
                     db.execute("INSERT OR REPLACE INTO private_chats VALUES(?,?,?,?,?)", tuple(chat.values()))
+                    # pylint: disable-next=protected-access  # vendored arbiter has no public event API
                     self.engine._event(db, chat["deal"], "STEWARD_NEGOTIATION_REQUESTED", {"steward": STEWARD})
                 return self._negotiate(chat)
             if not chat:
@@ -187,16 +241,25 @@ class CommerceSite:
                                     self.engine.public_request(capability, PROVIDER))
         return receipt
 
+    # pylint: disable-next=too-many-return-statements,too-many-branches  # one response per outcome
     def handle(self, handler):
+        """
+        Serve one commerce API request.
+
+        :param handler: The HTTP request handler for the request.
+        :return: None; the response is written to the handler.
+        """
         path = urllib.parse.urlsplit(handler.path).path
         operation = path.removeprefix(API) if path.startswith(API) else ""
         try:
             if handler.command == "GET" and operation == "info":
                 return self._json(handler, 200, {"role": self.role, "arbiter_url": self.arbiter_url,
-                    "seller_url": self.seller_url, "catalog": public_catalog(PROVIDER, default_trip())})
+                                                 "seller_url": self.seller_url,
+                                                 "catalog": public_catalog(PROVIDER, default_trip())})
             allowed = {"negotiate", "status", "approve", "cancel", "seller-bid", "provider-bid"}
             if not operation or operation not in allowed:
-                return self._json(handler, 404, {"error": "No commerce web interface. Use your private steward in nsFlow."})
+                return self._json(handler, 404,
+                                  {"error": "No commerce web interface. Use your private steward in nsFlow."})
             if handler.command != "POST":
                 return self._json(handler, 405, {"error": "Method not allowed."})
             if handler.headers.get("Origin") is not None:
@@ -215,7 +278,10 @@ class CommerceSite:
                 handler.close_connection = True
                 raise ValueError("Invalid commerce request size.")
             body = json.loads(handler.rfile.read(length))
-            result = self._provider_action(operation, body) if provider_action else self._steward_action(operation, body)
+            if provider_action:
+                result = self._provider_action(operation, body)
+            else:
+                result = self._steward_action(operation, body)
             return self._json(handler, 200, result)
         except PermissionError as exc:
             return self._json(handler, 403, {"error": str(exc)})
@@ -224,7 +290,8 @@ class CommerceSite:
         except (ValueError, TypeError, KeyError) as exc:
             return self._json(handler, 400, {"error": str(exc)})
         except (urllib.error.URLError, TimeoutError, OSError):
-            return self._json(handler, 502, {"error": "Commerce peer unavailable. Retry or inspect booking status; no receipt is fabricated."})
+            return self._json(handler, 502, {"error": "Commerce peer unavailable. Retry or inspect booking status; "
+                                                      "no receipt is fabricated."})
 
     @staticmethod
     def _json(handler, status, body):
@@ -239,6 +306,14 @@ class CommerceSite:
 
 
 def from_plan(plan, site_dir, site_base):
+    """
+    Build the commerce site for a deployment plan, provisioning the arbiter credential when needed.
+
+    :param plan: The deployment plan.
+    :param site_dir: The site's output directory.
+    :param site_base: The public base URL of the site.
+    :return: The commerce site, or None when the plan has no commerce configuration.
+    """
     config = plan.config.get("commerce")
     if not config:
         return None

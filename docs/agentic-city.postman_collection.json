@@ -1,0 +1,361 @@
+{
+  "info": {
+    "name": "Agentic City - deploy agent networks",
+    "description": "Deploy and manage agent networks on Agentic City over HTTPS.\n\nSet `token` in the collection variables before use. Every request inherits bearer auth from the collection except Health, which is unauthenticated.\n\nThe two Deploy requests write the new deployment's id into the `deploymentId` variable, so Wait / Logs / Restart / Delete work straight afterwards with no copy-paste.\n\nNOTE: the token is shared service-wide. It identifies 'allowed to use this service', never which team - so a holder can stop or delete ANY network. Set `org_name` to your team so your rows are identifiable, and only delete ids you created.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://agentic-city.example.com",
+      "type": "string"
+    },
+    { "key": "token", "value": "YOUR_API_TOKEN", "type": "string" },
+    { "key": "deploymentId", "value": "", "type": "string" },
+    { "key": "orgId", "value": "", "type": "string" },
+    { "key": "sitePort", "value": "8100", "type": "string" },
+    { "key": "networkName", "value": "my_network", "type": "string" },
+    { "key": "orgName", "value": "Your Team Name", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "1. Service",
+      "item": [
+        {
+          "name": "Health (no auth)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] },
+            "description": "The only unauthenticated route. `port_pool.capacity` minus the length of `port_pool.reserved` is how many more networks can run; a deploy is refused at zero."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('service is up', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "const free = b.port_pool.capacity - b.port_pool.reserved.length;",
+                  "console.log(`free slots: ${free}/${b.port_pool.capacity}`);",
+                  "pm.test('has a free slot', () => pm.expect(free).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Settings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/settings", "host": ["{{baseUrl}}"], "path": ["settings"] },
+            "description": "Masked credential state and the deploy defaults. Secrets come back as `is_set` plus the last 4 characters only - never the real value."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Deploy",
+      "item": [
+        {
+          "name": "Deploy - multipart (pick a file)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": null, "description": "Your .hocon. Postman cannot store file contents in a collection - select it from disk after importing." },
+                { "key": "org_name", "value": "{{orgName}}", "type": "text" }
+              ]
+            },
+            "url": { "raw": "{{baseUrl}}/deployments", "host": ["{{baseUrl}}"], "path": ["deployments"] },
+            "description": "Returns 202 immediately, BEFORE the build starts. The network name comes from the filename stem; a browser's duplicate marker is stripped, so `my_network (1).hocon` deploys as `my_network`.\n\nRe-uploading the same name under the same organization REPLACES that deployment (`replaced: true`), keeping the same id, port and URL."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('accepted', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "if (pm.response.code < 300) {",
+                  "  const b = pm.response.json();",
+                  "  pm.collectionVariables.set('deploymentId', b.id);",
+                  "  if (b.org_id) pm.collectionVariables.set('orgId', b.org_id);",
+                  "  console.log(`id=${b.id} name=${b.name} port=${b.port} replaced=${b.replaced}`);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deploy - raw body (scripted)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "text/plain" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  metadata = {\n    description = \"A minimal demo network.\"\n    sample_queries = [\"Say hello.\"]\n  }\n\n  tools = [\n    {\n      name = \"greeter\"\n      instructions = \"\"\"\nYou are a friendly greeter running in demo mode. Answer briefly.\n\"\"\"\n      function = {\n        description = \"Greets the visitor.\"\n      }\n      tools = []\n    }\n  ]\n}\n"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/deployments/raw?name={{networkName}}&org_name={{orgName}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["deployments", "raw"],
+              "query": [
+                { "key": "name", "value": "{{networkName}}", "description": "REQUIRED on this form - there is no filename to fall back on" },
+                { "key": "org_name", "value": "{{orgName}}" }
+              ]
+            },
+            "description": "The HOCON is the raw body. Use this from scripts. The body here is a working minimal network - replace it with yours.\n\nThe HOCON must be an OBJECT, starting with `{`. A top-level array fails with `ValueError: dictionary update sequence element #0 has length 5; 2 is required`, which does not read like a format error but is one."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('accepted', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "if (pm.response.code < 300) {",
+                  "  const b = pm.response.json();",
+                  "  pm.collectionVariables.set('deploymentId', b.id);",
+                  "  if (b.org_id) pm.collectionVariables.set('orgId', b.org_id);",
+                  "  console.log(`id=${b.id} name=${b.name} port=${b.port}`);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Monitor",
+      "item": [
+        {
+          "name": "Wait for ready (504 = still building)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/deployments/{{deploymentId}}/wait?timeout=60",
+              "host": ["{{baseUrl}}"],
+              "path": ["deployments", "{{deploymentId}}", "wait"],
+              "query": [{ "key": "timeout", "value": "60" }]
+            },
+            "description": "Blocks until the deployment settles. Returns 504 while it is STILL BUILDING - that is normal, not an error. Send it again until you get 200.\n\nA warm build is seconds; a cold one fetches tool definitions from GitHub and takes ~20-30s. Theming adds more."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 504) {",
+                  "  pm.test('still building - send this request again', () => true);",
+                  "} else {",
+                  "  pm.test('settled', () => pm.response.to.have.status(200));",
+                  "  const b = pm.response.json();",
+                  "  console.log(`status=${b.status} url=${b.url}`);",
+                  "  if (b.error) console.log(`error: ${b.error}`);",
+                  "  pm.test('reached ready', () => pm.expect(b.status).to.eql('ready'));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Build log",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/deployments/{{deploymentId}}/logs?tail=150",
+              "host": ["{{baseUrl}}"],
+              "path": ["deployments", "{{deploymentId}}", "logs"],
+              "query": [{ "key": "tail", "value": "150" }]
+            },
+            "description": "Where a failed build explains itself, and where theming reports whether it worked or fell back to the default look."
+          }
+        },
+        {
+          "name": "Get one deployment",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/deployments/{{deploymentId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["deployments", "{{deploymentId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Manage",
+      "item": [
+        {
+          "name": "List all",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/deployments", "host": ["{{baseUrl}}"], "path": ["deployments"] },
+            "description": "Newest first, including terminal records. No pagination."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "b.deployments.forEach(d => console.log(`${d.id}  ${d.name}  ${d.status}  ${d.url || '-'}`));",
+                  "console.log(`live ${b.capacity.live}/${b.capacity.max_deployments}`);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List by organization",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/deployments?org_id={{orgId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["deployments"],
+              "query": [{ "key": "org_id", "value": "{{orgId}}" }]
+            }
+          }
+        },
+        {
+          "name": "Restart (rebuild from stored HOCON)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/deployments/{{deploymentId}}/restart",
+              "host": ["{{baseUrl}}"],
+              "path": ["deployments", "{{deploymentId}}", "restart"]
+            },
+            "description": "Brings a stopped deployment back, as long as its uploaded HOCON is still on disk."
+          }
+        },
+        {
+          "name": "Stop",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/deployments/{{deploymentId}}/stop",
+              "host": ["{{baseUrl}}"],
+              "path": ["deployments", "{{deploymentId}}", "stop"]
+            }
+          }
+        },
+        {
+          "name": "Delete (frees the port)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/deployments/{{deploymentId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["deployments", "{{deploymentId}}"]
+            },
+            "description": "Please delete networks you are finished with - ports are a shared, limited pool. Only delete ids you created."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Organizations and map",
+      "item": [
+        {
+          "name": "List organizations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/orgs", "host": ["{{baseUrl}}"], "path": ["orgs"] }
+          }
+        },
+        {
+          "name": "Graph (map nodes and edges)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/graph", "host": ["{{baseUrl}}"], "path": ["graph"] },
+            "description": "Deployed networks as nodes, resolved links as edges. Edges are real - only where a link actually resolved at build time."
+          }
+        },
+        {
+          "name": "Directory",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/directory", "host": ["{{baseUrl}}"], "path": ["directory"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. A deployed site",
+      "item": [
+        {
+          "name": "Site root",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}:{{sitePort}}/",
+              "host": ["{{baseUrl}}"],
+              "port": "{{sitePort}}",
+              "path": [""]
+            },
+            "description": "Deployed sites are public and unauthenticated by design. Set `sitePort` to the port the deploy returned.\n\nNote these are non-standard ports (8100+). If your network blocks outbound traffic to them, the API will work but the sites will not open."
+          }
+        },
+        {
+          "name": "Agent manifest",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}:{{sitePort}}/agent-manifest.json",
+              "host": ["{{baseUrl}}"],
+              "port": "{{sitePort}}",
+              "path": ["agent-manifest.json"]
+            }
+          }
+        },
+        {
+          "name": "Well-known agent description",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}:{{sitePort}}/.well-known/nsdeploy-agent.json",
+              "host": ["{{baseUrl}}"],
+              "port": "{{sitePort}}",
+              "path": [".well-known", "nsdeploy-agent.json"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

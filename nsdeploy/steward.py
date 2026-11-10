@@ -12,11 +12,17 @@ import json
 import os
 import urllib.parse
 import urllib.request
-from typing import Any, Dict
+from typing import Any
+from typing import Dict
 
+import httpx
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
 from neuro_san.interfaces.coded_tool import CodedTool
 
-from nsdeploy.byok import ByokCredentials, authorization_for_key, byok_headers
+from nsdeploy.byok import ByokCredentials
+from nsdeploy.byok import authorization_for_key
+from nsdeploy.byok import byok_headers
 from nsdeploy.facade import NetworkRunner
 
 
@@ -31,8 +37,6 @@ def _origin(url: str) -> str:
 
 
 def _mcp_http_timeout(seconds: float):
-    import httpx
-
     short = min(30.0, seconds)
     return httpx.Timeout(seconds, connect=short, pool=short)
 
@@ -40,6 +44,7 @@ def _mcp_http_timeout(seconds: float):
 class PublicAgentNetworkGateway(CodedTool):
     """Fetch a public nsDeploy network and run it inside the private environment."""
 
+    # pylint: disable-next=too-many-locals,too-many-return-statements  # flat validation and fallback flow
     async def async_invoke(self, args: Dict[str, Any], sly_data: Dict[str, Any]) -> str:
         site_url = str(args.get("site_url", "")).strip()
         request = str(args.get("request", "")).strip()
@@ -84,7 +89,7 @@ class PublicAgentNetworkGateway(CodedTool):
                 f"Public agent site timed out after {PUBLIC_SITE_REQUEST_TIMEOUT_SECONDS:g} seconds; "
                 "do not retry it in this turn."
             )
-        except Exception as fetch_exc:
+        except Exception as fetch_exc:  # pylint: disable=broad-exception-caught; any failure tries the MCP fallback
             # Older nsDeploy sites may publish only the MCP facade contract. Keep
             # them reachable while fetch-and-run becomes the default.
             fallback = await self._invoke_mcp(site_url, request, caller_headers, denied)
@@ -92,7 +97,7 @@ class PublicAgentNetworkGateway(CodedTool):
                 return fallback
             return f"Public agent network load failed: {fetch_exc}. MCP fallback: {fallback}"
 
-    async def _invoke_mcp(self, site_url: str, request: str,
+    async def _invoke_mcp(self, site_url: str, request: str,  # pylint: disable=too-many-locals
                           caller_headers: Dict[str, str], denied: set[str]) -> str:
         endpoint = await asyncio.to_thread(self._endpoint_for, site_url)
         parsed = urllib.parse.urlparse(endpoint)
@@ -101,10 +106,6 @@ class PublicAgentNetworkGateway(CodedTool):
         if _origin(endpoint).rstrip("/") in denied:
             return "Denied by the steward's NSDEPLOY_STEWARD_DENY_ORIGINS policy."
         try:
-            from mcp import ClientSession
-            from mcp.client.streamable_http import streamable_http_client
-            import httpx
-
             # Do not wait indefinitely for a remote public network. Disabling
             # automatic DELETE on context exit also lets cancellation interrupt
             # a long-lived SSE stream immediately; a timed-out request must not
@@ -132,7 +133,7 @@ class PublicAgentNetworkGateway(CodedTool):
                 f"Public agent site timed out after {PUBLIC_SITE_REQUEST_TIMEOUT_SECONDS:g} seconds; "
                 "do not retry it in this turn."
             )
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught; tool returns any failure as text
             return f"Public agent site call failed: {exc}"
 
     @staticmethod
@@ -149,7 +150,7 @@ class PublicAgentNetworkGateway(CodedTool):
             endpoint = descriptor.get("endpoint")
             if isinstance(endpoint, str) and endpoint:
                 return urllib.parse.urljoin(root + "/", endpoint)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught; descriptor is optional, fall back to /mcp
             pass
         return root + "/mcp"
 

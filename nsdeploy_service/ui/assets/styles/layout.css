@@ -1,0 +1,414 @@
+/* App shell: navy header, left sidebar nav, main content column. */
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  /* dvh, not vh, wherever it is supported. `100vh` is the *largest* the viewport
+     can be: it counts space that retracting browser UI may be occupying right
+     now, so a full-height layout ends up taller than what is actually visible
+     and its last strip — on the map that is the legend, the counters and the
+     sidebar's health line — sits under the chrome. dvh tracks the viewport as it
+     is. The vh line above stays as the fallback for anything that lacks dvh. */
+  min-height: 100dvh;
+}
+
+.wrap {
+  width: 100%;
+  max-width: 68rem;
+  margin: 0 auto;
+  padding-inline: var(--space-5);
+}
+/* The launch screen is the one view that trades height for width: it lays its
+   pitch beside its form (see .launch in components.css) so the operator never
+   scrolls to reach Launch, and a few more rem of column keeps both halves at a
+   comfortable measure. The other views are tables and cards that read better in
+   the standard 68rem. */
+/* `.content > .wrap`, not `.wrap`: the footer row is a .wrap too (it shares the
+   column so its links line up with the content above them), and widening or
+   re-flowing it here would drag the footer along. */
+body[data-view="deploy"] .content > .wrap { max-width: 76rem; }
+
+/* On a tall window the launch screen ran out of content well before the window
+   ran out of height, leaving the form pinned to the top of a half-empty pane.
+   Centre it in the height it has instead.
+   Gated on min-height rather than applied always: centring content that is
+   taller than its box pushes the overflow off the top of the page, where it
+   cannot be scrolled back to. Above 58rem the screen is comfortably shorter
+   than the window, so there is nothing to push.
+
+   `safe center` covers what the gate cannot: a failed upload adds an error
+   panel inside the card, and on a window only just past 58rem that is enough to
+   overflow. Safe alignment falls back to flex-start exactly then, so the top of
+   the form is never cut off. The plain `center` above it is the declaration a
+   browser without safe-alignment support keeps. */
+@media (min-height: 58rem) {
+  body[data-view="deploy"] .content { display: flex; }
+  body[data-view="deploy"] .content > .wrap {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    justify-content: safe center;
+  }
+}
+
+/* ── header ─────────────────────────────────────────────────────────────── */
+/* Fixed brand navy regardless of light/dark theme — this is product-shell
+   chrome, not a themed surface (see --brand-navy in tokens.css). */
+/* A quiet sheen and a one-pixel accent seam replace what used to be a flat gradient
+   fill: the seam borrows the same blue/cyan pair the brand mark already carries, so
+   the bar reads as lit rather than merely coloured. Both are ::before/::after so
+   they cost no markup and cannot intercept a click on the controls above them. */
+.topbar {
+  position: relative;
+  background: linear-gradient(135deg, var(--brand-navy), var(--brand-navy-2));
+  box-shadow: var(--shadow-lg);
+  isolation: isolate;
+}
+.topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(60rem 10rem at 12% -40%, rgb(255 255 255 / 0.16), transparent 70%);
+  pointer-events: none;
+}
+.topbar::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 2px;
+  background: linear-gradient(90deg, #2f5fe0, #4fd1e0 55%, transparent);
+  opacity: 0.85;
+  pointer-events: none;
+}
+/* Full-bleed, not `.wrap`-constrained: the brand sits at the true left edge
+   of the viewport, the way the rest of the shell's chrome (sidebar, footer)
+   already spans edge to edge. */
+.topbar__inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.brand__mark {
+  display: grid;
+  place-items: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  flex: none;
+  filter: drop-shadow(0 6px 14px rgb(47 95 224 / 0.55));
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.brand:hover .brand__mark { transform: scale(1.06) rotate(-4deg); }
+.brand__mark svg { width: 100%; height: 100%; }
+.brand__text { min-width: 0; }
+.brand__text h1 {
+  color: var(--brand-ink);
+  letter-spacing: -0.02em;
+}
+.brand__sub {
+  color: var(--brand-ink-muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (prefers-reduced-motion: reduce) {
+  .brand:hover .brand__mark { transform: none; }
+}
+.topbar__spacer { flex: 1; }
+.topbar__build {
+  color: var(--brand-ink-muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.topbar__build strong { color: var(--brand-ink); font-weight: 600; }
+.topbar .btn--icon { color: var(--brand-ink-muted); }
+.topbar .btn--icon:hover { background: rgb(255 255 255 / 0.12); color: var(--brand-ink); }
+
+/* ── app body: persistent sidebar + main pane ──────────────────────────────
+   A left sidebar rather than a horizontal tab strip: this app has four
+   top-level sections today and is the kind of console that grows more, and a
+   sidebar stays fully scannable at a glance where a top bar would eventually
+   have to collapse the overflow into a hidden menu. */
+.appbody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.sidebar {
+  flex: none;
+  width: var(--sidebar-w);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-1);
+  border-right: 1px solid var(--border);
+  box-shadow: 1px 0 0 rgb(0 0 0 / 0.02), var(--shadow-sm);
+  transition: width 0.16s ease;
+}
+
+/* ── tabs (the sidebar's section nav) ──────────────────────────────────── */
+.tabs {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.tabs__inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+}
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.88rem;
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+.tab::before {
+  content: "";
+  position: absolute;
+  left: -0.75rem;
+  top: 0.35rem;
+  bottom: 0.35rem;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: transparent;
+  transition: background-color 0.14s ease;
+}
+.tab__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  color: var(--text-muted);
+  transition: color 0.14s ease;
+}
+.tab__icon svg { width: 100%; height: 100%; }
+.tab__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity 0.14s ease;
+}
+.tab:hover { color: var(--text-primary); background: var(--surface-2); }
+.tab:hover .tab__icon { color: var(--text-primary); }
+.tab:active { background: var(--accent-soft); }
+.tab[aria-selected="true"] {
+  color: var(--accent);
+  background: var(--accent-wash);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.tab[aria-selected="true"] .tab__icon { color: var(--accent); }
+.tab[aria-selected="true"]::before {
+  background: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+/* The service health line: version, live/total, port range, and any startup
+   note. It is four facts in a 15rem column, so it wraps instead of being
+   ellipsised — as one nowrap line it lost the port range and the reconcile
+   count to a "…" every time, which is the half an operator actually wants.
+   flex + wrap rather than plain text so it breaks between facts, never
+   mid-token, and the separators land at the ends of lines. */
+.sidebar__foot {
+  /* Extra bottom padding for the same reason the map's legend has it: this box
+     is the last thing in a full-height column, so it sits flush against the
+     window edge and its final line is the first casualty of any lost pixels. */
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.sidebar__foot #foot-health {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.3rem;
+  align-items: baseline;
+}
+
+/* ── collapse toggle ───────────────────────────────────────────────────────
+   Collapsing is available in every view, not just the map: any section benefits
+   from the extra 11rem, and a nav that only collapsed on one screen would be a
+   surprise. */
+.navtoggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: none;
+  margin: var(--space-3) var(--space-3) 0;
+  padding: 0.45rem 0.75rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+.navtoggle:hover { background: var(--surface-2); color: var(--text-primary); }
+.navtoggle__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  transition: transform 0.16s ease;
+}
+.navtoggle__icon svg { width: 100%; height: 100%; }
+
+/* Icon rail: the sidebar collapses to icons only rather than staying pinned at
+   full width and eating the viewport. The label stays in the DOM (each tab
+   already carries aria-label + title) so nothing loses its accessible name — it
+   is only visually collapsed.
+
+   One ruleset, two triggers. `data-nav` is set by initNav() in main.js from the
+   operator's stored choice, falling back to the 62rem breakpoint via matchMedia.
+   Keeping the breakpoint in JS rather than a second @media block here means the
+   rail is defined exactly once; an inline script in index.html applies the
+   attribute before first paint so the width never jumps. */
+html[data-nav="rail"] .sidebar { width: var(--sidebar-w-rail); }
+html[data-nav="rail"] .tab { justify-content: center; padding-inline: 0; }
+html[data-nav="rail"] .tab__label,
+html[data-nav="rail"] .navtoggle__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
+html[data-nav="rail"] .sidebar__foot { display: none; }
+html[data-nav="rail"] .navtoggle { justify-content: center; padding-inline: 0; }
+/* The chevrons point the way the next click will move the sidebar. */
+html[data-nav="rail"] .navtoggle__icon { transform: rotate(180deg); }
+
+/* ── content ────────────────────────────────────────────────────────────── */
+.mainpane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.content {
+  flex: 1;
+  padding-block: var(--space-6) var(--space-7);
+}
+.view[hidden] { display: none; }
+
+/* The launch screen lays itself out against the width it actually has, which is
+   the window minus the sidebar — and the sidebar collapses to a rail. Naming the
+   view as a query container lets .launch (components.css) ask that question
+   directly instead of guessing from the viewport. Declared on this view alone:
+   the map view is a flex/height layout and inline-size containment there would
+   be one more thing to reason about for no gain. */
+#view-deploy {
+  container-type: inline-size;
+  container-name: launchview;
+}
+
+/* The map view spans the full window and takes every pixel the chrome does not
+   need. It sits outside .wrap; on the map view .content becomes a flex column with
+   no padding so the stage runs edge to edge and absorbs the leftover height. */
+/* A flex container, not just a flex item: a percentage height on the child does not
+   reliably resolve against a height that came from flex-grow, and collapses to the
+   child's content height instead. Letting the child flex avoids the question. */
+.view--bleed:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+}
+.view--bleed {
+  flex: 1;
+  min-height: 0;
+}
+body[data-view="map"] .content {
+  display: flex;
+  flex-direction: column;
+  padding-block: 0;
+}
+/* The global footer's links live in the map's own overlay, so the row is redundant
+   here — and a row of chrome is height the map does not get. */
+body[data-view="map"] .footer { display: none; }
+/* The tagline is the one piece of the header that carries no information once you
+   are looking at the map. */
+body[data-view="map"] .brand__sub { display: none; }
+
+.stack { display: grid; gap: var(--space-5); }
+
+.columns {
+  display: grid;
+  gap: var(--space-5);
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  align-items: start;
+}
+@media (max-width: 62rem) {
+  .columns { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* The deploy view always has content for both columns — the form on the left,
+   and on the right either the "how it works" panel or, once a build starts,
+   the live progress panel — so it stays a true two-column layout rather than
+   the single centred column collapsing to it only after a build begins. */
+.columns--deploy {
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+}
+@media (max-width: 62rem) {
+  .columns--deploy {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 38rem;
+    margin-inline: auto;
+  }
+}
+
+.footer {
+  border-top: 1px solid var(--border);
+  padding-block: var(--space-4);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+.footer__inner {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  align-items: center;
+}
+.footer__spacer { flex: 1; }
+
+/* ── toasts ─────────────────────────────────────────────────────────────── */
+.toasts {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: 50;
+  display: grid;
+  gap: var(--space-2);
+  width: min(26rem, calc(100vw - 2 * var(--space-5)));
+}

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentic City</title>
+<meta name="description" content="Agentic City — upload a neuro-san agent-network HOCON and get a live URL.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&display=swap">
+<link rel="stylesheet" href="assets/styles/tokens.css?v=122">
+<link rel="stylesheet" href="assets/styles/base.css?v=122">
+<link rel="stylesheet" href="assets/styles/layout.css?v=122">
+<link rel="stylesheet" href="assets/styles/components.css?v=122">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='19' font-size='20'>◈</text></svg>">
+<script>
+  /* Apply the stored nav state before first paint. main.js owns the logic; this
+     only prevents the sidebar animating from 15.5rem to 4.5rem on every load.
+     Kept deliberately tiny and failure-tolerant — a blocked localStorage or an
+     exception here must not stop the page rendering. */
+  try {
+    var stored = localStorage.getItem('nsdeploy.nav');
+    var rail = stored === 'rail' || (!stored && window.matchMedia('(max-width: 62rem)').matches);
+    document.documentElement.dataset.nav = rail ? 'rail' : 'expanded';
+  } catch (e) { document.documentElement.dataset.nav = 'expanded'; }
+</script>
+</head>
+<body>
+<div class="shell">
+
+  <!-- Shown only when the server is serving a newer console than this tab booted
+       with. A tab left open across an update keeps running its old JavaScript, which
+       is indistinguishable from a broken UI — see checkForUpdate in main.js. -->
+  <div class="updatebar" id="update-banner" role="status" hidden>
+    <span class="updatebar__text">
+      This page is running an older version of the console.
+    </span>
+    <button type="button" class="btn btn--sm" id="update-reload">Reload to update</button>
+  </div>
+
+  <header class="topbar">
+    <div class="topbar__inner">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true">
+          <svg viewBox="0 0 100 100">
+            <path d="M50 0 L50 50 L0 50 Z" fill="#0e1a5c"/>
+            <path d="M50 0 L100 50 L50 50 Z" fill="#2f5fe0"/>
+            <path d="M0 50 L50 50 L50 100 Z" fill="#1a3aa0"/>
+            <path d="M50 50 L100 50 L50 100 Z" fill="#4fd1e0"/>
+          </svg>
+        </span>
+        <div class="brand__text">
+          <h1>Agentic City</h1>
+          <p class="brand__sub">Upload an agent network · watch it appear on the map</p>
+        </div>
+      </div>
+      <div class="topbar__spacer"></div>
+      <span class="topbar__build" id="build-text">Build: <strong id="build-strong">…</strong></span>
+      <button class="btn btn--icon" id="settings-toggle" type="button" aria-label="API settings"></button>
+      <button class="btn btn--icon" id="theme-toggle" type="button" aria-label="Toggle theme"></button>
+    </div>
+  </header>
+
+  <div class="appbody">
+    <aside class="sidebar">
+      <button class="navtoggle" id="nav-toggle" type="button" aria-expanded="true"
+              aria-controls="section-nav" aria-label="Collapse navigation"
+              title="Collapse navigation">
+        <span class="navtoggle__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 6l-6 6 6 6M20 6l-6 6 6 6"/>
+          </svg>
+        </span>
+        <span class="navtoggle__label">Collapse</span>
+      </button>
+      <!-- Three options, deliberately kept to this: add a network, look at the map,
+           or see the flat list of what's deployed. The grouped-by-organization
+           Directory and Organizations views still exist and are still reachable at
+           #directory / #organizations for whoever has to manage an org — they are
+           just not part of the main path. -->
+      <nav class="tabs" id="section-nav" aria-label="Sections">
+        <div class="tabs__inner" role="tablist" aria-orientation="vertical">
+          <!-- A place, not an action. The Launch button lives inside this tab, so the
+               tab must not also be called Launch: clicking it opens the form rather
+               than launching anything, and one word meaning two things is the kind of
+               "I pressed it and nothing happened" this console has already cost. -->
+          <button class="tab" role="tab" data-view="deploy" aria-selected="true"
+                  aria-controls="view-deploy" aria-label="New network" title="New network">
+            <span class="tab__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                   stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="9"/>
+                <path d="M12 8v8M8 12h8"/>
+              </svg>
+            </span>
+            <span class="tab__label">New network</span>
+          </button>
+          <button class="tab" role="tab" data-view="map" aria-selected="false"
+                  aria-controls="view-map" aria-label="Network map" title="Map">
+            <span class="tab__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                   stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 3 3 5.5v15L9 18l6 2.5 6-2.5v-15L15 5.5 9 3Zm0 0v15m6-15v15"/>
+              </svg>
+            </span>
+            <span class="tab__label">Map</span>
+          </button>
+          <button class="tab" role="tab" data-view="networks" aria-selected="false"
+                  aria-controls="view-networks" aria-label="Network list" title="Network list">
+            <span class="tab__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                   stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/>
+                <rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/>
+                <rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/>
+                <rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>
+              </svg>
+            </span>
+            <span class="tab__label">Network list</span>
+          </button>
+        </div>
+      </nav>
+      <div class="sidebar__foot">
+        <span id="foot-health">…</span>
+      </div>
+    </aside>
+
+    <div class="mainpane">
+      <main class="content">
+        <div class="wrap">
+          <section class="view" id="view-deploy" role="tabpanel" aria-label="New network"></section>
+          <section class="view" id="view-networks" role="tabpanel" aria-label="Network list" hidden></section>
+          <!-- Off the main path but kept mounted: grouped by organization, reachable
+               at #directory / #organizations. -->
+          <section class="view" id="view-directory" role="tabpanel" aria-label="Directory" hidden></section>
+          <section class="view" id="view-organizations" role="tabpanel" aria-label="Organizations" hidden></section>
+        </div>
+        <!-- Outside .wrap: the map is full-bleed, not a card inside the 68rem column. -->
+        <section class="view view--bleed" id="view-map" role="tabpanel"
+                 aria-label="Network map" hidden></section>
+      </main>
+
+      <footer class="footer">
+        <div class="wrap footer__inner">
+          <span class="footer__spacer"></span>
+          <!-- Kept out of the sidebar so the main path stays two choices, but still
+               one click away for whoever has to stop or restart a deployment. -->
+          <a href="#directory">Manage deployments</a>
+          <a href="/docs">API docs</a>
+          <a href="/console">Fallback console</a>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+</div>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<script type="module" src="assets/js/main.js?v=122"></script>
+</body>
+</html>

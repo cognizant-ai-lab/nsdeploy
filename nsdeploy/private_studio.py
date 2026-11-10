@@ -36,6 +36,12 @@ def _installed_cli_args(argv: list[str]) -> list[str]:
 
 
 def main() -> int:
+    """
+    Run the private Neuro-SAN studio with nsdeploy added to the child PYTHONPATH.
+
+    :return: The process exit code.
+    :raises SystemExit: If the studio project or its runner cannot be found or loaded.
+    """
     studio_root = Path(os.environ.get("NSDEPLOY_PRIVATE_STUDIO_ROOT", "")).resolve()
     if not studio_root.is_dir():
         raise SystemExit(f"Private Neuro-SAN studio project not found: {studio_root}")

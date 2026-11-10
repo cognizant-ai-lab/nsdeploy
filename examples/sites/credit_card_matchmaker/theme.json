@@ -1,0 +1,66 @@
+{
+  "brand": "Card Compass",
+  "icon": "\u25c8",
+  "tagline": "Sharper matches. Clearer tradeoffs.",
+  "hero": "Turn your spending habits into a precise, transparent credit card shortlist.",
+  "font": "Inter, Arial, Helvetica, sans-serif",
+  "radius": 14,
+  "colors": {
+    "primary": "#173E68",
+    "accent": "#D89B3C",
+    "bg": "#F4F1E9",
+    "bg_tint": "#E9EEF2",
+    "fg": "#17202A",
+    "muted": "#5F6B76",
+    "border": "#CBD2D7",
+    "msgbg": "#FCFBF7",
+    "panelbg": "#FFFFFF"
+  },
+  "welcome": {
+    "widget": {
+      "title": "Your card brief",
+      "icon": "\ud83d\udcdd",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "primary_goal": {
+            "type": "string",
+            "title": "Primary goal",
+            "description": "Cash back, travel rewards, balance transfer, business spending, credit building, or another goal"
+          },
+          "monthly_spending": {
+            "type": "string",
+            "title": "Typical monthly spending",
+            "description": "Approximate totals and major categories such as groceries, dining, travel, gas, ads, or shipping"
+          },
+          "fee_preference": {
+            "type": "string",
+            "title": "Annual fee comfort",
+            "description": "No fee, low fee, mid-range fee, premium fee, or flexible"
+          },
+          "desired_perks": {
+            "type": "string",
+            "title": "Important perks",
+            "description": "Examples include no foreign transaction fee, lounge access, protections, intro APR, or transfer partners"
+          },
+          "credit_band": {
+            "type": "string",
+            "title": "Credit band",
+            "description": "Choose a broad band only: rebuilding, fair, good, very good, excellent, or unsure"
+          },
+          "card_use": {
+            "type": "string",
+            "title": "Personal or business",
+            "description": "Tell us whether this is mainly for personal spending, business spending, or either"
+          }
+        },
+        "required": [
+          "primary_goal",
+          "credit_band"
+        ]
+      },
+      "submitLabel": "Create my card brief"
+    },
+    "message": "Build a quick card profile below, or simply describe what you need in chat. Share only broad financial preferences, never account numbers, card numbers, government IDs, or other sensitive information. You can revise any detail in chat."
+  }
+}

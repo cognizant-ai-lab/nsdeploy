@@ -6,17 +6,15 @@ build-backend = "setuptools.build_meta"
 name = "nsdeploy"
 version = "0.1.0"
 description = "Deploy a neuro-san agent-network HOCON as a serverless website: resolve dependencies, host tools as MCP servers, generate a site, and serve it — no neuro-san server."
-requires-python = ">=3.10"
-dependencies = [
-    # HOCON resolution (also a neuro-san dependency).
-    "pyhocon>=0.3.59",
-    # FastMCP + ASGI server for hosting coded tools as MCP servers.
-    "mcp>=1.0.0",
-    "uvicorn>=0.30",
-    "starlette>=0.40",
-    # The CodedTool base class that studio coded tools subclass.
-    "neuro-san>=0.5",
-]
+# This license name comes from doc recommendation here
+# https://packaging.python.org/en/latest/guides/licensing-examples-and-user-scenarios/
+license = "Apache-2.0"
+license-files = ["LICENSE.txt"]
+requires-python = ">=3.12"
+# Runtime dependencies live in requirements.txt (see [tool.setuptools.dynamic] below), so
+# team members who do not use uv get the conventional `pip install -r requirements.txt`,
+# and `pip install -e .` / `uv sync` read the very same list — one file to edit.
+dynamic = ["dependencies"]
 
 # A hosted tool's own third-party deps (e.g. `ddgs` for ddgs_search) are auto-
 # installed on demand from PyPI; nothing from neuro-san-studio is installed manually.
@@ -27,8 +25,21 @@ nsdeploy = "nsdeploy.__main__:main"
 [tool.setuptools]
 packages = ["nsdeploy", "nsdeploy.commerce"]
 
+[tool.setuptools.dynamic]
+# setuptools reads each non-comment line of requirements.txt as a PEP 508 requirement,
+# so that file must stay plain: no -e/-r lines, no --hash options, no continuations.
+# If the file is missing at build time setuptools only warns and builds a wheel that
+# declares no dependencies, which is why the Dockerfile copies it alongside this file.
+dependencies = { file = ["requirements.txt"] }
+
 # The vendored browser runtime (nsdeploy/runtime/) is data, not Python — ship it in the
 # wheel so non-editable installs can serve /runtime/*.
 [tool.setuptools.package-data]
 nsdeploy = ["runtime/*", "runtime/generated/*", "runtime/ts-package/*", "runtime/ts-package/generated/*/*"]
 "nsdeploy.commerce" = ["LICENSE.txt", "UPSTREAM_NOTICE", "PROVENANCE.md"]
+
+[tool.uv]
+# With dynamic metadata uv only re-reads the project's requirements when one of its
+# cache keys changes, and the defaults are pyproject.toml / setup.py / setup.cfg.
+# Name requirements.txt too, so an edit there reaches `uv sync` and `uv lock`.
+cache-keys = [{ file = "pyproject.toml" }, { file = "requirements.txt" }]

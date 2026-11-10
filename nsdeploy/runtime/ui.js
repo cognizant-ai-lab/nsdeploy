@@ -12,8 +12,10 @@ import {
   getSelectedByokProfile,
   guessByokProfileName,
   loadByokStore,
+  loadTabByokSetup,
   portableByokRouter,
   resolveByokRouter,
+  saveTabByokSetup,
   selectByokProfile,
   upsertByokProfile,
 } from "./byok.js";
@@ -21,6 +23,7 @@ import { normalizeModelName } from "./model.js";
 import { normalizePresentation } from "./cruse.js";
 import { PRESENTATION_CSS, renderMarkdown, renderRichComponent } from "./cruse-render.js";
 import { createTurnStatusController } from "./turn-status.js";
+import { reviewActions } from "./action-transport.js";
 
 const BASE_CSS = PRESENTATION_CSS + `
 /* Legacy themes get two resizable panes side by side. Composed themes provide
@@ -214,6 +217,37 @@ export function mountApp(root, { engine, trace, manifest }) {
 
   const net = engine.top?.network;
   const title = manifest?.networks?.[0]?.description || net?.name || "Agent network";
+  const needsByok = !engine.mockLLM && (!engine.byokKey || engine.byokKey === "demo");
+  const setupMessage = "This site needs your LLM API key before it can answer. Open BYOK / router settings, enter your key, then click Apply, save & reload. Your key stays in this browser and is sent only to the configured provider.";
+  const chatSlot = root.querySelector('[data-ns-slot="chat"]');
+  const agentsSlot = root.querySelector('[data-ns-slot="agents"]');
+  const activitySlot = root.querySelector('[data-ns-slot="activity"]');
+  const composed = Boolean(chatSlot && agentsSlot);
+  // Prompt v13 gives themes a dedicated settings mount. Older composed themes and
+  // the fixed shell have no such slot, so their settings stay beneath the chat.
+  const settingsSlot = composed ? root.querySelector('[data-ns-slot="settings"]') : null;
+  const settingsBodyHtml = `
+    <div class="ns-settings-body">
+      <label>Saved setup <select id="ns-profile"></select></label>
+      <label>Setup name <input id="ns-profile-name" placeholder="Local LLM, OpenAI, Anthropic router"></label>
+      <label>API key <input id="ns-key" type="password" placeholder="sk-… (kept in this browser only — enables a REAL LLM)"></label>
+      <label>Model <input id="ns-model" list="ns-model-options" placeholder="exact ID published by the upstream"></label>
+      <datalist id="ns-model-options"></datalist>
+      <label>Router base URL <input id="ns-router" placeholder="OpenAI-compatible /v1"></label>
+      <div id="ns-router-hint" class="ns-hint"></div>
+      <label class="ns-row-inline"><input type="checkbox" id="ns-lg"> Drive the LLM via LangChain.js</label>
+      <div class="ns-profile-actions">
+        <button id="ns-save-profile" class="ghost">Save setup</button>
+        <button id="ns-delete-profile" class="ghost">Delete setup</button>
+        <button id="ns-apply">Apply, save &amp; reload</button>
+      </div>
+      <div id="ns-profile-hint" class="ns-hint"></div>
+    </div>`;
+  const settingsHtml = `
+    <details class="ns-settings"${needsByok ? " open" : ""}>
+      <summary>⚙ BYOK / router settings</summary>
+      ${settingsBodyHtml}
+    </details>`;
 
   const headerHtml = `
     <div class="ns-header">
@@ -221,6 +255,8 @@ export function mountApp(root, { engine, trace, manifest }) {
       <div class="ns-title">${escapeHtml(manifest?.brand || net?.name || "neuro-san-web")}</div>
       ${engine.mockLLM
         ? `<div class="ns-llmbadge mock" title="The default router is a deterministic mock — it ignores the model name. Add a real key + router in ⚙ settings.">⚠ MOCK LLM — no real model</div>`
+        : needsByok
+          ? `<div class="ns-llmbadge error" title="${escapeHtml(setupMessage)}">API key required</div>`
         : `<div class="ns-llmbadge pending" title="Configured router: ${escapeHtml(engine.top?.llm?.baseUrl || "")}. It will be verified by the first response.">LLM configured — awaiting verification</div>`}
       <div class="ns-breadcrumb" id="ns-breadcrumb">${escapeHtml(location.host)}</div>
       <button class="ns-devtoggle" id="ns-devtoggle" title="Show the technical execution trace">⚙ Developer</button>
@@ -228,27 +264,9 @@ export function mountApp(root, { engine, trace, manifest }) {
   const chatHtml = `
     <div class="ns-chat">
       <div class="ns-msgs" id="ns-msgs">
-        <div class="ns-msg bot">${escapeHtml(title)}\n\nAsk me anything to see the web of agents in action.</div>
+        <div class="ns-msg bot">${escapeHtml(title)}\n\n${escapeHtml(needsByok ? setupMessage : "Ask me anything to see the web of agents in action.")}</div>
       </div>
-      <details class="ns-settings">
-        <summary>⚙ BYOK / router settings</summary>
-        <div class="ns-settings-body">
-          <label>Saved setup <select id="ns-profile"></select></label>
-          <label>Setup name <input id="ns-profile-name" placeholder="Local LLM, OpenAI, Anthropic router"></label>
-          <label>API key <input id="ns-key" type="password" placeholder="sk-… (kept in this browser only — enables a REAL LLM)"></label>
-          <label>Model <input id="ns-model" list="ns-model-options" placeholder="exact ID published by the upstream"></label>
-          <datalist id="ns-model-options"></datalist>
-          <label>Router base URL <input id="ns-router" placeholder="OpenAI-compatible /v1"></label>
-          <div id="ns-router-hint" class="ns-hint"></div>
-          <label class="ns-row-inline"><input type="checkbox" id="ns-lg"> Drive the LLM via LangChain.js</label>
-          <div class="ns-profile-actions">
-            <button id="ns-save-profile" class="ghost">Save setup</button>
-            <button id="ns-delete-profile" class="ghost">Delete setup</button>
-            <button id="ns-apply">Apply, save &amp; reload</button>
-          </div>
-          <div id="ns-profile-hint" class="ns-hint"></div>
-        </div>
-      </details>
+      ${settingsSlot ? "" : settingsHtml}
       <div class="ns-inputbar" data-turn-active="false">
         <input id="ns-input" class="ns-input" placeholder="Type a request…" />
         <button id="ns-send" class="ns-send">Send</button>
@@ -275,10 +293,6 @@ export function mountApp(root, { engine, trace, manifest }) {
     </aside>`;
   const modalHtml = `<div class="ns-modal" id="ns-modal" hidden><div class="ns-modal-card" id="ns-modal-card"></div></div>`;
 
-  const chatSlot = root.querySelector('[data-ns-slot="chat"]');
-  const agentsSlot = root.querySelector('[data-ns-slot="agents"]');
-  const activitySlot = root.querySelector('[data-ns-slot="activity"]');
-  const composed = Boolean(chatSlot && agentsSlot);
   let app;
   if (composed) {
     let headerSlot = root.querySelector('[data-ns-slot="header"]');
@@ -293,6 +307,19 @@ export function mountApp(root, { engine, trace, manifest }) {
     headerSlot.innerHTML = headerHtml;
     chatSlot.innerHTML = chatHtml;
     agentsSlot.innerHTML = agentsHtml + devHtml;
+    if (settingsSlot) {
+      // A theme can wrap the empty slot in native <details>/<summary> to choose
+      // its own gear label and drawer placement. Otherwise the runtime supplies
+      // the accessible default disclosure component inside the chosen slot.
+      const disclosure = settingsSlot.closest("details");
+      if (disclosure && root.contains(disclosure)) {
+        disclosure.classList.add("ns-settings");
+        if (needsByok) disclosure.open = true;
+        settingsSlot.innerHTML = settingsBodyHtml;
+      } else {
+        settingsSlot.innerHTML = settingsHtml;
+      }
+    }
     if (activitySlot) {
       // Theme prompt v10 briefly exposed a separate activity rail. Keep those
       // themes valid, but retire the empty rail now that status lives in chat.
@@ -423,6 +450,8 @@ export function mountApp(root, { engine, trace, manifest }) {
   engine.onAnswerDelta = undefined;
 
   let activeTurnStream = null;
+  engine.onActionConfirm = items => reviewActions(items);
+  let actionSubmissionBusy = false;
   const idlePlaceholder = input.getAttribute("placeholder") || "Type a request…";
   function setTurnInputState(active) {
     inputBar.dataset.turnActive = String(active);
@@ -435,6 +464,21 @@ export function mountApp(root, { engine, trace, manifest }) {
   }
 
   async function runUserTurn(text, interaction) {
+    if (actionSubmissionBusy) return false;
+    if (interaction?.executeActions) {
+      if (activeTurnStream) return false;
+      actionSubmissionBusy = true;
+      newChatBtn.disabled = true; input.disabled = true; sendBtn.disabled = true;
+      try {
+        const receipts = await engine.submitActions(interaction);
+        if (!receipts) return false;
+        const bubble = addBubble(msgs, "bot", "");
+        bubble.textContent = receipts.map(r => `${r.action}: ${r.result?.businessOutcome === "unverified" ? "response received; business outcome unverified" : r.status}\n${JSON.stringify(r.result ?? r.error ?? "", null, 2)}`).join("\n\n");
+        // Receipts are already in history; the next chat turn can interpret them.
+        return true;
+      } catch (error) { addBubble(msgs, "bot", error.message); return false; }
+      finally { actionSubmissionBusy = false; newChatBtn.disabled = false; input.disabled = false; sendBtn.disabled = false; }
+    }
     text = (text || "").trim();
     if (!text || activeTurnStream) return false;
     if (!await validateConfiguredModel()) return false;
@@ -800,10 +844,9 @@ export function mountApp(root, { engine, trace, manifest }) {
     modal.hidden = false;
   }
 
-  // BYOK / router settings. The active key is never written to the URL. Saved
-  // profiles make router/model/key reusable across agent networks; explicit URL
-  // router/model params still win so links remain shareable.
-  const params = new URLSearchParams(location.search);
+  // BYOK / router settings. Router, model and key are never read from or written
+  // to the URL. Apply keeps them for this tab in session storage, and saved
+  // profiles make them reusable across agent networks.
   let profileStore = loadByokStore();
   let selectedProfile = getSelectedByokProfile(profileStore);
   const profileEl = root.querySelector("#ns-profile");
@@ -818,16 +861,18 @@ export function mountApp(root, { engine, trace, manifest }) {
   const saveProfileBtn = root.querySelector("#ns-save-profile");
   const deleteProfileBtn = root.querySelector("#ns-delete-profile");
   // The compiled LLM may already point at BYOK after a saved-profile upgrade.
-  // Compare settings against the route the manifest explicitly declares as mock.
-  const mockUrl = manifest?.llm_router?.base_url || "";
+  // New manifests identify an opt-in mock separately; retain compatibility with
+  // older manifests where the mock was the declared default base URL.
+  const mockUrl = manifest?.llm_router?.mock_router
+    || (manifest?.llm_router?.mock ? manifest?.llm_router?.base_url : "");
   const byokRouter = engine.byokRouter || "";
   const staticMode = manifest?.deployment?.mode === "static";
 
-  routerEl.value = engine.routerOverride || mockUrl;
+  routerEl.value = engine.routerOverride || engine.top?.llm?.baseUrl || byokRouter || mockUrl;
   modelEl.value = engine.modelOverride || "";
-  let storedKey = "";
-  try { storedKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
-  keyEl.value = storedKey || selectedProfile?.key || "";
+  // The key shown comes from the same source as the router and model the engine
+  // uses, so it never shows another setup's key next to this tab's router.
+  keyEl.value = loadTabByokSetup(selectedProfile).key;
   profileNameEl.value = selectedProfile?.name || "";
   langchainEl.checked = !!engine.agentRunner;
 
@@ -896,7 +941,9 @@ export function mountApp(root, { engine, trace, manifest }) {
     }
     catch { return String(url || "").replace(/\/$/, ""); }
   };
-  const isMockRouter = (url) => !url || normalizedRouter(url) === normalizedRouter(mockUrl) || /:8003(\/|$)/.test(url);
+  const isMockRouter = (url) => Boolean(
+    url && ((mockUrl && normalizedRouter(url) === normalizedRouter(mockUrl)) || /:8003(\/|$)/.test(url)),
+  );
   const refreshHint = () => {
     const hasKey = keyEl.value.trim().length > 0;
     if (hasKey && isMockRouter(routerEl.value.trim())) {
@@ -936,11 +983,21 @@ export function mountApp(root, { engine, trace, manifest }) {
       return null;
     }
   };
-  validateConfiguredModel = async () => {
+  validateConfiguredModel = async (requireActiveKey = true) => {
     let router = routerEl.value.trim();
     const key = keyEl.value.trim();
     const model = normalizeModelName(modelEl.value);
     modelEl.value = model;
+    if (requireActiveKey && !engine.mockLLM && (!engine.byokKey || engine.byokKey === "demo")) {
+      const message = key
+        ? "Your API key is ready. Click Apply, save & reload before sending a request."
+        : setupMessage;
+      setProfileHint(message, "warn");
+      root.querySelector(".ns-settings").open = true;
+      (key ? root.querySelector("#ns-apply") : keyEl).focus();
+      addBubble(msgs, "bot", `⚠️ ${message}`);
+      return false;
+    }
     if (!model) return true;
     if ((key || model) && byokRouter && isMockRouter(router)) {
       router = byokRouter;
@@ -1001,29 +1058,22 @@ export function mountApp(root, { engine, trace, manifest }) {
     setProfileHint(`Deleted setup "${oldName}".`);
   });
   refreshHint();
+  if (needsByok) setProfileHint(setupMessage, "warn");
 
   root.querySelector("#ns-apply").addEventListener("click", async () => {
     const p = new URLSearchParams(location.search);
     p.delete("key"); // the key must never appear in the URL
-    let router = routerEl.value.trim();
-    const key = keyEl.value.trim();
     const model = normalizeModelName(modelEl.value);
     modelEl.value = model;
-    // Safety net: a real key must never be sent to the mock router.
-    if ((key || model) && byokRouter && isMockRouter(router)) router = byokRouter;
-    if (!await validateConfiguredModel()) return;
+    if (!await validateConfiguredModel(false)) return;
     const saved = saveCurrentProfile();
-    // The key is kept in browser storage, never the query string.
-    try {
-      if (key) sessionStorage.setItem("nsweb-byok-key", key);
-      else sessionStorage.removeItem("nsweb-byok-key");
-    } catch {}
-    if (router) p.set("router", router); else p.delete("router");
-    if (model) p.set("model", model); else p.delete("model");
+    // Key, router and model stay with this tab in session storage, never in the
+    // query string. Boot reads them after the reload, so a setup that another tab
+    // or port selects later cannot pair this tab's key with a different router.
+    saveTabByokSetup(saved);
     if (langchainEl.checked) p.set("runner", "langchain"); else p.delete("runner");
     const qs = p.toString();
-    // Rewrite the (key-free) query string, then reload so the change applies even
-    // when only the key changed (router/model unchanged).
+    // Rewrite the (key-free) query string, then reload so the applied setup takes effect.
     try { history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash); } catch {}
     if (saved) setProfileHint(`Saved setup "${saved.name}". Reloading...`);
     location.reload();
@@ -1180,7 +1230,7 @@ function renderWidget(container, spec, onSubmit, turnId) {
   const submit = async (text, data) => {
     lockWidget(card);
     try {
-      const accepted = await onSubmit(text, { turnId, componentId: spec.id || "welcome", kind, ...data });
+      const accepted = await onSubmit(text, { turnId, componentId: spec.id || "welcome", kind, ...data, ...(spec.submit?.actions || kind === "action" ? { executeActions: true } : {}) });
       if (accepted === false) lockWidget(card, false);
     } catch { lockWidget(card, false); }
   };
@@ -1192,7 +1242,13 @@ function renderWidget(container, spec, onSubmit, turnId) {
   let html = `<div class="ns-w-head">${spec.icon ? `<span class="ns-w-icon">${escapeHtml(spec.icon)}</span>` : ""}<b>${escapeHtml(spec.title || "")}</b></div>`;
   if (spec.description) html += `<div class="ns-w-desc">${escapeHtml(spec.description)}</div>`;
 
-  if (["report", "table", "chart", "html"].includes(kind)) {
+  if (kind === "action") {
+    card.innerHTML = html;
+    const button = document.createElement("button");
+    button.className = "ns-w-btn"; button.textContent = spec.label || "Review action";
+    button.onclick = () => submit(button.textContent, {});
+    card.append(button);
+  } else if (["report", "table", "chart", "html"].includes(kind)) {
     card.innerHTML = html;
     const body = document.createElement("div");
     renderRichComponent(body, spec);

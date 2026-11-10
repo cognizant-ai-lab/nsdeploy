@@ -1,0 +1,43 @@
+<div id="app" data-ns-layout="composed">
+  <div class="order-spread">
+    <section class="menu-side" aria-labelledby="order-hero">
+      <div class="menu-intro">
+        <div class="menu-kicker">The guided order counter</div>
+        <h1 id="order-hero">Pizza,<em>precisely yours.</em></h1>
+        <p class="hero-copy">Build every pie, choose the arrival, and inspect the complete ticket before anything is sent.</p>
+        <div class="protocol" aria-label="Order process">
+          <p class="protocol-title">Our three-step promise</p>
+          <ol>
+            <li><span>01</span>Build</li>
+            <li><span>02</span>Review</li>
+            <li><span>03</span>Confirm</li>
+          </ol>
+        </div>
+      </div>
+      <div class="pizza-mark" aria-hidden="true"></div>
+      <aside class="crew-card" aria-labelledby="crew-title">
+        <h2 class="crew-heading" id="crew-title">Your kitchen crew</h2>
+        <p class="crew-note">Specialists quietly check configuration, delivery details, confirmation, and the server receipt.</p>
+        <div data-ns-slot="agents"></div>
+      </aside>
+    </section>
+
+    <section class="ticket-shell" aria-label="Pizza ordering assistant">
+      <div class="ticket-top">
+        <div class="ticket-rule">Live order ticket</div>
+        <div data-ns-slot="header"></div>
+      </div>
+      <main data-ns-slot="chat"></main>
+    </section>
+  </div>
+
+  <details class="model-drawer">
+    <summary aria-label="Model settings">Model and API settings</summary>
+    <div data-ns-slot="settings"></div>
+  </details>
+
+  <footer class="service-footer">
+    <span><strong>Nothing is submitted without your explicit confirmation.</strong></span>
+    <span>Configuration · Delivery · Review · Echo check</span>
+  </footer>
+</div>

@@ -15,48 +15,47 @@ export { TraceBus } from "../trace.js";
 export { mountApp } from "../ui.js";
 export { AgentNetwork, validateNetwork, ChatMessageType } from "./agent-network.js";
 export { parseHocon } from "../hocon.js";
+export { ActionRegistry } from "../actions.js";
 
 import { Engine } from "./engine.js";
 import { TraceBus } from "../trace.js";
 import { mountApp } from "../ui.js";
-import { getSelectedByokProfile, resolveByokRouter } from "../byok.js";
-
-const sameRouterUrl = (left, right) => {
-  const normalize = (value) => {
-    try { return new URL(resolveByokRouter(value), location.origin).href.replace(/\/$/, ""); } catch { return ""; }
-  };
-  return !!left && normalize(left) === normalize(right);
-};
+import { getSelectedByokProfile, loadTabByokSetup } from "../byok.js";
 
 export async function boot(rootSelector = "#app", opts = {}) {
   const root = typeof rootSelector === "string" ? document.querySelector(rootSelector) : rootSelector;
+  if (!root) throw new Error("Agent widget mount not found.");
+  root.setAttribute("data-nsdeploy-ui", "");
   const trace = new TraceBus();
   const params = new URLSearchParams(location.search);
-  // An API key in the URL is refused, not used. Query strings end up in server logs,
-  // browser history and shared links, and a crafted link could plant someone else's
-  // key. It's taken out of the address bar before the page stops.
+  // Key, router and model come from the hosting page (opts), the setup applied in
+  // this tab or the saved BYOK profile, never from the URL, so a link cannot choose
+  // where the key is sent or which model it pays for. A key in the URL is removed
+  // from the address bar so it does not stay in history. Router and model stay,
+  // because a host page may use those names for its own parameters.
+  const ignoredParams = [];
+  // Note each setting found in the URL. Its value is never read or logged.
+  for (const name of ["key", "router", "model"]) {
+    if (params.has(name)) ignoredParams.push(name);
+  }
   if (params.has("key")) {
     params.delete("key");
     const qs = params.toString();
     try { history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash); } catch {}
-    throw new Error("API keys can't be passed in the URL. Open ⚙ BYOK settings and enter it there.");
   }
-  let storedKey = "";
-  try { storedKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
+  if (ignoredParams.length) {
+    const names = ignoredParams.join(", ");
+    console.warn(`Inference settings in the page URL are ignored (${names}). Set them in BYOK / router settings.`);
+  }
   const savedProfile = getSelectedByokProfile();
-  const savedRouter = resolveByokRouter(savedProfile?.router || "");
-  // The settings panel puts the router in the URL so links stay shareable, and saves
-  // it with the key. A link naming any other router gets no saved key, so a link can't
-  // send the visitor's key somewhere new.
-  const urlRouter = params.get("router") || "";
-  const keyFollows = !urlRouter || sameRouterUrl(urlRouter, savedRouter);
+  const tabSetup = loadTabByokSetup(savedProfile);
   const siteBase = (opts.originUrl || location.origin).replace(/\/$/, "");
   const engine = new Engine({
     originUrl: siteBase,
     trace,
-    byokKey: opts.byokKey || (keyFollows ? storedKey || savedProfile?.key : "") || "demo",
-    routerOverride: opts.router || urlRouter || savedRouter || "",
-    modelOverride: opts.model || params.get("model") || savedProfile?.model || "",
+    byokKey: opts.byokKey || tabSetup.key,
+    routerOverride: opts.router || tabSetup.router,
+    modelOverride: opts.model || tabSetup.model,
     // 24, as on main. The browser test raises it to check every agent a network can
     // reach, since nsdeploy's mock LLM calls every tool.
     maxAgentCalls: opts.maxAgentCalls ?? globalThis.__nsdeployMaxAgentCalls ?? 24,
@@ -66,7 +65,31 @@ export async function boot(rootSelector = "#app", opts = {}) {
   // The shared UI offers to drive the LLM via LangChain.js, which only the runtime in
   // the folder above can do. Here neuro-san's own loop always drives it.
   root.querySelector("#ns-lg")?.closest("label")?.remove();
+  {
+    const status = document.createElement("details");
+    status.className = "ns-action-status";
+    status.style.cssText = "flex:none;padding:8px 12px;font-size:12px;max-height:140px;overflow:auto";
+    const summary = document.createElement("summary");
+    const detail = document.createElement("p");
+    const update = () => {
+      const count = engine.actions.catalog({ base: engine.top.base, network: engine.top.network.name }).length;
+      summary.textContent = count ? `${count} website actions connected` : "No website actions connected";
+      detail.textContent = engine.actions.discoveryIssues.map(i => `${i.page}: ${i.reason}`).join(" ") || (count
+        ? "Actions run after you review and confirm them. Server responses appear as receipts."
+        : "This agent can collect information, but no website operations are connected.");
+    };
+    engine.actions.onChange = update;
+    update();
+    status.append(summary, detail); (root.querySelector(".ns-chat") || root).prepend(status);
+  }
   // expose for debugging / e2e tests
   if (typeof window !== "undefined") window.__nsweb = { engine, trace };
-  return { engine, trace };
+  return { engine, trace, actions: {
+    register: definition => {
+      const ref = engine.actions.register({ base: engine.top.base, network: engine.top.network.name }, definition);
+      engine.actions.onChange?.();
+      return ref;
+    },
+    refreshHostForms: () => engine.actions.hostForms?.refresh(),
+  } };
 }

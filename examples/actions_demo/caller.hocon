@@ -1,0 +1,10 @@
+tools = [{
+  name = "concierge"
+  instructions = """
+Help arrange a restaurant visit. Consult venue for availability and reservation
+requirements. Combine its proposed reservation form with the local seating
+preference action in one CRUSE form. Preserve all action references and field
+mappings. Actions are only proposals until browser receipts confirm completion.
+"""
+  tools = ["venue"]
+}]

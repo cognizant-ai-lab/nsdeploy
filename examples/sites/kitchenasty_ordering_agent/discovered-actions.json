@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "source": "https://httpbin.org/forms/post",
+  "spec": null,
+  "siteOrigin": "http://agent-a.example.com",
+  "visited": [
+    "https://httpbin.org/forms/post"
+  ],
+  "actions": [
+    {
+      "name": "post_forms_post_76079b9e",
+      "description": "Submit native form 1 from https://httpbin.org/forms/post. HTTP response is evidence of submission, not business acceptance.",
+      "effect": "write",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "custname": {
+            "type": "string",
+            "title": "custname",
+            "maxLength": 4096
+          },
+          "custtel": {
+            "type": "string",
+            "title": "custtel",
+            "maxLength": 4096
+          },
+          "custemail": {
+            "type": "string",
+            "title": "custemail",
+            "maxLength": 4096,
+            "description": "Optional email; may be left blank. Validated against the source form before submission."
+          },
+          "size": {
+            "type": "string",
+            "enum": [
+              "small",
+              "medium",
+              "large"
+            ]
+          },
+          "topping": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "bacon",
+                "cheese",
+                "onion",
+                "mushroom"
+              ]
+            },
+            "maxItems": 100
+          },
+          "delivery": {
+            "type": "string",
+            "title": "delivery",
+            "maxLength": 4096,
+            "description": "Time as HH:MM; minimum 11:00, maximum 21:00, step 900 seconds."
+          },
+          "comments": {
+            "type": "string",
+            "title": "comments",
+            "maxLength": 4096
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "request": {
+        "kind": "form",
+        "url": "https://httpbin.org/post",
+        "method": "POST",
+        "page": "https://httpbin.org/forms/post",
+        "index": 0,
+        "fingerprint": "a549916263c8979a4103fc34787023cc60021ad782aa84819b96e1ed35344c55"
+      },
+      "evidence": {
+        "source": "https://httpbin.org/forms/post",
+        "kind": "native-form"
+      },
+      "enabled": true,
+      "cors": {
+        "checks": [
+          {
+            "url": "https://httpbin.org/post",
+            "status": "preflight-permitted",
+            "httpStatus": 200
+          },
+          {
+            "url": "https://httpbin.org/forms/post",
+            "status": "preflight-permitted",
+            "httpStatus": 200
+          }
+        ],
+        "note": "OPTIONS only; actual browser execution and response CORS remain unverified. No business operation was run."
+      }
+    }
+  ],
+  "issues": []
+}

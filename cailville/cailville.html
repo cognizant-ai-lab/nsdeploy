@@ -1150,6 +1150,16 @@
       return icon;
     }
 
+    function safeUrl(value) {
+      try {
+        const url = new URL(value, window.location.href);
+        if (url.protocol === "http:" || url.protocol === "https:") return url.href;
+      } catch (error) {
+        // Fall through to the inert placeholder.
+      }
+      return "#";
+    }
+
     function createPublicSites() {
       community.sites.forEach(siteData => {
         const site = document.createElement("a");
@@ -1158,7 +1168,7 @@
         site.id = `site-${siteData.id}`;
         site.dataset.site = siteData.id;
         site.dataset.type = siteData.type;
-        site.href = siteData.url;
+        site.href = safeUrl(siteData.url);
         site.target = "_blank";
         site.rel = "noopener";
         site.title = siteData.name;
@@ -1222,7 +1232,10 @@
         steward.target = "_blank";
         steward.rel = "noopener";
         steward.setAttribute("aria-label", `Open ${sites[siteId].name} private steward in nsFlow`);
-        steward.innerHTML = '<i data-lucide="shield-check" aria-hidden="true"></i><span class="private-steward-label">Private steward</span>';
+        const stewardLabel = document.createElement("span");
+        stewardLabel.className = "private-steward-label";
+        stewardLabel.textContent = "Private steward";
+        steward.append(iconElement("shield-check"), stewardLabel);
         steward.addEventListener("mouseenter", () => focusSteward(siteId));
         steward.addEventListener("mouseleave", restoreDefaultSteward);
         steward.addEventListener("focus", () => focusSteward(siteId));

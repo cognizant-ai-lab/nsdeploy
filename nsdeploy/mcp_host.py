@@ -25,70 +25,21 @@ import importlib
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
 
-_JSON_TO_PY = {"string": "str", "integer": "int", "number": "float",
-               "boolean": "bool", "array": "list", "object": "dict"}
+import uvicorn
+from mcp.server.fastmcp import FastMCP
+from starlette.middleware.cors import CORSMiddleware
 
-
-class McpProgressReporter:
-    """neuro-san's AgentProgressReporter for a hosted tool: each report is an MCP log
-    notification tied to the tool call, so it reaches the caller before the result.
-    """
-
-    def __init__(self, context: Any, tool_name: str):
-        self.context = context
-        self.tool_name = tool_name
-
-    async def async_report_progress(self, structure: Dict[str, Any], content: str = ""):
-        data: Any = dict(structure or {})
-        if content and "message" not in data:
-            data["message"] = content
-        await self.context.session.send_log_message(
-            level="info", data=data, logger=self.tool_name, related_request_id=self.context.request_id)
-
-
-def _make_tool_function(coded: Any, parameters: Dict[str, Any], tool_name: str = "tool"):
-    """Build an async function whose signature mirrors the tool's JSON-Schema params,
-    so FastMCP advertises a correct inputSchema, and which forwards to the coded tool.
-    FastMCP fills its Context parameter, which the tool's progress reports go through.
-    """
-    from mcp.server.fastmcp import Context
-
-    try:
-        from neuro_san.interfaces.coded_tool import CodedTool
-        use_async = type(coded).async_invoke is not CodedTool.async_invoke
-    except Exception:
-        use_async = hasattr(coded, "async_invoke") and not hasattr(coded, "invoke")
-
-    async def _run(args: Dict[str, Any], context: Any = None) -> str:
-        args = {k: v for k, v in args.items() if v is not None}
-        if use_async:
-            if context is not None:
-                args["progress_reporter"] = McpProgressReporter(context, tool_name)
-            result = await coded.async_invoke(args, {})
-        else:
-            result = coded.invoke(args, {})
-        return result if isinstance(result, str) else json.dumps(result, default=str)
-
-    props = (parameters or {}).get("properties", {}) or {}
-    required = set((parameters or {}).get("required", []) or [])
-    sig_parts, collect_parts = [], []
-    for pname, pdef in props.items():
-        ann = _JSON_TO_PY.get((pdef or {}).get("type"), "str")
-        sig_parts.append(f"{pname}: {ann}" if pname in required else f"{pname}: {ann} = None")
-        collect_parts.append(f"{pname!r}: {pname}")
-    # Annotated with Context, FastMCP fills it in and leaves it out of the inputSchema.
-    sig_parts.append("mcp_context: Context = None")
-    sig = ", ".join(sig_parts)
-    collect = "{" + ", ".join(collect_parts) + "}"
-    src = f"async def _toolfn({sig}):\n    return await _run({collect}, mcp_context)\n"
-    namespace: Dict[str, Any] = {"_run": _run, "Context": Context}
-    exec(src, namespace)  # noqa: S102 - controlled codegen from a schema we resolved
-    return namespace["_toolfn"]
+from nsdeploy.coded_tool_module import CodedToolModule
+from nsdeploy.hosted_tool_function import HostedToolFunction
 
 
 def main() -> int:
+    """
+    Host one studio coded tool as a streamable-http MCP server.
+
+    :return: The process exit code.
+    """
     parser = argparse.ArgumentParser(description="Host one studio tool as an MCP server.")
     parser.add_argument("--studio", required=True)
     parser.add_argument("--spec", required=True)
@@ -99,22 +50,21 @@ def main() -> int:
         sys.path.insert(0, studio_root)
 
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
-    from mcp.server.fastmcp import FastMCP
 
-    module = importlib.import_module(spec["module"])
-    tool_class = getattr(module, spec["class_name"])
+    module_name = CodedToolModule.find_dotted(Path(studio_root), spec.get("module"))
+    class_name = spec.get("class_name")
+    if module_name is None or not isinstance(class_name, str) or not class_name.isidentifier():
+        raise SystemExit(f"[mcp_host] spec does not name a studio coded tool: {spec.get('module')}.{class_name}")
+    module = importlib.import_module(module_name)
+    tool_class = getattr(module, class_name)
     coded = tool_class()
 
     mcp = FastMCP(spec["name"], port=int(spec["port"]))
-    fn = _make_tool_function(coded, spec.get("parameters") or {}, spec["name"])
-    fn.__name__ = spec["name"]
-    fn.__doc__ = spec.get("description") or spec["name"]
+    fn = HostedToolFunction(coded, spec["name"], spec.get("description") or spec["name"], spec.get("parameters") or {})
     mcp.tool(name=spec["name"], description=spec.get("description") or spec["name"])(fn)
 
     # The browser calls this MCP server cross-origin (different port from the site),
     # so it must send CORS headers and expose the MCP session header to JS.
-    import uvicorn
-    from starlette.middleware.cors import CORSMiddleware
 
     app = mcp.streamable_http_app()
     app.add_middleware(
