@@ -261,7 +261,7 @@ default 120). It is advice, not a rule — a client may poll at its own cadence.
 | `org_name` | string | no | — | owning organization by name, **created on first use** (§3); ignored when `org_id` is given |
 | `name` | string | no | `file`'s basename | becomes the HOCON filename stem, so nsdeploy derives the network name from it |
 | `upstream` | string | no | service `UPSTREAM` | the site's `/byok/v1` forwarding target |
-| `theme` | bool | no | service `THEME` (off) | deploy-time LLM theming; needs `OPENAI_API_KEY` in the *service* env and adds minutes |
+| `theme` | bool | no | service `THEME` (off) | deploy-time LLM theming; needs `OPENAI_API_KEY` in the *service* env, listed in `SITE_ENV_ALLOW`, and adds minutes |
 | `theme_model` | string | no | service `THEME_MODEL` | only meaningful with `theme=true` |
 | `theme_prompt` | string, ≤ 4000 chars | no | service `THEME_PROMPT` (empty) | extra design instructions folded into the theming prompt (nsdeploy's own `--theme-prompt`); only meaningful with `theme=true` |
 | `cruse` | bool | no | `true` | inject the CRUSE generative-UI directive; `false` passes `--no-cruse` |
@@ -485,9 +485,10 @@ Suitable as a liveness/readiness probe. `status` is always `"ok"` when the proce
 serving.
 
 **`warnings` are ongoing conditions**, expected to persist until an operator fixes the
-underlying cause — currently only "bound off-loopback with no `API_TOKEN`". Because a
-warning repeats on every poll, **a client must surface a given message once**, not per
-response; the console keys off the message text to do that.
+underlying cause — for example "bound off-loopback with no `API_TOKEN`", or `THEME` on
+while site builds do not receive `OPENAI_API_KEY` (see `SITE_ENV_ALLOW` in the service
+README). Because a warning repeats on every poll, **a client must surface a given message
+once**, not per response; the console keys off the message text to do that.
 
 **`reconciled_at_startup` is a one-off statistic**, not a warning: how many records this
 run settled to `stopped` at boot because their processes did not survive a restart
