@@ -299,7 +299,7 @@ export function mountApp(root, { engine, trace, manifest }) {
         <summary>Advanced settings (optional)</summary>
         <div class="ns-settings-advanced-body">
           <label>Setup name (optional) <input id="ns-profile-name" placeholder="Local model, Google AI Studio, Groq"></label>
-          <label>Model (optional) <input id="ns-model" list="ns-model-options" placeholder="Uses the recommended default"></label>
+          <label><span id="ns-model-label">Model (optional)</span> <input id="ns-model" list="ns-model-options" placeholder="Uses this site's model"></label>
           <datalist id="ns-model-options"></datalist>
           <label>Provider URL (optional) <input id="ns-router" placeholder="Uses the configured default"></label>
           <div id="ns-router-hint" class="ns-hint"></div>
@@ -945,12 +945,20 @@ export function mountApp(root, { engine, trace, manifest }) {
     const sent = effectiveModel("", spec?.llm_config?.model_name, net?.config?.llm_config?.model_name);
     if (callsModel && isPlaceholderModel(sent)) everyAgentHasModel = false;
   }
+  // The Model field is optional only when every agent already has a model.
+  if (!everyAgentHasModel) {
+    root.querySelector("#ns-model-label").textContent = "Model";
+    modelEl.placeholder = "Enter a model your provider supports";
+  }
 
   routerEl.value = engine.routerOverride || engine.top?.llm?.baseUrl || byokRouter || mockUrl;
   modelEl.value = engine.modelOverride || "";
   // The key shown comes from the same source as the router and model the engine
   // uses, so it never shows another setup's key next to this tab's router.
   keyEl.value = loadTabByokSetup(selectedProfile).key;
+  // The provider whose settings the form holds. Another key from the same provider
+  // does not fill in that provider's defaults again.
+  let formProvider = providerForApiKey(keyEl.value);
   profileNameEl.value = selectedProfile?.name || "";
 
   const profileStorageText = canUseByokCookie()
@@ -972,6 +980,7 @@ export function mountApp(root, { engine, trace, manifest }) {
     if (!profile) return;
     profileNameEl.value = profile.name || "";
     keyEl.value = profile.key || "";
+    formProvider = providerForApiKey(keyEl.value);
     modelEl.value = profile.model || "";
     routerEl.value = resolveByokRouter(profile.router || "");
     refreshHint();
@@ -1040,6 +1049,7 @@ export function mountApp(root, { engine, trace, manifest }) {
     }
   };
   const applyProviderDefaults = (provider, message) => {
+    formProvider = provider;
     routerEl.value = provider.router;
     modelEl.value = provider.model;
     profileNameEl.value = provider.name;
@@ -1089,6 +1099,11 @@ export function mountApp(root, { engine, trace, manifest }) {
     if (model) return isPlaceholderModel(model);
     return !everyAgentHasModel;
   };
+  // The Model field is inside the collapsed advanced settings, so open them before focusing it.
+  const focusModelField = () => {
+    root.querySelector(".ns-settings-advanced").open = true;
+    modelEl.focus();
+  };
   // Ask for a model. Mention the Model field's suggestions only when an earlier
   // /models lookup filled them; this adds no request of its own.
   const modelSetupMessage = () => {
@@ -1121,7 +1136,8 @@ export function mountApp(root, { engine, trace, manifest }) {
         : modelSetupMessage();
       setProfileHint(message, "warn");
       root.querySelector(".ns-settings").open = true;
-      (unapplied ? root.querySelector("#ns-apply") : modelEl).focus();
+      if (unapplied) root.querySelector("#ns-apply").focus();
+      else focusModelField();
       addBubble(msgs, "bot", `⚠️ ${message}`);
       return false;
     }
@@ -1141,16 +1157,18 @@ export function mountApp(root, { engine, trace, manifest }) {
       "warn",
     );
     root.querySelector(".ns-settings").open = true;
-    modelEl.focus();
+    focusModelField();
     return false;
   };
-  // When a key is entered against the mock router, auto-fill the real proxy.
+  // A key from a newly detected provider fills in that provider's settings, so editing
+  // the key keeps a model or router the visitor chose. Any other key entered against
+  // the mock router switches it to the real proxy.
   keyEl.addEventListener("input", () => {
     const key = keyEl.value.trim();
     const provider = providerForApiKey(key);
-    if (provider) {
+    if (provider && provider !== formProvider) {
       applyProviderDefaults(provider, `${provider.name} key detected. Recommended settings are ready.`);
-    } else if (key && byokRouter && isMockRouter(routerEl.value.trim())) {
+    } else if (!provider && key && byokRouter && isMockRouter(routerEl.value.trim())) {
       routerEl.value = byokRouter;
     }
     if (profileEl.value && selectedProfile?.key !== keyEl.value.trim()) profileEl.value = "";

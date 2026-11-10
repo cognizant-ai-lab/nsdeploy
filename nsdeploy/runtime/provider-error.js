@@ -34,11 +34,15 @@ export class ProviderError extends Error {
       );
     }
 
+    const origin = page?.origin || "this site";
     let message = `Couldn’t connect to the local AI router at ${routerLabel}. `;
-    message += "Confirm Ollama is running and use its OpenAI-compatible base URL, usually http://localhost:11434/v1. ";
-    message += `Allow ${page?.origin || "this site"} in OLLAMA_ORIGINS, then restart Ollama.`;
+    message += `Check that it is running, that the URL is its OpenAI-compatible base URL, and that it allows browser requests from ${origin} (CORS).`;
+    // 11434 is Ollama's default port, so the router there is most likely Ollama.
+    if (router.port === "11434") {
+      message += ` For Ollama, the base URL is usually http://localhost:11434/v1. Allow ${origin} in OLLAMA_ORIGINS, then restart Ollama.`;
+    }
     if (page?.protocol === "https:" && router.protocol === "http:") {
-      message += " This HTTPS page may also be blocked from calling a local HTTP service; if so, expose Ollama through an HTTPS proxy or tunnel.";
+      message += " This HTTPS page may also be blocked from calling a local HTTP service; if so, expose the router through an HTTPS proxy or tunnel.";
     }
     return new ProviderError(message, error);
   }
@@ -78,7 +82,8 @@ export class ProviderError extends Error {
    * @return {boolean} True for loopback, local, and private-network addresses.
    */
   static isLocalAddress(hostname) {
-    const value = String(hostname || "").toLowerCase();
+    // URL.hostname keeps the brackets around an IPv6 address, as in "[::1]".
+    const value = String(hostname || "").toLowerCase().replace(/^\[(.*)\]$/, "$1");
     if (value === "localhost" || value === "::1" || value.endsWith(".localhost") || value.endsWith(".local")) return true;
     if (/^127\./.test(value) || /^10\./.test(value) || /^192\.168\./.test(value)) return true;
     const match = /^172\.(\d+)\./.exec(value);

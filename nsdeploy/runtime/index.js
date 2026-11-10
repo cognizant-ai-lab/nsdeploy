@@ -54,7 +54,8 @@ export async function boot(rootSelector = "#app", opts = {}) {
   });
   // Select the agent loop: ?runner=langchain drives the LLM via LangChain.js
   // (neuro-san-web owns the loop). 'langgraph' kept as an alias for older links.
-  const runnerChoice = opts.runner || params.get("runner") || (savedProfile?.runner ? "langchain" : "");
+  // A saved setup's runner flag is ignored, because the panel has no setting to turn it off.
+  const runnerChoice = opts.runner || params.get("runner") || "";
   const { manifest } = await engine.loadTop();
   if (manifest?.deployment?.mode !== "static"
       && (runnerChoice === "langchain" || runnerChoice === "langgraph")) {

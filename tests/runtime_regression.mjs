@@ -98,6 +98,17 @@ assert.equal(normalizeModelName("plain-model"), "plain-model");
   assert.match(friendlySdkError.message, /OLLAMA_ORIGINS/);
   const providerResponseError = new Error("model unavailable");
   assert.equal(ProviderError.friendly(providerResponseError, "http://localhost:11434/v1"), providerResponseError);
+
+  // A local router on another port, such as LiteLLM, gets general advice, not Ollama's.
+  const liteLlmError = ProviderError.friendly(browserError, "http://localhost:4000/v1", "https://site.example/");
+  assert.match(liteLlmError.message, /local AI router at localhost:4000/);
+  assert.match(liteLlmError.message, /CORS/);
+  assert.doesNotMatch(liteLlmError.message, /Ollama/);
+  // URL.hostname keeps the IPv6 brackets, and [::1] is still this machine.
+  assert.equal(ProviderError.isLocalAddress(new URL("http://[::1]:11434/v1").hostname), true);
+  const ipv6Error = ProviderError.friendly(browserError, "http://[::1]:11434/v1", "https://site.example/");
+  assert.match(ipv6Error.message, /local AI router/);
+  assert.match(ipv6Error.message, /OLLAMA_ORIGINS/);
 }
 {
   const originalFetch = globalThis.fetch;

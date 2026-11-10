@@ -1,6 +1,6 @@
 // Open cruse-browser.html through any local static server. Exercises the real UI
 // without a provider key or network requests; leaves a rich example for visual QA.
-import { mountApp, renderPresentation } from "../nsdeploy/runtime/ui.js";
+import { API_KEY_PROVIDERS, mountApp, renderPresentation } from "../nsdeploy/runtime/ui.js";
 import { renderMarkdown, renderSafeHtml } from "../nsdeploy/runtime/cruse-render.js";
 import { Engine } from "../nsdeploy/runtime/engine.js";
 import { AgentNetwork } from "../nsdeploy/runtime/kernel.js";
@@ -58,6 +58,33 @@ try {
   check(!!app.querySelector("#theme-settings.ns-settings #ns-key") && !app.querySelector('[data-ns-slot="chat"] .ns-settings'), "Theme-owned settings slot controls AI model placement");
   check(app.querySelector("#theme-settings summary").textContent.includes("Model settings"), "Theme-owned settings use a clear public label");
   check(app.querySelector("#ns-key").required && !app.querySelector("#ns-lg"), "Only the API key is required in the simple setup flow");
+  // The fixture network names no model, so the Model field must not say it is optional.
+  const modelInput = app.querySelector("#ns-model");
+  check(app.querySelector("#ns-model-label").textContent === "Model" && modelInput.placeholder === "Enter a model your provider supports", "The Model field asks for a model when the network names none");
+  const keyInput = app.querySelector("#ns-key");
+  const routerInput = app.querySelector("#ns-router");
+  const formBefore = { router: routerInput.value, model: modelInput.value };
+  const typeKey = (value) => { keyInput.value = value; keyInput.dispatchEvent(new Event("input")); };
+  const google = API_KEY_PROVIDERS.find((provider) => provider.keyPrefixes.includes("AIza"));
+  const groq = API_KEY_PROVIDERS.find((provider) => provider.keyPrefixes.includes("gsk_"));
+  typeKey("AIza-fixture");
+  check(modelInput.value === google.model, "A recognized key fills in its provider's model");
+  modelInput.value = "gemini-fixture-choice";
+  typeKey("AIza-fixture-edited");
+  check(modelInput.value === "gemini-fixture-choice", "Editing a key from the same provider keeps the chosen model");
+  typeKey("gsk_fixture");
+  check(modelInput.value === groq.model, "A key from another provider fills in that provider's model");
+  // An unrecognized key and no model: Save and start asks for one and shows the Model field.
+  keyInput.value = "sk-fixture-unrecognized";
+  routerInput.value = "https://router.example/v1";
+  modelInput.value = "";
+  app.querySelector("#ns-apply").click();
+  await tick();
+  check(app.querySelector(".ns-settings-advanced").open && document.activeElement === modelInput, "Asking for a model opens the advanced settings and focuses the Model field");
+  // Restore the form, so the chat checks below send nothing to a real provider.
+  typeKey("");
+  routerInput.value = formBefore.router;
+  modelInput.value = formBefore.model;
   app.querySelector("#ns-input").value = "Are there any minivans available for me to borrow next week?";
   app.querySelector("#ns-send").click();
   await tick();
