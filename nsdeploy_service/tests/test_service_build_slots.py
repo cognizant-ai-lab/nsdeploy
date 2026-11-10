@@ -155,6 +155,59 @@ class BuildSlotTest(unittest.IsolatedAsyncioTestCase):
         for name in ("agent-manifest.json", f"{dep.name}.network.json"):
             (dep.out_dir / name).write_text("{}", encoding="utf-8")
 
+    def _stop_during(self, dep) -> None:
+        """
+        Stand in for a stop landing inside an await point of the build.
+
+        Mirrors `_teardown` for a deployment whose process is still None: the port
+        goes back to the pool, the status becomes STOPPED, and there is no child to
+        signal.
+
+        :param dep: The deployment being stopped.
+        """
+        self.supervisor.ports.release(dep.port)
+        dep.status = DeploymentStatus.STOPPED
+
+    async def test_a_stop_while_clearing_prevents_the_spawn(self):
+        """Clearing is an await point. A stop completing inside it releases the port
+        and finds no child to signal, so spawning afterwards would put one on a port
+        the pool has already handed to the next deployment.
+        """
+        stopped = self.supervisor.create(b'{"tools": []}', DeployOptions(name="stopped"))
+        # pylint: disable-next=protected-access
+        self.supervisor._clear_readiness = self._stop_during
+        self.supervisor.start(stopped)
+        await self._settle()
+        self.assertEqual(stopped.status, DeploymentStatus.STOPPED)
+        self.assertEqual(self.processes, [], "a child was started for a stopped deployment")
+        self.assertIsNone(stopped.process)
+
+    async def test_a_stop_while_spawning_takes_the_child_with_it(self):
+        """Spawning is an await point too, and the stop that landed in it could not
+        see the child that came out. Left alone, _await_generated returns for the
+        changed status and the child keeps serving on a released port.
+        """
+        stopped = self.supervisor.create(b'{"tools": []}', DeployOptions(name="racer"))
+        # pylint: disable-next=protected-access
+        self.supervisor._spawn = self._spawn_then_stop
+        self.supervisor.start(stopped)
+        await self._settle()
+        self.assertEqual(stopped.status, DeploymentStatus.STOPPED)
+        self.assertEqual(len(self.processes), 1)
+        self.assertTrue(self.processes[0].exited, "the child outlived the deployment")
+        self.assertIsNone(stopped.process)
+
+    def _spawn_then_stop(self, dep) -> FakeProcess:
+        """
+        Spawn a child and have the deployment stopped in the same moment.
+
+        :param dep: The deployment being built.
+        :return: The started process.
+        """
+        process = self._spawn(dep)
+        self._stop_during(dep)
+        return process
+
     async def test_a_previous_builds_artifacts_do_not_release_the_slot(self):
         """A restart or a re-upload keeps the deployment's output directory, so the
         last build's manifest and network JSON are already there when the next child

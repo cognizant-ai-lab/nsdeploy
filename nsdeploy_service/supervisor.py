@@ -1252,6 +1252,27 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             cmd.append("--no-cruse")
         return cmd
 
+    def _abandon(self, dep: Deployment) -> None:
+        """
+        Stop a child this build started for a deployment which is no longer building.
+
+        A stop which lands while `_spawn` runs tears down a deployment whose
+        `process` is still None, so `_teardown` releases the port and has nothing to
+        signal. The child this build then produces is invisible to that teardown: it
+        would outlive the record, serving on a port the pool has already handed back
+        to the next deployment.
+
+        The port is deliberately not released again — the teardown that set this
+        status already did that, and releasing twice would hand one port to two
+        deployments.
+
+        :param dep: The deployment whose child must go.
+        """
+        process: Optional[subprocess.Popen] = dep.process
+        dep.process = None
+        if process is not None:
+            _terminate_tree(process)
+
     def _clear_readiness(self, dep: Deployment) -> None:
         """
         Remove the artifacts a previous build of this deployment left behind.
@@ -1342,10 +1363,22 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
                 except DeploymentError as exc:
                     self._fail(dep, str(exc))
                     return
+                # Clearing is an await point, so a stop can complete inside it.
+                # That teardown released the port and found no child to signal,
+                # so spawning now would put one on a port the pool has already
+                # handed back.
+                if dep.status is not DeploymentStatus.BUILDING:
+                    return
                 try:
                     dep.process = await asyncio.to_thread(self._spawn, dep)
                 except OSError as exc:
                     self._fail(dep, f"could not start nsdeploy: {exc}")
+                    return
+                # Spawning is an await point too, and a stop which landed in it
+                # could not see the child that came out of it. _await_generated
+                # would return for the changed status and leave it running.
+                if dep.status is not DeploymentStatus.BUILDING:
+                    await asyncio.to_thread(self._abandon, dep)
                     return
                 self._persist(dep)  # record the pid now that the child exists
                 generated = await self._await_generated(dep, deadline)
