@@ -353,20 +353,26 @@ airline, on 8193:
 - cancel the link prompt: the run finishes and the agent is told the airline isn't linked
 - enter the airline's URL in the link prompt: the airline gets called
 - decline the airline contact on the travel agency: the airline is never called, and the agent is told
-- pick the real router with no key: nothing reaches the router, and the run ends asking for a key
+- pick the real router with no key: the chat asks for a key, no run starts, and nothing reaches the router
 
 It checks MCP on the travel agent system on 8120, which has its own coded tools hosted
 as MCP servers under `/_mcp` and You.com's MCP server behind the site's `/ext-mcp` proxy:
 
-- call an MCP tool: a call goes out and comes back with something, and You.com's notifications show as the tool's progress
-- decline an MCP call: nothing reaches an outside MCP server, discovery included, while the site's own MCP tools still run
+- call an MCP tool: a call goes out and comes back with something, and You.com's notifications show as the
+  tool's progress
+- decline an MCP call: nothing reaches an outside MCP server, discovery included, while the site's own MCP
+  tools still run
 
 And it checks a turn while it runs, on the same site:
 
-- show what's happening: the chat's status line shows what the agents are doing and is gone once the answer is, and the answer's text streams into the trace
-- steer a running turn: guidance sent while the front man's first model call runs shows as a steering message, cancels that call, and goes into the calls after it
+- show what's happening: the chat's status line shows what the agents are doing and is gone once the answer
+  is, and the answer's text streams into the trace
+- steer a running turn: guidance sent while the front man's first model call runs shows as a steering
+  message, cancels that call, and goes into the calls after it
 
-A real LLM run uses OpenAI's `gpt-4o` to keep the cost down, and `TEST_MODEL=<id>` picks another model. It skips the MCP checks and the checks for when the user says no, which rely on the mock's answers, but runs the checks on a running turn, since steering has to work on a real model too.
+A real LLM run uses OpenAI's `gpt-4o` to keep the cost down, and `TEST_MODEL=<id>` picks another model. It
+skips the MCP checks and the checks for when the user says no, which rely on the mock's answers, but runs the
+checks on a running turn, since steering has to work on a real model too.
 Screenshots go to `.nsdeploy/cailville-browser-test/`.
 
 ### Book through Butterpink's private steward in nsFlow
