@@ -21,10 +21,16 @@ import html as _htmlmod
 import json
 import re
 import urllib.request
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
+from dataclasses import dataclass
+from dataclasses import field
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Tuple
 
 PROMPT_VERSION = "13"
 CACHE_DIR = Path.home() / ".cache" / "nsdeploy" / "themes"
@@ -192,7 +198,10 @@ DEFAULT_FONT = '"Segoe UI", system-ui, sans-serif'
 
 
 @dataclass
-class ThemeSpec:
+class ThemeSpec:  # pylint: disable=too-many-instance-attributes
+    """
+    A sanitized site theme: identity, palette, typography and an optional LLM-authored layout.
+    """
     brand: str = ""
     icon: str = ""
     tagline: str = ""
@@ -207,6 +216,11 @@ class ThemeSpec:
     body: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
+        """
+        Return the theme as a plain dictionary.
+
+        :return: The theme fields as JSON-serializable data.
+        """
         return asdict(self)
 
     @classmethod
@@ -414,7 +428,7 @@ def _extract_json(content: str) -> Dict[str, Any]:
         return json.loads(text)
     except json.JSONDecodeError:
         start, end = text.find("{"), text.rfind("}")
-        if start >= 0 and end > start:
+        if end > start >= 0:
             return json.loads(text[start:end + 1])
         raise
 
@@ -428,14 +442,15 @@ def _salvage_meta(text: str) -> Dict[str, Any]:
     data: Dict[str, Any] = {}
     cm = re.search(r'"colors"\s*:\s*\{([^{}]*)\}', text, re.S)
     if cm:
+        # pylint: disable-next=unnecessary-comprehension  # kept to preserve behavior
         cols = {k: v for k, v in re.findall(r'"([a-z_]+)"\s*:\s*"(#[0-9a-fA-F]{3,8})"', cm.group(1))}
         if cols:
             data["colors"] = cols
     for key in ("brand", "icon", "tagline", "hero", "font"):
-        m = re.search(r'"%s"\s*:\s*"((?:[^"\\]|\\.)*)"' % key, text)
+        m = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
         if m:
             try:
-                data[key] = json.loads('"%s"' % m.group(1))
+                data[key] = json.loads(f'"{m.group(1)}"')
             except json.JSONDecodeError:
                 data[key] = m.group(1)
     rm = re.search(r'"radius"\s*:\s*(\d+)', text)
@@ -452,7 +467,7 @@ def _lenient_meta(text: str) -> Dict[str, Any]:
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
     start, end = text.find("{"), text.rfind("}")
-    candidate = text[start:end + 1] if (start >= 0 and end > start) else text
+    candidate = text[start:end + 1] if end > start >= 0 else text
     for attempt in (candidate, re.sub(r",\s*([}\]])", r"\1", candidate)):
         try:
             d = json.loads(attempt)
@@ -507,6 +522,7 @@ def load_theme_file(path: Path) -> ThemeSpec:
     return ThemeSpec.coerce(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
+# pylint: disable-next=too-many-arguments  # keyword-only options
 def propose_theme(plan, *, model: str, api_key: str, upstream: str, refresh: bool = False,
                   theme_prompt: Optional[str] = None) -> ThemeSpec:
     """Ask the LLM for a theme (cached). Falls back to the default on any failure."""
@@ -522,7 +538,7 @@ def propose_theme(plan, *, model: str, api_key: str, upstream: str, refresh: boo
     if not refresh and cache_path.exists():
         try:
             return ThemeSpec.coerce(json.loads(cache_path.read_text(encoding="utf-8")))
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught; a bad cache entry is regenerated
             pass
     try:
         user_prompt = json.dumps(ident)
@@ -539,7 +555,7 @@ def propose_theme(plan, *, model: str, api_key: str, upstream: str, refresh: boo
                   flush=True)
             spec.body = ""
             spec.style = ""
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught; any LLM failure uses the default look
         print(f"   …theme: LLM step failed ({str(exc)[:80]}); using the default look", flush=True)
         return ThemeSpec()
     try:

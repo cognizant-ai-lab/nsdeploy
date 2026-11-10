@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # every route is registered inside create_app
 """FastAPI surface for the nsdeploy deployment service.
 
     POST   /deployments            upload a HOCON  -> 202 {id, status: "queued"}
@@ -23,69 +24,91 @@ import platform
 import re
 import sys
 import urllib.request
-from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
-from typing import Annotated, List, Optional
+from datetime import datetime
+from datetime import timezone
+from pathlib import Path
+from pathlib import PurePosixPath
+from typing import Annotated
+from typing import List
+from typing import Optional
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import Depends
+from fastapi import FastAPI
+from fastapi import File
+from fastapi import Form
+from fastapi import HTTPException
+from fastapi import Query
+from fastapi import Request
+from fastapi import Response
+from fastapi import UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.responses import JSONResponse
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from nsdeploy_service import PRODUCT_NAME, __version__
-from nsdeploy_service import envfile, themespec
+from nsdeploy_service import PRODUCT_NAME
+from nsdeploy_service import __version__
+from nsdeploy_service import envfile
+from nsdeploy_service import themespec
 from nsdeploy_service.bundle_error import BundleError
 from nsdeploy_service.bundle_result import BundleResult
 from nsdeploy_service.bundler import Bundler
 from nsdeploy_service.config import Settings
-from nsdeploy_service.models import (
-    ORG_NAME_MAX,
-    ORG_NAME_PATTERN,
-    AgentGraphView,
-    BundleOptions,
-    DeploymentList,
-    DeploymentStatus,
-    DeploymentView,
-    DeployOptions,
-    DirectoryOrg,
-    DirectoryView,
-    GraphEdge,
-    GraphNode,
-    GraphView,
-    HealthView,
-    LogView,
-    NetworkSummary,
-    OrgCreate,
-    OrgList,
-    OrgUpdate,
-    OrgView,
-    SettingsUpdate,
-    SettingsView,
-    ThemeSpecApplied,
-    ThemeSpecView,
-    ThemeTokens,
-    ThemeUpdate,
-)
+from nsdeploy_service.console_proxy import ConsoleProxy
+from nsdeploy_service.models import ORG_NAME_MAX
+from nsdeploy_service.models import ORG_NAME_PATTERN
+from nsdeploy_service.models import AgentGraphView
+from nsdeploy_service.models import BundleOptions
+from nsdeploy_service.models import DeploymentList
+from nsdeploy_service.models import DeploymentStatus
+from nsdeploy_service.models import DeploymentView
+from nsdeploy_service.models import DeployOptions
+from nsdeploy_service.models import DirectoryOrg
+from nsdeploy_service.models import DirectoryView
+from nsdeploy_service.models import GraphEdge
+from nsdeploy_service.models import GraphNode
+from nsdeploy_service.models import GraphView
+from nsdeploy_service.models import HealthView
+from nsdeploy_service.models import LogView
+from nsdeploy_service.models import NetworkSummary
+from nsdeploy_service.models import OrgCreate
+from nsdeploy_service.models import OrgList
+from nsdeploy_service.models import OrgUpdate
+from nsdeploy_service.models import OrgView
+from nsdeploy_service.models import SettingsUpdate
+from nsdeploy_service.models import SettingsView
+from nsdeploy_service.models import ThemeSpecApplied
+from nsdeploy_service.models import ThemeSpecView
+from nsdeploy_service.models import ThemeTokens
+from nsdeploy_service.models import ThemeUpdate
 from nsdeploy_service.layout import next_position
-from nsdeploy_service.models import RelationsView, SuggestedEdge
-from nsdeploy_service.relations import (
-    ChatFn,
-    SuggestedRelation,
-    identities_from_rows,
-    suggest_relations,
-)
+from nsdeploy_service.models import RelationsView
+from nsdeploy_service.models import SuggestedEdge
+from nsdeploy_service.relations import ChatFn
+from nsdeploy_service.relations import SuggestedRelation
+from nsdeploy_service.relations import identities_from_rows
+from nsdeploy_service.relations import suggest_relations
+from nsdeploy_service.site_env import SiteEnv
 from nsdeploy_service.siteproxy import SiteProxy
 from nsdeploy_service.store import StoreError
-from nsdeploy_service.supervisor import (
-    Deployment,
-    DeploymentError,
-    Supervisor,
-    _iso,
-    _tail as read_log,
-    is_publishable,
-    network_topology,
-    publish_refusal,
-)
+from nsdeploy_service.supervisor import Deployment
+from nsdeploy_service.supervisor import DeploymentError
+from nsdeploy_service.supervisor import Supervisor
+from nsdeploy_service.supervisor import _iso
+from nsdeploy_service.supervisor import _tail as read_log
+from nsdeploy_service.supervisor import is_publishable
+from nsdeploy_service.supervisor import network_topology
+from nsdeploy_service.supervisor import publish_refusal
+from nsdeploy_service.trust import ensure_ca_bundle
+from nsdeploy_service.upload_upstream import UploadUpstream
+
+# Optional drop-in folder: a checkout without it still runs.
+try:
+    from nsdeploy_service.adminPanel import install as install_admin_panel
+except ImportError:
+    install_admin_panel = None
 
 WAIT_POLL_SECONDS = 0.4
 
@@ -202,7 +225,7 @@ def _view(dep: Deployment) -> DeploymentView:
     )
 
 
-def _row_view(row: dict, settings: Settings) -> DeploymentView:
+def _row_view(row: dict, settings: Settings) -> DeploymentView:  # pylint: disable=unused-argument; shared call shape
     """Build a view from a persisted row — the read path for list/get/directory.
 
     Records outlive the processes they describe (and the service itself), so this must
@@ -348,18 +371,24 @@ def _org_view(row: dict) -> OrgView:
     )
 
 
+# pylint: disable-next=too-many-locals,too-many-statements  # routes are closures over settings and app
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
+    """
+    Build the FastAPI application with every route, middleware and the site proxy.
+
+    :param settings: The service settings, or None to read them from the environment.
+    :return: The ASGI application.
+    :raises ValueError: If settings are read from the environment and are invalid.
+    """
     settings = settings or Settings.from_env()
     # Configure TLS trust here rather than only in __main__, so an ASGI server
     # importing `app` directly (uvicorn/gunicorn in a container) gets it too.
     # Service-owned, so this works against an unmodified nsdeploy; the build
     # subprocesses get it via _bootstrap/sitecustomize.py instead.
-    from nsdeploy_service.trust import ensure_ca_bundle
-
     ensure_ca_bundle()
 
     @contextlib.asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(app: FastAPI):  # pylint: disable=redefined-outer-name; FastAPI passes the app
         # Built inside the loop so the build semaphore binds to the right one.
         app.state.settings = settings
         app.state.supervisor = Supervisor(settings)
@@ -388,7 +417,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             with contextlib.suppress(Exception):
                 await supervisor.reap_expired()
 
-    app = FastAPI(
+    app = FastAPI(  # pylint: disable=redefined-outer-name; module-level `app` is this function's result
         title=PRODUCT_NAME,
         version=__version__,
         summary="Deploy a neuro-san agent-network HOCON as a live website over HTTP.",
@@ -409,8 +438,6 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # hides every other response header, so a bundle fetched from another origin
     # would otherwise arrive with its name, digest and warnings reading as null.
     if settings.cors_origins:
-        from fastapi.middleware.cors import CORSMiddleware
-
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.cors_allowed_origins(),
@@ -429,6 +456,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             max_age=600,
         )
 
+    # Added after CORS, so it is the outer layer: a cross-origin preflight to /console-api gets a 403, and only
+    # the same-origin console can use the server's token.
+    app.add_middleware(ConsoleProxy, settings=settings)
+
     def require_token(request: Request) -> None:
         """Bearer-token gate. Disabled when no token is configured (loopback default)."""
         if not settings.api_token:
@@ -440,7 +471,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     # Applied per route rather than as a parameter: the gate injects nothing into the
     # handler, and a route-level dependency keeps it out of the OpenAPI parameter list.
-    AUTH = [Depends(require_token)]
+    AUTH = [Depends(require_token)]  # pylint: disable=invalid-name; route-level constant
 
     def supervisor_of(request: Request) -> Supervisor:
         return request.app.state.supervisor
@@ -476,7 +507,22 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     # --- create ----------------------------------------------------------
-    async def _accept(request: Request, hocon: bytes, options: DeployOptions) -> DeploymentView:
+    async def _accept(request: Request, hocon: bytes, options: DeployOptions,
+                      upstream: Optional[str]) -> DeploymentView:
+        """
+        Create a deployment from an upload and schedule its build.
+
+        :param request: The incoming request.
+        :param hocon: The uploaded HOCON.
+        :param options: The deploy options from the request.
+        :param upstream: The BYOK upstream the upload named, if any.
+        :return: The new deployment, in status queued.
+        :raises DeploymentError: If the upload names an upstream other than the service's own.
+        """
+        # Checked before anything is created, so a refused upload leaves no record behind.
+        refusal: Optional[str] = UploadUpstream.refusal(upstream, settings.upstream)
+        if refusal:
+            raise DeploymentError(refusal)
         supervisor = supervisor_of(request)
         dep = supervisor.create(hocon, options)
         supervisor.start(dep)
@@ -484,6 +530,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.post("/deployments", status_code=202, response_model=DeploymentView,
               dependencies=AUTH, summary="Deploy a HOCON (multipart upload)")
+    # pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals  # one per form field
     async def deploy(
         request: Request,
         response: Response,
@@ -503,7 +550,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                         "when org_id is given. Letters, digits and & ' ( ) . , - / + # "
                         f"only, {ORG_NAME_MAX} characters maximum")] = None,
         name: Annotated[Optional[str], Form()] = None,
-        upstream: Annotated[Optional[str], Form()] = None,
+        upstream: Annotated[Optional[str], Form(
+            description="not supported; leave it out. Every site forwards BYOK requests "
+                        "to the service-wide upstream, and any other value is refused "
+                        "with 400")] = None,
         theme: Annotated[Optional[bool], Form()] = None,
         theme_model: Annotated[Optional[str], Form()] = None,
         theme_refresh: Annotated[Optional[bool], Form()] = None,
@@ -518,16 +568,17 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             (file.filename or "network").replace("\\", "/")).name
         options = DeployOptions(
             name=candidate, org_id=org_id, org_name=org_name,
-            upstream=upstream, theme=theme, theme_model=theme_model,
+            theme=theme, theme_model=theme_model,
             theme_refresh=theme_refresh, theme_prompt=theme_prompt,
             cruse=cruse, ttl_seconds=ttl_seconds,
         )
-        view = await _accept(request, await file.read(), options)
+        view = await _accept(request, await file.read(), options, upstream)
         response.headers["Location"] = f"/deployments/{view.id}"
         return view
 
     @app.post("/deployments/raw", status_code=202, response_model=DeploymentView,
               dependencies=AUTH, summary="Deploy a HOCON posted as a raw request body")
+    # pylint: disable-next=too-many-arguments,too-many-positional-arguments  # one parameter per form field
     async def deploy_raw(
         request: Request,
         response: Response,
@@ -538,17 +589,20 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             description="owning organization by name, created on first use. Letters, "
                         "digits and & ' ( ) . , - / + # only, "
                         f"{ORG_NAME_MAX} characters maximum")] = None,
-        upstream: Annotated[Optional[str], Query()] = None,
+        upstream: Annotated[Optional[str], Query(
+            description="not supported; leave it out. Every site forwards BYOK requests "
+                        "to the service-wide upstream, and any other value is refused "
+                        "with 400")] = None,
         theme: Annotated[Optional[bool], Query()] = None,
         theme_model: Annotated[Optional[str], Query()] = None,
         cruse: Annotated[Optional[bool], Query()] = None,
         ttl_seconds: Annotated[Optional[int], Query(ge=0)] = None,
     ) -> DeploymentView:
         options = DeployOptions(name=name, org_id=org_id, org_name=org_name,
-                                upstream=upstream, theme=theme,
+                                theme=theme,
                                 theme_model=theme_model, cruse=cruse,
                                 ttl_seconds=ttl_seconds)
-        view = await _accept(request, await request.body(), options)
+        view = await _accept(request, await request.body(), options, upstream)
         response.headers["Location"] = f"/deployments/{view.id}"
         return view
 
@@ -633,9 +687,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/graph", response_model=GraphView, dependencies=AUTH,
              summary="Deployed networks and the links between them, as a map")
-    async def graph(
+    async def graph(  # pylint: disable=too-many-locals; builds nodes and edges in one pass
         request: Request,
         org_id: Annotated[Optional[str], Query(description="filter to one organization")] = None,
+        # pylint: disable-next=unused-argument  # accepted so existing /graph callers do not break
         live_only: Annotated[bool, Query(description="hide stopped and failed nodes")] = False,
         suggest: Annotated[bool, Query(
             description="also infer suggested relations (slow on a large map)")] = False,
@@ -836,8 +891,6 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 await asyncio.sleep(WAIT_POLL_SECONDS)
 
         try:
-            # wait_for rather than asyncio.timeout so this still runs on Python 3.10,
-            # which is what nsdeploy's pyproject declares as the floor.
             await asyncio.wait_for(settled(), timeout=timeout)
         except asyncio.TimeoutError:
             # Not an error: the build may still be running. Report current state.
@@ -1000,7 +1053,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # product and not a process: it has no port, no lifecycle, no place on the map
     # and no record. It is built, handed over and forgotten, so everything here is
     # answered on the open connection and nothing reaches the store.
+    # pylint: disable-next=invalid-name  # route-level constant
     BUNDLE_MEDIA_TYPE = "application/gzip"
+    # pylint: disable-next=invalid-name  # route-level constant
     BUNDLE_RESPONSES = {
         200: {"content": {BUNDLE_MEDIA_TYPE: {"schema": {"type": "string",
                                                          "format": "binary"}}},
@@ -1013,11 +1068,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     #
     # The three left out have nothing finished to offer. `queued` and `building`
     # have not produced a site yet, and `failed` tried and could not.
+    # pylint: disable-next=invalid-name  # route-level constant
     BUNDLE_STATUSES = (DeploymentStatus.READY, DeploymentStatus.STOPPED)
 
     @app.post("/bundles", dependencies=AUTH, response_class=Response,
               responses=BUNDLE_RESPONSES,
               summary="Build a HOCON into a static bundle and return it (multipart)")
+    # pylint: disable-next=too-many-arguments,too-many-positional-arguments  # one parameter per form field
     async def build_bundle(
         request: Request,
         file: Annotated[UploadFile, File(description="the agent-network .hocon")],
@@ -1048,6 +1105,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.post("/bundles/raw", dependencies=AUTH, response_class=Response,
               responses=BUNDLE_RESPONSES,
               summary="Build a HOCON posted as a raw request body into a static bundle")
+    # pylint: disable-next=too-many-arguments,too-many-positional-arguments  # one parameter per form field
     async def build_bundle_raw(
         request: Request,
         name: Annotated[str, Query(description="network name (becomes the HOCON "
@@ -1092,7 +1150,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                         "own URL, which is this service's loopback port")] = None,
         upstream: Annotated[Optional[str], Query(
             description="BYOK upstream for this bundle only; defaults to the "
-                        "deployment's own")] = None,
+                        "service-wide upstream, which deployed sites also use")] = None,
     ) -> Response:
         row = find_row(request, deployment_id)
         status = DeploymentStatus(row.get("status"))
@@ -1158,6 +1216,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 f"terminates TLS on each port in that range. Host where the range is "
                 f"reachable, or set SUBDOMAIN_TEMPLATE (see nsdeploy_service/README.md)."
             )
+        # Theming runs in each site's build, which receives the key only when SITE_ENV_ALLOW
+        # lists it. Checked per request, because POST /settings can turn THEME on at runtime.
+        theme_warning: Optional[str] = SiteEnv.theme_key_warning(settings.theme, os.environ, settings.site_env_allow)
+        if theme_warning:
+            warnings.append(theme_warning)
+        # Sites never receive the service's own credentials, so listing one in SITE_ENV_ALLOW does nothing.
+        allow_warning: Optional[str] = SiteEnv.allow_list_warning(settings.site_env_allow)
+        if allow_warning:
+            warnings.append(allow_warning)
         # Reconciliation is routine housekeeping at startup, not a fault, and it is a
         # one-off event rather than an ongoing condition — so it is reported as a
         # plain count, never in `warnings`. Putting it in `warnings` made every
@@ -1191,15 +1258,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # parallel name for the same thing. The secrets are masked on the way out; the
     # rest are the same deploy defaults Settings already reads at startup
     # (config.py) — upstream/theme_model as plain text, theme/theme_refresh as bools.
+    # pylint: disable-next=invalid-name  # route-level constant
     SETTINGS_SECRET_KEYS = {
         "nsdeploy_api_token": "NSDEPLOY_SERVICE_API_TOKEN",
         "openai_api_key": "OPENAI_API_KEY",
     }
+    # pylint: disable-next=invalid-name  # route-level constant
     SETTINGS_TEXT_KEYS = {
         "upstream": "NSDEPLOY_SERVICE_UPSTREAM",
         "theme_model": "NSDEPLOY_SERVICE_THEME_MODEL",
         "theme_prompt": "NSDEPLOY_SERVICE_THEME_PROMPT",
     }
+    # pylint: disable-next=invalid-name  # route-level constant
     SETTINGS_BOOL_KEYS = {
         "theme": "NSDEPLOY_SERVICE_THEME",
         "theme_refresh": "NSDEPLOY_SERVICE_THEME_REFRESH",
@@ -1209,6 +1279,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # is installed at all. Asked of the panel rather than inferred, and entirely
     # optional: a checkout without the folder, or one where the panel has not
     # mounted yet, simply reports neither as managed.
+    # pylint: disable-next=invalid-name  # route-level constant
     SETTINGS_PANEL_KIND = {"nsdeploy_api_token": "app", "openai_api_key": "llm"}
 
     def _panel_managed() -> set:
@@ -1220,7 +1291,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 field for field, kind in SETTINGS_PANEL_KIND.items()
                 if context.store.default_key(kind) is not None
             }
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught; the panel's faults stay out of the host
             # The panel's own store is its business; a fault there must not take
             # out the host's settings dialog.
             return set()
@@ -1240,9 +1311,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 # from the same place the check reads.
                 value = str(settings.api_token or "")
             else:
-                # The environment is correct for the LLM key: supervisor._spawn copies
-                # os.environ into every build subprocess, so that is literally what
-                # deploy-time theming will use.
+                # The LLM key lives in the service's environment. A site build receives it
+                # only when SITE_ENV_ALLOW lists it, which deploy-time theming needs; see
+                # site_env.py.
                 value = os.environ.get(env_key) or stored.get(env_key, "")
             fields[field_name] = {
                 "is_set": bool(value), "last4": value[-4:] if value else "",
@@ -1328,17 +1399,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     # --- admin panel -------------------------------------------------------
     # A drop-in folder that owns its own routes, UI, database and settings. This is
-    # the entire integration: nothing above is aware of it, and it is imported
-    # lazily so a checkout without the folder still runs. See
+    # the entire integration: nothing above is aware of it. See
     # nsdeploy_service/adminPanel/INTEGRATION.md.
     #
     # It must come before the SiteProxy wrap below: that object is not a FastAPI,
     # so there would be nothing to mount onto.
-    try:
-        from nsdeploy_service.adminPanel import install as install_admin_panel
-    except ImportError:
-        pass
-    else:
+    if install_admin_panel is not None:
         install_admin_panel(app, settings)
 
     # Serve deployed sites on their own hostnames through this one listener. Wrapped
@@ -1397,8 +1463,8 @@ a{color:var(--acc)}
   <input type="file" id="file" accept=".hocon,.conf,text/plain" required>
   <div class="row">
     <div><label for="name">name (optional)</label><input type="text" id="name" placeholder="from filename"></div>
-    <div><label for="ttl">ttl seconds (0 = never)</label><input type="number" id="ttl" min="0" \
-placeholder="service default"></div>
+    <div><label for="ttl">ttl seconds (0 = never)</label><input type="number" id="ttl" min="0"
+      placeholder="service default"></div>
   </div>
   <button type="submit" id="go">Deploy</button>
 </fieldset>

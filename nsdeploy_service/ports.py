@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import socket
 import threading
-from typing import Optional, Set
+from typing import Optional
+from typing import Set
 
 
 class PortPoolExhausted(RuntimeError):
@@ -36,6 +37,11 @@ class PortPool:
 
     @property
     def capacity(self) -> int:
+        """
+        Return the number of ports in the pool.
+
+        :return: The pool size.
+        """
         return self._end - self._start + 1
 
     def _is_free(self, port: int) -> bool:
@@ -86,9 +92,19 @@ class PortPool:
         )
 
     def release(self, port: int) -> None:
+        """
+        Return a reserved port to the pool.
+
+        :param port: The port to release.
+        """
         with self._lock:
             self._reserved.discard(port)
 
     def reserved(self) -> Set[int]:
+        """
+        Return a snapshot of the currently reserved ports.
+
+        :return: A copy of the reserved port set.
+        """
         with self._lock:
             return set(self._reserved)

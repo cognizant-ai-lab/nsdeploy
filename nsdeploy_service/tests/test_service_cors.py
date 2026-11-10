@@ -1,8 +1,12 @@
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, List
+from typing import Any
+from typing import List
 
+from fastapi.testclient import TestClient
+
+from nsdeploy_service.app import create_app
 from nsdeploy_service.config import Settings
 
 ORIGIN = "https://console.example.com"
@@ -22,6 +26,7 @@ class CorsSettingsTest(unittest.TestCase):
         self.assertEqual(Settings().cors_origins, [])
 
     def test_accepts_an_origin_with_and_without_a_port(self):
+        """Origins with and without a port are accepted."""
         settings = self._settings([ORIGIN, "http://127.0.0.1:5173"])
         settings.validate()
         self.assertEqual(settings.cors_allowed_origins(),
@@ -35,11 +40,13 @@ class CorsSettingsTest(unittest.TestCase):
         self.assertEqual(settings.cors_allowed_origins(), [ORIGIN])
 
     def test_accepts_a_lone_wildcard(self):
+        """A lone wildcard is accepted."""
         settings = self._settings(["*"])
         settings.validate()
         self.assertEqual(settings.cors_allowed_origins(), ["*"])
 
     def test_refuses_a_wildcard_mixed_with_named_origins(self):
+        """A wildcard mixed with named origins is refused."""
         with self.assertRaises(ValueError) as caught:
             self._settings(["*", ORIGIN]).validate()
         self.assertIn("alongside named origins", str(caught.exception))
@@ -52,6 +59,7 @@ class CorsSettingsTest(unittest.TestCase):
         self.assertIn("path, query or fragment", str(caught.exception))
 
     def test_refuses_a_bare_hostname(self):
+        """A bare hostname is refused."""
         with self.assertRaises(ValueError) as caught:
             self._settings(["console.example.com"]).validate()
         self.assertIn("is not an origin", str(caught.exception))
@@ -67,17 +75,13 @@ class CorsResponseTest(unittest.TestCase):
     """What a cross-origin caller actually gets back."""
 
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
     def _client(self, **overrides: Any):
-        from fastapi.testclient import TestClient
-
-        from nsdeploy_service.app import create_app
-
         settings = Settings(work_root=self.root / "work",
                             port_start=8700, port_end=8709, **overrides)
         return TestClient(create_app(settings))
@@ -91,11 +95,13 @@ class CorsResponseTest(unittest.TestCase):
         self.assertNotIn("access-control-allow-origin", response.headers)
 
     def test_a_listed_origin_is_allowed(self):
+        """A listed origin receives the allow-origin header."""
         with self._client(cors_origins=[ORIGIN]) as client:
             response = client.get("/health", headers={"Origin": ORIGIN})
         self.assertEqual(response.headers["access-control-allow-origin"], ORIGIN)
 
     def test_an_unlisted_origin_is_not_allowed(self):
+        """An unlisted origin receives no allow-origin header."""
         with self._client(cors_origins=[ORIGIN]) as client:
             response = client.get("/health",
                                   headers={"Origin": "https://evil.example.com"})
@@ -140,18 +146,21 @@ class CorsResponseTest(unittest.TestCase):
         self.assertNotIn("access-control-allow-credentials", response.headers)
 
     def test_a_wildcard_allows_any_origin(self):
+        """A wildcard allows any origin."""
         with self._client(cors_origins=["*"]) as client:
             response = client.get("/health",
                                   headers={"Origin": "https://anywhere.example.com"})
         self.assertEqual(response.headers["access-control-allow-origin"], "*")
 
     def test_health_warns_about_a_wildcard_with_no_token(self):
+        """/health warns about a wildcard origin with no API token."""
         with self._client(cors_origins=["*"]) as client:
             warnings = client.get("/health").json()["warnings"]
         self.assertTrue(any("CORS_ORIGINS is '*'" in line for line in warnings),
                         f"no wildcard warning in {warnings}")
 
     def test_health_does_not_warn_when_a_token_gates_the_wildcard(self):
+        """/health does not warn when an API token gates the wildcard."""
         with self._client(cors_origins=["*"], api_token="s3cret") as client:
             warnings = client.get("/health").json()["warnings"]
         self.assertFalse([line for line in warnings if "CORS_ORIGINS" in line])

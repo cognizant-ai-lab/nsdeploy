@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # supervisor state machine kept in one module
 """Deployment supervisor: one `python -m nsdeploy` child process per network.
 
 Why a child process rather than calling nsdeploy.launcher.serve() in-process:
@@ -27,25 +28,37 @@ import threading
 import urllib.error
 import urllib.request
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Tuple
 
-from nsdeploy_service.config import REPO_ROOT, SERVICE_ROOT, Settings
-from nsdeploy_service.layout import is_on_grid, next_position
-from nsdeploy_service.models import (
-    AgentGraphEdge,
-    AgentGraphNode,
-    DeploymentStatus,
-    DeployOptions,
-    NetworkLink,
-    NetworkSummary,
-    SUMMARY_SCHEMA_VERSION,
-)
-from nsdeploy_service.ports import PortPool, PortPoolExhausted
+from nsdeploy_service.config import REPO_ROOT
+from nsdeploy_service.config import SERVICE_ROOT
+from nsdeploy_service.config import Settings
+from nsdeploy_service.layout import is_on_grid
+from nsdeploy_service.layout import next_position
+from nsdeploy_service.models import AgentGraphEdge
+from nsdeploy_service.models import AgentGraphNode
+from nsdeploy_service.models import DeploymentStatus
+from nsdeploy_service.models import DeployOptions
+from nsdeploy_service.models import NetworkLink
+from nsdeploy_service.models import NetworkSummary
+from nsdeploy_service.models import SUMMARY_SCHEMA_VERSION
+from nsdeploy_service.ports import PortPool
+from nsdeploy_service.ports import PortPoolExhausted
 from nsdeploy_service.shared_byok import sync_shared_byok
-from nsdeploy_service.store import UNATTRIBUTED_NAME, Store, StoreError
+from nsdeploy_service.site_env import SiteEnv
+from nsdeploy_service.store import UNATTRIBUTED_NAME
+from nsdeploy_service.store import Store
+from nsdeploy_service.store import StoreError
 
 IS_WINDOWS = sys.platform == "win32"
 READINESS_POLL_SECONDS = 0.5
@@ -108,7 +121,7 @@ def safe_network_name(raw: str) -> str:
 
 
 @dataclass
-class Deployment:
+class Deployment:  # pylint: disable=too-many-instance-attributes; one field per persisted column
     """Server-side record for one deployed network."""
 
     id: str
@@ -147,10 +160,20 @@ class Deployment:
 
     @property
     def pid(self) -> Optional[int]:
+        """
+        Return the child process id while one is running.
+
+        :return: The pid, or None when no process is attached.
+        """
         return self.process.pid if self.process else None
 
     @property
     def is_live(self) -> bool:
+        """
+        Report whether the deployment is queued, building or ready.
+
+        :return: True for a live deployment.
+        """
         return self.status in (DeploymentStatus.QUEUED, DeploymentStatus.BUILDING,
                                DeploymentStatus.READY)
 
@@ -320,7 +343,7 @@ def engine_supports_host(python_exe: str) -> bool:
         result = subprocess.run(
             [python_exe, "-m", "nsdeploy", "--help"],
             capture_output=True, text=True, timeout=60,
-            cwd=str(REPO_ROOT),
+            cwd=str(REPO_ROOT), check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -481,6 +504,14 @@ def _inline_peers(network: Dict[str, Any]) -> List[NetworkLink]:
 
 
 def summarize_build(out_dir: Path, name: str, log_text: str) -> NetworkSummary:
+    """
+    Read the generated bundle and build log into a network summary.
+
+    :param out_dir: The nsdeploy output directory.
+    :param name: The network name.
+    :param log_text: The deployment log; only the most recent run is read.
+    :return: The network summary.
+    """
     summary = NetworkSummary()
     log_text = latest_run(log_text)
     try:
@@ -607,6 +638,12 @@ def network_topology(
 
 
 def build_warnings(summary: NetworkSummary) -> List[str]:
+    """
+    Turn the problems recorded in a summary into user-facing warnings.
+
+    :param summary: The network summary.
+    :return: The warning messages.
+    """
     warnings: List[str] = []
     if summary.missing_tools:
         warnings.append(
@@ -626,7 +663,7 @@ def build_warnings(summary: NetworkSummary) -> List[str]:
     return warnings
 
 
-class Supervisor:
+class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry, pool, locks and tasks
     """Owns the deployment registry, the port pool, and every child process."""
 
     def __init__(self, settings: Settings, store: Optional[Store] = None) -> None:
@@ -729,14 +766,30 @@ class Supervisor:
 
     # --- registry ---------------------------------------------------------
     def get(self, deployment_id: str) -> Optional[Deployment]:
+        """
+        Look up a deployment by id.
+
+        :param deployment_id: The deployment id.
+        :return: The deployment, or None if it is not registered.
+        """
         with self._lock:
             return self._deployments.get(deployment_id)
 
     def list(self) -> List[Deployment]:
+        """
+        List every registered deployment, newest first.
+
+        :return: The deployments.
+        """
         with self._lock:
             return sorted(self._deployments.values(), key=lambda d: d.created_at, reverse=True)
 
     def counts(self) -> Dict[str, int]:
+        """
+        Count registered deployments per status.
+
+        :return: A mapping from status value to count.
+        """
         counts = {status.value: 0 for status in DeploymentStatus}
         with self._lock:
             for dep in self._deployments.values():
@@ -857,7 +910,7 @@ class Supervisor:
             self.store.set_published(deployment_id, dep.published_at)
         return dep
 
-    def create(self, hocon_bytes: bytes, options: DeployOptions) -> Deployment:
+    def create(self, hocon_bytes: bytes, options: DeployOptions) -> Deployment:  # pylint: disable=too-many-locals
         """Accept an upload, reserve a port, and write the work dir. Does not build."""
         if not hocon_bytes.strip():
             raise DeploymentError("the uploaded HOCON is empty")
@@ -1086,7 +1139,10 @@ class Supervisor:
             # manifests, .well-known, steward HOCON), so it must be declared now and
             # must match the URL we hand back.
             "--site-url", dep.url,
-            "--upstream", opts.upstream or s.upstream,
+            # Always the service-wide upstream. The site's /byok/v1 forwards every
+            # visitor's API key there, so a deployment does not choose it, and an
+            # `upstream` still stored in a record's options is ignored.
+            "--upstream", s.upstream,
         ]
         # `--host` is the ONE flag this service has ever needed that upstream nsdeploy
         # does not ship. Three successive engine drops have removed it, each time
@@ -1142,7 +1198,17 @@ class Supervisor:
         return cmd
 
     def _spawn(self, dep: Deployment) -> subprocess.Popen:
-        env = dict(os.environ)
+        """
+        Start the nsdeploy process that builds and serves a deployment.
+
+        :param dep: The deployment to start. Its output goes to its log file.
+        :return: The started process.
+        :raises OSError: If the log file cannot be opened or the process cannot start.
+        :raises DeploymentError: If DEPLOY_HOST needs a --host flag this nsdeploy lacks.
+        """
+        # The site runs code from the uploaded network, so it gets none of the service's
+        # credentials or the host's provider keys. See site_env.py.
+        env: Dict[str, str] = SiteEnv.build(os.environ, self.settings.site_env_allow)
         env["PYTHONUNBUFFERED"] = "1"
         # nsdeploy's report is emoji-rich; without this the child's stdout is written
         # in the console codepage and the log comes back mojibaked.
@@ -1264,6 +1330,12 @@ class Supervisor:
         self._persist(dep)
 
     async def stop(self, dep: Deployment, reason: str = "stopped by request") -> None:
+        """
+        Stop a live deployment; does nothing if it is not live.
+
+        :param dep: The deployment.
+        :param reason: The reason recorded on the deployment.
+        """
         if not dep.is_live:
             return
         await asyncio.to_thread(self._teardown, dep, DeploymentStatus.STOPPED, reason)
@@ -1306,6 +1378,9 @@ class Supervisor:
         return await asyncio.to_thread(self.store.delete_deployment, deployment_id)
 
     async def shutdown(self) -> None:
+        """
+        Cancel background tasks, stop live deployments and close the store.
+        """
         for task in list(self._tasks):
             task.cancel()
         for dep in self.list():
@@ -1315,4 +1390,11 @@ class Supervisor:
         await asyncio.to_thread(self.store.close)
 
     def logs(self, dep: Deployment, limit: int) -> Tuple[List[str], bool]:
+        """
+        Return the tail of a deployment's log.
+
+        :param dep: The deployment.
+        :param limit: The maximum number of lines.
+        :return: The lines and whether the log was truncated.
+        """
         return _tail(dep.log_path, limit)

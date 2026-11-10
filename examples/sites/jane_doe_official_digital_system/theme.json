@@ -1,8 +1,8 @@
 {
-  "brand": "Selena Digital Atelier",
+  "brand": "Jane Doe Digital Atelier",
   "icon": "\ud83d\udcbf",
   "tagline": "Launches, links, drops, and fan journeys in sync.",
-  "hero": "The backstage OS for Selena Gomez digital launches, unifying music, content, merch, analytics, and approvals.",
+  "hero": "The backstage OS for Jane Doe digital launches, unifying music, content, merch, analytics, and approvals.",
   "font": "Avenir Next, Segoe UI, Helvetica Neue, Arial, sans-serif",
   "radius": 18,
   "colors": {
@@ -51,6 +51,6 @@
       },
       "submitLabel": "Open the runbook"
     },
-    "message": "Tell the atelier what you are preparing for Selena Gomez official digital channels."
+    "message": "Tell the atelier what you are preparing for Jane Doe official digital channels."
   }
 }

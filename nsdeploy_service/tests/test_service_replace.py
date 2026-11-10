@@ -13,6 +13,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from nsdeploy_service.app import _row_view
+from nsdeploy_service.app import _view
 from nsdeploy_service.config import Settings
 from nsdeploy_service.models import DeployOptions
 from nsdeploy_service.supervisor import Supervisor
@@ -21,8 +23,9 @@ HOCON = b'{"tools":[{"name":"front_man","instructions":"x","function":{"descript
 
 
 class ReplaceOnReuploadTest(unittest.TestCase):
+    """Re-uploading a network replaces the existing deployment."""
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
         self.supervisor = Supervisor(Settings(
             work_root=self.root, port_start=8860, port_end=8869, max_deployments=10))
@@ -38,6 +41,7 @@ class ReplaceOnReuploadTest(unittest.TestCase):
         return self.supervisor.store.list_deployments()
 
     def test_second_upload_replaces_rather_than_duplicates(self):
+        """A second upload replaces the deployment rather than duplicating it."""
         first = self._upload("store_returns_ops", "Acme")
         second = self._upload("store_returns_ops", "Acme", HOCON + b"\n# edited\n")
 
@@ -52,6 +56,7 @@ class ReplaceOnReuploadTest(unittest.TestCase):
                       "the replacement must build from the NEW upload")
 
     def test_a_different_organization_is_a_different_network(self):
+        """A different organization gets a different network."""
         mine = self._upload("store_returns_ops", "Acme")
         theirs = self._upload("store_returns_ops", "Globex")
         self.assertEqual(len(self._rows()), 2)
@@ -59,6 +64,7 @@ class ReplaceOnReuploadTest(unittest.TestCase):
         self.assertNotEqual(theirs.port, mine.port)
 
     def test_a_different_name_is_a_different_network(self):
+        """A different name gets a different network."""
         self._upload("store_returns_ops", "Acme")
         other = self._upload("order_management", "Acme")
         self.assertEqual(len(self._rows()), 2)
@@ -103,8 +109,6 @@ class ReplaceOnReuploadTest(unittest.TestCase):
         record must report False — otherwise the console would keep announcing a
         replacement that happened hours ago.
         """
-        from nsdeploy_service.app import _row_view, _view
-
         first = self._upload("store_returns_ops", "Acme")
         self.assertFalse(_view(first).replaced)
 

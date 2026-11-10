@@ -13,7 +13,12 @@ map scales without re-layout.
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any
+from typing import Dict
+from typing import Iterable
+from typing import List
+from typing import Optional
+from typing import Tuple
 
 # Candidate slots, in percent of the map viewport.
 #

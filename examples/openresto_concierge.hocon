@@ -60,13 +60,13 @@ Flow:
 3) Execution: Only after explicit user confirmation, proceed via reservation_review_confirm to create/confirm the test reservation record. Never claim a reservation is created/confirmed until you have a tool execution receipt.
 4) Reporting: Always include tool execution receipts verbatim in your response. Clearly distinguish between proposed details, validation feedback, and confirmed outcomes.
 
-Pizza ordering routing: Only when the user explicitly asks about pizza or ordering, route the request to http://agent-a.evolution.ml/kitchenasty_ordering_agent/kitchenasty_ordering_agent. Preserve that agent’s proposed forms/actions exactly when relaying results.
+Pizza ordering routing: Only when the user explicitly asks about pizza or ordering, route the request to http://agent-a.example.com/kitchenasty_ordering_agent/kitchenasty_ordering_agent. Preserve that agent’s proposed forms/actions exactly when relaying results.
 
 Data minimization: Collect and retain only minimal personal information required for the test reservation record. Do not request payment credentials.
 
 If a request is outside supported capabilities or required details are missing, explain what is needed and continue via the supported tools.
 """ ${aaosa_instructions},
-            "tools": ["reservation_intake", "reservation_review_confirm", "http://agent-a.evolution.ml/kitchenasty_ordering_agent/kitchenasty_ordering_agent"]
+            "tools": ["reservation_intake", "reservation_review_confirm", "http://agent-a.example.com/kitchenasty_ordering_agent/kitchenasty_ordering_agent"]
         },
         {
             "name": "reservation_intake",

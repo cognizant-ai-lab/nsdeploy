@@ -4,7 +4,7 @@ Take a neuro-san(-studio) agent-network **HOCON**, check its dependencies, host 
 tools as **MCP servers**, generate a static **index.html**, and **serve the network
 as a website** — with **no neuro-san server** and no runtime dependency on neuro-san.
 
-This is a reference implementation for the [wwaw mvp spec](docs/Worldwide_Agentic_Web_MVP_Spec_v0.1.pdf).
+This is a reference implementation for the [wwaw mvp spec](https://github.com/cognizant-ai-labs/agentic-web/tree/main/docs).
 
 This is a standalone project. **No neuro-san-studio checkout is required** — by
 default nsdeploy pulls just the files it needs (`aaosa.hocon`, `toolbox_info.hocon`,
@@ -243,9 +243,9 @@ to the manifest directory, for example
 and portable with the bundle directory. To run those stewards in a standard
 Neuro-SAN server, set `AGENT_MANIFEST_FILE` to that manifest.
 `launch_all.sh` also starts the private Neuro-SAN studio from
-`/Users/754339/projects/cailville-private` (using its installed
-`neuro-san-studio` package), points its `AGENT_MANIFEST_FILE` at this generated
-manifest, and opens nsFlow on port `4174`.
+`../neuro-san-studio`, a neuro-san-studio project next to this checkout (using
+the `neuro-san-studio` package installed in its virtualenv), points its
+`AGENT_MANIFEST_FILE` at this generated manifest, and opens nsFlow on port `4174`.
 It waits for both the Neuro-SAN HTTP server and nsFlow to be ready before opening
 the demo, avoiding an initial concierge connection race.
 Override the private project or ports with `NSDEPLOY_PRIVATE_STUDIO_DIR`,
@@ -464,7 +464,8 @@ python -m nsdeploy examples/community_bank_front_office.hocon \
 
 Use `--cailville-base-map` with `--add-to-cailville` to discard prior demo additions first.
 The base community lives in `cailville/community.base.json`; the active cumulative state is
-`cailville/community.json`. `launch_all.sh` reads the active state, so newly added sites and
+`cailville/community.json`, a local git-ignored file created on the first addition (until then
+the base map is used). `launch_all.sh` reads the active state, so newly added sites and
 both sides of inferred public-network relationships are launched automatically. Public sites
 receive only their inferred peer links, while every private steward receives the directory of
 all currently active Cailville public sites. Returning to the base map also removes prior demo
@@ -814,15 +815,15 @@ From the repository root, with your existing themes:
 python -m nsdeploy examples/kitchenasty_ordering_agent.hocon \
   --static-bundle --theme \
   --out ./dist/kitchenasty_ordering_agent \
-  --site-url http://agent-a.evolution.ml/kitchenasty_ordering_agent \
+  --site-url http://agent-a.example.com/kitchenasty_ordering_agent \
   --action-site https://httpbin.org/forms/post \
   --action-max-pages 1 --action-refresh --action-include-all \
-  --action-caller-origin http://cors.decisionai.ml
+  --action-caller-origin http://agent-b.example.com
 
 python -m nsdeploy examples/openresto_concierge.hocon \
   --static-bundle --theme \
   --out ./dist/openresto_concierge \
-  --site-url http://cors.decisionai.ml/openresto_concierge \
+  --site-url http://agent-b.example.com/openresto_concierge \
   --action-site https://restful-api.dev/ \
   --action-spec examples/actions/restful-api.openapi.json \
   --action-max-pages 1 --action-refresh --action-include-all
@@ -841,13 +842,13 @@ Check the receipt's actual `data.form` echo. Ask OpenResto to create a synthetic
 for four guests on 2026-11-14 at 19:00; check the returned server-assigned `id`.
 In the next turn ask it to retrieve that exact id and compare the stored values.
 
-The deployed example is available at
-`http://cors.decisionai.ml/openresto_concierge`; its remote KitchenAsty site is
-`http://agent-a.evolution.ml/kitchenasty_ordering_agent`. The KitchenAsty HOCON
+In this example, OpenResto is deployed at
+`http://agent-b.example.com/openresto_concierge`; its remote KitchenAsty site is
+`http://agent-a.example.com/kitchenasty_ordering_agent`. The KitchenAsty HOCON
 reference includes both the bundle path and the exported network name:
-`http://agent-a.evolution.ml/kitchenasty_ordering_agent/kitchenasty_ordering_agent`.
+`http://agent-a.example.com/kitchenasty_ordering_agent/kitchenasty_ordering_agent`.
 The repeated name is intentional. The caller passed to `--action-caller-origin`
-is only the exact origin (`http://cors.decisionai.ml`), without a path.
+is only the exact origin (`http://agent-b.example.com`), without a path.
 
 Then ask OpenResto:
 
@@ -874,7 +875,7 @@ Successful end-to-end execution produces two independent receipts:
   server-assigned `data.id` from `https://api.restful-api.dev/objects`.
 - `.../kitchenasty_ordering_agent#post_forms_post_76079b9e` reports HTTP 200
   from `https://httpbin.org/post`; `data.form` echoes the pizza fields. Its echoed
-  `Origin` is `http://agent-a.evolution.ml`, demonstrating that the remote action
+  `Origin` is `http://agent-a.example.com`, demonstrating that the remote action
   ran in its owning site's bridge rather than being imitated by OpenResto.
 
 `state: "response_received"` proves that the browser received an HTTP response.
@@ -978,7 +979,7 @@ configured route forms; modules declare their own caller policy.
 
 For the OpenResto/KitchenAsty deployment, keep your theme/model/output flags and add
 the actual application routes to each build. Add
-`--action-caller-origin https://agent-b.decisionai.ml` to KitchenAsty if OpenResto
+`--action-caller-origin https://agent-b.example.com` to KitchenAsty if OpenResto
 is hosted on that origin. These agent domains must also host their corresponding
 real applications and backends. An unrelated original website cannot be inspected
 or operated just by naming it in HOCON. The routes must be taken from your actual

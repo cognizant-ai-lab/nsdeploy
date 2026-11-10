@@ -20,15 +20,38 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
+from nsdeploy.action_discovery import prepare_actions
+from nsdeploy.form_actions import action_discovery_config
 from nsdeploy.generate import generate_site
 from nsdeploy.gateway import run_gateway_command
-from nsdeploy.linker import load_deploy_links, run_link_command
+from nsdeploy.linker import load_deploy_links
+from nsdeploy.linker import run_link_command
 from nsdeploy.launcher import serve
-from nsdeploy.resolve import build_plan, format_report, load_toolbox_info, resolve_hocon
-from nsdeploy.site_source import load_site_theme, seed_site_source, site_source_exists
-from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio
-from nsdeploy.theme import DEFAULT_THEME_MODEL, ThemeSpec, load_theme_file, propose_theme
+from nsdeploy.resolve import build_plan
+from nsdeploy.resolve import format_report
+from nsdeploy.resolve import load_toolbox_info
+from nsdeploy.resolve import resolve_hocon
+from nsdeploy.site_source import load_site_theme
+from nsdeploy.site_source import seed_site_source
+from nsdeploy.site_source import site_source_exists
+from nsdeploy.studio import DEFAULT_REF
+from nsdeploy.studio import DEFAULT_REPO
+from nsdeploy.studio import GithubStudio
+from nsdeploy.studio import LocalStudio
+from nsdeploy.theme import DEFAULT_THEME_MODEL
+from nsdeploy.theme import ThemeSpec
+from nsdeploy.theme import load_theme_file
+from nsdeploy.theme import propose_theme
+
+# Optional module: a plain deploy must not fail to start when it is absent from an install.
+try:
+    from nsdeploy import cailville as _cailville
+    _CAILVILLE_IMPORT_ERROR: Optional[ImportError] = None
+except ImportError as _exc:
+    _cailville = None
+    _CAILVILLE_IMPORT_ERROR = _exc
 
 
 def _on_off(value: str) -> bool:
@@ -42,20 +65,24 @@ def _on_off(value: str) -> bool:
 
 
 def _load_cailville():
-    """Import the Cailville community helpers on demand.
+    """Return the Cailville community helpers, or None when they are unavailable.
 
     Only `nsdeploy cailville ...` and --add-to-cailville need them; a plain deploy must
     not fail to start when that module is absent from an install.
     """
-    try:
-        from nsdeploy import cailville
-    except ImportError as exc:
-        print(f"error: Cailville support is unavailable in this install: {exc}", file=sys.stderr)
-        return None
-    return cailville
+    if _cailville is None:
+        print(f"error: Cailville support is unavailable in this install: {_CAILVILLE_IMPORT_ERROR}",
+              file=sys.stderr)
+    return _cailville
 
 
+# pylint: disable-next=too-many-locals,too-many-return-statements,too-many-branches,too-many-statements  # flat CLI flow
 def main() -> int:
+    """
+    Run the nsdeploy command line: dispatch subcommands, or resolve, generate and serve a network.
+
+    :return: The process exit code.
+    """
     if len(sys.argv) > 1 and sys.argv[1] == "gateway":
         return run_gateway_command(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "link":
@@ -151,7 +178,7 @@ def main() -> int:
     args = ap.parse_args()
     if args.actions and not Path(args.actions).is_file():
         ap.error("--actions must name an existing JavaScript adapter")
-    from nsdeploy.form_actions import action_discovery_config
+    # pylint: disable-next=too-many-boolean-expressions  # flat list of conflicting options
     if args.no_action_discovery and (args.action_page or args.action_host_page or args.action_caller_origin
                                      or args.action_site or args.action_spec or args.action_lock
                                      or args.action_refresh or args.action_allow or args.action_include_all):
@@ -185,9 +212,9 @@ def main() -> int:
     network_name = hocon_path.stem
     site_dir = (Path(args.site_dir).resolve() if args.site_dir
                 else hocon_path.parent / "sites" / network_name)
-    from nsdeploy.action_discovery import prepare_actions
     action_lock = Path(args.action_lock) if args.action_lock else site_dir / "discovered-actions.json"
     discovered_actions = None
+    # pylint: disable-next=too-many-boolean-expressions  # flat list of discovery triggers
     if not args.no_action_discovery and (args.action_site or args.action_spec or args.action_lock
                                          or args.action_refresh or args.action_allow or args.action_include_all
                                          or action_lock.exists()):

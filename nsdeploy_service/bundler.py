@@ -8,19 +8,34 @@ import os
 import tarfile
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Set
+from typing import Tuple
 
 from nsdeploy.generate import generate_site
-from nsdeploy.resolve import DeploymentPlan, build_plan, resolve_hocon
-from nsdeploy.studio import DEFAULT_REF, DEFAULT_REPO, GithubStudio, LocalStudio, StudioSource
-from nsdeploy.theme import DEFAULT_THEME_MODEL, ThemeSpec, propose_theme
+from nsdeploy.resolve import DeploymentPlan
+from nsdeploy.resolve import build_plan
+from nsdeploy.resolve import resolve_hocon
+from nsdeploy.studio import DEFAULT_REF
+from nsdeploy.studio import DEFAULT_REPO
+from nsdeploy.studio import GithubStudio
+from nsdeploy.studio import LocalStudio
+from nsdeploy.studio import StudioSource
+from nsdeploy.theme import DEFAULT_THEME_MODEL
+from nsdeploy.theme import ThemeSpec
+from nsdeploy.theme import propose_theme
 
 from nsdeploy_service import themespec
 from nsdeploy_service.bundle_error import BundleError
 from nsdeploy_service.bundle_result import BundleResult
 from nsdeploy_service.config import Settings
-from nsdeploy_service.models import BundleOptions, DeployOptions
-from nsdeploy_service.supervisor import DeploymentError, safe_network_name
+from nsdeploy_service.models import BundleOptions
+from nsdeploy_service.models import DeployOptions
+from nsdeploy_service.supervisor import DeploymentError
+from nsdeploy_service.supervisor import safe_network_name
 
 
 class Bundler:
@@ -196,15 +211,19 @@ class Bundler:
 
         :param row: The persisted deployment record.
         :param site_url: Where the client will host this bundle, if stated.
-        :param upstream: A BYOK upstream for this bundle only, if stated.
+        :param upstream: A BYOK upstream for this bundle only, if stated. Without
+                         one, the bundle uses the service-wide upstream.
         :return: The options for this build.
         """
         stored: Dict[str, Any] = row.get("options") or {}
         deployed: DeployOptions = DeployOptions(**stored)
+        # An upstream stored in the record is not replayed. The uploader chose it, and
+        # the deployed site forwards to the service-wide upstream, so the bundle does too.
         return BundleOptions(name=row.get("name"), site_url=site_url,
-                             upstream=upstream or deployed.upstream,
+                             upstream=upstream,
                              cruse=deployed.cruse, theme=False)
 
+    # pylint: disable-next=too-many-locals  # one linear build pipeline
     def build_in(self, work: Path, name: str, text: str, options: BundleOptions,
                  deployment_work: Optional[Path] = None) -> BundleResult:
         """

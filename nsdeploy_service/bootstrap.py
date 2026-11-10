@@ -33,6 +33,7 @@ Exit code 0 means ready to use.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import shutil
 import socket
@@ -52,12 +53,18 @@ _results: list[tuple[str, bool, str]] = []
 # Wall-clock per step, printed at the end. Without it there is no way to tell a slow
 # step from a stuck one, which is the whole difficulty with this script.
 _timings: list[tuple[str, float]] = []
-_step_started = 0.0
-_step_title = ""
+_step_started = 0.0  # pylint: disable=invalid-name; mutable step state, not a constant
+_step_title = ""  # pylint: disable=invalid-name; mutable step state, not a constant
 
 
 def step(number: int, title: str) -> None:
-    global _step_started, _step_title
+    """
+    Start a numbered step, recording the elapsed time of the previous one.
+
+    :param number: The step number.
+    :param title: The step title.
+    """
+    global _step_started, _step_title  # pylint: disable=global-statement; stdlib-only script state
     if _step_title:
         _timings.append((_step_title, time.monotonic() - _step_started))
     _step_started, _step_title = time.monotonic(), title
@@ -65,19 +72,36 @@ def step(number: int, title: str) -> None:
 
 
 def close_timings() -> None:
-    global _step_title
+    """
+    Record the elapsed time of the step in progress, if any.
+    """
+    global _step_title  # pylint: disable=global-statement; stdlib-only script state
     if _step_title:
         _timings.append((_step_title, time.monotonic() - _step_started))
         _step_title = ""
 
 
 def ok(label: str, detail: str = "") -> bool:
+    """
+    Print and record a passing check.
+
+    :param label: The check label.
+    :param detail: Optional detail shown after the label.
+    :return: Always True.
+    """
     print(f"  OK    {label}{'  ' + detail if detail else ''}")
     _results.append((label, True, detail))
     return True
 
 
 def fail(label: str, detail: str = "") -> bool:
+    """
+    Print and record a failing check.
+
+    :param label: The check label.
+    :param detail: Optional multi-line detail shown under the label.
+    :return: Always False.
+    """
     print(f"  FAIL  {label}")
     for line in (detail or "").splitlines():
         print(f"        {line}")
@@ -86,7 +110,14 @@ def fail(label: str, detail: str = "") -> bool:
 
 
 def run(args: list[str], cwd: Path = ROOT) -> subprocess.CompletedProcess:
-    return subprocess.run(args, cwd=str(cwd), capture_output=True, text=True)
+    """
+    Run a command and capture its output without raising on failure.
+
+    :param args: The command and its arguments.
+    :param cwd: The working directory.
+    :return: The completed process.
+    """
+    return subprocess.run(args, cwd=str(cwd), capture_output=True, text=True, check=False)
 
 
 def stream(args: list[str], cwd: Path = ROOT, keep: int = 40) -> tuple[int, str]:
@@ -105,6 +136,7 @@ def stream(args: list[str], cwd: Path = ROOT, keep: int = 40) -> tuple[int, str]
     interesting = ("Collecting", "Downloading", "Building", "Installing",
                    "Successfully", "Using cached", "ERROR", "error:", "WARNING")
     tail: list[str] = []
+    # pylint: disable-next=consider-using-with  # process lifetime kept as-is to preserve behavior
     process = subprocess.Popen(
         args, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1)
@@ -133,6 +165,11 @@ def installer() -> tuple[list[str], str]:
 
 
 def free_port() -> int:
+    """
+    Ask the OS for an unused loopback port.
+
+    :return: The port number.
+    """
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return int(probe.getsockname()[1])
@@ -140,6 +177,11 @@ def free_port() -> int:
 
 # --- 1. placement -----------------------------------------------------------
 def check_placement() -> bool:
+    """
+    Step 1: check that this folder sits beside nsdeploy/ and Python is new enough.
+
+    :return: True when placement is correct.
+    """
     step(1, "Placement")
     good = True
     if SERVICE.name != "nsdeploy_service":
@@ -158,8 +200,8 @@ def check_placement() -> bool:
                     "The supervisor runs `python -m nsdeploy` from this folder's parent, "
                     "which here is the package itself — every deployment would fail with "
                     "'No module named nsdeploy'.")
-    if sys.version_info < (3, 10):
-        good = fail(f"Python {sys.version.split()[0]}", "3.10 or newer is required.")
+    if sys.version_info < (3, 12):
+        good = fail(f"Python {sys.version.split()[0]}", "3.12 or newer is required.")
     else:
         ok(f"Python {sys.version.split()[0]}")
     return good
@@ -179,8 +221,6 @@ def already_installed() -> bool:
     reports the wrong root and the check silently answered False.
     """
     try:
-        import importlib
-
         for name in ("nsdeploy", "nsdeploy_service"):
             module = importlib.import_module(name)
             if not module.__file__:
@@ -188,11 +228,18 @@ def already_installed() -> bool:
             if Path(module.__file__).resolve().parent.parent != ROOT:
                 return False
         return True
+    # pylint: disable-next=broad-exception-caught  # not importable yet just means "not installed"
     except Exception:  # noqa: BLE001 - not importable yet just means "not installed"
         return False
 
 
 def install(skip: bool) -> bool:
+    """
+    Step 2: install nsdeploy and nsdeploy_service in editable mode.
+
+    :param skip: Skip the install when True.
+    :return: True when both installs succeed or are skipped.
+    """
     step(2, "Install")
     if skip:
         print("  ..    skipped (--skip-install)")
@@ -220,6 +267,11 @@ def install(skip: bool) -> bool:
 
 # --- 3. nsdeploy runs -------------------------------------------------------
 def check_nsdeploy_cli() -> bool:
+    """
+    Step 3: check that `python -m nsdeploy --help` runs.
+
+    :return: True when the CLI runs.
+    """
     step(3, "nsdeploy CLI")
     result = run([sys.executable, "-m", "nsdeploy", "--help"])
     if result.returncode != 0:
@@ -237,6 +289,11 @@ def check_nsdeploy_cli() -> bool:
 
 # --- 4. contract ------------------------------------------------------------
 def check_contract() -> bool:
+    """
+    Step 4: run the integration contract check against this nsdeploy.
+
+    :return: True when the contract matches.
+    """
     step(4, "Contract with this nsdeploy")
     script = SERVICE / "scripts" / "check-nsdeploy-integration.py"
     if not script.is_file():
@@ -252,6 +309,12 @@ def check_contract() -> bool:
 
 # --- 5. tests ---------------------------------------------------------------
 def run_tests(skip: bool) -> bool:
+    """
+    Step 5: run the service test suite.
+
+    :param skip: Skip the tests when True.
+    :return: True when the suite passes or is skipped.
+    """
     step(5, "Tests")
     if skip:
         print("  ..    skipped (--skip-tests)")
@@ -269,11 +332,18 @@ def run_tests(skip: bool) -> bool:
 
 # --- 6. connection ----------------------------------------------------------
 def check_connection(port: int) -> bool:
+    """
+    Step 6: start the service on a throwaway work root and probe its endpoints.
+
+    :param port: The port for the service API.
+    :return: True when every probe answers.
+    """
     step(6, "Connection")
     work = Path(tempfile.mkdtemp(prefix="nsdeploy-bootstrap-"))
     # A throwaway work root and a port pool clear of the API port, so this never
     # touches real deployment records.
     env_port_start = port + 1
+    # pylint: disable-next=consider-using-with  # the finally block below terminates the child
     child = subprocess.Popen(
         [sys.executable, "-m", "nsdeploy_service",
          "--host", "127.0.0.1", "--port", str(port),
@@ -308,7 +378,7 @@ def check_connection(port: int) -> bool:
                     ok(f"GET {path}", f"HTTP {response.status} ({label})")
             except urllib.error.HTTPError as exc:
                 ok(f"GET {path}", f"HTTP {exc.code} ({label})")
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught; report any probe failure
                 good = fail(f"GET {path}", f"{type(exc).__name__}: {exc}")
 
         for warning in health.get("warnings") or []:
@@ -323,6 +393,12 @@ def check_connection(port: int) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """
+    Run every setup step and print a readiness summary.
+
+    :param argv: Command-line arguments, or None to read sys.argv.
+    :return: The process exit code.
+    """
     parser = argparse.ArgumentParser(
         prog="bootstrap", description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)

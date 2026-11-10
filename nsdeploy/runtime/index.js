@@ -14,7 +14,7 @@ export { ActionRegistry } from "./actions.js";
 import { Engine } from "./engine.js";
 import { TraceBus } from "./trace.js";
 import { mountApp } from "./ui.js";
-import { getSelectedByokProfile, resolveByokRouter } from "./byok.js";
+import { getSelectedByokProfile, loadTabByokSetup } from "./byok.js";
 
 export async function boot(rootSelector = "#app", opts = {}) {
   const root = typeof rootSelector === "string" ? document.querySelector(rootSelector) : rootSelector;
@@ -22,33 +22,35 @@ export async function boot(rootSelector = "#app", opts = {}) {
   root.setAttribute("data-nsdeploy-ui", "");
   const trace = new TraceBus();
   const params = new URLSearchParams(location.search);
-  // BYOK key handling: a real API key must NEVER live in the URL/query string -
-  // that leaks it to the static origin (initial GET), browser history, server
-  // logs, and shared links. If a key ever arrives via the URL (legacy/shared
-  // link), migrate it into sessionStorage and strip it from the address bar
-  // immediately. Saved BYOK profiles, when present, provide cross-network
-  // defaults without putting the key in the URL.
+  // Key, router and model come from the hosting page (opts), the setup applied in
+  // this tab or the saved BYOK profile, never from the URL, so a link cannot choose
+  // where the key is sent or which model it pays for. A key in the URL is removed
+  // from the address bar so it does not stay in history. Router and model stay,
+  // because a host page may use those names for its own parameters.
+  const ignoredParams = [];
+  // Note each setting found in the URL. Its value is never read or logged.
+  for (const name of ["key", "router", "model"]) {
+    if (params.has(name)) ignoredParams.push(name);
+  }
   if (params.has("key")) {
-    const urlKey = params.get("key");
-    if (urlKey && urlKey !== "demo") {
-      try { sessionStorage.setItem("nsweb-byok-key", urlKey); } catch {}
-    }
     params.delete("key");
     const qs = params.toString();
     try { history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash); } catch {}
   }
-  let storedKey = "";
-  try { storedKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
+  if (ignoredParams.length) {
+    const names = ignoredParams.join(", ");
+    console.warn(`Inference settings in the page URL are ignored (${names}). Set them in BYOK / router settings.`);
+  }
   const savedProfile = getSelectedByokProfile();
-  const savedRouter = resolveByokRouter(savedProfile?.router || "");
+  const tabSetup = loadTabByokSetup(savedProfile);
   const siteBase = (opts.originUrl || location.origin).replace(/\/$/, "");
   const engine = new Engine({
     originUrl: siteBase,
     trace,
     sandboxWorkerUrl: opts.sandboxWorkerUrl || "/runtime/sandbox-worker.js",
-    byokKey: opts.byokKey || storedKey || savedProfile?.key || "",
-    routerOverride: opts.router || params.get("router") || savedRouter || "",
-    modelOverride: opts.model || params.get("model") || savedProfile?.model || "",
+    byokKey: opts.byokKey || tabSetup.key,
+    routerOverride: opts.router || tabSetup.router,
+    modelOverride: opts.model || tabSetup.model,
   });
   // Select the agent loop: ?runner=langchain drives the LLM via LangChain.js
   // (neuro-san-web owns the loop). 'langgraph' kept as an alias for older links.

@@ -4,8 +4,14 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
 
+from fastapi.testclient import TestClient
+
+from nsdeploy_service.app import create_app
 from nsdeploy_service.config import Settings
 from nsdeploy_service.models import DeployOptions
 
@@ -47,7 +53,7 @@ class DeploymentBundleTest(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
         # An empty checkout, so includes resolve locally and GithubStudio is never
         # constructed. The test network has no includes, so there is nothing to find.
@@ -66,14 +72,11 @@ class DeploymentBundleTest(unittest.TestCase):
         :param overrides: Settings overrides for this test.
         :return: The test client.
         """
-        from fastapi.testclient import TestClient
-
-        from nsdeploy_service.app import create_app
-
         settings = Settings(studio=str(self.root / "studio"),
                             work_root=self.root / "work",
                             port_start=8700, port_end=8709, **overrides)
         self.client = TestClient(create_app(settings))
+        # pylint: disable-next=unnecessary-dunder-call  # the client stays open until tearDown exits it
         self.client.__enter__()
         return self.client
 
@@ -122,6 +125,7 @@ class DeploymentBundleTest(unittest.TestCase):
 
     # --- what the endpoint refuses ----------------------------------------
     def test_an_unknown_deployment_is_a_404(self):
+        """An unknown deployment is a 404."""
         client = self._open()
         response = client.get("/deployments/nosuchid/bundle")
         self.assertEqual(response.status_code, 404)
@@ -176,6 +180,7 @@ class DeploymentBundleTest(unittest.TestCase):
 
     # --- what it returns ---------------------------------------------------
     def test_returns_the_archive_and_describes_it_in_the_headers(self):
+        """The archive is returned and described in the response headers."""
         client = self._open()
         row = self._deploy(client)
         response = client.get(f"/deployments/{row['id']}/bundle",
@@ -224,6 +229,7 @@ class DeploymentBundleTest(unittest.TestCase):
         self.assertNotIn(row["url"], manifest)
 
     def test_the_site_url_is_baked_in_when_it_is_given(self):
+        """A given site URL is baked into the manifest."""
         client = self._open()
         row = self._deploy(client)
         response = client.get(f"/deployments/{row['id']}/bundle",
@@ -272,6 +278,7 @@ class DeploymentBundleTest(unittest.TestCase):
                         f"no default-look warning in {reported}")
 
     def test_the_warnings_name_what_the_deployment_has_and_the_bundle_cannot(self):
+        """The warnings name what the deployment has and the bundle cannot carry."""
         client = self._open()
         row = self._deploy(client)
         response = client.get(f"/deployments/{row['id']}/bundle")
@@ -279,15 +286,22 @@ class DeploymentBundleTest(unittest.TestCase):
         self.assertTrue(any("rebuilt from the deployment" in line for line in reported),
                         f"no rebuild warning in {reported}")
 
-    def test_the_upstream_is_the_deployments_own_unless_overridden(self):
-        client = self._open()
+    def test_a_stored_upstream_is_not_baked_in(self) -> None:
+        """Without a query, the bundle uses the service upstream, not the record's."""
+        # An older record can still hold the upstream its uploader chose. The site
+        # ignores it, so the bundle must too, or visitors' keys would go there.
+        client = self._open(upstream="https://router.example/v1")
         row = self._deploy(client, options=DeployOptions(
-            name="hello_shop", upstream="https://llm.example.com/v1"))
+            name="hello_shop", upstream="https://uploader.example/v1"))
         response = client.get(f"/deployments/{row['id']}/bundle")
-        self.assertIn("https://llm.example.com/v1",
-                      self._text(response.content, "agent-manifest.json"))
+        self.assertEqual(response.status_code, 200)
+        manifest: Dict[str, Any] = json.loads(self._text(response.content, "agent-manifest.json"))
+        router: Dict[str, Any] = manifest.get("llm_router") or {}
+        self.assertEqual(router.get("byok_router"), "https://router.example/v1")
+        self.assertNotIn("https://uploader.example/v1", json.dumps(manifest))
 
-    def test_an_upstream_query_overrides_the_deployments_own(self):
+    def test_an_upstream_query_sets_the_bundles_upstream(self):
+        """An upstream query parameter sets the bundle's BYOK target, and a stored upstream is not used."""
         client = self._open()
         row = self._deploy(client, options=DeployOptions(
             name="hello_shop", upstream="https://llm.example.com/v1"))

@@ -2,9 +2,14 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel
+from pydantic import Field
+from pydantic import field_validator
 
 # themespec owns the one seam into nsdeploy's private colour rule, so the schema
 # validates against exactly what the write path will accept (see themespec.py).
@@ -51,7 +56,10 @@ class DeployOptions(BaseModel):
                     "profile and then pick its id. Ignored when org_id is given.",
     )
     upstream: Optional[str] = Field(
-        default=None, description="runtime BYOK proxy upstream for this site's /byok/v1",
+        default=None,
+        description="ignored. Every site's /byok/v1 forwards to the service-wide upstream "
+                    "(NSDEPLOY_SERVICE_UPSTREAM). Kept so stored options still parse; an "
+                    "upload that names a different upstream is refused with 400.",
     )
     theme: Optional[bool] = Field(
         default=None,
@@ -176,6 +184,10 @@ class OrgCreate(BaseModel):
 
 
 class OrgUpdate(BaseModel):
+    """
+    Partial update to an organization; omitted fields stay unchanged.
+    """
+
     name: Optional[str] = Field(default=None, min_length=1, max_length=ORG_NAME_MAX,
                                 pattern=ORG_NAME_PATTERN)
     address: Optional[str] = Field(default=None, max_length=500)
@@ -183,6 +195,10 @@ class OrgUpdate(BaseModel):
 
 
 class OrgView(BaseModel):
+    """
+    An organization as returned by the API, with its deployment counts.
+    """
+
     id: str
     name: str
     address: str = ""
@@ -193,6 +209,10 @@ class OrgView(BaseModel):
 
 
 class OrgList(BaseModel):
+    """
+    List of organizations.
+    """
+
     organizations: List[OrgView]
 
 
@@ -328,6 +348,10 @@ class DeploymentView(BaseModel):
 
 
 class DeploymentList(BaseModel):
+    """
+    List of deployments plus the port-pool capacity.
+    """
+
     deployments: List[DeploymentView]
     capacity: Dict[str, Any]
 
@@ -560,6 +584,10 @@ class AgentGraphView(BaseModel):
 
 
 class LogView(BaseModel):
+    """
+    Tail of a deployment's build or run log.
+    """
+
     id: str
     status: DeploymentStatus
     lines: List[str]
@@ -567,6 +595,10 @@ class LogView(BaseModel):
 
 
 class HealthView(BaseModel):
+    """
+    Service health and version information.
+    """
+
     status: str
     version: str
     build: str = Field(
@@ -618,6 +650,10 @@ class SettingsField(BaseModel):
 
 
 class SettingsView(BaseModel):
+    """
+    Service settings as shown to the console, with secrets masked.
+    """
+
     nsdeploy_api_token: SettingsField = Field(default_factory=SettingsField)
     openai_api_key: SettingsField = Field(default_factory=SettingsField)
     # Not secrets, so shown to the console verbatim rather than masked — these are

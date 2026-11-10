@@ -3,12 +3,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nsdeploy.site_source import load_site_theme, seed_site_source, site_source_exists
+from nsdeploy.site_source import load_site_theme
+from nsdeploy.site_source import seed_site_source
+from nsdeploy.site_source import site_source_exists
 from nsdeploy.theme import ThemeSpec
 
 
 class SiteSourceTests(unittest.TestCase):
+    """Tests for seeding and loading editable site source packages."""
+
     def test_seed_creates_editable_source_package(self):
+        """Check seed creates editable source package."""
         with tempfile.TemporaryDirectory() as tmp:
             site_dir = Path(tmp) / "sites" / "harbor"
             seed_site_source(site_dir, ThemeSpec(brand="Harbor Desk"), "Harbor Desk")
@@ -23,6 +28,7 @@ class SiteSourceTests(unittest.TestCase):
             self.assertNotIn("style", metadata)
 
     def test_normal_seed_preserves_edits_and_refresh_preserves_site_js(self):
+        """Check normal seed preserves edits and refresh preserves site js."""
         with tempfile.TemporaryDirectory() as tmp:
             site_dir = Path(tmp)
             original = ThemeSpec.coerce({
@@ -50,6 +56,7 @@ class SiteSourceTests(unittest.TestCase):
             self.assertEqual((site_dir / "site.js").read_text(), "export const keep = true;")
 
     def test_load_combines_metadata_layout_and_css(self):
+        """Check load combines metadata layout and css."""
         with tempfile.TemporaryDirectory() as tmp:
             site_dir = Path(tmp)
             (site_dir / "theme.json").write_text(json.dumps({"brand": "Edited Harbor"}))

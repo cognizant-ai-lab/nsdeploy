@@ -38,10 +38,21 @@ from __future__ import annotations
 import os
 import ssl
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
+from typing import Optional
+
+# Optional dependencies: each fallback is skipped when its package is absent.
+try:
+    import truststore
+except ImportError:
+    truststore = None
+try:
+    import certifi
+except ImportError:
+    certifi = None
 
 # Set once per process; the value is also the "already done" flag.
-_installed: Optional[str] = None
+_installed: Optional[str] = None  # pylint: disable=invalid-name; mutable process state, not a constant
 
 
 def has_usable_store() -> bool:
@@ -71,6 +82,7 @@ def _install_python_default(bundle: str) -> None:
         return original(*args, **kwargs)
 
     ssl.create_default_context = create_default_context  # type: ignore[assignment]
+    # pylint: disable-next=protected-access  # urllib reads this private seam
     ssl._create_default_https_context = create_default_context  # type: ignore[assignment]
 
 
@@ -86,22 +98,18 @@ def _try_os_trust_store() -> Optional[str]:
     project's own machine api.github.com is untouched while api.openai.com is
     re-signed, so GitHub fetches succeeded and every LLM call failed.
     """
-    try:
-        import truststore
-    except ImportError:
+    if truststore is None:
         return None
     try:
         truststore.inject_into_ssl()
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught; any failure falls back to certifi
         return None
     return "the operating system trust store"
 
 
 def _try_certifi() -> Optional[str]:
     """Fall back to certifi's public roots. Enough for an un-inspected network."""
-    try:
-        import certifi
-    except ImportError:
+    if certifi is None:
         return None
     bundle = certifi.where()
     if not Path(bundle).is_file():
@@ -119,7 +127,7 @@ def ensure_ca_bundle() -> Optional[str]:
     here is inherited by a subprocess. That is deliberate: see the module docstring
     on `primp`.
     """
-    global _installed
+    global _installed  # pylint: disable=global-statement; process-wide idempotence flag
     if _installed:
         return _installed
     if os.environ.get("SSL_CERT_FILE") or os.environ.get("SSL_CERT_DIR"):

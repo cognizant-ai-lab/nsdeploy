@@ -9,20 +9,29 @@ live at its own URL, absent from the map — until its owner publishes it. Eithe
 only map visibility is affected; the directory and the deployment list show every
 record, and /unpublish withdraws one.
 """
+import asyncio
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
+from nsdeploy_service.app import create_app
 from nsdeploy_service.config import Settings
 from nsdeploy_service.models import DeployOptions
 from nsdeploy_service.store import Store
-from nsdeploy_service.supervisor import DeploymentError, Supervisor
+from nsdeploy_service.supervisor import DeploymentError
+from nsdeploy_service.supervisor import Supervisor
+from nsdeploy_service.supervisor import is_publishable
+from nsdeploy_service.supervisor import publish_refusal
 
 
 class PublishStateTest(unittest.TestCase):
+    """Publishes, refuses and withdraws deployments through the supervisor."""
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
         self._supervisors = []
 
@@ -88,12 +97,14 @@ class PublishStateTest(unittest.TestCase):
             supervisor.ports.release(dep.port)
 
     def test_publishing_a_ready_deployment_stamps_it(self):
+        """Publishing a ready deployment stamps it."""
         supervisor = self._supervisor()
         self._ready_row(supervisor)
         row = supervisor.publish("dep1")
         self.assertIsNotNone(row["published_at"])
 
     def test_publishing_is_idempotent_and_keeps_the_first_timestamp(self):
+        """Publishing is idempotent and keeps the first timestamp."""
         supervisor = self._supervisor()
         self._ready_row(supervisor)
         first = supervisor.publish("dep1")["published_at"]
@@ -101,6 +112,7 @@ class PublishStateTest(unittest.TestCase):
         self.assertEqual(first, again)
 
     def test_a_build_that_never_served_cannot_be_published(self):
+        """A build that never served cannot be published."""
         supervisor = self._supervisor()
         self._ready_row(supervisor, status="failed", ready_at=None)
         with self.assertRaises(DeploymentError) as caught:
@@ -119,8 +131,6 @@ class PublishStateTest(unittest.TestCase):
 
     def test_the_two_refusals_are_told_apart(self):
         """Deploy it, versus restart it — different remedies, different messages."""
-        from nsdeploy_service.supervisor import publish_refusal
-
         never = publish_refusal({"name": "n", "status": "failed", "ready_at": None})
         stopped = publish_refusal({"name": "n", "status": "stopped",
                                    "ready_at": "2026-09-23T22:00:00+00:00"})
@@ -129,18 +139,19 @@ class PublishStateTest(unittest.TestCase):
         self.assertNotIn("Restart", never)
 
     def test_publishable_is_reported_for_the_console(self):
-        from nsdeploy_service.supervisor import is_publishable
-
+        """Publishable is reported for the console."""
         self.assertTrue(is_publishable({"status": "ready", "published_at": None}))
         self.assertFalse(is_publishable({"status": "stopped", "published_at": None}))
         self.assertFalse(is_publishable({"status": "ready", "published_at": "t"}))
 
     def test_publishing_an_unknown_deployment_is_an_error(self):
+        """Publishing an unknown deployment is an error."""
         supervisor = self._supervisor()
         with self.assertRaises(DeploymentError):
             supervisor.publish("nope")
 
     def test_unpublish_clears_it_and_is_idempotent(self):
+        """Unpublish clears it and is idempotent."""
         supervisor = self._supervisor()
         self._ready_row(supervisor)
         supervisor.publish("dep1")
@@ -159,6 +170,7 @@ class PublishStateTest(unittest.TestCase):
         self.assertEqual(supervisor.store.get_deployment("dep1")["published_at"], published)
 
     def test_stopping_does_not_remove_a_network_from_the_map(self):
+        """Stopping does not remove a network from the map."""
         supervisor = self._supervisor()
         self._ready_row(supervisor)
         supervisor.publish("dep1")
@@ -172,7 +184,7 @@ class PublishMigrationTest(unittest.TestCase):
     """Networks that predate the gate must stay on the map."""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
 
     def tearDown(self):
@@ -180,8 +192,6 @@ class PublishMigrationTest(unittest.TestCase):
 
     def _legacy_database(self):
         """A database created before published_at existed."""
-        import sqlite3
-
         path = self.root / "service.db"
         store = Store(path)
         org = store.create_org("Acme")
@@ -203,6 +213,7 @@ class PublishMigrationTest(unittest.TestCase):
         return path
 
     def test_existing_ready_networks_are_adopted_as_published(self):
+        """Existing ready networks are adopted as published."""
         path = self._legacy_database()
         store = Store(path)
         try:
@@ -223,7 +234,7 @@ class PublishMigrationTest(unittest.TestCase):
             store.close()
 
     def test_a_stopped_legacy_record_is_still_adopted(self):
-        import sqlite3
+        """A stopped legacy record is still adopted."""
         path = self._legacy_database()
         conn = sqlite3.connect(path)
         conn.execute("UPDATE deployments SET status='stopped'")
@@ -259,8 +270,9 @@ class PublishMigrationTest(unittest.TestCase):
 
 
 class PublishEndpointTest(unittest.TestCase):
+    """Gates map visibility on publish state through the real endpoints."""
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
         for index in (0, 1):
             out_dir = self.root / f"d{index}" / "site"
@@ -300,13 +312,10 @@ class PublishEndpointTest(unittest.TestCase):
             })
 
     def _client(self):
-        from fastapi.testclient import TestClient
-
-        from nsdeploy_service.app import create_app
-
         return TestClient(create_app(self._settings()))
 
     def test_drafts_are_absent_from_the_map(self):
+        """Drafts are absent from the map."""
         with self._client() as client:
             self._seed(client.app.state.supervisor)
             graph = client.get("/graph").json()
@@ -314,6 +323,7 @@ class PublishEndpointTest(unittest.TestCase):
             self.assertEqual(graph["totals"]["nodes"], 0)
 
     def test_publishing_puts_exactly_that_network_on_the_map(self):
+        """Publishing puts exactly that network on the map."""
         with self._client() as client:
             self._seed(client.app.state.supervisor)
             self.assertEqual(client.post("/deployments/d0/publish").status_code, 200)
@@ -329,6 +339,7 @@ class PublishEndpointTest(unittest.TestCase):
             self.assertFalse(any(d["published"] for d in body["deployments"]))
 
     def test_the_directory_still_lists_drafts(self):
+        """The directory still lists drafts."""
         with self._client() as client:
             self._seed(client.app.state.supervisor)
             body = client.get("/directory").json()
@@ -336,6 +347,7 @@ class PublishEndpointTest(unittest.TestCase):
             self.assertCountEqual(names, ["net0", "net1"])
 
     def test_the_view_reports_publish_state(self):
+        """The view reports publish state."""
         with self._client() as client:
             self._seed(client.app.state.supervisor)
             self.assertFalse(client.get("/deployments/d0").json()["published"])
@@ -345,6 +357,7 @@ class PublishEndpointTest(unittest.TestCase):
             self.assertIsNotNone(view["published_at"])
 
     def test_unpublishing_removes_the_pin_but_keeps_the_deployment(self):
+        """Unpublishing removes the pin but keeps the deployment."""
         with self._client() as client:
             self._seed(client.app.state.supervisor)
             client.post("/deployments/d0/publish")
@@ -365,11 +378,13 @@ class PublishEndpointTest(unittest.TestCase):
                 self.assertIn(edge["target"], ids)
 
     def test_relations_endpoint_still_considers_every_deployment(self):
+        """Relations endpoint still considers every deployment."""
         with self._client() as client:
             self._seed(client.app.state.supervisor)
             self.assertEqual(client.get("/relations").json()["networks"], 2)
 
     def test_publishing_an_unknown_deployment_is_a_404(self):
+        """Publishing an unknown deployment is a 404."""
         with self._client() as client:
             self._seed(client.app.state.supervisor)
             self.assertEqual(client.post("/deployments/nope/publish").status_code, 404)
@@ -393,17 +408,13 @@ class MapStatusFilterTest(unittest.TestCase):
     """
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
 
     def tearDown(self):
         self._tmp.cleanup()
 
     def _client(self):
-        from fastapi.testclient import TestClient
-
-        from nsdeploy_service.app import create_app
-
         return TestClient(create_app(
             Settings(work_root=self.root, port_start=8770, port_end=8779)))
 
@@ -446,6 +457,7 @@ class MapStatusFilterTest(unittest.TestCase):
             self.assertEqual(self._names(client), set())
 
     def test_a_queued_network_is_not_on_the_map_yet(self):
+        """A queued network is not on the map yet."""
         with self._client() as client:
             self._seed(client.app.state.supervisor, "d0", "queued")
             self.assertEqual(self._names(client), set())
@@ -464,6 +476,7 @@ class MapStatusFilterTest(unittest.TestCase):
             self.assertTrue(all(node["url"] for node in nodes))
 
     def test_failed_and_stopped_networks_leave_the_map(self):
+        """Failed and stopped networks leave the map."""
         with self._client() as client:
             supervisor = client.app.state.supervisor
             self._seed(supervisor, "d0", "failed")
@@ -500,17 +513,13 @@ class PublishGuardEndpointTest(unittest.TestCase):
     with a message it can show verbatim."""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
 
     def tearDown(self):
         self._tmp.cleanup()
 
     def _client(self):
-        from fastapi.testclient import TestClient
-
-        from nsdeploy_service.app import create_app
-
         return TestClient(create_app(
             Settings(work_root=self.root, port_start=8770, port_end=8779)))
 
@@ -528,6 +537,7 @@ class PublishGuardEndpointTest(unittest.TestCase):
         })
 
     def test_a_never_deployed_network_is_refused_with_deploy_first(self):
+        """A never deployed network is refused with deploy first."""
         with self._client() as client:
             self._row(client.app.state.supervisor, "failed", None)
             response = client.post("/deployments/d/publish")
@@ -535,6 +545,7 @@ class PublishGuardEndpointTest(unittest.TestCase):
             self.assertIn("Deploy netd", response.json()["detail"])
 
     def test_a_stopped_network_is_refused_with_restart_first(self):
+        """A stopped network is refused with restart first."""
         with self._client() as client:
             self._row(client.app.state.supervisor, "stopped", "2026-09-23T22:00:05+00:00")
             response = client.post("/deployments/d/publish")
@@ -542,12 +553,14 @@ class PublishGuardEndpointTest(unittest.TestCase):
             self.assertIn("Restart it", response.json()["detail"])
 
     def test_a_refused_network_never_reaches_the_map(self):
+        """A refused network never reaches the map."""
         with self._client() as client:
             self._row(client.app.state.supervisor, "stopped", "2026-09-23T22:00:05+00:00")
             client.post("/deployments/d/publish")
             self.assertEqual(client.get("/graph").json()["nodes"], [])
 
     def test_the_view_carries_the_reason_for_the_console(self):
+        """The view carries the reason for the console."""
         with self._client() as client:
             self._row(client.app.state.supervisor, "failed", None)
             view = client.get("/deployments/d").json()
@@ -555,6 +568,7 @@ class PublishGuardEndpointTest(unittest.TestCase):
             self.assertIn("Deploy netd", view["publish_blocked_reason"])
 
     def test_a_ready_network_is_publishable_with_no_reason(self):
+        """A ready network is publishable with no reason."""
         with self._client() as client:
             self._row(client.app.state.supervisor, "ready", "2026-09-23T22:00:05+00:00")
             view = client.get("/deployments/d").json()
@@ -562,6 +576,7 @@ class PublishGuardEndpointTest(unittest.TestCase):
             self.assertIsNone(view["publish_blocked_reason"])
 
     def test_an_already_published_network_reports_no_reason(self):
+        """An already published network reports no reason."""
         with self._client() as client:
             self._row(client.app.state.supervisor, "ready", "2026-09-23T22:00:05+00:00")
             client.post("/deployments/d/publish")
@@ -576,17 +591,13 @@ class MapVisibilityTest(unittest.TestCase):
     takes it off; restarting puts it back without re-publishing."""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
 
     def tearDown(self):
         self._tmp.cleanup()
 
     def _client(self):
-        from fastapi.testclient import TestClient
-
-        from nsdeploy_service.app import create_app
-
         return TestClient(create_app(
             Settings(work_root=self.root, port_start=8730, port_end=8739)))
 
@@ -609,6 +620,7 @@ class MapVisibilityTest(unittest.TestCase):
             supervisor.store.set_published("d", "2026-09-23T22:10:00+00:00")
 
     def test_a_published_and_ready_network_is_on_the_map(self):
+        """A published and ready network is on the map."""
         with self._client() as client:
             self._row(client.app.state.supervisor, "ready")
             nodes = client.get("/graph").json()["nodes"]
@@ -624,6 +636,7 @@ class MapVisibilityTest(unittest.TestCase):
             self.assertTrue(node["url"].startswith("http"))
 
     def test_stopping_takes_it_off_the_map(self):
+        """Stopping takes it off the map."""
         with self._client() as client:
             self._row(client.app.state.supervisor, "stopped")
             self.assertEqual(client.get("/graph").json()["nodes"], [])
@@ -635,6 +648,7 @@ class MapVisibilityTest(unittest.TestCase):
             self.assertTrue(client.get("/deployments/d").json()["published"])
 
     def test_a_failed_published_network_is_not_on_the_map(self):
+        """A failed published network is not on the map."""
         with self._client() as client:
             self._row(client.app.state.supervisor, "failed")
             self.assertEqual(client.get("/graph").json()["nodes"], [])
@@ -645,17 +659,13 @@ class RemovalGuardTest(unittest.TestCase):
     uploaded HOCON, so it must not double as "tear the running site down"."""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
 
     def tearDown(self):
         self._tmp.cleanup()
 
     def _client(self):
-        from fastapi.testclient import TestClient
-
-        from nsdeploy_service.app import create_app
-
         return TestClient(create_app(
             Settings(work_root=self.root, port_start=8740, port_end=8749)))
 
@@ -674,6 +684,7 @@ class RemovalGuardTest(unittest.TestCase):
         })
 
     def test_a_running_deployment_cannot_be_purged(self):
+        """A running deployment cannot be purged."""
         with self._client() as client:
             self._row(client.app.state.supervisor, "ready")
             response = client.delete("/deployments/d?purge=true")
@@ -689,27 +700,27 @@ class RemovalGuardTest(unittest.TestCase):
             self.assertEqual(client.get("/deployments/d").json()["status"], "ready")
 
     def test_a_rejected_purge_keeps_the_record(self):
+        """A rejected purge keeps the record."""
         with self._client() as client:
             self._row(client.app.state.supervisor, "ready")
             client.delete("/deployments/d?purge=true")
             self.assertEqual(client.get("/deployments/d").status_code, 200)
 
     def test_a_stopped_deployment_can_be_purged(self):
+        """A stopped deployment can be purged."""
         with self._client() as client:
             self._row(client.app.state.supervisor, "stopped")
             self.assertEqual(client.delete("/deployments/d?purge=true").status_code, 200)
             self.assertEqual(client.get("/deployments/d").status_code, 404)
 
     def test_stopping_without_purge_is_still_allowed_while_running(self):
+        """Stopping without purge is still allowed while running."""
         with self._client() as client:
             self._row(client.app.state.supervisor, "ready")
             self.assertEqual(client.delete("/deployments/d").status_code, 200)
 
     def test_forget_refuses_a_live_record_directly(self):
-        import asyncio
-
-        from nsdeploy_service.supervisor import Supervisor
-
+        """Forget refuses a live record directly."""
         supervisor = Supervisor(Settings(work_root=self.root,
                                          port_start=8740, port_end=8749))
         try:
@@ -726,36 +737,36 @@ class PublishedOriginWarningTest(unittest.TestCase):
     nothing. /health says so instead of leaving it to be discovered."""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root = Path(self._tmp.name)
 
     def tearDown(self):
         self._tmp.cleanup()
 
     def _warnings(self, **over):
-        from fastapi.testclient import TestClient
-
-        from nsdeploy_service.app import create_app
-
-        base = dict(work_root=self.root, port_start=8710, port_end=8719)
+        base = {"work_root": self.root, "port_start": 8710, "port_end": 8719}
         base.update(over)
         with TestClient(create_app(Settings(**base))) as client:
             return client.get("/health").json()["warnings"]
 
     def test_https_with_port_per_deployment_is_flagged(self):
+        """Https with port per deployment is flagged."""
         found = self._warnings(public_scheme="https",
                                public_host="x.eastus.azurecontainerapps.io")
         self.assertTrue(any("will not resolve" in w for w in found), found)
 
     def test_the_warning_names_the_port_pool(self):
+        """The warning names the port pool."""
         found = self._warnings(public_scheme="https", public_host="x.example.com")
         self.assertTrue(any("8710-8719" in w for w in found), found)
 
     def test_a_subdomain_template_clears_it(self):
+        """A subdomain template clears it."""
         found = self._warnings(public_scheme="https", public_host="x.example.com",
                                subdomain_template="{id}")
         self.assertFalse(any("will not resolve" in w for w in found), found)
 
     def test_plain_http_is_not_flagged(self):
+        """Plain http is not flagged."""
         found = self._warnings(public_scheme="http", public_host="10.1.2.3")
         self.assertFalse(any("will not resolve" in w for w in found), found)

@@ -9,9 +9,11 @@ from __future__ import annotations
 import os
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
-from typing import List, Optional
+from typing import List
+from typing import Optional
 from urllib.parse import urlsplit
 
 ENV_PREFIX = "NSDEPLOY_SERVICE_"
@@ -77,7 +79,7 @@ def _env_list(name: str, default: List[str]) -> List[str]:
 
 
 @dataclass
-class Settings:
+class Settings:  # pylint: disable=too-many-instance-attributes; one field per setting
     """Runtime configuration for the deployment service."""
 
     # --- the service's own listener ---
@@ -227,6 +229,9 @@ class Settings:
 
     # --- access control ---
     api_token: str = ""              # empty = open (fine on loopback only)
+    # Lets /console-api add `api_token` to the console's own requests, so the console does not ask
+    # for it. The token stays on the server, but anyone can then make those requests (see ConsoleProxy).
+    console_proxy: bool = False
 
     # Origins allowed to call this API from a browser on another host. Empty — the
     # default — installs no CORS middleware at all, so the service answers exactly as
@@ -250,6 +255,9 @@ class Settings:
     # with a bearer header, never a cookie, so there is nothing for a browser to
     # attach automatically and no reason to let it.
     cors_origins: List[str] = field(default_factory=list)
+    # Environment variables a site process still receives although SiteEnv would remove
+    # them, such as a provider key a coded tool reads. Never the service's own credentials.
+    site_env_allow: List[str] = field(default_factory=list)
 
     # --- deployment environment ---
     # `/health` warns that https site URLs cannot resolve when the scheme is https and
@@ -263,6 +271,12 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        """
+        Build validated settings from NSDEPLOY_SERVICE_* environment variables.
+
+        :return: The settings, with unset variables taking their defaults.
+        :raises ValueError: If a value is malformed or the settings are inconsistent.
+        """
         default = cls()
         work_root = _env("WORK_ROOT")
         db_path = _env("DB_PATH")
@@ -307,7 +321,9 @@ class Settings:
             relations_model=_env("RELATIONS_MODEL", default.relations_model),
             build_version=_env("BUILD_VERSION", default.build_version),
             api_token=_env("API_TOKEN", default.api_token),
+            console_proxy=_env_bool("CONSOLE_PROXY", default.console_proxy),
             cors_origins=_env_list("CORS_ORIGINS", default.cors_origins),
+            site_env_allow=_env_list("SITE_ENV_ALLOW", default.site_env_allow),
             tls_terminated_externally=_env_bool("TLS_TERMINATED_EXTERNALLY",
                                                 default.tls_terminated_externally),
         )
@@ -315,6 +331,11 @@ class Settings:
         return settings
 
     def validate(self) -> None:
+        """
+        Check that the settings are mutually consistent.
+
+        :raises ValueError: If a setting is out of range or conflicts with another.
+        """
         if self.port_end < self.port_start:
             raise ValueError("PORT_END must be >= PORT_START")
         pool_size = self.port_end - self.port_start + 1
@@ -384,6 +405,11 @@ class Settings:
         return allowed
 
     def database_path(self) -> Path:
+        """
+        Return the SQLite database path, defaulting to service.db under the work root.
+
+        :return: The database path.
+        """
         return self.db_path or (self.work_root / "service.db")
 
     def subdomain_label(self, deployment_id: str, port: int, name: str = "") -> str:

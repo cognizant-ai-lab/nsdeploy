@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build:runner": "node scripts/bundle-runner.mjs",
-    "test": "node tests/runtime_regression.mjs && node --test tests/cruse.test.mjs tests/actions.test.mjs tests/accelerator_link.test.mjs tests/link_prompt.test.mjs tests/map_refresh.test.mjs tests/network_list.test.mjs tests/scatter.test.mjs tests/shared_byok.test.mjs tests/zoom.test.mjs tests/engine_stream.test.mjs"
+    "test": "node tests/runtime_regression.mjs && node --test tests/cruse.test.mjs tests/actions.test.mjs tests/accelerator_link.test.mjs tests/link_prompt.test.mjs tests/map_refresh.test.mjs tests/network_list.test.mjs tests/scatter.test.mjs tests/shared_byok.test.mjs tests/byok_tab_setup.test.mjs tests/zoom.test.mjs tests/engine_stream.test.mjs"
   },
   "devDependencies": {
     "@langchain/core": "1.2.12",

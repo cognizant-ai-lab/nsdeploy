@@ -20,14 +20,7 @@ export { ActionRegistry } from "../actions.js";
 import { Engine } from "./engine.js";
 import { TraceBus } from "../trace.js";
 import { mountApp } from "../ui.js";
-import { getSelectedByokProfile, resolveByokRouter } from "../byok.js";
-
-const sameRouterUrl = (left, right) => {
-  const normalize = (value) => {
-    try { return new URL(resolveByokRouter(value), location.origin).href.replace(/\/$/, ""); } catch { return ""; }
-  };
-  return !!left && normalize(left) === normalize(right);
-};
+import { getSelectedByokProfile, loadTabByokSetup } from "../byok.js";
 
 export async function boot(rootSelector = "#app", opts = {}) {
   const root = typeof rootSelector === "string" ? document.querySelector(rootSelector) : rootSelector;
@@ -35,31 +28,34 @@ export async function boot(rootSelector = "#app", opts = {}) {
   root.setAttribute("data-nsdeploy-ui", "");
   const trace = new TraceBus();
   const params = new URLSearchParams(location.search);
-  // An API key in the URL is refused, not used. Query strings end up in server logs,
-  // browser history and shared links, and a crafted link could plant someone else's
-  // key. It's taken out of the address bar before the page stops.
+  // Key, router and model come from the hosting page (opts), the setup applied in
+  // this tab or the saved BYOK profile, never from the URL, so a link cannot choose
+  // where the key is sent or which model it pays for. A key in the URL is removed
+  // from the address bar so it does not stay in history. Router and model stay,
+  // because a host page may use those names for its own parameters.
+  const ignoredParams = [];
+  // Note each setting found in the URL. Its value is never read or logged.
+  for (const name of ["key", "router", "model"]) {
+    if (params.has(name)) ignoredParams.push(name);
+  }
   if (params.has("key")) {
     params.delete("key");
     const qs = params.toString();
     try { history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash); } catch {}
-    throw new Error("API keys can't be passed in the URL. Open ⚙ BYOK settings and enter it there.");
   }
-  let storedKey = "";
-  try { storedKey = sessionStorage.getItem("nsweb-byok-key") || ""; } catch {}
+  if (ignoredParams.length) {
+    const names = ignoredParams.join(", ");
+    console.warn(`Inference settings in the page URL are ignored (${names}). Set them in BYOK / router settings.`);
+  }
   const savedProfile = getSelectedByokProfile();
-  const savedRouter = resolveByokRouter(savedProfile?.router || "");
-  // The settings panel puts the router in the URL so links stay shareable, and saves
-  // it with the key. A link naming any other router gets no saved key, so a link can't
-  // send the visitor's key somewhere new.
-  const urlRouter = params.get("router") || "";
-  const keyFollows = !urlRouter || sameRouterUrl(urlRouter, savedRouter);
+  const tabSetup = loadTabByokSetup(savedProfile);
   const siteBase = (opts.originUrl || location.origin).replace(/\/$/, "");
   const engine = new Engine({
     originUrl: siteBase,
     trace,
-    byokKey: opts.byokKey || (keyFollows ? storedKey || savedProfile?.key : "") || "",
-    routerOverride: opts.router || urlRouter || savedRouter || "",
-    modelOverride: opts.model || params.get("model") || savedProfile?.model || "",
+    byokKey: opts.byokKey || tabSetup.key,
+    routerOverride: opts.router || tabSetup.router,
+    modelOverride: opts.model || tabSetup.model,
     // 24, as on main. The browser test raises it to check every agent a network can
     // reach, since nsdeploy's mock LLM calls every tool.
     maxAgentCalls: opts.maxAgentCalls ?? globalThis.__nsdeployMaxAgentCalls ?? 24,

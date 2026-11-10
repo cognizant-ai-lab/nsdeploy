@@ -10,7 +10,7 @@ description = "Deploy a neuro-san agent-network HOCON as a serverless website: r
 # https://packaging.python.org/en/latest/guides/licensing-examples-and-user-scenarios/
 license = "Apache-2.0"
 license-files = ["LICENSE.txt"]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 # Runtime dependencies live in requirements.txt (see [tool.setuptools.dynamic] below), so
 # team members who do not use uv get the conventional `pip install -r requirements.txt`,
 # and `pip install -e .` / `uv sync` read the very same list — one file to edit.

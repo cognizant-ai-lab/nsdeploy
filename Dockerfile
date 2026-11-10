@@ -1,8 +1,4 @@
-FROM python:3.11-slim
-
-# nsdeploy pip-installs a hosted tool's third-party deps on demand at build time.
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+FROM python:3.12-slim
 
 WORKDIR /app
 
