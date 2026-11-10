@@ -692,6 +692,16 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         # releases its slot, so the status counts alone no longer say whether
         # the service is saturated.
         self._slots_in_use: int = 0
+        # One lock per work directory. A restart and a re-upload both reuse the
+        # directory of the deployment they replace, so without this the outgoing
+        # build's cleanup can still be deleting files while its replacement is
+        # generating them there. Keyed by path rather than by deployment, because
+        # the replacement is a different Deployment over the same directory.
+        #
+        # Only ever touched from the event loop, so the dict needs no guard of its
+        # own. It holds one small entry per directory this process has built in,
+        # which is bounded by MAX_DEPLOYMENTS for any one run.
+        self._work_locks: Dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task] = set()
         settings.work_root.mkdir(parents=True, exist_ok=True)
         self.store = store or Store(settings.database_path())
@@ -1252,6 +1262,24 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             cmd.append("--no-cruse")
         return cmd
 
+    def _work_lock(self, dep: Deployment) -> asyncio.Lock:
+        """
+        The lock that serializes builds sharing one work directory.
+
+        Acquired *after* a build slot, never before: a build which held this while
+        queueing for a slot would block the predecessor that already has one from
+        finishing and releasing it.
+
+        :param dep: The deployment about to be built.
+        :return: The lock for its work directory.
+        """
+        key: str = str(dep.work_dir)
+        lock: Optional[asyncio.Lock] = self._work_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._work_locks[key] = lock
+        return lock
+
     def _abandon(self, dep: Deployment) -> None:
         """
         Stop a child this build started for a deployment which is no longer building.
@@ -1356,32 +1384,44 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             # included, or /health reports free capacity while every slot is busy.
             self._slots_in_use += 1
             try:
-                # Cleared before the child starts, so the readiness test can only
-                # pass on output this build produced.
-                try:
-                    await asyncio.to_thread(self._clear_readiness, dep)
-                except DeploymentError as exc:
-                    self._fail(dep, str(exc))
-                    return
-                # Clearing is an await point, so a stop can complete inside it.
-                # That teardown released the port and found no child to signal,
-                # so spawning now would put one on a port the pool has already
-                # handed back.
-                if dep.status is not DeploymentStatus.BUILDING:
-                    return
-                try:
-                    dep.process = await asyncio.to_thread(self._spawn, dep)
-                except OSError as exc:
-                    self._fail(dep, f"could not start nsdeploy: {exc}")
-                    return
-                # Spawning is an await point too, and a stop which landed in it
-                # could not see the child that came out of it. _await_generated
-                # would return for the changed status and leave it running.
-                if dep.status is not DeploymentStatus.BUILDING:
-                    await asyncio.to_thread(self._abandon, dep)
-                    return
-                self._persist(dep)  # record the pid now that the child exists
-                generated = await self._await_generated(dep, deadline)
+                # Nothing else may be building in this directory. A restart or a
+                # re-upload builds in the directory of the deployment it replaces,
+                # and the outgoing build's cleanup runs in a worker thread: without
+                # this it could still be deleting files while the replacement
+                # generates them, and no later status check can undo that.
+                async with self._work_lock(dep):
+                    # Cleared before the child starts, so the readiness test can
+                    # only pass on output this build produced.
+                    try:
+                        await asyncio.to_thread(self._clear_readiness, dep)
+                    except DeploymentError as exc:
+                        # A stop can have completed while that worker ran. Failing
+                        # now would release the port a second time and persist this
+                        # record over the replacement which has already taken it.
+                        if dep.status is DeploymentStatus.BUILDING:
+                            self._fail(dep, str(exc))
+                        return
+                    # Clearing is an await point, so a stop can complete inside
+                    # it. That teardown released the port and found no child to
+                    # signal, so spawning now would put one on a port the pool
+                    # has already handed back.
+                    if dep.status is not DeploymentStatus.BUILDING:
+                        return
+                    try:
+                        dep.process = await asyncio.to_thread(self._spawn, dep)
+                    except OSError as exc:
+                        if dep.status is DeploymentStatus.BUILDING:
+                            self._fail(dep, f"could not start nsdeploy: {exc}")
+                        return
+                    # Spawning is an await point too, and a stop which landed in
+                    # it could not see the child that came out of it.
+                    # _await_generated would return for the changed status and
+                    # leave it running.
+                    if dep.status is not DeploymentStatus.BUILDING:
+                        await asyncio.to_thread(self._abandon, dep)
+                        return
+                    self._persist(dep)  # record the pid now the child exists
+                    generated = await self._await_generated(dep, deadline)
             except asyncio.CancelledError:
                 self._teardown(dep, DeploymentStatus.STOPPED, "service shutting down")
                 raise

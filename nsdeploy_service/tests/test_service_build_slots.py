@@ -7,6 +7,7 @@ from nsdeploy_service.config import Settings
 from nsdeploy_service.models import DeploymentStatus
 from nsdeploy_service.models import DeployOptions
 from nsdeploy_service.supervisor import READINESS_POLL_SECONDS
+from nsdeploy_service.supervisor import DeploymentError
 from nsdeploy_service.supervisor import Supervisor
 
 
@@ -60,15 +61,28 @@ class BuildSlotTest(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
-        settings = Settings(work_root=Path(self._tmp.name), port_start=8560, port_end=8579,
-                            max_deployments=10, max_concurrent_builds=1)
-        self.supervisor = Supervisor(settings)
         self.generated = set()
         self.processes = []
+        self.install(slots=1)
+
+    def install(self, slots: int) -> None:
+        """
+        Build the supervisor these tests drive.
+
+        Most of them want one slot, so that only the slot can let the next
+        deployment start. A test about the work-directory lock needs a spare slot,
+        or the slot would hold the second build back and the test would pass
+        whether the lock exists or not.
+
+        :param slots: How many concurrent builds to allow.
+        """
+        settings = Settings(work_root=Path(self._tmp.name), port_start=8560, port_end=8579,
+                            max_deployments=10, max_concurrent_builds=slots)
+        self.supervisor = Supervisor(settings)
         # The seams these tests drive. Patched rather than mocked so the real
         # _build coroutine runs: the slot handover is what is under test.
         # _site_is_ours never answers, so a deployment stays in the readiness
-        # phase and only the slot can let the next one start.
+        # phase and only a slot or the work lock can let the next one start.
         # pylint: disable=protected-access
         self.supervisor._spawn = self._spawn
         self.supervisor._site_is_ready_to_summarize = self._has_generated
@@ -207,6 +221,61 @@ class BuildSlotTest(unittest.IsolatedAsyncioTestCase):
         process = self._spawn(dep)
         self._stop_during(dep)
         return process
+
+    async def test_a_stop_during_clearing_does_not_fail_the_record(self):
+        """_fail releases the port, so failing a deployment that has already been
+        stopped releases it twice — and the second release can take the reservation
+        of the replacement that has meanwhile claimed that port.
+        """
+        stopped = self.supervisor.create(b'{"tools": []}', DeployOptions(name="unlucky"))
+        port = stopped.port
+        # pylint: disable-next=protected-access
+        self.supervisor._clear_readiness = self._stop_then_raise
+        self.supervisor.start(stopped)
+        await self._settle()
+        self.assertEqual(stopped.status, DeploymentStatus.STOPPED,
+                         "a stopped deployment was overwritten as failed")
+        # Released once by the stop. A second release would hand this port out while
+        # whoever reserved it next is still using it.
+        self.assertNotIn(port, self.supervisor.ports.reserved())
+        self.assertEqual(self.supervisor.ports.reserve(preferred=port), port)
+
+    def _stop_then_raise(self, dep) -> None:
+        """
+        Stand in for a stop completing inside a clearing worker that then fails.
+
+        :param dep: The deployment being cleared.
+        :raises DeploymentError: Always, after the stop has landed.
+        """
+        self._stop_during(dep)
+        raise DeploymentError("cannot clear the previous build's agent-manifest.json")
+
+    async def test_one_build_at_a_time_per_work_directory(self):
+        """A restart and a re-upload build in the directory of the deployment they
+        replace. The outgoing build clears that directory from a worker thread, so
+        two builds over one directory could have the old cleanup delete what the new
+        one has just generated — which no later status check can undo.
+        """
+        # Two slots, so the slot cannot be what holds the second build back.
+        self.supervisor.store.close()
+        self.install(slots=2)
+        first = self.supervisor.create(b'{"tools": []}', DeployOptions(name="shared"))
+        # The replacement: a different Deployment over the same work directory, as
+        # restart() and _replace() both build.
+        second = self.supervisor.create(b'{"tools": []}', DeployOptions(name="other"))
+        second.work_dir = first.work_dir
+        second.out_dir = first.out_dir
+        self.supervisor.start(first)
+        await self._settle()
+        self.supervisor.start(second)
+        await self._settle()
+        # Both hold a slot: the slot is taken before the lock, deliberately, so
+        # that a build waiting for the lock cannot also be holding up the slot
+        # its predecessor needs to finish. What the lock stops is the second one
+        # reaching this directory at all.
+        self.assertEqual(len(self.processes), 1,
+                         "a second build ran in a directory already being built in")
+        self.assertIsNone(second.process)
 
     async def test_a_previous_builds_artifacts_do_not_release_the_slot(self):
         """A restart or a re-upload keeps the deployment's output directory, so the
