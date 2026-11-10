@@ -236,6 +236,7 @@ const BASE_CSS = PRESENTATION_CSS + `
 .ns-settings-body button.ghost{background:transparent;color:var(--ns-muted,#666);border:1px solid var(--ns-border,#ccc)}
 .ns-profile-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .ns-key-help{padding:10px;border:1px solid color-mix(in srgb,var(--ns-primary,#2563eb) 30%,var(--ns-border,#ccc));border-radius:8px;background:color-mix(in srgb,var(--ns-primary,#2563eb) 6%,var(--ns-panelbg,#fff));display:flex;flex-direction:column;gap:6px}
+.ns-key-help[hidden]{display:none}
 .ns-key-help p{margin:0;line-height:1.45}
 .ns-key-help>a{color:var(--ns-primary,#2563eb);font-weight:600}
 .ns-key-providers{display:flex;flex-wrap:wrap;gap:6px}
@@ -293,7 +294,7 @@ export function mountApp(root, { engine, trace, manifest }) {
         <div class="ns-key-providers">${providerLinksHtml}</div>
         <div class="ns-hint">Free tiers have usage limits and may vary by region. Other providers may require billing.</div>
       </div>` : ""}
-      <label>API key <span aria-hidden="true">*</span><input id="ns-key" type="password" autocomplete="off" placeholder="Paste your API key" required aria-required="true"></label>
+      <label><span>API key <span aria-hidden="true">*</span></span><input id="ns-key" type="password" autocomplete="off" placeholder="Paste your API key" required aria-required="true"></label>
       <button id="ns-apply">Save and start</button>
       <details class="ns-settings-advanced">
         <summary>Advanced settings (optional)</summary>
@@ -929,6 +930,11 @@ export function mountApp(root, { engine, trace, manifest }) {
   const saveProfileBtn = root.querySelector("#ns-save-profile");
   const deleteProfileBtn = root.querySelector("#ns-delete-profile");
   const providerLinks = root.querySelectorAll("[data-ns-provider]");
+  // The help is for visitors without a key, so it hides while the key field has one.
+  const keyHelpEl = root.querySelector(".ns-key-help");
+  const refreshKeyHelp = () => {
+    if (keyHelpEl) keyHelpEl.hidden = keyEl.value.trim().length > 0;
+  };
   // The compiled LLM may already point at BYOK after a saved-profile upgrade.
   // New manifests identify an opt-in mock separately; retain compatibility with
   // older manifests where the mock was the declared default base URL.
@@ -981,6 +987,7 @@ export function mountApp(root, { engine, trace, manifest }) {
     profileNameEl.value = profile.name || "";
     keyEl.value = profile.key || "";
     formProvider = providerForApiKey(keyEl.value);
+    refreshKeyHelp();
     modelEl.value = profile.model || "";
     routerEl.value = resolveByokRouter(profile.router || "");
     refreshHint();
@@ -1043,9 +1050,11 @@ export function mountApp(root, { engine, trace, manifest }) {
       hintEl.textContent = `Mock router (no key needed). To use a real LLM, enter a key — it will route via ${byokRouter || "the proxy"}.`;
     } else {
       hintEl.className = "ns-hint";
-      hintEl.textContent = staticMode
-        ? "Real LLM router. Your key is sent directly from this browser to that router; it must allow browser CORS."
-        : "Real LLM router. Your key is sent only here (a CORS pass-through to your provider).";
+      const viaThisSite = !staticMode && !!byokRouter
+        && resolveByokRouter(routerEl.value) === resolveByokRouter(byokRouter);
+      hintEl.textContent = viaThisSite
+        ? "Your key is sent to this site, which passes it on to your AI provider."
+        : "Your key is sent from this browser straight to this address.";
     }
   };
   const applyProviderDefaults = (provider, message) => {
@@ -1172,6 +1181,7 @@ export function mountApp(root, { engine, trace, manifest }) {
       routerEl.value = byokRouter;
     }
     if (profileEl.value && selectedProfile?.key !== keyEl.value.trim()) profileEl.value = "";
+    refreshKeyHelp();
     refreshHint();
   });
   routerEl.addEventListener("input", refreshHint);
@@ -1189,6 +1199,7 @@ export function mountApp(root, { engine, trace, manifest }) {
       // A key recognized as another provider's must not be sent to this provider.
       const keyProvider = providerForApiKey(keyEl.value.trim());
       if (keyProvider && keyProvider !== provider) keyEl.value = "";
+      refreshKeyHelp();
       applyProviderDefaults(provider, `${provider.name} selected. Create a key in the new tab, then paste it here.`);
     });
   });
