@@ -1,5 +1,6 @@
 import json
 import re
+import sqlite3
 import socket
 import subprocess
 import sys
@@ -7,6 +8,7 @@ import tempfile
 import unittest
 from datetime import timedelta
 from pathlib import Path
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -14,6 +16,7 @@ from nsdeploy_service import __version__
 from nsdeploy_service.app import ORG_NAME_MAX
 from nsdeploy_service.app import ORG_NAME_PATTERN
 from nsdeploy_service.app import create_app
+from nsdeploy_service.bundler import Bundler
 from nsdeploy_service.app import read_ui_version
 from nsdeploy_service.config import Settings
 from nsdeploy_service.models import DeploymentStatus
@@ -340,6 +343,36 @@ class BuildQueueTest(unittest.TestCase):
         self.assertEqual(queue["slots"], 2)
         self.assertEqual(queue["waiting"], 1)
         self.assertIsNotNone(queue["oldest_wait_seconds"])
+
+
+class LifespanCleanupTest(unittest.TestCase):
+    """Shutdown runs even when a background task ended badly.
+
+    The studio warm-up is fire-and-forget, and shutdown awaits it to collect the
+    task. Awaiting a task that raised re-raises at that point, so without care the
+    deployment children and the store are left exactly as they are.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_a_failed_warm_up_does_not_skip_supervisor_shutdown(self):
+        """A warm-up that raises must not leave the store open."""
+        settings = Settings(work_root=Path(self._tmp.name), port_start=8750, port_end=8759,
+                            max_deployments=5)
+        # Raised from the source construction, which is outside warm_listing's own
+        # handling, and not an OSError so _warm_studio cannot absorb it either.
+        with mock.patch.object(Bundler, "studio_source", side_effect=RuntimeError("boom")):
+            client = TestClient(create_app(settings))
+            with client:
+                supervisor = client.app.state.supervisor
+        # Closing the store is the last thing shutdown() does, so a closed store
+        # means the whole of it ran.
+        with self.assertRaises(sqlite3.ProgrammingError):
+            supervisor.store.count_by_status()
 
 
 class ReportParsingTest(unittest.TestCase):

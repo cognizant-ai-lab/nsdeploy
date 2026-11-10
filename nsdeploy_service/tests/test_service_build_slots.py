@@ -277,6 +277,51 @@ class BuildSlotTest(unittest.IsolatedAsyncioTestCase):
                          "a second build ran in a directory already being built in")
         self.assertIsNone(second.process)
 
+    async def test_the_lock_registry_does_not_grow_with_every_deployment(self):
+        """MAX_DEPLOYMENTS bounds live deployments, not directories ever built in,
+        and forget() drops a record without dropping its lock. A registry that only
+        grew would keep an entry for every deploy/purge cycle of the service's life.
+        """
+        # Several deployments, each with its own work directory, built one after
+        # another as a long-lived service would.
+        for index in range(4):
+            dep = self.supervisor.create(b'{"tools": []}',
+                                         DeployOptions(name=f"churn{index}"))
+            self.supervisor.start(dep)
+            await self._settle()
+            self._stop_during(dep)
+            await self._settle()
+        # pylint: disable-next=protected-access
+        self.assertEqual(self.supervisor._work_locks, {},
+                         "a lock was kept for a directory nothing is building in")
+        # pylint: disable-next=protected-access
+        self.assertEqual(self.supervisor._work_claims, {})
+
+    async def test_a_waiting_build_keeps_the_lock_it_is_waiting_on(self):
+        """Retiring a lock while a waiter holds a reference to it would let the next
+        claim create a second Lock for one directory, which serializes nothing.
+        """
+        self.supervisor.store.close()
+        self.install(slots=2)
+        first = self.supervisor.create(b'{"tools": []}', DeployOptions(name="held"))
+        second = self.supervisor.create(b'{"tools": []}', DeployOptions(name="waiter"))
+        second.work_dir = first.work_dir
+        second.out_dir = first.out_dir
+        self.supervisor.start(first)
+        await self._settle()
+        self.supervisor.start(second)
+        await self._settle()
+        key = str(first.work_dir)
+        # pylint: disable-next=protected-access
+        held = self.supervisor._work_locks.get(key)
+        # pylint: disable-next=protected-access
+        self.assertEqual(self.supervisor._work_claims.get(key), 2)
+        self._stop_during(first)
+        await self._settle()
+        # The waiter took the very same lock, not a fresh one.
+        # pylint: disable-next=protected-access
+        self.assertIs(self.supervisor._work_locks.get(key), held)
+
     async def test_a_previous_builds_artifacts_do_not_release_the_slot(self):
         """A restart or a re-upload keeps the deployment's output directory, so the
         last build's manifest and network JSON are already there when the next child

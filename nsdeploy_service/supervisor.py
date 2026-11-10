@@ -698,10 +698,14 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         # generating them there. Keyed by path rather than by deployment, because
         # the replacement is a different Deployment over the same directory.
         #
-        # Only ever touched from the event loop, so the dict needs no guard of its
-        # own. It holds one small entry per directory this process has built in,
-        # which is bounded by MAX_DEPLOYMENTS for any one run.
+        # Only ever touched from the event loop, so neither dict needs a guard of
+        # its own. A lock is kept only while a build holds or waits for it:
+        # MAX_DEPLOYMENTS bounds live deployments, not directories ever built in,
+        # and forget() drops a record without dropping its lock, so a registry that
+        # only grew would keep an entry for every deploy/purge cycle of the
+        # service's life.
         self._work_locks: Dict[str, asyncio.Lock] = {}
+        self._work_claims: Dict[str, int] = {}
         self._tasks: set[asyncio.Task] = set()
         settings.work_root.mkdir(parents=True, exist_ok=True)
         self.store = store or Store(settings.database_path())
@@ -1262,9 +1266,14 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             cmd.append("--no-cruse")
         return cmd
 
-    def _work_lock(self, dep: Deployment) -> asyncio.Lock:
+    def _claim_work_lock(self, dep: Deployment) -> asyncio.Lock:
         """
-        The lock that serializes builds sharing one work directory.
+        Claim the lock that serializes builds sharing one work directory.
+
+        Claiming before acquiring is what makes the lock safe to retire: a waiter
+        has registered its claim before the holder releases, so the entry cannot be
+        removed and recreated underneath it — two Lock objects for one directory
+        would serialize nothing.
 
         Acquired *after* a build slot, never before: a build which held this while
         queueing for a slot would block the predecessor that already has one from
@@ -1278,7 +1287,22 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         if lock is None:
             lock = asyncio.Lock()
             self._work_locks[key] = lock
+        self._work_claims[key] = self._work_claims.get(key, 0) + 1
         return lock
+
+    def _drop_work_lock(self, dep: Deployment) -> None:
+        """
+        Give up this build's claim, retiring the lock once nothing holds it.
+
+        :param dep: The deployment whose build has finished with the directory.
+        """
+        key: str = str(dep.work_dir)
+        claims: int = self._work_claims.get(key, 0) - 1
+        if claims > 0:
+            self._work_claims[key] = claims
+            return
+        self._work_claims.pop(key, None)
+        self._work_locks.pop(key, None)
 
     def _abandon(self, dep: Deployment) -> None:
         """
@@ -1383,13 +1407,14 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             # Counted for the whole time the slot is held, clearing and spawning
             # included, or /health reports free capacity while every slot is busy.
             self._slots_in_use += 1
+            # Nothing else may be building in this directory. A restart or a
+            # re-upload builds in the directory of the deployment it replaces, and
+            # the outgoing build's cleanup runs in a worker thread: without this it
+            # could still be deleting files while the replacement generates them,
+            # and no later status check can undo that.
+            work_lock: asyncio.Lock = self._claim_work_lock(dep)
             try:
-                # Nothing else may be building in this directory. A restart or a
-                # re-upload builds in the directory of the deployment it replaces,
-                # and the outgoing build's cleanup runs in a worker thread: without
-                # this it could still be deleting files while the replacement
-                # generates them, and no later status check can undo that.
-                async with self._work_lock(dep):
+                async with work_lock:
                     # Cleared before the child starts, so the readiness test can
                     # only pass on output this build produced.
                     try:
@@ -1426,6 +1451,7 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
                 self._teardown(dep, DeploymentStatus.STOPPED, "service shutting down")
                 raise
             finally:
+                self._drop_work_lock(dep)
                 self._slots_in_use -= 1
         if not generated or deadline is None:
             return

@@ -48,6 +48,7 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from nsdeploy.studio import StudioSource
 from nsdeploy_service import PRODUCT_NAME
 from nsdeploy_service import __version__
 from nsdeploy_service import envfile
@@ -383,7 +384,15 @@ async def _warm_studio(bundler: Bundler) -> None:
 
     :param bundler: The bundler, which owns how a studio source is chosen.
     """
-    source = bundler.studio_source()
+    source: Optional[StudioSource] = None
+    try:
+        # Not inside warm_listing's own handling: building a GithubStudio creates
+        # its cache directory, so this can fail before there is anything to warm.
+        source = bundler.studio_source()
+    except OSError as exc:
+        print(f"cannot prepare the studio cache, so include paths will be "
+              f"resolved per build: {exc}", file=sys.stderr)
+        return
     await asyncio.to_thread(source.warm_listing)
 
 
@@ -425,12 +434,20 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         finally:
             reaper.cancel()
             warming.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await reaper
-            with contextlib.suppress(asyncio.CancelledError):
-                await warming
-            # Never leave orphaned site/tool/facade processes holding ports.
-            await app.state.supervisor.shutdown()
+            try:
+                # Exception as well as CancelledError, and in a try of its own: a
+                # background task that ended badly must not take the cleanup with
+                # it. Awaiting a failed task re-raises here, and the children and
+                # the store would then be left exactly as they are. CancelledError
+                # derives from BaseException, so suppressing Exception alone would
+                # not cover the ordinary case.
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await reaper
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await warming
+            finally:
+                # Never leave orphaned site/tool/facade processes holding ports.
+                await app.state.supervisor.shutdown()
 
     async def _reaper(supervisor: Supervisor) -> None:
         interval = max(5, supervisor.settings.reap_interval_seconds)
