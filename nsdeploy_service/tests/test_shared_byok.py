@@ -60,9 +60,9 @@ class SharedByokTests(unittest.TestCase):
 
     def test_subdomain_sites_share_the_cookie_on_the_public_host(self):
         """Subdomain sites share the cookie on the public host, port sites need no domain."""
-        subdomains = Settings(public_host="agentic-city-dev.decisionai.ml", subdomain_template="{slug}-{id}")
-        self.assertEqual(shared_cookie_domain(subdomains), "agentic-city-dev.decisionai.ml")
-        self.assertEqual(shared_cookie_domain(Settings(public_host="agentic-city-dev.decisionai.ml")), "")
+        subdomains = Settings(public_host="agentic-city.example.com", subdomain_template="{slug}-{id}")
+        self.assertEqual(shared_cookie_domain(subdomains), "agentic-city.example.com")
+        self.assertEqual(shared_cookie_domain(Settings(public_host="agentic-city.example.com")), "")
 
     def test_sync_writes_the_cookie_domain_into_the_site(self):
         """Sync writes the cookie domain into the site, and port mode leaves it empty."""
@@ -72,8 +72,8 @@ class SharedByokTests(unittest.TestCase):
             path.parent.mkdir(parents=True)
             path.write_text("export const customerCode = true;\n", encoding="utf-8")
 
-            sync_shared_byok(work, cookie_domain="agentic-city-dev.decisionai.ml")
-            self.assertIn('const cookieDomain = "agentic-city-dev.decisionai.ml";', path.read_text(encoding="utf-8"))
+            sync_shared_byok(work, cookie_domain="agentic-city.example.com")
+            self.assertIn('const cookieDomain = "agentic-city.example.com";', path.read_text(encoding="utf-8"))
 
             sync_shared_byok(work)
             self.assertIn('const cookieDomain = "";', path.read_text(encoding="utf-8"))
