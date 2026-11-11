@@ -273,7 +273,7 @@ export function mountApp(root, { engine, trace, manifest }) {
   const net = engine.top?.network;
   const title = manifest?.networks?.[0]?.description || net?.name || "Agent network";
   const needsByok = !engine.mockLLM && (!engine.byokKey || engine.byokKey === "demo");
-  const setupMessage = `To start, add an AI provider key. Open ${AI_MODEL_SETTINGS_LABEL}, choose a free provider, create a key, paste it here, then select Save and start. Your key stays in this browser and is sent only to that provider.`;
+  const setupMessage = `To start, add an AI provider key. In ⚙ ${AI_MODEL_SETTINGS_LABEL}, choose a provider, create a key on its site, and paste it into the API key field. Then select Save and start. Your key is saved in this browser.`;
   const chatSlot = root.querySelector('[data-ns-slot="chat"]');
   const agentsSlot = root.querySelector('[data-ns-slot="agents"]');
   const activitySlot = root.querySelector('[data-ns-slot="activity"]');
@@ -951,10 +951,13 @@ export function mountApp(root, { engine, trace, manifest }) {
     const sent = effectiveModel("", spec?.llm_config?.model_name, net?.config?.llm_config?.model_name);
     if (callsModel && isPlaceholderModel(sent)) everyAgentHasModel = false;
   }
-  // The Model field is optional only when every agent already has a model.
+  // The Model field is optional only when every agent already has a model. Otherwise it
+  // is marked required, like the API key.
   if (!everyAgentHasModel) {
-    root.querySelector("#ns-model-label").textContent = "Model";
+    root.querySelector("#ns-model-label").innerHTML = 'Model <span aria-hidden="true">*</span>';
     modelEl.placeholder = "Enter a model your provider supports";
+    modelEl.required = true;
+    modelEl.setAttribute("aria-required", "true");
   }
 
   routerEl.value = engine.routerOverride || engine.top?.llm?.baseUrl || byokRouter || mockUrl;
@@ -1053,8 +1056,8 @@ export function mountApp(root, { engine, trace, manifest }) {
       const viaThisSite = !staticMode && !!byokRouter
         && resolveByokRouter(routerEl.value) === resolveByokRouter(byokRouter);
       hintEl.textContent = viaThisSite
-        ? "Your key is sent to this site, which passes it on to your AI provider."
-        : "Your key is sent from this browser straight to this address.";
+        ? "This site passes your key on to your AI provider."
+        : "Your browser sends your key directly to the Provider URL above.";
     }
   };
   const applyProviderDefaults = (provider, message) => {
@@ -1117,10 +1120,9 @@ export function mountApp(root, { engine, trace, manifest }) {
   // /models lookup filled them; this adds no request of its own.
   const modelSetupMessage = () => {
     const choice = modelOptionsEl.options.length
-      ? "pick a suggested model in the Model field or enter another model your provider supports"
-      : "enter a model your provider supports in the Model field";
-    return "This site needs a model name before it can answer with your key. "
-      + `Open ⚙ ${AI_MODEL_SETTINGS_LABEL}, ${choice}, then select Save and start.`;
+      ? "Pick a suggested model in the Model field, or enter another model your provider supports"
+      : "Enter a model your provider supports in the Model field";
+    return `This site needs a model name before it can answer with your key. ${choice}, then select Save and start.`;
   };
   validateConfiguredModel = async (requireActiveKey = true) => {
     let router = routerEl.value.trim();
@@ -1179,6 +1181,18 @@ export function mountApp(root, { engine, trace, manifest }) {
       applyProviderDefaults(provider, `${provider.name} key detected. Recommended settings are ready.`);
     } else if (!provider && key && byokRouter && isMockRouter(routerEl.value.trim())) {
       routerEl.value = byokRouter;
+    }
+    if (!provider && key) {
+      // A key the page cannot place comes with no model, so when the site needs one and the
+      // field is empty, show the Model field and say what to enter.
+      if (!everyAgentHasModel && !modelEl.value.trim()) {
+        root.querySelector(".ns-settings-advanced").open = true;
+        setProfileHint(modelSetupMessage());
+      } else {
+        setProfileHint("Select Save and start to use this key.");
+      }
+    } else if (!key && needsByok) {
+      setProfileHint(setupMessage, "warn");
     }
     if (profileEl.value && selectedProfile?.key !== keyEl.value.trim()) profileEl.value = "";
     refreshKeyHelp();

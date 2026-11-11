@@ -60,7 +60,8 @@ try {
   check(app.querySelector("#ns-key").required && !app.querySelector("#ns-lg"), "Only the API key is required in the simple setup flow");
   // The fixture network names no model, so the Model field must not say it is optional.
   const modelInput = app.querySelector("#ns-model");
-  check(app.querySelector("#ns-model-label").textContent === "Model" && modelInput.placeholder === "Enter a model your provider supports", "The Model field asks for a model when the network names none");
+  check(app.querySelector("#ns-model-label").textContent === "Model *" && modelInput.required && modelInput.placeholder === "Enter a model your provider supports", "The Model field is marked required when the network names no model");
+  const advanced = app.querySelector(".ns-settings-advanced");
   const keyInput = app.querySelector("#ns-key");
   const routerInput = app.querySelector("#ns-router");
   const formBefore = { router: routerInput.value, model: modelInput.value };
@@ -72,18 +73,25 @@ try {
   check(!!keyHelp && getComputedStyle(keyHelp).display === "none", "A page that needs no key builds the key help hidden");
   typeKey("AIza-fixture");
   check(modelInput.value === google.model, "A recognized key fills in its provider's model");
+  check(!advanced.open, "A recognized key leaves the advanced settings closed");
   modelInput.value = "gemini-fixture-choice";
   typeKey("AIza-fixture-edited");
   check(modelInput.value === "gemini-fixture-choice", "Editing a key from the same provider keeps the chosen model");
   typeKey("gsk_fixture");
   check(modelInput.value === groq.model, "A key from another provider fills in that provider's model");
-  // An unrecognized key and no model: Save and start asks for one and shows the Model field.
-  keyInput.value = "sk-fixture-unrecognized";
-  routerInput.value = "https://router.example/v1";
+  // An unrecognized key on a network that names no model opens the advanced settings at once.
   modelInput.value = "";
+  typeKey("sk-fixture-unrecognized");
+  check(advanced.open, "An unrecognized key opens the advanced settings when the site needs a model");
+  const profileHint = app.querySelector("#ns-profile-hint");
+  check(/^This site needs a model name/.test(profileHint.textContent) && !/Open/.test(profileHint.textContent), "The hint says to enter a model, without asking the visitor to open anything");
+  // Save and start still asks for the model and puts the cursor in its field.
+  advanced.open = false;
+  routerInput.value = "https://router.example/v1";
   app.querySelector("#ns-apply").click();
   await tick();
-  check(app.querySelector(".ns-settings-advanced").open && document.activeElement === modelInput, "Asking for a model opens the advanced settings and focuses the Model field");
+  check(advanced.open && document.activeElement === modelInput, "Asking for a model opens the advanced settings and focuses the Model field");
+  check(/Enter a model your provider supports in the Model field/.test(profileHint.textContent) && !/Open/.test(profileHint.textContent), "Save and start's model message does not ask the visitor to open anything");
   // A page that needs a key shows provider links. Choosing another provider clears a key
   // recognized as a different provider's, so that key is never sent to it.
   const keyed = document.createElement("div");
@@ -99,19 +107,36 @@ try {
   const keyedHelp = keyed.querySelector(".ns-key-help");
   const keyedHint = keyed.querySelector("#ns-router-hint");
   const keyLabel = keyedKey.closest("label");
+  const keyedProfileHint = keyed.querySelector("#ns-profile-hint");
+  check(/^To start, add an AI provider key\. In ⚙ AI model settings, choose a provider/.test(keyedProfileHint.textContent) && !/free provider|sent only to/.test(keyedProfileHint.textContent), "The first-visit message names the panel clearly and does not promise free providers");
   check(keyLabel.children.length === 2 && keyLabel.firstElementChild.textContent === "API key *", "The API key label keeps its asterisk on the label's line");
-  check(/sent to this site, which passes it on/.test(keyedHint.textContent) && !/CORS/.test(keyedHint.textContent), "The hint says plainly that this site passes the key on");
+  check(/This site passes your key on/.test(keyedHint.textContent) && !/CORS/.test(keyedHint.textContent), "The hint says plainly that this site passes the key on");
   check(getComputedStyle(keyedHelp).display !== "none", "The key help shows while there is no key");
   keyedKey.value = "AIza-fixture";
   keyedKey.dispatchEvent(new Event("input"));
   check(getComputedStyle(keyedHelp).display === "none", "The key help hides once a key is entered");
   keyed.querySelector(`[data-ns-provider="${groq.name}"]`).click();
   check(keyedKey.value === "" && keyed.querySelector("#ns-router").value === groq.router, "Choosing another provider clears a key that belongs to a different provider");
-  check(getComputedStyle(keyedHelp).display !== "none" && /straight to this address/.test(keyedHint.textContent), "The help returns when the key is cleared, and a provider address gets the key straight from the browser");
+  check(getComputedStyle(keyedHelp).display !== "none" && /sends your key directly to the Provider URL/.test(keyedHint.textContent), "The help returns when the key is cleared, and a provider address gets the key straight from the browser");
   keyedKey.value = "sk-fixture-unrecognized";
   keyed.querySelector(`[data-ns-provider="${google.name}"]`).click();
   check(keyedKey.value === "sk-fixture-unrecognized", "Choosing a provider keeps a key it cannot attribute to another provider");
   keyed.remove();
+  // On a site whose network names a model, an unrecognized key needs only Save and start.
+  const named = document.createElement("div");
+  document.body.append(named);
+  const namedEngine = new Engine({ originUrl: location.origin });
+  namedEngine.top = { network: new AgentNetwork({ llm_config: { model_name: "fixture-model" }, tools: [{ name: "root", instructions: "Fixture" }] }, "named"), base: location.origin };
+  namedEngine.mockLLM = false;
+  mountApp(named, { engine: namedEngine, trace: namedEngine.trace, manifest: { brand: "Named fixture", llm_router: { base_url: "https://router.example/v1" } } });
+  const namedKey = named.querySelector("#ns-key");
+  namedKey.value = "sk-fixture-unrecognized";
+  namedKey.dispatchEvent(new Event("input"));
+  check(named.querySelector("#ns-profile-hint").textContent === "Select Save and start to use this key." && !named.querySelector(".ns-settings-advanced").open, "On a site that names a model, an unrecognized key only needs Save and start");
+  namedKey.value = "";
+  namedKey.dispatchEvent(new Event("input"));
+  check(/^To start, add an AI provider key/.test(named.querySelector("#ns-profile-hint").textContent), "Clearing the key brings back the first-visit message");
+  named.remove();
   // Restore the form, so the chat checks below send nothing to a real provider.
   typeKey("");
   check(getComputedStyle(keyHelp).display !== "none", "Clearing the key shows the key help, even on a page that started with no need for one");
