@@ -10,6 +10,7 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { SystemMessage, HumanMessage, AIMessage, ToolMessage } from "@langchain/core/messages";
 import { tool } from "@langchain/core/tools";
+import { ProviderError } from "./provider-error.js";
 
 function hostOf(url) {
   try { return new URL(url).host; } catch { return url || "?"; }
@@ -52,7 +53,7 @@ export async function runAgentLangChain(ctx, agentName, userText, parentSpan, ch
     // placeholder "demo" to a live provider (which returns a confusing 401, e.g.
     // when a shared/reloaded URL keeps the proxy router but the per-tab key is gone).
     if (!ctx.mock && (!ctx.apiKey || ctx.apiKey === "demo")) {
-      throw new Error(`An LLM API key is required for ${hostOf(ctx.routerBaseUrl) || "the configured provider"}. Open ⚙ BYOK / router settings, enter your key, then click Apply, save & reload. Your key stays in this browser and is sent only to the configured provider.`);
+      throw new Error(`An AI provider key is required for ${hostOf(ctx.routerBaseUrl) || "the configured provider"}. Open ⚙ AI model settings, paste your key, then select Save and start. Your key stays in this browser and is sent only to the configured provider.`);
     }
     const keySource = ctx.apiKey ? "local BYOK (not shown)" : "none";
 
@@ -105,8 +106,9 @@ export async function runAgentLangChain(ctx, agentName, userText, parentSpan, ch
         const respMock = ctx.mock || /neuro-san-mock/.test(respModel || "");
         trace.end(span, { usage: ai?.usage_metadata, toolCalls: (ai?.tool_calls || []).map((t) => t.name), mock: respMock, respModel });
       } catch (err) {
-        trace.fail(span, err);
-        throw err;
+        const friendlyError = ProviderError.friendly(err, ctx.routerBaseUrl);
+        trace.fail(span, friendlyError);
+        throw friendlyError;
       }
 
       if (isTopFrontMan && ctx.turnControl?.pending.length) {

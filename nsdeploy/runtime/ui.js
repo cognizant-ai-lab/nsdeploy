@@ -25,6 +25,51 @@ import { PRESENTATION_CSS, renderMarkdown, renderRichComponent } from "./cruse-r
 import { createTurnStatusController } from "./turn-status.js";
 import { reviewActions } from "./action-transport.js";
 
+export const AI_MODEL_SETTINGS_LABEL = "AI model settings";
+export const API_KEY_HELP_URL = "https://ai.google.dev/gemini-api/docs/api-key";
+export const API_KEY_PROVIDERS = [
+  {
+    name: "Google AI Studio",
+    keyUrl: "https://aistudio.google.com/apikey",
+    router: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-3.8-flash",
+    keyPrefixes: ["AIza"],
+    accessNote: "Free tier",
+  },
+  {
+    name: "Groq",
+    keyUrl: "https://console.groq.com/keys",
+    router: "https://api.groq.com/openai/v1",
+    model: "openai/gpt-oss-120b",
+    keyPrefixes: ["gsk_"],
+    accessNote: "Free tier",
+  },
+  {
+    name: "OpenAI",
+    keyUrl: "https://platform.openai.com/api-keys",
+    router: "https://api.openai.com/v1",
+    model: "gpt-5.5",
+    keyPrefixes: ["sk-proj-", "sk-svcacct-"],
+    accessNote: "Billing may be required",
+  },
+  {
+    name: "Anthropic",
+    keyUrl: "https://console.anthropic.com/settings/keys",
+    router: "https://api.anthropic.com/v1",
+    model: "claude-sonnet-4-6",
+    keyPrefixes: ["sk-ant-"],
+    accessNote: "Billing may be required",
+  },
+];
+
+export function providerForApiKey(apiKey) {
+  const key = String(apiKey || "").trim();
+  for (const provider of API_KEY_PROVIDERS) {
+    if (provider.keyPrefixes.some((prefix) => key.startsWith(prefix))) return provider;
+  }
+  return null;
+}
+
 const BASE_CSS = PRESENTATION_CSS + `
 /* Legacy themes get two resizable panes side by side. Composed themes provide
    header/chat/agents mount slots and own their placement; the runtime continues
@@ -190,6 +235,16 @@ const BASE_CSS = PRESENTATION_CSS + `
 .ns-settings-body button{padding:6px 12px;background:var(--ns-primary,#2563eb);color:#fff;border:0;border-radius:6px;cursor:pointer;align-self:flex-start}
 .ns-settings-body button.ghost{background:transparent;color:var(--ns-muted,#666);border:1px solid var(--ns-border,#ccc)}
 .ns-profile-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.ns-key-help{padding:10px;border:1px solid color-mix(in srgb,var(--ns-primary,#2563eb) 30%,var(--ns-border,#ccc));border-radius:8px;background:color-mix(in srgb,var(--ns-primary,#2563eb) 6%,var(--ns-panelbg,#fff));display:flex;flex-direction:column;gap:6px}
+.ns-key-help[hidden]{display:none}
+.ns-key-help p{margin:0;line-height:1.45}
+.ns-key-help>a{color:var(--ns-primary,#2563eb);font-weight:600}
+.ns-key-providers{display:flex;flex-wrap:wrap;gap:6px}
+.ns-key-providers a{padding:6px 9px;border:1px solid var(--ns-primary,#2563eb);border-radius:6px;color:var(--ns-primary,#2563eb);font-weight:600;text-decoration:none;background:var(--ns-panelbg,#fff)}
+.ns-key-providers small{display:block;color:var(--ns-muted,#777);font-size:10px;font-weight:400;margin-top:2px}
+.ns-settings-advanced{border-top:1px solid var(--ns-border,#e2e2e2);margin-top:2px}
+.ns-settings-advanced>summary{padding:7px 0;color:var(--ns-muted,#666)}
+.ns-settings-advanced-body{display:flex;flex-direction:column;gap:6px;padding:2px 0 4px}
 .ns-hint{font-size:11px;color:var(--ns-muted,#777);margin-top:-2px}
 .ns-hint.warn{color:#b45309;font-weight:600}
 `;
@@ -218,7 +273,7 @@ export function mountApp(root, { engine, trace, manifest }) {
   const net = engine.top?.network;
   const title = manifest?.networks?.[0]?.description || net?.name || "Agent network";
   const needsByok = !engine.mockLLM && (!engine.byokKey || engine.byokKey === "demo");
-  const setupMessage = "This site needs your LLM API key before it can answer. Open BYOK / router settings, enter your key, then click Apply, save & reload. Your key stays in this browser and is sent only to the configured provider.";
+  const setupMessage = `To start, add an AI provider key. In ⚙ ${AI_MODEL_SETTINGS_LABEL}, choose a provider, create a key on its site, and paste it into the API key field. Then select Save and start. Your key is saved in this browser.`;
   const chatSlot = root.querySelector('[data-ns-slot="chat"]');
   const agentsSlot = root.querySelector('[data-ns-slot="agents"]');
   const activitySlot = root.querySelector('[data-ns-slot="activity"]');
@@ -226,26 +281,41 @@ export function mountApp(root, { engine, trace, manifest }) {
   // Prompt v13 gives themes a dedicated settings mount. Older composed themes and
   // the fixed shell have no such slot, so their settings stay beneath the chat.
   const settingsSlot = composed ? root.querySelector('[data-ns-slot="settings"]') : null;
+  const providerLinksHtml = API_KEY_PROVIDERS.map((provider) => `
+        <a href="${provider.keyUrl}" target="_blank" rel="noopener noreferrer" data-ns-provider="${provider.name}" data-router="${provider.router}" data-model="${provider.model}">${provider.name} <span aria-hidden="true">↗</span><small>${provider.accessNote}</small></a>`).join("");
   const settingsBodyHtml = `
     <div class="ns-settings-body">
       <label>Saved setup <select id="ns-profile"></select></label>
-      <label>Setup name <input id="ns-profile-name" placeholder="Local LLM, OpenAI, Anthropic router"></label>
-      <label>API key <input id="ns-key" type="password" placeholder="sk-… (kept in this browser only — enables a REAL LLM)"></label>
-      <label>Model <input id="ns-model" list="ns-model-options" placeholder="exact ID published by the upstream"></label>
-      <datalist id="ns-model-options"></datalist>
-      <label>Router base URL <input id="ns-router" placeholder="OpenAI-compatible /v1"></label>
-      <div id="ns-router-hint" class="ns-hint"></div>
-      <label class="ns-row-inline"><input type="checkbox" id="ns-lg"> Drive the LLM via LangChain.js</label>
-      <div class="ns-profile-actions">
-        <button id="ns-save-profile" class="ghost">Save setup</button>
-        <button id="ns-delete-profile" class="ghost">Delete setup</button>
-        <button id="ns-apply">Apply, save &amp; reload</button>
+      <div class="ns-key-help"${needsByok ? "" : " hidden"}>
+        <strong>Don't have an API key?</strong>
+        <p>An API key is a private code from an AI provider. It lets this page use that provider for you; it is not your password.</p>
+        <a href="${API_KEY_HELP_URL}" target="_blank" rel="noopener noreferrer">What is an API key and how do I get one? <span aria-hidden="true">↗</span></a>
+        <p>Choose a provider below and create a key. Its recommended settings will be filled in for you.</p>
+        <div class="ns-key-providers">${providerLinksHtml}</div>
+        <div class="ns-hint">Free tiers have usage limits and may vary by region. Other providers may require billing.</div>
       </div>
-      <div id="ns-profile-hint" class="ns-hint"></div>
+      <label><span>API key <span aria-hidden="true">*</span></span><input id="ns-key" type="password" autocomplete="off" placeholder="Paste your API key" required aria-required="true"></label>
+      <button id="ns-apply">Save and start</button>
+      <details class="ns-settings-advanced">
+        <summary>Advanced settings (optional)</summary>
+        <div class="ns-settings-advanced-body">
+          <label>Setup name (optional) <input id="ns-profile-name" placeholder="Local model, Google AI Studio, Groq"></label>
+          <label><span id="ns-model-label">Model (optional)</span> <input id="ns-model" list="ns-model-options" placeholder="Uses this site's model"></label>
+          <datalist id="ns-model-options"></datalist>
+          <label>Provider URL (optional) <input id="ns-router" placeholder="Uses the configured default"></label>
+          <div id="ns-router-hint" class="ns-hint"></div>
+          <div class="ns-profile-actions">
+            <button id="ns-save-profile" class="ghost">Save setup</button>
+            <button id="ns-delete-profile" class="ghost">Delete setup</button>
+          </div>
+        </div>
+      </details>
+      <div id="ns-profile-hint" class="ns-hint">
+      </div>
     </div>`;
   const settingsHtml = `
     <details class="ns-settings"${needsByok ? " open" : ""}>
-      <summary>⚙ BYOK / router settings</summary>
+      <summary>⚙ ${AI_MODEL_SETTINGS_LABEL}</summary>
       ${settingsBodyHtml}
     </details>`;
 
@@ -844,7 +914,7 @@ export function mountApp(root, { engine, trace, manifest }) {
     modal.hidden = false;
   }
 
-  // BYOK / router settings. Router, model and key are never read from or written
+  // AI model settings. Router, model and key are never read from or written
   // to the URL. Apply keeps them for this tab in session storage, and saved
   // profiles make them reusable across agent networks.
   let profileStore = loadByokStore();
@@ -855,11 +925,16 @@ export function mountApp(root, { engine, trace, manifest }) {
   const keyEl = root.querySelector("#ns-key");
   const modelEl = root.querySelector("#ns-model");
   const modelOptionsEl = root.querySelector("#ns-model-options");
-  const langchainEl = root.querySelector("#ns-lg");
   const hintEl = root.querySelector("#ns-router-hint");
   const profileHintEl = root.querySelector("#ns-profile-hint");
   const saveProfileBtn = root.querySelector("#ns-save-profile");
   const deleteProfileBtn = root.querySelector("#ns-delete-profile");
+  const providerLinks = root.querySelectorAll("[data-ns-provider]");
+  // The help is for visitors without a key, so it hides while the key field has one.
+  const keyHelpEl = root.querySelector(".ns-key-help");
+  const refreshKeyHelp = () => {
+    if (keyHelpEl) keyHelpEl.hidden = keyEl.value.trim().length > 0;
+  };
   // The compiled LLM may already point at BYOK after a saved-profile upgrade.
   // New manifests identify an opt-in mock separately; retain compatibility with
   // older manifests where the mock was the declared default base URL.
@@ -876,14 +951,24 @@ export function mountApp(root, { engine, trace, manifest }) {
     const sent = effectiveModel("", spec?.llm_config?.model_name, net?.config?.llm_config?.model_name);
     if (callsModel && isPlaceholderModel(sent)) everyAgentHasModel = false;
   }
+  // The Model field is optional only when every agent already has a model. Otherwise it
+  // is marked required, like the API key.
+  if (!everyAgentHasModel) {
+    root.querySelector("#ns-model-label").innerHTML = 'Model <span aria-hidden="true">*</span>';
+    modelEl.placeholder = "Enter a model your provider supports";
+    modelEl.required = true;
+    modelEl.setAttribute("aria-required", "true");
+  }
 
   routerEl.value = engine.routerOverride || engine.top?.llm?.baseUrl || byokRouter || mockUrl;
   modelEl.value = engine.modelOverride || "";
   // The key shown comes from the same source as the router and model the engine
   // uses, so it never shows another setup's key next to this tab's router.
   keyEl.value = loadTabByokSetup(selectedProfile).key;
+  // The provider whose settings the form holds. Another key from the same provider
+  // does not fill in that provider's defaults again.
+  let formProvider = providerForApiKey(keyEl.value);
   profileNameEl.value = selectedProfile?.name || "";
-  langchainEl.checked = !!engine.agentRunner;
 
   const profileStorageText = canUseByokCookie()
     ? "Saved setups are kept in this browser and mirrored to a local cookie, so they follow nsDeploy across localhost ports."
@@ -904,9 +989,10 @@ export function mountApp(root, { engine, trace, manifest }) {
     if (!profile) return;
     profileNameEl.value = profile.name || "";
     keyEl.value = profile.key || "";
+    formProvider = providerForApiKey(keyEl.value);
+    refreshKeyHelp();
     modelEl.value = profile.model || "";
     routerEl.value = resolveByokRouter(profile.router || "");
-    langchainEl.checked = !!profile.runner;
     refreshHint();
   };
   const currentProfileDraft = (id) => {
@@ -923,12 +1009,16 @@ export function mountApp(root, { engine, trace, manifest }) {
       key,
       model,
       router: portableByokRouter(router),
-      runner: langchainEl.checked,
+      runner: false,
     };
   };
   const saveCurrentProfile = () => {
     const draft = currentProfileDraft(profileEl.value);
-    if (!draft.key && !draft.model && !draft.router) return null;
+    if (!draft.key) {
+      setProfileHint("API key is required. Paste your key above to continue.", "warn");
+      keyEl.focus();
+      return null;
+    }
     const res = upsertByokProfile(draft, { select: true });
     if (!res.profile) return null;
     profileStore = res.store;
@@ -957,16 +1047,27 @@ export function mountApp(root, { engine, trace, manifest }) {
     const hasKey = keyEl.value.trim().length > 0;
     if (hasKey && isMockRouter(routerEl.value.trim())) {
       hintEl.className = "ns-hint warn";
-      hintEl.textContent = `⚠ This router is the MOCK (ignores your key). It will be switched to the real proxy ${byokRouter || ""} on Apply.`;
+      hintEl.textContent = `⚠ This router is the MOCK (ignores your key). It will be switched to the real proxy ${byokRouter || ""} when you save.`;
     } else if (isMockRouter(routerEl.value.trim())) {
       hintEl.className = "ns-hint";
       hintEl.textContent = `Mock router (no key needed). To use a real LLM, enter a key — it will route via ${byokRouter || "the proxy"}.`;
     } else {
       hintEl.className = "ns-hint";
-      hintEl.textContent = staticMode
-        ? "Real LLM router. Your key is sent directly from this browser to that router; it must allow browser CORS."
-        : "Real LLM router. Your key is sent only here (a CORS pass-through to your provider).";
+      const viaThisSite = !staticMode && !!byokRouter
+        && resolveByokRouter(routerEl.value) === resolveByokRouter(byokRouter);
+      hintEl.textContent = viaThisSite
+        ? "This site passes your key on to your AI provider."
+        : "Your browser sends your key directly to the Provider URL above.";
     }
+  };
+  const applyProviderDefaults = (provider, message) => {
+    formProvider = provider;
+    routerEl.value = provider.router;
+    modelEl.value = provider.model;
+    profileNameEl.value = provider.name;
+    profileEl.value = "";
+    if (message) setProfileHint(message);
+    refreshHint();
   };
   const fetchAvailableModels = async (router, key) => {
     if (!router || isMockRouter(router)) return null;
@@ -1010,14 +1111,18 @@ export function mountApp(root, { engine, trace, manifest }) {
     if (model) return isPlaceholderModel(model);
     return !everyAgentHasModel;
   };
+  // The Model field is inside the collapsed advanced settings, so open them before focusing it.
+  const focusModelField = () => {
+    root.querySelector(".ns-settings-advanced").open = true;
+    modelEl.focus();
+  };
   // Ask for a model. Mention the Model field's suggestions only when an earlier
   // /models lookup filled them; this adds no request of its own.
   const modelSetupMessage = () => {
     const choice = modelOptionsEl.options.length
-      ? "pick a suggested model in the Model field or enter another model your provider supports"
-      : "enter a model your provider supports in the Model field";
-    return "This site needs a model name before it can answer with your key. "
-      + `Open ⚙ BYOK / router settings, ${choice}, then click Apply, save & reload.`;
+      ? "Pick a suggested model in the Model field, or enter another model your provider supports"
+      : "Enter a model your provider supports in the Model field";
+    return `This site needs a model name before it can answer with your key. ${choice}, then select Save and start.`;
   };
   validateConfiguredModel = async (requireActiveKey = true) => {
     let router = routerEl.value.trim();
@@ -1026,7 +1131,7 @@ export function mountApp(root, { engine, trace, manifest }) {
     modelEl.value = model;
     if (requireActiveKey && !engine.mockLLM && (!engine.byokKey || engine.byokKey === "demo")) {
       const message = key
-        ? "Your API key is ready. Click Apply, save & reload before sending a request."
+        ? "Your API key is ready. Select Save and start before sending a request."
         : setupMessage;
       setProfileHint(message, "warn");
       root.querySelector(".ns-settings").open = true;
@@ -1038,11 +1143,12 @@ export function mountApp(root, { engine, trace, manifest }) {
       // A usable model typed but not applied yet only needs Apply.
       const unapplied = requireActiveKey && !!model && !isPlaceholderModel(model);
       const message = unapplied
-        ? "Your model is ready. Click Apply, save & reload before sending a request."
+        ? "Your model is ready. Select Save and start before sending a request."
         : modelSetupMessage();
       setProfileHint(message, "warn");
       root.querySelector(".ns-settings").open = true;
-      (unapplied ? root.querySelector("#ns-apply") : modelEl).focus();
+      if (unapplied) root.querySelector("#ns-apply").focus();
+      else focusModelField();
       addBubble(msgs, "bot", `⚠️ ${message}`);
       return false;
     }
@@ -1062,13 +1168,45 @@ export function mountApp(root, { engine, trace, manifest }) {
       "warn",
     );
     root.querySelector(".ns-settings").open = true;
-    modelEl.focus();
+    focusModelField();
     return false;
   };
-  // When a key is entered against the mock router, auto-fill the real proxy.
+  // Put back the site's own settings in place of those a provider's key filled in,
+  // leaving any field the visitor has changed.
+  const clearProviderDefaults = (provider) => {
+    if (routerEl.value.trim() === provider.router) routerEl.value = byokRouter || mockUrl;
+    if (modelEl.value.trim() === provider.model) modelEl.value = "";
+    if (profileNameEl.value.trim() === provider.name) profileNameEl.value = "";
+    formProvider = null;
+  };
+  // The page cannot tell which provider an unrecognized key is for, so the visitor checks
+  // the Provider URL, and enters a model when the site needs one.
+  const unrecognizedKeyMessage = () => {
+    const needsModel = !everyAgentHasModel && !modelEl.value.trim();
+    return "The page can't tell which provider this key is for. Check the Provider URL, "
+      + (needsModel ? "enter a model your provider supports in the Model field, " : "")
+      + "then select Save and start.";
+  };
+  // A key from a newly detected provider fills in that provider's settings, so editing
+  // the key keeps a model or router the visitor chose. Any other key entered against
+  // the mock router switches it to the real proxy.
   keyEl.addEventListener("input", () => {
-    if (keyEl.value.trim() && byokRouter && isMockRouter(routerEl.value.trim())) routerEl.value = byokRouter;
+    const key = keyEl.value.trim();
+    const provider = providerForApiKey(key);
+    if (provider && provider !== formProvider) {
+      applyProviderDefaults(provider, `${provider.name} key detected. Recommended settings are ready.`);
+    } else if (!provider && key) {
+      // Another provider's settings must not stay with this key, and a real key never goes
+      // to the mock. Then show the Provider URL and Model fields and ask for a check.
+      if (formProvider) clearProviderDefaults(formProvider);
+      if (byokRouter && isMockRouter(routerEl.value.trim())) routerEl.value = byokRouter;
+      root.querySelector(".ns-settings-advanced").open = true;
+      setProfileHint(unrecognizedKeyMessage());
+    } else if (!key && needsByok) {
+      setProfileHint(setupMessage, "warn");
+    }
     if (profileEl.value && selectedProfile?.key !== keyEl.value.trim()) profileEl.value = "";
+    refreshKeyHelp();
     refreshHint();
   });
   routerEl.addEventListener("input", refreshHint);
@@ -1079,13 +1217,24 @@ export function mountApp(root, { engine, trace, manifest }) {
     if (!profileNameEl.value.trim()) profileNameEl.value = guessByokProfileName({ router: routerEl.value, model: modelEl.value });
     refreshHint();
   });
+  providerLinks.forEach((link) => {
+    link.addEventListener("click", () => {
+      const provider = API_KEY_PROVIDERS.find((candidate) => candidate.name === link.dataset.nsProvider);
+      if (!provider) return;
+      // A key recognized as another provider's must not be sent to this provider.
+      const keyProvider = providerForApiKey(keyEl.value.trim());
+      if (keyProvider && keyProvider !== provider) keyEl.value = "";
+      refreshKeyHelp();
+      applyProviderDefaults(provider, `${provider.name} selected. Create a key in the new tab, then paste it here.`);
+    });
+  });
   profileEl.addEventListener("change", () => {
     const id = profileEl.value;
     profileStore = selectByokProfile(id);
     selectedProfile = getSelectedByokProfile(profileStore);
     if (selectedProfile) {
       applyProfileToForm(selectedProfile);
-      setProfileHint(`Loaded setup "${selectedProfile.name}". Click Apply to use it for this page.`);
+      setProfileHint(`Loaded setup "${selectedProfile.name}". Select Save and start to use it for this page.`);
     } else {
       profileNameEl.value = "";
       setProfileHint();
@@ -1111,15 +1260,21 @@ export function mountApp(root, { engine, trace, manifest }) {
   root.querySelector("#ns-apply").addEventListener("click", async () => {
     const p = new URLSearchParams(location.search);
     p.delete("key"); // the key must never appear in the URL
+    const key = keyEl.value.trim();
     const model = normalizeModelName(modelEl.value);
     modelEl.value = model;
+    if (!key) {
+      setProfileHint("API key is required. Paste your key above to continue.", "warn");
+      root.querySelector(".ns-settings").open = true;
+      keyEl.focus();
+      return;
+    }
     if (!await validateConfiguredModel(false)) return;
     const saved = saveCurrentProfile();
     // Key, router and model stay with this tab in session storage, never in the
     // query string. Boot reads them after the reload, so a setup that another tab
     // or port selects later cannot pair this tab's key with a different router.
     saveTabByokSetup(saved);
-    if (langchainEl.checked) p.set("runner", "langchain"); else p.delete("runner");
     const qs = p.toString();
     // Rewrite the (key-free) query string, then reload so the applied setup takes effect.
     try { history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash); } catch {}

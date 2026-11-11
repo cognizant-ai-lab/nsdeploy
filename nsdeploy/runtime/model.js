@@ -39,6 +39,6 @@ export function effectiveModel(override, agentModel, networkModel) {
 export function assertModelForRouter(model, mock, routerHost) {
   if (mock || !isPlaceholderModel(model)) return;
   throw new Error(`A model is required for ${routerHost || "the configured provider"}. `
-    + "Open ⚙ BYOK / router settings, enter a model your provider supports in the Model field, "
-    + "then click Apply, save & reload.");
+    + "Open ⚙ AI model settings, enter a model your provider supports in the Model field, "
+    + "then select Save and start.");
 }

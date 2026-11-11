@@ -4,11 +4,13 @@ import { Engine, isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, se
 import { AgentNetwork } from "../nsdeploy/runtime/kernel.js";
 import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
 import { LlmClient, browserMockCompletion, isMockResponse } from "../nsdeploy/runtime/llm.js";
+import { ProviderError } from "../nsdeploy/runtime/provider-error.js";
 import { McpClient, parseMaybeSse, readJsonRpcResponse } from "../nsdeploy/runtime/mcp.js";
 import { effectiveModel, fallbackModel, isPlaceholderModel, normalizeModelName } from "../nsdeploy/runtime/model.js";
 import { createTurnEventStream } from "../nsdeploy/runtime/execution-stream.js";
 import { TraceBus } from "../nsdeploy/runtime/trace.js";
 import { createTurnStatusController, statusTextForEvent } from "../nsdeploy/runtime/turn-status.js";
+import { AI_MODEL_SETTINGS_LABEL, API_KEY_HELP_URL, API_KEY_PROVIDERS, providerForApiKey } from "../nsdeploy/runtime/ui.js";
 import {
   buildToolTable,
   consumeAgentBudget,
@@ -26,6 +28,17 @@ const manifest = {
     mock: true,
   },
 };
+assert.equal(AI_MODEL_SETTINGS_LABEL, "AI model settings");
+assert.equal(API_KEY_HELP_URL, "https://ai.google.dev/gemini-api/docs/api-key");
+assert.deepEqual(API_KEY_PROVIDERS.map((provider) => provider.name), ["Google AI Studio", "Groq", "OpenAI", "Anthropic"]);
+assert.ok(API_KEY_PROVIDERS.every((provider) => provider.keyUrl.startsWith("https://")));
+assert.ok(API_KEY_PROVIDERS.every((provider) => provider.router.startsWith("https://") && provider.model));
+assert.equal(providerForApiKey("AIza-example").name, "Google AI Studio");
+assert.equal(providerForApiKey("gsk_example").name, "Groq");
+assert.equal(providerForApiKey("sk-proj-example").name, "OpenAI");
+assert.equal(providerForApiKey("sk-proj-example").model, "gpt-5.5");
+assert.equal(providerForApiKey("sk-ant-example").name, "Anthropic");
+assert.equal(providerForApiKey("sk-or-v1-example"), null);
 assert.deepEqual(
   selectTopRouter(manifest, "http://127.0.0.1:8091/v1", "real-key"),
   { baseUrl: "http://127.0.0.1:8091/byok/v1", mock: false, upgradedToByok: true },
@@ -55,6 +68,62 @@ assert.equal(normalizeModelName("'gpt-4o'"), "gpt-4o");
 assert.equal(normalizeModelName('  \"qwen/model:id\"  '), "qwen/model:id");
 assert.equal(normalizeModelName("plain-model"), "plain-model");
 {
+  const browserError = new TypeError("Failed to fetch");
+  const localError = ProviderError.friendly(
+    browserError,
+    "http://localhost:11434/v1",
+    "https://worldwideagenticweb.org/",
+  );
+  assert.equal(localError.name, "ProviderError");
+  assert.equal(localError.code, "LLM_NETWORK_ERROR");
+  assert.equal(localError.cause, browserError);
+  assert.match(localError.message, /OLLAMA_ORIGINS/);
+  assert.match(localError.message, /HTTPS page/);
+  assert.match(localError.message, /http:\/\/localhost:11434\/v1/);
+
+  const remoteError = ProviderError.friendly(
+    new TypeError("NetworkError when attempting to fetch resource."),
+    "https://router.example/v1",
+    "https://site.example/",
+  );
+  assert.match(remoteError.message, /router\.example/);
+  assert.match(remoteError.message, /https:\/\/site\.example/);
+  const sdkError = new Error("Connection error.");
+  sdkError.name = "APIConnectionError";
+  const friendlySdkError = ProviderError.friendly(
+    sdkError,
+    "http://127.0.0.1:11434/v1",
+    "https://site.example/",
+  );
+  assert.match(friendlySdkError.message, /OLLAMA_ORIGINS/);
+  const providerResponseError = new Error("model unavailable");
+  assert.equal(ProviderError.friendly(providerResponseError, "http://localhost:11434/v1"), providerResponseError);
+
+  // A local router on another port, such as LiteLLM, gets general advice, not Ollama's.
+  const liteLlmError = ProviderError.friendly(browserError, "http://localhost:4000/v1", "https://site.example/");
+  assert.match(liteLlmError.message, /local AI router at localhost:4000/);
+  assert.match(liteLlmError.message, /CORS/);
+  assert.doesNotMatch(liteLlmError.message, /Ollama/);
+  // URL.hostname keeps the IPv6 brackets, and [::1] is still this machine.
+  assert.equal(ProviderError.isLocalAddress(new URL("http://[::1]:11434/v1").hostname), true);
+  const ipv6Error = ProviderError.friendly(browserError, "http://[::1]:11434/v1", "https://site.example/");
+  assert.match(ipv6Error.message, /local AI router/);
+  assert.match(ipv6Error.message, /OLLAMA_ORIGINS/);
+}
+{
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+  try {
+    const ollama = new LlmClient({ baseUrl: "http://localhost:11434/v1", apiKey: "ollama", mock: false });
+    await assert.rejects(
+      ollama.chat({ model: "gpt-oss:20b", messages: [{ role: "user", content: "hello" }] }),
+      /OLLAMA_ORIGINS/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+{
   const tools = [{type: "function", function: {
     name: "lookup", parameters: {type: "object", properties: {request: {type: "string"}}, required: ["request"]},
   }}];
@@ -79,6 +148,27 @@ assert.equal(normalizeModelName("plain-model"), "plain-model");
     assert.equal(fetched, false);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+}
+
+// Anthropic requires an explicit opt-in header for direct browser access. Static
+// bundles add it only for Anthropic's own OpenAI-compatible endpoint.
+{
+  const realFetch = globalThis.fetch;
+  let sentHeaders;
+  globalThis.fetch = async (_url, init) => {
+    sentHeaders = init.headers;
+    return new Response("invalid key", { status: 401 });
+  };
+  try {
+    const anthropic = new LlmClient({ baseUrl: "https://api.anthropic.com/v1", apiKey: "sk-ant-test", mock: false });
+    await assert.rejects(anthropic.chat({ model: "claude-sonnet-4-6", messages: [] }), /LLM HTTP 401/);
+    assert.equal(sentHeaders["anthropic-dangerous-direct-browser-access"], "true");
+    const openai = new LlmClient({ baseUrl: "https://api.openai.com/v1", apiKey: "sk-proj-test", mock: false });
+    await assert.rejects(openai.chat({ model: "gpt-5.6", messages: [] }), /LLM HTTP 401/);
+    assert.equal(sentHeaders["anthropic-dangerous-direct-browser-access"], undefined);
+  } finally {
+    globalThis.fetch = realFetch;
   }
 }
 {
@@ -402,9 +492,9 @@ assert.throws(
   globalThis.fetch = async () => { fetched += 1; throw new Error("fetch reached"); };
   try {
     const real = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "demo", mock: false });
-    await assert.rejects(real.chat({ model: "m", messages: [] }), /API key is required/);
+    await assert.rejects(real.chat({ model: "m", messages: [] }), /provider key is required/);
     const empty = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "", mock: false });
-    await assert.rejects(empty.chat({ model: "m", messages: [] }), /API key is required/);
+    await assert.rejects(empty.chat({ model: "m", messages: [] }), /provider key is required/);
     assert.equal(fetched, 0);
     const mock = new LlmClient({ baseUrl: "http://127.0.0.1:8091/v1", apiKey: "demo", mock: true });
     await assert.rejects(mock.chat({ model: "m", messages: [] }), /fetch reached/);
@@ -429,7 +519,7 @@ assert.throws(
     await assert.rejects(real.chat({ model: "   ", messages: [] }), /model is required/);
     await assert.rejects(real.chat({ model: '""', messages: [] }), /model is required/);
     const keyless = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "", mock: false });
-    await assert.rejects(keyless.chat({ model: "mock-1", messages: [] }), /API key is required/);
+    await assert.rejects(keyless.chat({ model: "mock-1", messages: [] }), /AI provider key is required/);
     assert.deepEqual(sent, []);
     await assert.rejects(real.chat({ model: "gpt-test", messages: [] }), /fetch reached/);
     const mock = new LlmClient({ baseUrl: "http://127.0.0.1:8091/v1", apiKey: "demo", mock: true });
@@ -511,7 +601,7 @@ assert.equal(isPlaceholderModel(fallbackModel(undefined)), true);
       }
       await assert.rejects(keyed.run("hello"), /model is required for byok\.example/);
       assert.equal(keyed.top.llm.mock, false);
-      await assert.rejects(keyless.run("hello"), /API key is required for byok\.example/);
+      await assert.rejects(keyless.run("hello"), /AI provider key is required for byok\.example/);
     }
     assert.deepEqual(sent, []);
     // Without a key, the mock site keeps its mock router, which gets the placeholder.
