@@ -240,6 +240,16 @@ class BuildSlotTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(port, self.supervisor.ports.reserved())
         self.assertEqual(self.supervisor.ports.reserve(preferred=port), port)
 
+    def _stop_and_deny(self, dep) -> bool:
+        """
+        Stop the deployment from inside the generation probe, reporting no bundle.
+
+        :param dep: The deployment being polled.
+        :return: False, so the loop sleeps and then meets its deadline.
+        """
+        self._stop_during(dep)
+        return False
+
     def _stop_then_raise(self, dep) -> None:
         """
         Stand in for a stop completing inside a clearing worker that then fails.
@@ -321,6 +331,30 @@ class BuildSlotTest(unittest.IsolatedAsyncioTestCase):
         # The waiter took the very same lock, not a fresh one.
         # pylint: disable-next=protected-access
         self.assertIs(self.supervisor._work_locks.get(key), held)
+
+    async def test_a_build_timeout_does_not_fail_a_stopped_record(self):
+        """The deadline can expire during the last poll or sleep, so the timeout is
+        reached after an await like every other outcome. Failing then releases the
+        port a second time, and the second release takes the reservation of the
+        replacement that has since claimed it.
+        """
+        self.supervisor.store.close()
+        self.install(slots=1)
+        # Shorter than one poll interval, so the deadline expires during the sleep
+        # that follows the first iteration — which is the only way to reach the
+        # timeout with a status the loop has not re-checked.
+        self.supervisor.settings.build_timeout_seconds = 0.1
+        stopped = self.supervisor.create(b'{"tools": []}', DeployOptions(name="late"))
+        port = stopped.port
+        # The stop lands inside the generation probe, which is an await.
+        # pylint: disable-next=protected-access
+        self.supervisor._site_is_ready_to_summarize = self._stop_and_deny
+        self.supervisor.start(stopped)
+        await self._settle()
+        self.assertEqual(stopped.status, DeploymentStatus.STOPPED,
+                         "a stopped deployment was overwritten as failed")
+        self.assertNotIn(port, self.supervisor.ports.reserved())
+        self.assertEqual(self.supervisor.ports.reserve(preferred=port), port)
 
     async def test_a_previous_builds_artifacts_do_not_release_the_slot(self):
         """A restart or a re-upload keeps the deployment's output directory, so the

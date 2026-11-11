@@ -1478,6 +1478,22 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             self._teardown(dep, DeploymentStatus.STOPPED, "service shutting down")
             raise
 
+    def _settle_if_building(self, dep: Deployment, error: str) -> None:
+        """
+        Fail a deployment, unless it has already been stopped or replaced.
+
+        Every outcome in the build loops is reached after an await, so a stop can
+        have completed in between. `_fail` releases the port, and failing a record
+        which has already stopped releases it twice — the second release taking the
+        reservation of whatever replacement has since claimed that port, and
+        persisting this record over the replacement's state.
+
+        :param dep: The deployment that failed.
+        :param error: What to record as the reason.
+        """
+        if dep.status is DeploymentStatus.BUILDING:
+            self._fail(dep, error)
+
     async def _await_generated(self, dep: Deployment, deadline: datetime) -> bool:
         """
         Poll until nsdeploy has written the bundle, or the build ends badly.
@@ -1498,15 +1514,18 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
                 return False  # stopped underneath us
             proc: Optional[subprocess.Popen] = dep.process
             if proc is None:
-                self._fail(dep, "deployment process vanished")
+                self._settle_if_building(dep, "deployment process vanished")
                 return False
             if proc.poll() is not None:
-                self._fail(dep, _error_excerpt(dep.log_path, proc.returncode))
+                self._settle_if_building(
+                    dep, _error_excerpt(dep.log_path, proc.returncode))
                 return False
             if await asyncio.to_thread(self._site_is_ready_to_summarize, dep):
                 return True
             await asyncio.sleep(READINESS_POLL_SECONDS)
-        self._fail(
+        # The deadline can expire during the last poll or sleep, so this is reached
+        # after an await like every other outcome here.
+        self._settle_if_building(
             dep,
             f"nsdeploy did not generate the bundle within "
             f"{self.settings.build_timeout_seconds}s (a cold build fetches includes "
@@ -1526,16 +1545,20 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
                 return  # stopped underneath us
             proc = dep.process
             if proc is None:
-                self._fail(dep, "deployment process vanished")
+                self._settle_if_building(dep, "deployment process vanished")
                 return
             if proc.poll() is not None:
-                self._fail(dep, _error_excerpt(dep.log_path, proc.returncode))
+                self._settle_if_building(
+                    dep, _error_excerpt(dep.log_path, proc.returncode))
                 return
             if await asyncio.to_thread(self._site_is_ours, dep):
-                self._mark_ready(dep)
+                # The probe is an await too: a deployment stopped during it must
+                # not be marked ready over the top of whatever replaced it.
+                if dep.status is DeploymentStatus.BUILDING:
+                    self._mark_ready(dep)
                 return
             await asyncio.sleep(READINESS_POLL_SECONDS)
-        self._fail(
+        self._settle_if_building(
             dep,
             f"the site did not become ready within {self.settings.build_timeout_seconds}s "
             f"(a cold build fetches includes from GitHub and may pip-install tool deps)",

@@ -113,7 +113,12 @@ class BuildQueueTest(unittest.TestCase):
 
     def test_health_reports_the_queue(self):
         """The block reaches the caller, not only the supervisor."""
-        settings = Settings(work_root=Path(self._tmp.name) / "svc",
+        # An empty local checkout, so start-up warms a LocalStudio, which needs no
+        # network. Left unset this would pick GithubStudio, and a unit test would
+        # make a real api.github.com request and write the developer's own cache.
+        studio = Path(self._tmp.name) / "studio"
+        studio.mkdir(parents=True, exist_ok=True)
+        settings = Settings(work_root=Path(self._tmp.name) / "svc", studio=str(studio),
                             port_start=8540, port_end=8549, max_deployments=5,
                             max_concurrent_builds=2)
         with TestClient(create_app(settings)) as client:
