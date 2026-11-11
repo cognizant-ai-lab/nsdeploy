@@ -28,19 +28,45 @@
     // the shared key, so remove it.
     if (cookieDomain) document.cookie = `${cookieName}=; Path=/; Max-Age=0; Secure`;
 
+    // Every site's own relay sends a key to the same service upstream. A key applied
+    // with any other Provider URL is for that provider only, and another site would
+    // send it to its relay instead, so it is never shared.
+    const usesSiteRelay = (router) => {
+      if (!router) return true;
+      try {
+        const url = new URL(router, location.href);
+        return url.hostname === location.hostname && url.pathname.replace(/\/$/, "") === "/byok/v1";
+      } catch { return false; }
+    };
+
     const keyInput = document.querySelector("#ns-key");
     const applyButton = document.querySelector("#ns-apply");
-    const sharedKey = readSharedKey();
+    const clickedItem = "nsdeploy-shared-byok-clicked";
+    let clickedKey = null;
+    let tabKey = "";
+    let tabRouter = null;
     let sessionKey = "";
-    // nsdeploy marks a setup applied in this tab with this item, even when its key
-    // is empty. That setup keeps its own key, so the shared key must not replace it
-    // or fill the key field.
-    let tabSetupApplied = false;
     try {
+      clickedKey = sessionStorage.getItem(clickedItem);
+      sessionStorage.removeItem(clickedItem);
+      tabKey = sessionStorage.getItem("nsweb-byok-tab-key") || "";
+      // nsdeploy marks a setup applied in this tab with this item, even when its
+      // key is empty.
+      tabRouter = sessionStorage.getItem("nsweb-byok-router");
       sessionKey = sessionStorage.getItem("nsweb-byok-key") || "";
-      tabSetupApplied = sessionStorage.getItem("nsweb-byok-router") !== null;
     } catch {}
+    const tabSetupApplied = tabRouter !== null;
 
+    // nsdeploy saves a setup and reloads only when it passes the page's checks. So
+    // the key clicked before this load is shared only if this tab now has it.
+    if (clickedKey !== null && tabSetupApplied && clickedKey === tabKey) {
+      if (!tabKey) clearSharedKey();
+      else if (usesSiteRelay(tabRouter)) writeSharedKey(tabKey);
+    }
+
+    // A setup applied in this tab keeps its own key, so the shared key must not
+    // replace it or fill the key field.
+    const sharedKey = readSharedKey();
     if (sharedKey && !tabSetupApplied && sharedKey !== sessionKey) {
       // boot() has already created this page's engine. Seed the storage it reads
       // and reload once so the engine selects /byok/v1 with the shared key.
@@ -51,13 +77,14 @@
       keyInput.value = sharedKey;
     }
 
-    // nsdeploy's own handler saves the site-local session/profile and reloads.
-    // This listener adds only the 48-hour shared copy and adds no UI text.
+    // nsdeploy's own handler checks and saves the setup, then reloads. This listener
+    // only notes the key, so the next load can share it, and adds no UI text.
     applyButton?.addEventListener("click", () => {
-      const key = keyInput?.value.trim() || "";
-      if (key) writeSharedKey(key);
-      else clearSharedKey();
+      try { sessionStorage.setItem(clickedItem, keyInput?.value.trim() || ""); } catch {}
     });
+    // Deleting a setup means the visitor wants their key gone, so the other sites
+    // stop getting it too.
+    document.querySelector("#ns-delete-profile")?.addEventListener("click", clearSharedKey);
   }
 }
 /* nsdeploy_service shared BYOK cookie: end */
