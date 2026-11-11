@@ -467,10 +467,9 @@ URL stays on that site. Delete setup clears the shared key.
 
 With `SUBDOMAIN_TEMPLATE` set, the cookie is set on `PUBLIC_HOST`, so every site
 under it gets the key, and so does the console. Use a `PUBLIC_HOST` that serves only
-this service, because every host under it can read the key. The service writes this
-script into existing sites when it starts, and a restarted site serves it. Locally,
-use a two-label host such as `agents.localhost`, since browsers refuse a cookie set
-on `localhost` itself.
+this service, because every host under it can read the key. Locally, use a
+two-label host such as `agents.localhost`, since browsers refuse a cookie set on
+`localhost` itself.
 
 The remaining alternative, if you want per-site isolation as well, is giving each
 deployment **its own Container App** — replace `Supervisor._spawn`, the single seam,
