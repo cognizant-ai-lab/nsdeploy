@@ -56,7 +56,10 @@ class DeployOptions(BaseModel):
                     "profile and then pick its id. Ignored when org_id is given.",
     )
     upstream: Optional[str] = Field(
-        default=None, description="runtime BYOK proxy upstream for this site's /byok/v1",
+        default=None,
+        description="ignored. Every site's /byok/v1 forwards to the service-wide upstream "
+                    "(NSDEPLOY_SERVICE_UPSTREAM). Kept so stored options still parse; an "
+                    "upload that names a different upstream is refused with 400.",
     )
     theme: Optional[bool] = Field(
         default=None,

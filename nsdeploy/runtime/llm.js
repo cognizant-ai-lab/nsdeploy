@@ -1,6 +1,6 @@
 // llm.js — the LlmClient intrinsic: an OpenAI-compatible chat-completions client.
 
-import { normalizeModelName } from "./model.js";
+import { assertModelForRouter, normalizeModelName } from "./model.js";
 
 function hostOf(url) {
   try { return new URL(url).host; } catch { return url || "?"; }
@@ -69,6 +69,7 @@ export class LlmClient {
     if (!this.mock && (!this.apiKey || this.apiKey === "demo")) {
       throw new Error(`An LLM API key is required for ${hostOf(this.baseUrl) || "the configured provider"}. Open ⚙ BYOK / router settings, enter your key, then click Apply, save & reload. Your key stays in this browser and is sent only to the configured provider.`);
     }
+    assertModelForRouter(model, this.mock, hostOf(this.baseUrl));
     const span = this.trace?.start("model_call", {
       parent: parentSpan,
       origin,

@@ -4,7 +4,7 @@ Take a neuro-san(-studio) agent-network **HOCON**, check its dependencies, host 
 tools as **MCP servers**, generate a static **index.html**, and **serve the network
 as a website** — with **no neuro-san server** and no runtime dependency on neuro-san.
 
-This is a reference implementation for the [wwaw mvp spec](docs/Worldwide_Agentic_Web_MVP_Spec_v0.1.pdf).
+This is a reference implementation for the [wwaw mvp spec](https://github.com/cognizant-ai-labs/agentic-web/tree/main/docs).
 
 This is a standalone project. **No neuro-san-studio checkout is required** — by
 default nsdeploy pulls just the files it needs (`aaosa.hocon`, `toolbox_info.hocon`,
@@ -88,7 +88,9 @@ The gateway itself speaks HTTP; TLS can terminate at the platform ingress.
 By default the site requires BYOK. Open **⚙ BYOK settings** in the page and enter
 your API key + model — calls route through the same-origin `/byok/v1` CORS proxy to
 your provider. Without a key, the UI explains how to configure one and does not make
-an LLM request. Developers who need deterministic, keyless test behavior can deploy
+an LLM request. The same applies to the model when the network does not name one for every
+agent: the UI asks for a model your provider supports, and the mock placeholder model is never
+sent to a real provider. Developers who need deterministic, keyless test behavior can deploy
 with `--mock-llm`; this makes the local `/v1` mock the default for that build. The header reports
 a real LLM only after the endpoint returns a verifiable, non-mock model response;
 routing errors are shown as errors rather than silently falling back to mock.

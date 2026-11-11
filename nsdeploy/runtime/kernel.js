@@ -9,6 +9,7 @@
 // runs today; behavioral parity tests (see nsxc/) pin it to the Python source.
 
 import { deepMerge, isPlainObject } from "./hocon.js";
+import { normalizeModelName } from "./model.js";
 // Cross-compiled from neuro_san/kernel by nsxc (regenerated every build, drift-gated).
 import { find_front_man, classify_tool } from "./generated/graph.gen.mjs";
 import { validate_network } from "./generated/validation.gen.mjs";
@@ -135,8 +136,19 @@ export function filterConfig(rawConfig) {
     }
     // name correction: trim whitespace
     if (typeof agent.name === "string") agent.name = agent.name.trim();
+    normalizeConfiguredModel(agent.llm_config);
   }
+  normalizeConfiguredModel(config.llm_config);
   return config;
+}
+
+// A blank or quoted-empty model_name ("  ", '""') becomes "", so it counts as not set
+// and falls back to the network's model. Both runners and the settings panel read
+// this config, so they all fall back the same way.
+function normalizeConfiguredModel(llmConfig) {
+  if (isPlainObject(llmConfig) && typeof llmConfig.model_name === "string") {
+    llmConfig.model_name = normalizeModelName(llmConfig.model_name);
+  }
 }
 
 function walkReplace(v, fn) {
