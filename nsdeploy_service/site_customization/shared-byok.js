@@ -7,7 +7,7 @@
   const cookieDomain = "";
   const secure = location.protocol === "https:";
   const host = location.hostname;
-  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(host) || host.endsWith(".localhost");
+  const loopback = host === "localhost" || host === "127.0.0.1" || host.endsWith(".localhost");
 
   // The cookie contains the caller's own API key, so plain http is only allowed on
   // this machine.
