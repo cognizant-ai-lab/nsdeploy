@@ -35,7 +35,7 @@
       if (!router) return true;
       try {
         const url = new URL(router, location.href);
-        return url.hostname === location.hostname && url.pathname.replace(/\/$/, "") === "/byok/v1";
+        return url.origin === location.origin && url.pathname.replace(/\/$/, "") === "/byok/v1";
       } catch { return false; }
     };
 
