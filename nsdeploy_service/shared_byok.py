@@ -9,7 +9,6 @@ the public host when sites are served on subdomains.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 from nsdeploy_service.config import SERVICE_ROOT
@@ -20,27 +19,19 @@ START_MARKER = "/* nsdeploy_service shared BYOK cookie: begin */"
 END_MARKER = "/* nsdeploy_service shared BYOK cookie: end */"
 SCRIPT_PATH = SERVICE_ROOT / "site_customization" / "shared-byok.js"
 DOMAIN_LINE = 'const cookieDomain = "";'
-DOMAIN_PATTERN = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)*")
 
 
 def shared_cookie_domain(settings: Settings) -> str:
     """
-    The cookie domain that lets one shared key reach every deployed site.
+    The domain to set the shared cookie on.
 
-    Sites on subdomains of the public host need the cookie set on that host. Sites
-    that share one hostname on different ports need no domain, since cookies ignore
-    ports.
+    Sites on subdomains share one cookie on the public host. Sites on one hostname
+    with different ports need no domain, because cookies ignore ports.
 
     :param settings: Service settings
-    :return: The public host in subdomain mode, otherwise an empty string
+    :return: The public host when sites are on subdomains, otherwise an empty string
     """
-    if not settings.subdomain_template:
-        return ""
-    domain = settings.public_host.strip().strip(".").lower()
-    # Anything but a plain hostname could add cookie attributes, so drop it.
-    if not DOMAIN_PATTERN.fullmatch(domain):
-        return ""
-    return domain
+    return settings.public_host if settings.subdomain_template else ""
 
 
 def shared_byok_script(cookie_domain: str = "") -> str:

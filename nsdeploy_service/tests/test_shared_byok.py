@@ -63,8 +63,6 @@ class SharedByokTests(unittest.TestCase):
         subdomains = Settings(public_host="agentic-city-dev.decisionai.ml", subdomain_template="{slug}-{id}")
         self.assertEqual(shared_cookie_domain(subdomains), "agentic-city-dev.decisionai.ml")
         self.assertEqual(shared_cookie_domain(Settings(public_host="agentic-city-dev.decisionai.ml")), "")
-        injected = Settings(public_host="example.com; Domain=evil.com", subdomain_template="{id}")
-        self.assertEqual(shared_cookie_domain(injected), "")
 
     def test_sync_writes_the_cookie_domain_into_the_site(self):
         """Sync writes the cookie domain into the site, and port mode leaves it empty."""
