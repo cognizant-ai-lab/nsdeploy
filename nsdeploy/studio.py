@@ -139,7 +139,8 @@ class StudioSource:
         """
         raise NotImplementedError
 
-    def warm_files(self) -> bool:
+    # pylint: disable-next=unused-argument  # the no-op ignores it; GithubStudio does not
+    def warm_files(self, force: bool = False) -> bool:
         """
         Make the file list available before any build asks for a path.
 
@@ -147,6 +148,7 @@ class StudioSource:
         overrides it. A caller can therefore warm a source without knowing which
         kind it holds.
 
+        :param force: Refresh even when a cached list is still within its TTL.
         :return: True when the source is ready to resolve paths.
         """
         return True
@@ -378,7 +380,7 @@ class GithubStudio(StudioSource):
                                    tmp, cleanup)
 
     @override
-    def warm_files(self) -> bool:
+    def warm_files(self, force: bool = False) -> bool:
         """
         Fetch the file list now, so later builds do not each fetch it.
 
@@ -389,13 +391,23 @@ class GithubStudio(StudioSource):
         burst exhausts it and later builds fail to resolve their includes at all.
         Warming once, before any build, makes that one call for all of them.
 
+        A `force` refresh ignores the TTL. A site process receives no GitHub
+        credential (see nsdeploy_service/site_env.py), so a child that finds the
+        cached list expired fetches it anonymously and can meet the 60-an-hour
+        limit even where the service holds a token. Refreshing on a schedule
+        shorter than the TTL keeps the list a child reads from ever being expired,
+        and keeps every authenticated fetch in the service.
+
         Best effort. A source that cannot be warmed is not broken: the next build
         that needs a path it has not mirrored fetches the list itself.
 
+        :param force: Refresh even when a cached list is still within its TTL.
         :return: True when a file list is available, False when it could not be read.
         """
         try:
-            if self._files is None:
+            if force:
+                self._files = self._fetch_file_list()
+            elif self._files is None:
                 self._files = self._list_files()
         except (OSError, RuntimeError, ValueError) as exc:
             LOGGER.warning("cannot warm the file list for %s@%s: %s",
@@ -427,6 +439,15 @@ class GithubStudio(StudioSource):
         cached: Optional[List[str]] = self._cached_file_list()
         if cached is not None:
             return cached
+        return self._fetch_file_list()
+
+    def _fetch_file_list(self) -> List[str]:
+        """
+        Read the file list from the API and cache it, ignoring any cached copy.
+
+        :return: The file paths relative to the repository root
+        :raises RuntimeError: When the repository tree cannot be read
+        """
         data: Optional[str] = _http_get(TREE_URL.format(repo=self.repo, ref=self.ref))
         if data is None:
             raise RuntimeError(f"cannot read git tree for {self.repo}@{self.ref}")

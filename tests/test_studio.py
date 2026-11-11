@@ -321,6 +321,66 @@ class TestGithubStudio(unittest.TestCase):
             studio._store_file_list(["one.hocon"])
         warned.assert_not_called()
 
+
+class TestStudioWarmUp(unittest.TestCase):
+    """Warming the file list in the service, so no child has to fetch it.
+
+    A site process receives no GitHub credential, so a child that found the cached
+    list expired would fetch it anonymously and could meet the 60-an-hour limit even
+    where the service holds a token. The service therefore refreshes on a schedule
+    shorter than the TTL, which is what `force` is for.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
+        self.cache = Path(self._tmp.name)
+        self._http_get = studio_module._http_get
+        self.requested: List[str] = []
+
+    def tearDown(self) -> None:
+        studio_module._http_get = self._http_get
+        self._tmp.cleanup()
+
+    def _serve_file_list(self, payload: Optional[str]) -> None:
+        """
+        Answer every HTTP call with `payload`, recording the URLs asked for.
+
+        :param payload: The body to return, or None for a 404.
+        """
+        self.requested = []
+        studio_module._http_get = self._record(payload)
+
+    def _record(self, payload: Optional[str]):
+        """
+        Build a replacement for `_http_get` that records its calls.
+
+        :param payload: The body to return.
+        :return: The replacement callable.
+        """
+        requested = self.requested
+
+        def _get(url: str) -> Optional[str]:
+            requested.append(url)
+            return payload
+
+        return _get
+
+    @staticmethod
+    def _payload(paths: List[str]) -> str:
+        """
+        Render a GitHub tree response.
+
+        :param paths: The file paths it should list.
+        :return: The JSON body.
+        """
+        entries = []
+        # GitHub's own names: a "blob" entry per file, plus a "tree" entry for a
+        # directory, which the loader must ignore.
+        for path in paths:
+            entries.append({"path": path, "type": "blob"})
+        entries.append({"path": "coding", "type": "tree"})
+        return json.dumps({"tree": entries})
+
     def test_warming_caches_the_listing_for_later_builds(self):
         """The point of warming: one call here, none in the builds that follow."""
         self._serve_file_list(self._payload(FILES))
@@ -350,6 +410,47 @@ class TestGithubStudio(unittest.TestCase):
     def test_a_local_studio_needs_no_warming(self):
         """So a caller can warm whatever source it holds without asking what it is."""
         self.assertTrue(LocalStudio(self.cache).warm_files())
+
+    def test_a_forced_refresh_replaces_a_list_that_is_still_fresh(self):
+        """A child receives no GitHub credential, so one that found the list expired
+        would fetch it anonymously. The service refreshes before expiry instead, which
+        means ignoring a cached list that is merely still valid.
+        """
+        self._serve_file_list(self._payload(FILES))
+        GithubStudio(cache_dir=self.cache).warm_files()
+        self.assertEqual(len(self.requested), 1)
+        self._serve_file_list(self._payload(FILES))
+        # Not forced: the fresh cache answers and nothing is fetched.
+        GithubStudio(cache_dir=self.cache).warm_files()
+        self.assertEqual(self.requested, [])
+        self._serve_file_list(self._payload(FILES))
+        GithubStudio(cache_dir=self.cache).warm_files(force=True)
+        self.assertEqual(len(self.requested), 1)
+
+    def test_a_forced_refresh_renews_the_cache_on_disk(self):
+        """What the child reads is the file, so refreshing in memory alone would leave
+        it ageing out exactly as before."""
+        self._serve_file_list(self._payload(FILES))
+        GithubStudio(cache_dir=self.cache).warm_files()
+        stale = time.time() - FILE_LIST_CACHE_TTL_SECONDS - 60
+        os.utime(self.cache / FILE_LIST_CACHE_NAME, (stale, stale))
+        self._serve_file_list(self._payload(FILES))
+        GithubStudio(cache_dir=self.cache).warm_files(force=True)
+        # Fresh again, so a child reading it now does not fetch.
+        self._serve_file_list(self._payload(FILES))
+        self.assertEqual(GithubStudio(cache_dir=self.cache)._list_files(), FILES)
+        self.assertEqual(self.requested, [])
+
+    def test_a_forced_refresh_that_fails_is_reported_without_raising(self):
+        """The refresh runs forever in a background task; one failed pass must not end
+        it or the service."""
+        self._serve_file_list(None)
+        with self.assertLogs(studio_module.LOGGER, level="WARNING"):
+            self.assertFalse(GithubStudio(cache_dir=self.cache).warm_files(force=True))
+
+    def test_a_local_studio_ignores_a_forced_refresh(self):
+        """A local studio ignores a forced refresh."""
+        self.assertTrue(LocalStudio(self.cache).warm_files(force=True))
 
 
 class TestStudioToken(unittest.TestCase):

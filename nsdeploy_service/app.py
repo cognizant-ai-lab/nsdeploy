@@ -48,6 +48,7 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from nsdeploy.studio import FILE_LIST_CACHE_TTL_SECONDS
 from nsdeploy.studio import StudioSource
 from nsdeploy_service import PRODUCT_NAME
 from nsdeploy_service import __version__
@@ -372,6 +373,11 @@ def _org_view(row: dict) -> OrgView:
     )
 
 
+# Half the cache's lifetime, so a refresh always lands before the previous list
+# can expire under a child that is resolving its includes.
+STUDIO_REFRESH_SECONDS = FILE_LIST_CACHE_TTL_SECONDS // 2
+
+
 async def _warm_studio(bundler: Bundler) -> None:
     """Cache the studio's file list once, before any build needs it.
 
@@ -388,15 +394,28 @@ async def _warm_studio(bundler: Bundler) -> None:
     :param bundler: The bundler, which owns how a studio source is chosen.
     """
     source: Optional[StudioSource] = None
-    try:
-        # Not inside warm_files's own handling: building a GithubStudio creates
-        # its cache directory, so this can fail before there is anything to warm.
-        source = bundler.studio_source()
-    except OSError as exc:
-        print(f"cannot prepare the studio cache, so include paths will be "
-              f"resolved per build: {exc}", file=sys.stderr)
-        return
-    await asyncio.to_thread(source.warm_files)
+    first: bool = True
+    # Forever, at half the cache's lifetime, so the list a child reads is never
+    # past its TTL. A child receives no GitHub credential, so one that found the
+    # list expired would fetch it anonymously and could meet the 60-an-hour limit
+    # even where this service holds a token. The cost is two refreshes per TTL,
+    # which a token makes free and which is one call either way rather than one
+    # per queued build.
+    while True:
+        try:
+            # Not inside warm_files's own handling: building a GithubStudio
+            # creates its cache directory, so this can fail before there is
+            # anything to warm.
+            source = bundler.studio_source()
+        except OSError as exc:
+            print(f"cannot prepare the studio cache, so include paths will be "
+                  f"resolved per build: {exc}", file=sys.stderr)
+            return
+        # The first pass takes a cached list if one is fresh; later passes replace
+        # it, because their whole purpose is to stop it ageing out under a child.
+        await asyncio.to_thread(source.warm_files, not first)
+        first = False
+        await asyncio.sleep(STUDIO_REFRESH_SECONDS)
 
 
 # pylint: disable-next=too-many-locals,too-many-statements  # routes are closures over settings and app
