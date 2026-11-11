@@ -184,6 +184,29 @@ class TestSiteEnv(unittest.TestCase):
         self.assertIsNone(SiteEnv.allow_list_warning([]))
         self.assertIsNone(SiteEnv.allow_list_warning(["OPENAI_API_KEY", "GROQ_API_KEY"]))
 
+    def test_a_github_token_never_reaches_a_site(self):
+        """The service authenticates its own file-list requests with one of these, and
+        a site is built from an uploaded HOCON whose coded tools run arbitrary Python.
+        A site that received one could read the organization's GitHub credential.
+        """
+        base = {"GITHUB_TOKEN": "t", "GH_TOKEN": "t", "NSDEPLOY_GITHUB_TOKEN": "t",
+                "PATH": "/usr/bin"}
+        self.assertEqual(sorted(SiteEnv.build(base)), ["PATH"])
+
+    def test_the_allow_list_cannot_admit_a_github_token(self):
+        """Same rule as the service's own credentials: an operator must not be able to
+        hand one to uploaded code by listing it."""
+        base = {"GITHUB_TOKEN": "t", "GH_TOKEN": "t", "NSDEPLOY_GITHUB_TOKEN": "t",
+                "PATH": "/usr/bin"}
+        allowed = SiteEnv.build(base, allow=list(SiteEnv.SOURCE_CONTROL_NAMES))
+        self.assertEqual(sorted(allowed), ["PATH"])
+
+    def test_listing_a_github_token_is_reported_as_having_no_effect(self):
+        """So an operator who lists one is told rather than left believing it works."""
+        warning = SiteEnv.allow_list_warning(["GITHUB_TOKEN"])
+        self.assertIsNotNone(warning)
+        self.assertIn("GITHUB_TOKEN", warning)
+
 
 if __name__ == "__main__":
     unittest.main()

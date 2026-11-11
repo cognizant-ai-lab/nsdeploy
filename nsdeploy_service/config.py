@@ -184,7 +184,18 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
     # exception, logs "using the default look" and returns an empty ThemeSpec, which
     # __main__ turns into `theme or ThemeSpec()`. More concurrent calls hitting a rate
     # limit costs plainer styling on some networks, not a failed deployment.
-    max_concurrent_builds: int = 4
+    #
+    # 8, not 4. A slot now covers only the phase that does the work: the child
+    # is polled until it has written its bundle, and the wait for its listener
+    # to answer happens outside the slot. The old cap bounded that wait too, so
+    # one slow-starting site held build capacity it was not using.
+    #
+    # Measured on a burst of 16 trivial networks: 4 slots settled the last one in
+    # 5.2s, 8 in 3.7s and 16 in 2.8s. The curve is still falling at 16, so this is
+    # a conservative default rather than an optimum — but each slot can become a
+    # child process holding ~110 MB, so raise it against measured memory and not
+    # against this number.
+    max_concurrent_builds: int = 8
     # How many static bundle builds may run at once. A separate bound from the one
     # above, and not the same semaphore, for two reasons: a deployment holds its slot
     # for the whole build *and* the readiness poll (up to BUILD_TIMEOUT_SECONDS), so

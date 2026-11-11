@@ -48,6 +48,8 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from nsdeploy.studio import FILE_LIST_CACHE_TTL_SECONDS
+from nsdeploy.studio import StudioSource
 from nsdeploy_service import PRODUCT_NAME
 from nsdeploy_service import __version__
 from nsdeploy_service import envfile
@@ -371,6 +373,56 @@ def _org_view(row: dict) -> OrgView:
     )
 
 
+# Half the cache's lifetime, so a refresh always lands before the previous list
+# can expire under a child that is resolving its includes.
+STUDIO_REFRESH_SECONDS = FILE_LIST_CACHE_TTL_SECONDS // 2
+
+
+async def _warm_studio(bundler: Bundler) -> None:
+    """Cache the studio's file list once, before any build needs it.
+
+    Every deployment resolves its `include` lines in its own child process, so the
+    only thing a burst can share is the cached file list. Cold, each process misses
+    it before any has written it and spends one api.github.com call — 60 an hour
+    per IP unauthenticated, after which includes stop resolving altogether. One
+    call here serves every build that follows.
+
+    A task rather than part of start-up: the fetch can take seconds, and a service
+    that cannot answer its own health probe because GitHub is slow is worse than
+    one whose first build pays for the listing itself. Nothing waits on the result.
+
+    :param bundler: The bundler, which owns how a studio source is chosen.
+    """
+    # A local checkout is already on disk: LocalStudio.warm_files() is a no-op, and
+    # constructing one would create a mirror directory under the invoking user's
+    # home for nothing. Nothing here has anything to do, so do not start the loop.
+    if bundler.settings.studio:
+        return
+    source: Optional[StudioSource] = None
+    first: bool = True
+    # Forever, at half the cache's lifetime, so the list a child reads is never
+    # past its TTL. A child receives no GitHub credential, so one that found the
+    # list expired would fetch it anonymously and could meet the 60-an-hour limit
+    # even where this service holds a token. The cost is two refreshes per TTL,
+    # which a token makes free and which is one call either way rather than one
+    # per queued build.
+    while True:
+        try:
+            # Not inside warm_files's own handling: building a GithubStudio
+            # creates its cache directory, so this can fail before there is
+            # anything to warm.
+            source = bundler.studio_source()
+        except OSError as exc:
+            print(f"cannot prepare the studio cache, so include paths will be "
+                  f"resolved per build: {exc}", file=sys.stderr)
+            return
+        # The first pass takes a cached list if one is fresh; later passes replace
+        # it, because their whole purpose is to stop it ageing out under a child.
+        await asyncio.to_thread(source.warm_files, not first)
+        first = False
+        await asyncio.sleep(STUDIO_REFRESH_SECONDS)
+
+
 # pylint: disable-next=too-many-locals,too-many-statements  # routes are closures over settings and app
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
     """
@@ -401,14 +453,28 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             print(f"rebuilt the network summary for {len(app.state.supervisor.resummarized)} "
                   f"deployment record(s) from their generated bundle", file=sys.stderr)
         reaper = asyncio.create_task(_reaper(app.state.supervisor), name="ttl-reaper")
+        # Fire and forget. Held only so the task is not garbage collected while
+        # it runs, and cancelled with everything else on shutdown.
+        warming = asyncio.create_task(_warm_studio(app.state.bundler), name="warm-studio")
         try:
             yield
         finally:
             reaper.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await reaper
-            # Never leave orphaned site/tool/facade processes holding ports.
-            await app.state.supervisor.shutdown()
+            warming.cancel()
+            try:
+                # Exception as well as CancelledError, and in a try of its own: a
+                # background task that ended badly must not take the cleanup with
+                # it. Awaiting a failed task re-raises here, and the children and
+                # the store would then be left exactly as they are. CancelledError
+                # derives from BaseException, so suppressing Exception alone would
+                # not cover the ordinary case.
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await reaper
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await warming
+            finally:
+                # Never leave orphaned site/tool/facade processes holding ports.
+                await app.state.supervisor.shutdown()
 
     async def _reaper(supervisor: Supervisor) -> None:
         interval = max(5, supervisor.settings.reap_interval_seconds)
@@ -1249,6 +1315,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "capacity": supervisor.ports.capacity,
                 "reserved": sorted(supervisor.ports.reserved()),
             },
+            # Live, not persisted: only this process can have a queue, and a
+            # deployment waiting for a slot is invisible in every other field.
+            build_queue=supervisor.build_queue(),
             warnings=warnings,
         )
 

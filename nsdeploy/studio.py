@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -34,9 +36,39 @@ DEFAULT_REF = "main"
 # Directories of a local checkout that hold no studio sources.
 SKIPPED_CHECKOUT_DIRS = ("venv", "node_modules", "__pycache__")
 
+# A diagnostic channel, not the build report. nsdeploy prints its report to
+# stdout, but this module also runs in process inside the deployment service,
+# where a print would land in the middle of that service's own output.
+LOGGER = logging.getLogger(__name__)
+# `_list_files` is one GitHub API call, and a deployment service runs one process
+# per build. Unauthenticated api.github.com allows 60 calls an hour per IP, so a
+# busy service stops being able to resolve includes at all — the failure is a hard
+# RuntimeError, not a slow build. The file list is cached beside the files it
+# indexes, so every later build within the TTL reads it from there.
+FILE_LIST_CACHE_NAME = ".file-list.json"
+FILE_LIST_CACHE_TTL_SECONDS = 900
+# A token raises the limit from 60 to 5000 calls an hour. Read from the standard
+# names so an existing CI or container secret is picked up without new config.
+TOKEN_ENV_NAMES = ("NSDEPLOY_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN")
+
+
+def _github_token() -> str:
+    """The GitHub token to authenticate a file-list request with, if one is set."""
+    # First name that holds a value wins, so a deployment can override the
+    # ambient CI token without unsetting it.
+    for name in TOKEN_ENV_NAMES:
+        value: str = (os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
 
 def _http_get(url: str) -> Optional[str]:
-    req = urllib.request.Request(url, headers={"User-Agent": "nsdeploy", "Accept": "*/*"})
+    headers = {"User-Agent": "nsdeploy", "Accept": "*/*"}
+    token = _github_token()
+    if token and url.startswith("https://api.github.com/"):
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return resp.read().decode("utf-8")
@@ -106,6 +138,20 @@ class StudioSource:
         :raises NotImplementedError: Always; subclasses list their own files.
         """
         raise NotImplementedError
+
+    # pylint: disable-next=unused-argument  # the no-op ignores it; GithubStudio does not
+    def warm_files(self, force: bool = False) -> bool:
+        """
+        Make the file list available before any build asks for a path.
+
+        Nothing to do for a source that walks a local checkout; GithubStudio
+        overrides it. A caller can therefore warm a source without knowing which
+        kind it holds.
+
+        :param force: Refresh even when a cached list is still within its TTL.
+        :return: True when the source is ready to resolve paths.
+        """
+        return True
 
     def _read_upstream(self, upstream: str) -> Optional[str]:
         """
@@ -267,6 +313,108 @@ class GithubStudio(StudioSource):
         safe = repo.replace("/", "_")
         super().__init__(Path(cache_dir) if cache_dir else (Path.home() / ".cache" / "nsdeploy" / f"{safe}@{ref}"))
 
+    def _file_list_cache_path(self) -> Path:
+        """
+        Where this repo+ref's file list is cached between processes.
+
+        :return: The cache file's path.
+        """
+        return self._root / FILE_LIST_CACHE_NAME
+
+    def _cached_file_list(self) -> Optional[List[str]]:
+        """
+        The file list from disk, when one is there and still fresh.
+
+        :return: The file paths, or None when the cache is absent, stale or unusable.
+        """
+        path: Path = self._file_list_cache_path()
+        paths: object = None
+        try:
+            age: float = time.time() - path.stat().st_mtime
+            if age > FILE_LIST_CACHE_TTL_SECONDS:
+                return None
+            paths = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(paths, list):
+            return None
+        # Every entry, not just the outer list: _resolve_upstream calls endswith() on
+        # each one, so a cache holding [null] or [{}] would raise AttributeError
+        # instead of falling back to a fetch.
+        for item in paths:
+            if not isinstance(item, str):
+                return None
+        return paths
+
+    def _store_file_list(self, paths: List[str]) -> None:
+        """
+        Cache the file list for the next process. A failure is not fatal.
+
+        Each write takes its own temporary name: a deployment service builds several
+        bundles at once in worker threads of ONE process, so a shared name would let
+        one writer replace the file while another still held it open — which is what
+        the atomic replace exists to prevent.
+
+        :param paths: The file paths to cache.
+        """
+        tmp: Optional[Path] = None
+        try:
+            handle, raw = tempfile.mkstemp(prefix=f"{FILE_LIST_CACHE_NAME}.", dir=self._root)
+            tmp = Path(raw)
+            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                stream.write(json.dumps(paths))
+            os.replace(tmp, self._file_list_cache_path())
+        except OSError as exc:
+            # Non-fatal: this build already has the list it just fetched. It is
+            # reported because the consequence is otherwise invisible — a cache
+            # directory that has turned unwritable, or a full disk, makes every later
+            # build spend another api.github.com call until the hourly allowance is
+            # gone, with nothing anywhere saying why.
+            LOGGER.warning("cannot cache the file list for %s@%s at %s: %s",
+                           self.repo, self.ref, self._file_list_cache_path(), exc)
+            if tmp is not None:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError as cleanup:
+                    LOGGER.warning("cannot remove the temporary cache file %s: %s",
+                                   tmp, cleanup)
+
+    @override
+    def warm_files(self, force: bool = False) -> bool:
+        """
+        Fetch the file list now, so later builds do not each fetch it.
+
+        A deployment is a separate process, so the only thing concurrent builds can
+        share is the cached list — and a burst that starts cold has every process
+        miss it before any has written it, costing one api.github.com call each.
+        Unauthenticated that allowance is 60 an hour per IP, so a large enough first
+        burst exhausts it and later builds fail to resolve their includes at all.
+        Warming once, before any build, makes that one call for all of them.
+
+        A `force` refresh ignores the TTL. A site process receives no GitHub
+        credential (see nsdeploy_service/site_env.py), so a child that finds the
+        cached list expired fetches it anonymously and can meet the 60-an-hour
+        limit even where the service holds a token. Refreshing on a schedule
+        shorter than the TTL keeps the list a child reads from ever being expired,
+        and keeps every authenticated fetch in the service.
+
+        Best effort. A source that cannot be warmed is not broken: the next build
+        that needs a path it has not mirrored fetches the list itself.
+
+        :param force: Refresh even when a cached list is still within its TTL.
+        :return: True when a file list is available, False when it could not be read.
+        """
+        try:
+            if force:
+                self._files = self._fetch_file_list()
+            elif self._files is None:
+                self._files = self._list_files()
+        except (OSError, RuntimeError, ValueError) as exc:
+            LOGGER.warning("cannot warm the file list for %s@%s: %s",
+                           self.repo, self.ref, exc)
+            return False
+        return True
+
     @override
     def ensure(self, rel_path: str) -> Optional[Path]:
         """
@@ -288,14 +436,28 @@ class GithubStudio(StudioSource):
         :return: The file paths relative to the repository root
         :raises RuntimeError: When the repository tree cannot be read
         """
+        cached: Optional[List[str]] = self._cached_file_list()
+        if cached is not None:
+            return cached
+        return self._fetch_file_list()
+
+    def _fetch_file_list(self) -> List[str]:
+        """
+        Read the file list from the API and cache it, ignoring any cached copy.
+
+        :return: The file paths relative to the repository root
+        :raises RuntimeError: When the repository tree cannot be read
+        """
         data: Optional[str] = _http_get(TREE_URL.format(repo=self.repo, ref=self.ref))
         if data is None:
             raise RuntimeError(f"cannot read git tree for {self.repo}@{self.ref}")
         files: List[str] = []
-        # Keep the files; the tree also lists directories.
+        # Keep the files; the tree also lists directories. "tree" and "blob" are
+        # GitHub's own names for a directory entry and a file entry.
         for entry in json.loads(data).get("tree", []):  # type: dict
             if entry.get("type") == "blob":
                 files.append(entry.get("path"))
+        self._store_file_list(files)
         return files
 
     @override

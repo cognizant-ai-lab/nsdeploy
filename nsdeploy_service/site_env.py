@@ -37,6 +37,15 @@ class SiteEnv:
     PROVIDER_SUFFIXES: Tuple[str, ...] = ("_API_KEY", "_API_TOKEN", "_SECRET_KEY")
     PROVIDER_NAMES: FrozenSet[str] = frozenset({"GOOGLE_APPLICATION_CREDENTIALS", "NSDEPLOY_FACADE_API_KEY"})
 
+    # Source-control credentials. The service authenticates its own file-list requests
+    # with one of these (nsdeploy/studio.py), and a site process is built from an
+    # uploaded HOCON whose coded tools run arbitrary Python — so a site that received
+    # one could read the organization's GitHub credential. None of them matches the
+    # service or provider rules: they carry no NSDEPLOY_SERVICE_ prefix and no
+    # provider prefix or suffix, so they need naming here.
+    SOURCE_CONTROL_NAMES: FrozenSet[str] = frozenset(
+        {"NSDEPLOY_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"})
+
     # The key that nsdeploy's deploy-time theming reads from the site build's environment.
     THEME_KEY: str = "OPENAI_API_KEY"
 
@@ -69,7 +78,7 @@ class SiteEnv:
         :return: True when the variable is passed on to the site.
         """
         # Checked before the allow-list, so the allow-list can never pass the service's credentials.
-        if SiteEnv.is_service_secret(name):
+        if SiteEnv.is_service_secret(name) or SiteEnv.is_source_control_secret(name):
             return False
         return name in allow or not SiteEnv.is_provider_secret(name)
 
@@ -114,7 +123,7 @@ class SiteEnv:
         name: str
         # Collect each listed name that build() drops anyway.
         for name in allow:
-            if SiteEnv.is_service_secret(name):
+            if SiteEnv.is_service_secret(name) or SiteEnv.is_source_control_secret(name):
                 ignored.append(name)
         if not ignored:
             return None
@@ -131,6 +140,16 @@ class SiteEnv:
         :return: True for an NSDEPLOY_SERVICE_ name that ends in _TOKEN, _KEY, _SECRET or _PASSWORD.
         """
         return name.startswith(ENV_PREFIX) and name.endswith(SiteEnv.SERVICE_SECRET_SUFFIXES)
+
+    @staticmethod
+    def is_source_control_secret(name: str) -> bool:
+        """
+        Report whether a variable holds the credential the service fetches sources with.
+
+        :param name: The variable name.
+        :return: True for one of the GitHub token names studio.py reads.
+        """
+        return name in SiteEnv.SOURCE_CONTROL_NAMES
 
     @staticmethod
     def is_provider_secret(name: str) -> bool:

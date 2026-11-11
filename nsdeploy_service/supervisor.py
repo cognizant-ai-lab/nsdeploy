@@ -352,14 +352,31 @@ def engine_supports_host(python_exe: str) -> bool:
     return "--host" in (result.stdout or "")
 
 
+def readiness_artifacts(out_dir: Path, name: str) -> List[Path]:
+    """The files a finished build leaves behind, which `summarize_build` reads.
+
+    Named in one place because two things depend on the same list: `bundle_ready`
+    tests for them, and `Supervisor._clear_readiness` removes them before a
+    rebuild so that the test cannot pass on the last build's output.
+    """
+    return [out_dir / "agent-manifest.json", out_dir / f"{name}.network.json"]
+
+
 def bundle_ready(out_dir: Path, name: str) -> bool:
     """True once nsdeploy has written the artifacts `summarize_build` reads.
 
     Gating readiness on this keeps a deployment out of `ready` until the values the
     directory and the network map are built from actually exist on disk.
+
+    Existence only, deliberately: the files are written by another process and
+    there is no moment at which this one can read them atomically. What makes that
+    safe is that a rebuild clears them first — see `Supervisor._clear_readiness`.
     """
-    return ((out_dir / "agent-manifest.json").is_file()
-            and (out_dir / f"{name}.network.json").is_file())
+    # Both have to exist; the first missing one answers the question.
+    for path in readiness_artifacts(out_dir, name):
+        if not path.is_file():
+            return False
+    return True
 
 
 MAX_ERROR_CHARS = 600
@@ -672,6 +689,24 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         self._deployments: Dict[str, Deployment] = {}
         self._lock = threading.Lock()
         self._build_slots = asyncio.Semaphore(settings.max_concurrent_builds)
+        # Slots actually held. A deployment keeps BUILDING status after it
+        # releases its slot, so the status counts alone no longer say whether
+        # the service is saturated.
+        self._slots_in_use: int = 0
+        # One lock per work directory. A restart and a re-upload both reuse the
+        # directory of the deployment they replace, so without this the outgoing
+        # build's cleanup can still be deleting files while its replacement is
+        # generating them there. Keyed by path rather than by deployment, because
+        # the replacement is a different Deployment over the same directory.
+        #
+        # Only ever touched from the event loop, so neither dict needs a guard of
+        # its own. A lock is kept only while a build holds or waits for it:
+        # MAX_DEPLOYMENTS bounds live deployments, not directories ever built in,
+        # and forget() drops a record without dropping its lock, so a registry that
+        # only grew would keep an entry for every deploy/purge cycle of the
+        # service's life.
+        self._work_locks: Dict[str, asyncio.Lock] = {}
+        self._work_claims: Dict[str, int] = {}
         self._tasks: set[asyncio.Task] = set()
         settings.work_root.mkdir(parents=True, exist_ok=True)
         self.store = store or Store(settings.database_path())
@@ -774,6 +809,44 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         """
         with self._lock:
             return self._deployments.get(deployment_id)
+
+    def build_queue(self) -> Dict[str, Any]:
+        """
+        Report how many deployments wait for a build slot, and for how long.
+
+        A deployment holds its slot for the whole build *and* the readiness poll, so
+        one stuck build can keep others queued for up to BUILD_TIMEOUT_SECONDS. The
+        wait itself has no deadline — `build_timeout_seconds` is measured only after
+        a slot is taken — so without these numbers a stalled queue and a busy one
+        look the same from outside.
+
+        Counted from the in-memory deployments, which is where a queue can exist: a
+        record from an earlier run is terminal and never waits for a slot.
+
+        :return: The slot count, how many build now, how many wait, and the longest
+                 wait in whole seconds (None when nothing waits).
+        """
+        waiting: List[Deployment] = []
+        building: int = 0
+        now: datetime = _now()
+        # One pass over the live deployments, so both counts read one snapshot.
+        for dep in self.list():
+            if dep.status is DeploymentStatus.QUEUED:
+                waiting.append(dep)
+            elif dep.status is DeploymentStatus.BUILDING:
+                building += 1
+        oldest: Optional[int] = None
+        if waiting:
+            # list() is newest first, so the last entry has waited longest.
+            earliest: Deployment = waiting[-1]
+            oldest = int((now - earliest.created_at).total_seconds())
+        return {
+            "slots": self.settings.max_concurrent_builds,
+            "slots_in_use": self._slots_in_use,
+            "building": building,
+            "waiting": len(waiting),
+            "oldest_wait_seconds": oldest,
+        }
 
     def list(self) -> List[Deployment]:
         """
@@ -1197,6 +1270,93 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             cmd.append("--no-cruse")
         return cmd
 
+    def _claim_work_lock(self, dep: Deployment) -> asyncio.Lock:
+        """
+        Claim the lock that serializes builds sharing one work directory.
+
+        Claiming before acquiring is what makes the lock safe to retire: a waiter
+        has registered its claim before the holder releases, so the entry cannot be
+        removed and recreated underneath it — two Lock objects for one directory
+        would serialize nothing.
+
+        Acquired *after* a build slot, never before: a build which held this while
+        queueing for a slot would block the predecessor that already has one from
+        finishing and releasing it.
+
+        :param dep: The deployment about to be built.
+        :return: The lock for its work directory.
+        """
+        key: str = str(dep.work_dir)
+        lock: Optional[asyncio.Lock] = self._work_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._work_locks[key] = lock
+        self._work_claims[key] = self._work_claims.get(key, 0) + 1
+        return lock
+
+    def _drop_work_lock(self, dep: Deployment) -> None:
+        """
+        Give up this build's claim, retiring the lock once nothing holds it.
+
+        :param dep: The deployment whose build has finished with the directory.
+        """
+        key: str = str(dep.work_dir)
+        claims: int = self._work_claims.get(key, 0) - 1
+        if claims > 0:
+            self._work_claims[key] = claims
+            return
+        self._work_claims.pop(key, None)
+        self._work_locks.pop(key, None)
+
+    def _abandon(self, dep: Deployment) -> None:
+        """
+        Stop a child this build started for a deployment which is no longer building.
+
+        A stop which lands while `_spawn` runs tears down a deployment whose
+        `process` is still None, so `_teardown` releases the port and has nothing to
+        signal. The child this build then produces is invisible to that teardown: it
+        would outlive the record, serving on a port the pool has already handed back
+        to the next deployment.
+
+        The port is deliberately not released again — the teardown that set this
+        status already did that, and releasing twice would hand one port to two
+        deployments.
+
+        :param dep: The deployment whose child must go.
+        """
+        process: Optional[subprocess.Popen] = dep.process
+        dep.process = None
+        if process is not None:
+            _terminate_tree(process)
+
+    def _clear_readiness(self, dep: Deployment) -> None:
+        """
+        Remove the artifacts a previous build of this deployment left behind.
+
+        A restart and a re-upload both keep the deployment's work directory, so the
+        last build's `agent-manifest.json` and network JSON are still in `out_dir`
+        when the next child starts. `bundle_ready` tests only that those files
+        exist, so without this the build slot is handed back on the first poll —
+        before the new child has resolved anything — and concurrent restarts would
+        run their resolution and generation with no bound at all.
+
+        One visible consequence: `/graph` and the inferred relations read the
+        network JSON from `out_dir` (relations.py), so this deployment contributes
+        nothing to them until the rebuild writes it again. It is `building` for that
+        whole window, which is what the directory already reports.
+
+        :param dep: The deployment about to be built.
+        :raises DeploymentError: If an artifact cannot be removed. Continuing would
+                                 report a stale bundle as this build's own.
+        """
+        # Both files, so a half-cleared directory cannot read as a finished build.
+        for path in readiness_artifacts(dep.out_dir, dep.name):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                raise DeploymentError(
+                    f"cannot clear the previous build's {path.name}: {exc}") from exc
+
     def _spawn(self, dep: Deployment) -> subprocess.Popen:
         """
         Start the nsdeploy process that builds and serves a deployment.
@@ -1245,41 +1405,160 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             log_handle.close()
 
     async def _build(self, dep: Deployment) -> None:
+        generated: bool = False
+        deadline: Optional[datetime] = None
         async with self._build_slots:
             if dep.status is not DeploymentStatus.QUEUED:
                 return  # cancelled while queued
+            # Counted from here, not from when the task was scheduled: the wait for
+            # a slot is unbounded, so a deadline set before it would spend a
+            # queued deployment's whole budget on queueing and fail it the moment
+            # its child started. One deadline for both phases, so splitting the
+            # slot cannot let a deployment take twice BUILD_TIMEOUT_SECONDS.
+            deadline = _now() + timedelta(seconds=self.settings.build_timeout_seconds)
             dep.status = DeploymentStatus.BUILDING
             self._persist(dep)
+            # Counted for the whole time the slot is held, clearing and spawning
+            # included, or /health reports free capacity while every slot is busy.
+            self._slots_in_use += 1
+            # Nothing else may be building in this directory. A restart or a
+            # re-upload builds in the directory of the deployment it replaces, and
+            # the outgoing build's cleanup runs in a worker thread: without this it
+            # could still be deleting files while the replacement generates them,
+            # and no later status check can undo that.
+            work_lock: asyncio.Lock = self._claim_work_lock(dep)
             try:
-                dep.process = await asyncio.to_thread(self._spawn, dep)
-            except OSError as exc:
-                self._fail(dep, f"could not start nsdeploy: {exc}")
-                return
-            self._persist(dep)  # record the pid now that the child exists
-            try:
-                await self._await_ready(dep)
+                async with work_lock:
+                    # Cleared before the child starts, so the readiness test can
+                    # only pass on output this build produced.
+                    try:
+                        await asyncio.to_thread(self._clear_readiness, dep)
+                    except DeploymentError as exc:
+                        # A stop can have completed while that worker ran. Failing
+                        # now would release the port a second time and persist this
+                        # record over the replacement which has already taken it.
+                        if dep.status is DeploymentStatus.BUILDING:
+                            self._fail(dep, str(exc))
+                        return
+                    # Clearing is an await point, so a stop can complete inside
+                    # it. That teardown released the port and found no child to
+                    # signal, so spawning now would put one on a port the pool
+                    # has already handed back.
+                    if dep.status is not DeploymentStatus.BUILDING:
+                        return
+                    try:
+                        dep.process = await asyncio.to_thread(self._spawn, dep)
+                    except OSError as exc:
+                        if dep.status is DeploymentStatus.BUILDING:
+                            self._fail(dep, f"could not start nsdeploy: {exc}")
+                        return
+                    # Spawning is an await point too, and a stop which landed in
+                    # it could not see the child that came out of it.
+                    # _await_generated would return for the changed status and
+                    # leave it running.
+                    if dep.status is not DeploymentStatus.BUILDING:
+                        await asyncio.to_thread(self._abandon, dep)
+                        return
+                    self._persist(dep)  # record the pid now the child exists
+                    generated = await self._await_generated(dep, deadline)
             except asyncio.CancelledError:
                 self._teardown(dep, DeploymentStatus.STOPPED, "service shutting down")
                 raise
+            finally:
+                self._drop_work_lock(dep)
+                self._slots_in_use -= 1
+        if not generated or deadline is None:
+            return
+        # Outside the slot. The child has written its bundle and is only binding
+        # a port now, so it needs no build capacity — and holding one here is what
+        # made a slow-starting site stall every queued deployment behind it.
+        try:
+            await self._await_ready(dep, deadline)
+        except asyncio.CancelledError:
+            self._teardown(dep, DeploymentStatus.STOPPED, "service shutting down")
+            raise
 
-    async def _await_ready(self, dep: Deployment) -> None:
-        """Poll until the site answers, the child dies, or the build times out."""
-        deadline = _now() + timedelta(seconds=self.settings.build_timeout_seconds)
+    def _settle_if_building(self, dep: Deployment, error: str) -> None:
+        """
+        Fail a deployment, unless it has already been stopped or replaced.
+
+        Every outcome in the build loops is reached after an await, so a stop can
+        have completed in between. `_fail` releases the port, and failing a record
+        which has already stopped releases it twice — the second release taking the
+        reservation of whatever replacement has since claimed that port, and
+        persisting this record over the replacement's state.
+
+        :param dep: The deployment that failed.
+        :param error: What to record as the reason.
+        """
+        if dep.status is DeploymentStatus.BUILDING:
+            self._fail(dep, error)
+
+    async def _await_generated(self, dep: Deployment, deadline: datetime) -> bool:
+        """
+        Poll until nsdeploy has written the bundle, or the build ends badly.
+
+        This is the phase a build slot exists to bound. `bundle_ready` tests the
+        two files generate_site writes before launcher.serve() is reached, so it
+        is the observable end of the resolving, include-fetching and generating
+        a slot is meant to limit. What follows is the child binding a port, which
+        costs nothing a slot protects.
+
+        :param dep: The deployment being built.
+        :param deadline: When the whole build gives up.
+        :return: True when the bundle exists and the wait for a listener should
+                 continue; False when this deployment is already settled.
+        """
+        while _now() < deadline:
+            if dep.status is not DeploymentStatus.BUILDING:
+                return False  # stopped underneath us
+            proc: Optional[subprocess.Popen] = dep.process
+            if proc is None:
+                self._settle_if_building(dep, "deployment process vanished")
+                return False
+            if proc.poll() is not None:
+                self._settle_if_building(
+                    dep, _error_excerpt(dep.log_path, proc.returncode))
+                return False
+            if await asyncio.to_thread(self._site_is_ready_to_summarize, dep):
+                return True
+            await asyncio.sleep(READINESS_POLL_SECONDS)
+        # The deadline can expire during the last poll or sleep, so this is reached
+        # after an await like every other outcome here.
+        self._settle_if_building(
+            dep,
+            f"nsdeploy did not generate the bundle within "
+            f"{self.settings.build_timeout_seconds}s (a cold build fetches includes "
+            f"from GitHub and may pip-install tool deps)",
+        )
+        return False
+
+    async def _await_ready(self, dep: Deployment, deadline: datetime) -> None:
+        """
+        Poll until the site answers, the child dies, or the build times out.
+
+        :param dep: The deployment being built.
+        :param deadline: When the whole build gives up.
+        """
         while _now() < deadline:
             if dep.status is not DeploymentStatus.BUILDING:
                 return  # stopped underneath us
             proc = dep.process
             if proc is None:
-                self._fail(dep, "deployment process vanished")
+                self._settle_if_building(dep, "deployment process vanished")
                 return
             if proc.poll() is not None:
-                self._fail(dep, _error_excerpt(dep.log_path, proc.returncode))
+                self._settle_if_building(
+                    dep, _error_excerpt(dep.log_path, proc.returncode))
                 return
             if await asyncio.to_thread(self._site_is_ours, dep):
-                self._mark_ready(dep)
+                # The probe is an await too: a deployment stopped during it must
+                # not be marked ready over the top of whatever replaced it.
+                if dep.status is DeploymentStatus.BUILDING:
+                    self._mark_ready(dep)
                 return
             await asyncio.sleep(READINESS_POLL_SECONDS)
-        self._fail(
+        self._settle_if_building(
             dep,
             f"the site did not become ready within {self.settings.build_timeout_seconds}s "
             f"(a cold build fetches includes from GitHub and may pip-install tool deps)",
