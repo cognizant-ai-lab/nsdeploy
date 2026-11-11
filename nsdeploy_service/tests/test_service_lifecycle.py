@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 import tempfile
 import unittest
@@ -7,6 +8,8 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
+import nsdeploy.studio as studio_module
+from nsdeploy_service.app import _warm_studio
 from nsdeploy_service.app import create_app
 from nsdeploy_service.bundler import Bundler
 from nsdeploy_service.config import Settings
@@ -158,6 +161,18 @@ class LifespanCleanupTest(unittest.TestCase):
         # means the whole of it ran.
         with self.assertRaises(sqlite3.ProgrammingError):
             supervisor.store.count_by_status()
+
+    def test_a_configured_studio_needs_no_warming(self):
+        """A local checkout is already on disk, so warming it would fetch nothing and
+        would create a mirror directory under the invoking user's home for no reason.
+        """
+        calls = []
+        with mock.patch.object(studio_module, "_http_get", side_effect=calls.append):
+            settings = Settings(work_root=Path(self._tmp.name) / "svc",
+                                studio=str(Path(self._tmp.name) / "checkout"),
+                                port_start=8760, port_end=8769)
+            asyncio.run(_warm_studio(Bundler(settings)))
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

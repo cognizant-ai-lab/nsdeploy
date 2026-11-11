@@ -393,6 +393,11 @@ async def _warm_studio(bundler: Bundler) -> None:
 
     :param bundler: The bundler, which owns how a studio source is chosen.
     """
+    # A local checkout is already on disk: LocalStudio.warm_files() is a no-op, and
+    # constructing one would create a mirror directory under the invoking user's
+    # home for nothing. Nothing here has anything to do, so do not start the loop.
+    if bundler.settings.studio:
+        return
     source: Optional[StudioSource] = None
     first: bool = True
     # Forever, at half the cache's lifetime, so the list a child reads is never
