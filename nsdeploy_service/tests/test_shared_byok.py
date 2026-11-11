@@ -2,9 +2,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from nsdeploy_service.config import Settings
 from nsdeploy_service.shared_byok import END_MARKER
 from nsdeploy_service.shared_byok import START_MARKER
 from nsdeploy_service.shared_byok import shared_byok_script
+from nsdeploy_service.shared_byok import shared_cookie_domain
 from nsdeploy_service.shared_byok import sync_shared_byok
 
 
@@ -55,6 +57,26 @@ class SharedByokTests(unittest.TestCase):
             sync_shared_byok(work, enabled=False)
 
             self.assertEqual(path.read_text(encoding="utf-8"), authored)
+
+    def test_subdomain_sites_share_the_cookie_on_the_public_host(self):
+        """Subdomain sites share the cookie on the public host, port sites need no domain."""
+        subdomains = Settings(public_host="agentic-city.example.com", subdomain_template="{slug}-{id}")
+        self.assertEqual(shared_cookie_domain(subdomains), "agentic-city.example.com")
+        self.assertEqual(shared_cookie_domain(Settings(public_host="agentic-city.example.com")), "")
+
+    def test_sync_writes_the_cookie_domain_into_the_site(self):
+        """Sync writes the cookie domain into the site, and port mode leaves it empty."""
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            path = work / "site" / "site.js"
+            path.parent.mkdir(parents=True)
+            path.write_text("export const customerCode = true;\n", encoding="utf-8")
+
+            sync_shared_byok(work, cookie_domain="agentic-city.example.com")
+            self.assertIn('const cookieDomain = "agentic-city.example.com";', path.read_text(encoding="utf-8"))
+
+            sync_shared_byok(work)
+            self.assertIn('const cookieDomain = "";', path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
