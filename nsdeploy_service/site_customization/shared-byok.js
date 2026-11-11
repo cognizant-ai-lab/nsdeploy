@@ -1,20 +1,16 @@
 /* nsdeploy_service shared BYOK cookie: begin */
 {
+  const cookieName = "__Secure-nsdeploy_shared_byok_v1";
   const maxAgeSeconds = 48 * 60 * 60;
-  // When sites are on subdomains, the service fills in its public host here so one
-  // cookie reaches every site. Sites on one hostname with different ports need no
-  // domain, because cookies ignore ports.
+  // Sites on one hostname differ only by port, and cookies ignore ports, so a
+  // host-only cookie follows the browser to each site. Sites on subdomains need the
+  // cookie on their shared domain, which the service fills in here.
   const cookieDomain = "";
-  const secure = location.protocol === "https:";
-  const host = location.hostname;
-  const loopback = host === "localhost" || host === "127.0.0.1" || host.endsWith(".localhost");
 
-  // The cookie contains the caller's own API key, so plain http is only allowed on
-  // this machine.
-  if (secure || loopback) {
-    // The __Secure- prefix needs https.
-    const cookieName = secure ? "__Secure-nsdeploy_shared_byok_v1" : "nsdeploy_shared_byok_v1";
-    const attrs = `Path=/${cookieDomain ? `; Domain=${cookieDomain}` : ""}; SameSite=Strict${secure ? "; Secure" : ""}`;
+  // The cookie contains the caller's own API key, so it is only used over https or
+  // on localhost, which browsers treat as secure.
+  if (window.isSecureContext) {
+    const attrs = `Path=/${cookieDomain ? `; Domain=${cookieDomain}` : ""}; SameSite=Strict; Secure`;
     const readSharedKey = () => {
       const prefix = `${cookieName}=`;
       const part = document.cookie.split("; ").find((item) => item.startsWith(prefix));
@@ -30,7 +26,7 @@
 
     // A copy saved for this site alone, from before sites shared one, would hide
     // the shared key, so remove it.
-    if (cookieDomain) document.cookie = `${cookieName}=; Path=/; Max-Age=0${secure ? "; Secure" : ""}`;
+    if (cookieDomain) document.cookie = `${cookieName}=; Path=/; Max-Age=0; Secure`;
 
     const keyInput = document.querySelector("#ns-key");
     const applyButton = document.querySelector("#ns-apply");

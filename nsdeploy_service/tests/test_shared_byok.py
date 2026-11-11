@@ -16,7 +16,7 @@ class SharedByokTests(unittest.TestCase):
         """The script uses a 48-hour secure cookie and adds no UI content."""
         script = shared_byok_script()
         self.assertIn("48 * 60 * 60", script)
-        self.assertIn('SameSite=Strict${secure ? "; Secure" : ""}', script)
+        self.assertIn("SameSite=Strict; Secure", script)
         self.assertIn("__Secure-nsdeploy_shared_byok_v1", script)
         self.assertIn('sessionStorage.setItem("nsweb-byok-key", sharedKey)', script)
         self.assertIn('applyButton?.addEventListener("click"', script)
