@@ -30,12 +30,14 @@
 
     // Every site's own relay sends a key to the same service upstream. A key applied
     // with any other Provider URL is for that provider only, and another site would
-    // send it to its relay instead, so it is never shared.
+    // send it to its relay instead, so it is never shared. Only the hostname is
+    // compared: every port on it is this service, and a relay URL has no port when
+    // the service is reached through a proxy port.
     const usesSiteRelay = (router) => {
       if (!router) return true;
       try {
         const url = new URL(router, location.href);
-        return url.origin === location.origin && url.pathname.replace(/\/$/, "") === "/byok/v1";
+        return url.hostname === location.hostname && url.pathname.replace(/\/$/, "") === "/byok/v1";
       } catch { return false; }
     };
 

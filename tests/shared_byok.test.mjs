@@ -89,12 +89,17 @@ test('a key applied with the site relay is shared after the page saves it', () =
 });
 
 test('a key applied with another provider URL stays on the site', () => {
-  for (const router of ['https://api.groq.com/openai/v1', 'https://site.example.test:8443/byok/v1']) {
-    const page = browser({ inputValue: 'sk-groq' });
-    page.listeners.apply();
-    applied(page.session, 'sk-groq', router);
-    assert.deepEqual(browser({ session: page.session }).writes, []);
-  }
+  const page = browser({ inputValue: 'sk-groq' });
+  page.listeners.apply();
+  applied(page.session, 'sk-groq', 'https://api.groq.com/openai/v1');
+  assert.deepEqual(browser({ session: page.session }).writes, []);
+});
+
+test('a relay on another port of the same host is this service, so its key is shared', () => {
+  const page = browser({ inputValue: 'sk-port' });
+  page.listeners.apply();
+  applied(page.session, 'sk-port', 'https://site.example.test:8443/byok/v1');
+  assert.match(browser({ session: page.session }).writes[0], /^__Secure-nsdeploy_shared_byok_v1=sk-port;/);
 });
 
 test('a key the page rejected is not shared', () => {
