@@ -84,7 +84,7 @@ try {
   typeKey("sk-fixture-unrecognized");
   check(advanced.open, "An unrecognized key opens the advanced settings when the site needs a model");
   const profileHint = app.querySelector("#ns-profile-hint");
-  check(/^This site needs a model name/.test(profileHint.textContent) && !/Open/.test(profileHint.textContent), "The hint says to enter a model, without asking the visitor to open anything");
+  check(/^The page can't tell which provider this key is for\. Check the Provider URL, enter a model/.test(profileHint.textContent) && !/Open/.test(profileHint.textContent), "The hint asks to check the Provider URL and enter a model, without asking the visitor to open anything");
   // Save and start still asks for the model and puts the cursor in its field.
   advanced.open = false;
   routerInput.value = "https://router.example/v1";
@@ -128,14 +128,28 @@ try {
   const namedEngine = new Engine({ originUrl: location.origin });
   namedEngine.top = { network: new AgentNetwork({ llm_config: { model_name: "fixture-model" }, tools: [{ name: "root", instructions: "Fixture" }] }, "named"), base: location.origin };
   namedEngine.mockLLM = false;
-  mountApp(named, { engine: namedEngine, trace: namedEngine.trace, manifest: { brand: "Named fixture", llm_router: { base_url: "https://router.example/v1" } } });
+  namedEngine.byokRouter = "https://named.example/byok/v1";
+  mountApp(named, { engine: namedEngine, trace: namedEngine.trace, manifest: { brand: "Named fixture", llm_router: { base_url: namedEngine.byokRouter } } });
   const namedKey = named.querySelector("#ns-key");
-  namedKey.value = "sk-fixture-unrecognized";
-  namedKey.dispatchEvent(new Event("input"));
-  check(named.querySelector("#ns-profile-hint").textContent === "Select Save and start to use this key." && !named.querySelector(".ns-settings-advanced").open, "On a site that names a model, an unrecognized key only needs Save and start");
-  namedKey.value = "";
-  namedKey.dispatchEvent(new Event("input"));
-  check(/^To start, add an AI provider key/.test(named.querySelector("#ns-profile-hint").textContent), "Clearing the key brings back the first-visit message");
+  const namedRouter = named.querySelector("#ns-router");
+  const namedModel = named.querySelector("#ns-model");
+  const namedHint = named.querySelector("#ns-profile-hint");
+  const namedAdvanced = named.querySelector(".ns-settings-advanced");
+  const typeNamedKey = (value) => { namedKey.value = value; namedKey.dispatchEvent(new Event("input")); };
+  typeNamedKey("sk-fixture-unrecognized");
+  check(namedHint.textContent === "The page can't tell which provider this key is for. Check the Provider URL, then select Save and start." && namedAdvanced.open, "On a site that names a model, an unrecognized key shows the Provider URL and asks for a check");
+  typeNamedKey("");
+  check(/^To start, add an AI provider key/.test(namedHint.textContent), "Clearing the key brings back the first-visit message");
+  // A Groq key fills in Groq's settings. A key the page cannot place then gets the site's own.
+  typeNamedKey("gsk_fixture");
+  check(namedRouter.value === groq.router && namedModel.value === groq.model, "A Groq key fills in Groq's settings");
+  typeNamedKey("sk-or-fixture");
+  check(namedRouter.value === namedEngine.byokRouter && namedModel.value === "" && /Check the Provider URL/.test(namedHint.textContent), "Replacing a recognized key with an unrecognized one puts back the site's settings");
+  // Settings the visitor changed stay.
+  typeNamedKey("gsk_fixture");
+  namedModel.value = "visitor-model";
+  typeNamedKey("sk-or-fixture");
+  check(namedModel.value === "visitor-model" && namedRouter.value === namedEngine.byokRouter, "A model the visitor chose stays when the key changes");
   named.remove();
   // Restore the form, so the chat checks below send nothing to a real provider.
   typeKey("");

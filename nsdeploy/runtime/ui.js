@@ -1171,6 +1171,22 @@ export function mountApp(root, { engine, trace, manifest }) {
     focusModelField();
     return false;
   };
+  // Put back the site's own settings in place of those a provider's key filled in,
+  // leaving any field the visitor has changed.
+  const clearProviderDefaults = (provider) => {
+    if (routerEl.value.trim() === provider.router) routerEl.value = byokRouter || mockUrl;
+    if (modelEl.value.trim() === provider.model) modelEl.value = "";
+    if (profileNameEl.value.trim() === provider.name) profileNameEl.value = "";
+    formProvider = null;
+  };
+  // The page cannot tell which provider an unrecognized key is for, so the visitor checks
+  // the Provider URL, and enters a model when the site needs one.
+  const unrecognizedKeyMessage = () => {
+    const needsModel = !everyAgentHasModel && !modelEl.value.trim();
+    return "The page can't tell which provider this key is for. Check the Provider URL, "
+      + (needsModel ? "enter a model your provider supports in the Model field, " : "")
+      + "then select Save and start.";
+  };
   // A key from a newly detected provider fills in that provider's settings, so editing
   // the key keeps a model or router the visitor chose. Any other key entered against
   // the mock router switches it to the real proxy.
@@ -1179,18 +1195,13 @@ export function mountApp(root, { engine, trace, manifest }) {
     const provider = providerForApiKey(key);
     if (provider && provider !== formProvider) {
       applyProviderDefaults(provider, `${provider.name} key detected. Recommended settings are ready.`);
-    } else if (!provider && key && byokRouter && isMockRouter(routerEl.value.trim())) {
-      routerEl.value = byokRouter;
-    }
-    if (!provider && key) {
-      // A key the page cannot place comes with no model, so when the site needs one and the
-      // field is empty, show the Model field and say what to enter.
-      if (!everyAgentHasModel && !modelEl.value.trim()) {
-        root.querySelector(".ns-settings-advanced").open = true;
-        setProfileHint(modelSetupMessage());
-      } else {
-        setProfileHint("Select Save and start to use this key.");
-      }
+    } else if (!provider && key) {
+      // Another provider's settings must not stay with this key, and a real key never goes
+      // to the mock. Then show the Provider URL and Model fields and ask for a check.
+      if (formProvider) clearProviderDefaults(formProvider);
+      if (byokRouter && isMockRouter(routerEl.value.trim())) routerEl.value = byokRouter;
+      root.querySelector(".ns-settings-advanced").open = true;
+      setProfileHint(unrecognizedKeyMessage());
     } else if (!key && needsByok) {
       setProfileHint(setupMessage, "warn");
     }
