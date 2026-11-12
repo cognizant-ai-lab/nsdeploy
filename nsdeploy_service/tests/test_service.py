@@ -175,6 +175,19 @@ class SettingsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             Settings(port_start=8200, port_end=8100).validate()
 
+    def test_rejects_a_token_that_cannot_be_sent(self) -> None:
+        """An API token that is not printable ASCII is rejected."""
+        with self.assertRaises(ValueError):
+            Settings(api_token="s3crèt").validate()
+
+    def test_console_proxy_accepts_only_known_values(self) -> None:
+        """CONSOLE_PROXY accepts only the usual true and false words."""
+        with mock.patch.dict(os.environ, {"NSDEPLOY_SERVICE_CONSOLE_PROXY": "disabled"}):
+            with self.assertRaises(ValueError):
+                Settings.from_env()
+        with mock.patch.dict(os.environ, {"NSDEPLOY_SERVICE_CONSOLE_PROXY": "on"}):
+            self.assertTrue(Settings.from_env().console_proxy)
+
     def test_reads_the_site_env_allow_list_from_the_environment(self) -> None:
         """
         NSDEPLOY_SERVICE_SITE_ENV_ALLOW is read as a comma-separated list of names.

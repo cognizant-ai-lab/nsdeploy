@@ -12,6 +12,7 @@ import sys
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
+from typing import ClassVar
 from typing import List
 from typing import Optional
 from urllib.parse import urlsplit
@@ -63,10 +64,21 @@ def _env_int(name: str, default: int) -> int:
         raise ValueError(f"{ENV_PREFIX}{name} must be an integer, got {raw!r}") from exc
 
 
-def _env_bool(name: str, default: bool) -> bool:
+def _env_bool(name: str, default: bool, strict: bool = False) -> bool:
+    """
+    Read a boolean setting.
+
+    :param name: The setting name, without ENV_PREFIX.
+    :param default: The value when the variable is unset or empty.
+    :param strict: Accept only 1/true/yes/on and 0/false/no/off. Otherwise any value but the false ones is true.
+    :return: The setting's value.
+    :raises ValueError: If `strict` is set and the value is neither true nor false.
+    """
     raw = _env(name).lower()
     if not raw:
         return default
+    if strict and raw not in ("1", "true", "yes", "on", "0", "false", "no", "off"):
+        raise ValueError(f"{ENV_PREFIX}{name} must be one of 1/true/yes/on or 0/false/no/off, got {raw!r}")
     return raw not in ("0", "false", "no", "off")
 
 
@@ -232,6 +244,13 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
     # Lets /console-api add `api_token` to the console's own requests, so the console does not ask
     # for it. The token stays on the server, but anyone can then make those requests (see ConsoleProxy).
     console_proxy: bool = False
+    CONSOLE_PROXY_WARNING: ClassVar[str] = (
+        "CONSOLE_PROXY is on, so anyone who can reach this service can make the console's requests without "
+        "API_TOKEN, through /console-api. That includes uploading a network, which can execute arbitrary Python "
+        "on this host (see nsdeploy_service/README.md)."
+    )
+    # /health needs no token and the console shows its warnings to every visitor, so it gets a neutral line.
+    CONSOLE_PROXY_HEALTH_WARNING: ClassVar[str] = "CONSOLE_PROXY is on, so console requests don't need API_TOKEN"
 
     # Origins allowed to call this API from a browser on another host. Empty — the
     # default — installs no CORS middleware at all, so the service answers exactly as
@@ -321,7 +340,7 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
             relations_model=_env("RELATIONS_MODEL", default.relations_model),
             build_version=_env("BUILD_VERSION", default.build_version),
             api_token=_env("API_TOKEN", default.api_token),
-            console_proxy=_env_bool("CONSOLE_PROXY", default.console_proxy),
+            console_proxy=_env_bool("CONSOLE_PROXY", default.console_proxy, strict=True),
             cors_origins=_env_list("CORS_ORIGINS", default.cors_origins),
             site_env_allow=_env_list("SITE_ENV_ALLOW", default.site_env_allow),
             tls_terminated_externally=_env_bool("TLS_TERMINATED_EXTERNALLY",
@@ -349,6 +368,8 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
         if self.max_concurrent_bundle_builds < 1:
             raise ValueError("MAX_CONCURRENT_BUNDLE_BUILDS must be >= 1")
         self._validate_cors_origins()
+        if not self.is_valid_api_token(self.api_token):
+            raise ValueError("API_TOKEN must be printable ASCII")
         if self.map_refresh_seconds < 5:
             raise ValueError("MAP_REFRESH_SECONDS must be >= 5")
         if self.port_start <= self.port <= self.port_end:
@@ -356,6 +377,16 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
                 f"the service port ({self.port}) must not sit inside the deployment "
                 f"port pool ({self.port_start}-{self.port_end})"
             )
+
+    @staticmethod
+    def is_valid_api_token(token: str) -> bool:
+        """
+        Check that a token can be sent in an HTTP header.
+
+        :param token: The token, or "" for none.
+        :return: True if the token is printable ASCII.
+        """
+        return token.isascii() and token.isprintable()
 
     def _validate_cors_origins(self) -> None:
         """Refuse a CORS entry no browser could ever match.

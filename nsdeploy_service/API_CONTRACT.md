@@ -15,6 +15,7 @@ second precision** (`2026-09-22T20:29:19+00:00`). All times are server-generated
 | --- | --- |
 | `API_TOKEN` unset (default) | every route is open — intended for loopback only |
 | `API_TOKEN` set | `Authorization: Bearer <token>` required on all routes **except** `GET /health` and the UI's static assets |
+| `API_TOKEN` and `CONSOLE_PROXY` set | as above, except the console's own requests under `/console-api` (below), which the server sends with the token |
 <!-- pyml enable md013 -->
 
 Failure: `401` `{"detail": "a valid bearer token is required"}` — returned both for a
@@ -27,6 +28,37 @@ organization's deployments. Per-org isolation requires the login mechanism.
 The UI's assets are served unauthenticated (they are static files and carry no data),
 but every call it makes is gated. On a `401` it prompts for the token once and keeps it
 in `sessionStorage` for the tab.
+
+### The console proxy (`/console-api`)
+
+The console sends every request to `/console-api/<path>`, except `POST /settings`, which
+goes to `/settings`. `/console-api/<path>` serves `/<path>`.
+
+With `CONSOLE_PROXY` off (the default), that is all it does: the request needs the token
+and gets CORS exactly as `/<path>` does.
+
+With `CONSOLE_PROXY` on, the server replaces the request's `Authorization` with
+`Bearer <API_TOKEN>`, so the console never asks for the token. **Anyone who can reach the
+service can then make these requests**, including uploading a network, which runs code
+on the host. Start-up and `/health` warn while it is on. Only these requests are passed
+on:
+
+```text
+GET    /health  /settings  /orgs  /graph  /directory  /deployments  /deployments/{id}
+GET    /deployments/{id}/wait|logs|graph|theme-spec
+POST   /orgs  /deployments  /deployments/{id}/restart|theme|theme-spec|publish|unpublish
+PATCH  /orgs/{id}
+DELETE /orgs/{id}  /deployments/{id}
+```
+
+Everything else under `/console-api` gets
+`403` `{"detail": "<method> <path> isn't a console request"}`, so `POST /settings`,
+`/bundles` and the other routes still need the caller's own token. A request whose
+`Sec-Fetch-Site` is not `same-origin` or `none`, or, without `Sec-Fetch-Site`, whose
+`Origin` matches neither the first `X-Forwarded-Host` entry nor `Host`, gets `403`
+`{"detail": "/console-api refuses requests from another site"}`, so another page cannot
+use a visitor's browser to make them, CORS preflights included.
+`GET /console-api/settings` returns an empty `last4` for every key.
 
 ### Cross-origin callers (CORS)
 
@@ -486,10 +518,10 @@ Suitable as a liveness/readiness probe. `status` is always `"ok"` when the proce
 serving.
 
 **`warnings` are ongoing conditions**, expected to persist until an operator fixes the
-underlying cause — for example "bound off-loopback with no `API_TOKEN`", or `THEME` on
-while site builds do not receive `OPENAI_API_KEY` (see `SITE_ENV_ALLOW` in the service
-README). Because a warning repeats on every poll, **a client must surface a given message
-once**, not per response; the console keys off the message text to do that.
+underlying cause, such as "bound off-loopback with no `API_TOKEN`", `THEME` on while
+site builds do not receive `OPENAI_API_KEY` (see `SITE_ENV_ALLOW` in the service README),
+or "`CONSOLE_PROXY` is on". Because a warning repeats on every poll, **a client must surface
+a given message once**, not per response; the console keys off the message text to do that.
 
 **`reconciled_at_startup` is a one-off statistic**, not a warning: how many records this
 run settled to `stopped` at boot because their processes did not survive a restart
@@ -752,6 +784,7 @@ Present on a **successful** deployment to flag silent degradation. Never a failu
 | `200` | varies | read/delete succeeded |
 | `400` | `{"detail": "<message>"}` | rejected by the service (below) |
 | `401` | `{"detail": "a valid bearer token is required"}` | auth configured and not satisfied |
+| `403` | `{"detail": "<message>"}` | `/console-api` request refused while `CONSOLE_PROXY` is on (§1) |
 | `404` | `{"detail": "no deployment '<id>'"}` | unknown id |
 | `409` | `{"detail": "<message>"}` | conflicts with existing state: duplicate org name, or deleting an org that still owns records |
 | `422` | `{"detail": [{"type","loc","msg","input"}, …]}` | FastAPI schema validation (missing `file`, `tail` out of range, …) |

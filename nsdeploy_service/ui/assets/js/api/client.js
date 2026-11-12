@@ -14,7 +14,9 @@ export const BASE = '';
 
 // Requests go through the server's console proxy, which adds the API token when
 // NSDEPLOY_SERVICE_CONSOLE_PROXY is on. POST /settings is not on its allowlist, so
-// it goes to the API directly and still asks for the token.
+// it goes to the API directly and still asks for the token. With the proxy on,
+// /console-api refuses requests from another origin, so a console hosted elsewhere
+// needs the proxy off; /console-api is then a plain alias of the API.
 const CONSOLE_BASE = `${BASE}/console-api`;
 
 export class ApiError extends Error {

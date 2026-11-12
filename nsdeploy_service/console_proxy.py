@@ -1,37 +1,42 @@
 from __future__ import annotations
 
 import re
-from typing import Any
-from typing import Awaitable
-from typing import Callable
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Pattern
 from typing import Tuple
+from urllib.parse import urlsplit
 
 from fastapi.responses import JSONResponse
+from starlette.types import ASGIApp
+from starlette.types import Receive
+from starlette.types import Scope
+from starlette.types import Send
 
 from nsdeploy_service.config import Settings
-
-Scope = Dict[str, Any]
-Message = Dict[str, Any]
-Receive = Callable[[], Awaitable[Message]]
-Send = Callable[[Message], Awaitable[None]]
-AsgiApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
 class ConsoleProxy:
     """
     ASGI middleware that lets the console call the API without holding the API token.
 
-    The console sends its requests to `/console-api/<path>`. A request on `ALLOWED_REQUESTS` is passed on to
-    `/<path>`, and when `console_proxy` is on, its Authorization header is replaced with the server's token. Any other
-    `/console-api` request gets a 403. This is the console's equivalent of neuro-san-ui's `/api/publish` proxy: the
-    token stays on the server, and visitors can only make the requests the console makes. `POST /settings` and
-    `/bundles` are not on the list, so they still need the caller's own token.
+    The console sends its requests to `/console-api/<path>`, which is passed on to `/<path>`. With `console_proxy`
+    off, that is all it does, so the API's own token check and CORS apply as on any other route. With it on, only a
+    same-origin request on `ALLOWED_REQUESTS` is passed on, its Authorization header is replaced with the server's
+    token, and the request is marked in `scope["state"]` under `STATE_KEY`. Any other `/console-api` request gets a
+    403. This is the console's equivalent of neuro-san-ui's `/api/publish` proxy: the token stays on the server, and
+    visitors can only make the requests the console makes. `POST /settings` and `/bundles` are not on the list, so
+    they still need the caller's own token.
     """
 
     PREFIX: str = "/console-api"
+
+    # The `request.state` attribute that is True on a request the proxy passed on with the server's token.
+    STATE_KEY: str = "console_proxy"
+
+    # Sec-Fetch-Site values for a request from the console's own page, or typed into the address bar.
+    SAME_ORIGIN_FETCH_SITES: Tuple[str, ...] = ("same-origin", "none")
 
     # Every request the console makes (ui/assets/js/api/client.js) except POST /settings. A segment is `[\w-]+`,
     # so an encoded "/" or "." cannot reach another route.
@@ -52,7 +57,7 @@ class ConsoleProxy:
         ("POST", re.compile(r"/deployments/[\w-]+/(restart|theme|theme-spec|publish|unpublish)")),
     )
 
-    def __init__(self, app: AsgiApp, settings: Settings) -> None:
+    def __init__(self, app: ASGIApp, settings: Settings) -> None:
         """
         Wrap an ASGI app.
 
@@ -60,7 +65,7 @@ class ConsoleProxy:
         :param settings: The service settings. `api_token` is read per request, because POST /settings can
             replace it.
         """
-        self.app: AsgiApp = app
+        self.app: ASGIApp = app
         self.settings: Settings = settings
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -77,17 +82,29 @@ class ConsoleProxy:
             return
 
         api_path: str = path[len(self.PREFIX):]
-        method: str = scope.get("method", "")
-        if not self.is_allowed(method, api_path):
-            refusal = JSONResponse({"detail": f"{method} {api_path} isn't a console request"}, status_code=403)
-            await refusal(scope, receive, send)
-            return
-
         forwarded: Scope = dict(scope)
         forwarded["path"] = api_path
         forwarded["raw_path"] = self.strip_prefix(scope.get("raw_path"), api_path)
-        if self.settings.console_proxy:
-            forwarded["headers"] = self.with_token(scope.get("headers", []))
+        if not self.settings.console_proxy:
+            await self.app(forwarded, receive, send)
+            return
+
+        method: str = scope.get("method", "")
+        headers: List[Tuple[bytes, bytes]] = scope.get("headers", [])
+        detail: Optional[str] = None
+        if self.is_cross_site(headers):
+            detail = f"{self.PREFIX} refuses requests from another site"
+        elif not self.is_allowed(method, api_path):
+            detail = f"{method} {api_path} isn't a console request"
+        if detail is not None:
+            refusal = JSONResponse({"detail": detail}, status_code=403)
+            await refusal(scope, receive, send)
+            return
+
+        forwarded["headers"] = self.with_token(headers)
+        state: Dict[str, object] = dict(scope.get("state") or {})
+        state[self.STATE_KEY] = True
+        forwarded["state"] = state
         await self.app(forwarded, receive, send)
 
     def is_allowed(self, method: str, api_path: str) -> bool:
@@ -106,7 +123,52 @@ class ConsoleProxy:
                 return True
         return False
 
-    def strip_prefix(self, raw_path: Any, api_path: str) -> bytes:
+    def is_cross_site(self, headers: List[Tuple[bytes, bytes]]) -> bool:
+        """
+        Check whether a browser sent the request from a page on another origin.
+
+        A request without `Sec-Fetch-Site` or `Origin`, such as one from curl, is not cross-site: it gets nothing it
+        could not get by calling the service itself. A browser sends at least one of them on a cross-site request,
+        including the form posts that need no CORS preflight.
+
+        :param headers: The request headers as ASGI byte pairs.
+        :return: True if `Sec-Fetch-Site` names another origin, or, without `Sec-Fetch-Site`, `Origin` matches neither
+            `X-Forwarded-Host` nor `Host`.
+        """
+        # The browser sets Sec-Fetch-Site and a page cannot change it, so Origin is only compared without it.
+        fetch_site: Optional[str] = self.header(headers, b"sec-fetch-site")
+        if fetch_site is not None:
+            return fetch_site.lower() not in self.SAME_ORIGIN_FETCH_SITES
+        origin: Optional[str] = self.header(headers, b"origin")
+        if origin is None:
+            return False
+        origin_host: str = urlsplit(origin.lower()).netloc
+        # A proxy such as Azure Front Door rewrites Host and keeps the browser's host in X-Forwarded-Host, as
+        # SiteProxy expects. A page on another site cannot set that header without a preflight, which is refused.
+        forwarded_host: str = (self.header(headers, b"x-forwarded-host") or "").split(",")[0].strip().lower()
+        host: str = (self.header(headers, b"host") or "").lower()
+        if not origin_host:
+            return True
+        return origin_host not in (forwarded_host, host)
+
+    @staticmethod
+    def header(headers: List[Tuple[bytes, bytes]], name: bytes) -> Optional[str]:
+        """
+        Read one request header.
+
+        :param headers: The request headers as ASGI byte pairs, with lowercase names.
+        :param name: The lowercase header name.
+        :return: The first value of the header, or None if the request does not have it.
+        """
+        # Return the first header with this name.
+        header_name: bytes
+        value: bytes
+        for header_name, value in headers:
+            if header_name == name:
+                return value.decode("latin-1")
+        return None
+
+    def strip_prefix(self, raw_path: object, api_path: str) -> bytes:
         """
         Remove `/console-api` from the undecoded request path.
 
@@ -124,7 +186,8 @@ class ConsoleProxy:
         Replace the request's Authorization header with the server's API token.
 
         :param headers: The request headers as ASGI byte pairs.
-        :return: The headers without the caller's Authorization, plus the server's token when one is set.
+        :return: The headers without the caller's Authorization, plus the server's token when one is set. The token
+            is printable ASCII, which `Settings.validate` and POST /settings check.
         """
         result: List[Tuple[bytes, bytes]] = []
         # Drop the caller's Authorization so only the server's token is checked.
@@ -134,5 +197,5 @@ class ConsoleProxy:
             if name.lower() != b"authorization":
                 result.append((name, value))
         if self.settings.api_token:
-            result.append((b"authorization", b"Bearer " + self.settings.api_token.encode("latin-1")))
+            result.append((b"authorization", b"Bearer " + self.settings.api_token.encode("ascii")))
         return result
