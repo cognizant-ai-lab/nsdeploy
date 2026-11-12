@@ -1,13 +1,8 @@
 # We separate out requirements that are specific to the build, but not
 # necessary for operation to minimize the size of containers
 
-# Agentic City service, needed by nsdeploy_service/tests
-# (same set as nsdeploy_service/pyproject.toml)
-fastapi>=0.110
+# Multipart form parsing for nsdeploy_service, needed by nsdeploy_service/tests
 python-multipart>=0.0.9
-httpx>=0.27
-truststore>=0.9
-certifi
 
 # Tests
 pytest==9.0.3
