@@ -780,9 +780,19 @@ export class Engine {
       // A static bundle's mock answers here, with no server to send the call to.
       const call = router === BROWSER_MOCK_ROUTER ? async () => browserMockResponse(url, body || {}) : originalFetch;
       // A call that never reaches the router gets main's advice on why (CORS, a local
-      // router that isn't running), instead of the browser's bare "Failed to fetch".
+      // router that isn't running). The OpenAI client neuro-san uses retries, then
+      // reports only "Connection error.", so the turn shows the advice itself when no
+      // later call got through (see streamTurn).
       const send = async (...args) => {
-        try { return await call(...args); } catch (err) { throw ProviderError.friendly(err, base); }
+        try {
+          const response = await call(...args);
+          this.providerError = null;
+          return response;
+        } catch (err) {
+          const friendly = ProviderError.friendly(err, base);
+          if (friendly instanceof ProviderError) this.providerError = friendly;
+          throw friendly;
+        }
       };
       // Only the top front man is steered. Work already handed to tools and other
       // agents finishes as it is, so nothing runs twice.
@@ -1177,6 +1187,7 @@ export class Engine {
         chat_filter: { chat_filter_type: "MAXIMAL" },
       };
       if (this.chatContext) request.chat_context = this.chatContext;
+      this.providerError = null;
       let answer = "";
       for await (const chatResponse of loop.streaming_chat(request)) {
         const message = chatResponse?.response;
@@ -1192,6 +1203,8 @@ export class Engine {
       this.chatContext = boundedHistory(withSteering(this.chatContext, network.findFrontMan(), _turnControl?.accepted || []));
       for (const entry of this.agentSpans.values()) if (!entry.ended) this.trace.end(entry.span, {});
       for (const key of [...this.toolSpans.keys()]) this._endTool(key);
+      // The router couldn't be reached, so neuro-san's answer is only its own error.
+      if (this.providerError) throw this.providerError;
       // The answer's text for the chat, and the presentation the UI renders, if the
       // front man proposed one (see cruse.js).
       const result = parseAgentResponse(answer, {
