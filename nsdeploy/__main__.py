@@ -204,7 +204,7 @@ def main() -> int:
 
     if args.studio:
         source = LocalStudio(args.studio)
-        print(f"▶ Resolving {hocon_path.name} (studio: {source.root}) …\n")
+        print(f"▶ Resolving {hocon_path.name} (studio: {args.studio}) …\n")
     else:
         source = GithubStudio(args.repo, args.ref)
         print(f"▶ Resolving {hocon_path.name} (tools from github:{args.repo}@{args.ref}) …\n")

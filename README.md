@@ -96,10 +96,12 @@ single internal port, start the gateway with `--bind 0.0.0.0`, and give each sit
 external origin such as `--site-url https://link-demo-airline.agents.example.com`.
 The gateway itself speaks HTTP; TLS can terminate at the platform ingress.
 
-By default the site requires BYOK. Open **⚙ BYOK settings** in the page and enter
-your API key + model — calls route through the same-origin `/byok/v1` CORS proxy to
-your provider. Without a key, the UI explains how to configure one and does not make
-an LLM request. Developers who need deterministic, keyless test behavior can deploy
+By default the site requires the visitor's own API key. Open **⚙ AI model settings**
+in the page and enter the key — calls route through the configured provider. Without
+a key, the UI links to free-tier providers, fills in their recommended model settings,
+and does not make an LLM request. The same applies to the model when the network does not name one for every
+agent: the UI asks for a model your provider supports, and the mock placeholder model is never
+sent to a real provider. Developers who need deterministic, keyless test behavior can deploy
 with `--mock-llm`; this makes the local `/v1` mock the default for that build. The header reports
 a real LLM only after the endpoint returns a verifiable, non-mock model response;
 routing errors are shown as errors rather than silently falling back to mock.
@@ -270,7 +272,7 @@ For a cloud ingress, additionally set `NSDEPLOY_GATEWAY_BIND=0.0.0.0`,
 `NSDEPLOY_GATEWAY_PORT` can remain an unprivileged port such as `8080`.
 
 To run the agents with Docker Model Runner instead, explicitly select its upstream
-and enter one of the exact IDs returned by its `/models` endpoint in BYOK settings:
+and enter one of the exact IDs returned by its `/models` endpoint in AI model settings:
 
 ```bash
 NSDEPLOY_UPSTREAM=http://localhost:12434/engines/v1 \
@@ -1157,7 +1159,7 @@ and the existing site's backend supplies any server-side functions.
 ### 4. Test on the same site
 
 Open <http://127.0.0.1:8122/>. Configure a real CORS-enabled model router through
-BYOK settings; the ordinary built-in mock does not synthesize action proposals.
+AI model settings; the ordinary built-in mock does not synthesize action proposals.
 Ask: “Request a restaurant visit for three people on December 15, 2026.”
 Review the proposed form/action and submit it. Cancel once to verify no request is
 sent, then confirm. The result should include `succeeded` and a demonstration
@@ -1317,7 +1319,7 @@ you intend.
 If you'd rather not use a cloud API key, run a model **locally** with
 [Ollama](https://ollama.com) and point nsdeploy at it. The same local endpoint works
 for **deploy-time theming** (`--theme-upstream`) and for **running the agents** (paste
-it into the page's BYOK settings) — nothing leaves your machine.
+it into the page's AI model settings) — nothing leaves your machine.
 
 The bundled helper installs nothing surprising: it checks for Ollama, starts the
 server if needed, pulls the model, and prints the exact deploy command.
@@ -1344,7 +1346,7 @@ python -m nsdeploy examples/soccer_world_cup_assistant.hocon --port 8080 \
     --theme-upstream http://127.0.0.1:11434/v1
 ```
 
-To also **run the deployed agents** on the local model, open **⚙ BYOK settings** in the
+To also **run the deployed agents** on the local model, open **⚙ AI model settings** in the
 page and set Router base URL `http://127.0.0.1:11434/v1`, Model `qwen2.5:7b`, and any
 non-empty API key. For local deploy-time theming, pass
 `--theme-upstream http://127.0.0.1:11434/v1`; `--upstream` remains the runtime BYOK
@@ -1438,7 +1440,7 @@ chatbot:
   boxes joined by edges — the front-man at the root, sub-agents nested beneath, and
   MCP/remote/coded tools as dashed leaf boxes; the active agent/origin **glows and its
   dot pulses** as a run progresses. Plus a live, exportable **execution log**.
-- **BYOK / router settings** let the user pick a real model + key at run time and save
+- **AI model settings** let the user pick a real model + key at run time and save
   named setups (for example, Local LLM, OpenAI, or an Anthropic-compatible router).
   Keys are never put in the URL; profiles are stored in the browser, with loopback
   localhost/127.0.0.1 deployments mirrored to a local cookie so the same setups

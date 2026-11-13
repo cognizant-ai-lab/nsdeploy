@@ -89,4 +89,4 @@ class TestRuntimeUrlParams(unittest.TestCase):
         with self.subTest(file_name="index.js"):
             self.assertEqual(self.find_calls("index.js", r"\.delete\([^)]*\)"), ['.delete("key")'])
         with self.subTest(file_name="ui.js"):
-            self.assertEqual(self.find_calls("ui.js", r"\.delete\(\s*['\"`](?:router|model)['\"`]"), [])
+            self.assertEqual(self.find_calls("ui.js", r"\.delete\(\s*['\"`][^'\"`]*['\"`]\s*\)"), ['.delete("key")'])

@@ -10,11 +10,25 @@ import { AgentNetwork, loadNeuroSan, initNetwork } from "../nsdeploy/runtime/ts-
 import { createTurnEventStream } from "../nsdeploy/runtime/execution-stream.js";
 import { TraceBus } from "../nsdeploy/runtime/trace.js";
 import { createTurnStatusController, statusTextForEvent } from "../nsdeploy/runtime/turn-status.js";
+import { AI_MODEL_SETTINGS_LABEL, API_KEY_HELP_URL, API_KEY_PROVIDERS, providerForApiKey } from "../nsdeploy/runtime/ui.js";
 
 // remoteIsInChain parses references with neuro-san's ExternalAgentParsing, from the
 // bundled package.
 await loadNeuroSan();
 initNetwork();
+
+// The settings panel is shared by both runtimes.
+assert.equal(AI_MODEL_SETTINGS_LABEL, "AI model settings");
+assert.equal(API_KEY_HELP_URL, "https://ai.google.dev/gemini-api/docs/api-key");
+assert.deepEqual(API_KEY_PROVIDERS.map((provider) => provider.name), ["Google AI Studio", "Groq", "OpenAI", "Anthropic"]);
+assert.ok(API_KEY_PROVIDERS.every((provider) => provider.keyUrl.startsWith("https://")));
+assert.ok(API_KEY_PROVIDERS.every((provider) => provider.router.startsWith("https://") && provider.model));
+assert.equal(providerForApiKey("AIza-example").name, "Google AI Studio");
+assert.equal(providerForApiKey("gsk_example").name, "Groq");
+assert.equal(providerForApiKey("sk-proj-example").name, "OpenAI");
+assert.equal(providerForApiKey("sk-proj-example").model, "gpt-5.5");
+assert.equal(providerForApiKey("sk-ant-example").name, "Anthropic");
+assert.equal(providerForApiKey("sk-or-v1-example"), null);
 
 const manifest = {
   llm_router: {
