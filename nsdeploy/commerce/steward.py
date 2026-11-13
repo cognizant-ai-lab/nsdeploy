@@ -11,6 +11,11 @@ import urllib.error
 from dataclasses import dataclass
 from datetime import date
 from datetime import timedelta
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Set
 
 from neuro_san.interfaces.coded_tool import CodedTool
 
@@ -21,16 +26,16 @@ from nsdeploy.commerce.service import credential_path
 from nsdeploy.commerce.service import origin
 from nsdeploy.commerce.service import post_json
 
-HANDLE = "nsdeploy_butterpink_commerce_binding"
+HANDLE: str = "nsdeploy_butterpink_commerce_binding"
 # Keys neuro-san puts into every coded-tool call. They are framework plumbing rather
 # than arguments the model supplied, and the set grows with the framework:
 # "activation_capsule" arrived in neuro-san 0.7.23. Each one has to be dropped before
 # the argument check below, which refuses any key the operation does not name.
-FRAMEWORK_ARGS = {"origin", "origin_str", "progress_reporter", "reservationist",
-                  "activation_capsule"}
-TURN = "nsdeploy_butterpink_commerce_turn"
-_bindings = {}
-_lock = threading.RLock()
+FRAMEWORK_ARGS: Set[str] = {"origin", "origin_str", "progress_reporter", "reservationist",
+                            "activation_capsule"}
+TURN: str = "nsdeploy_butterpink_commerce_turn"
+_bindings: Dict[str, Dict[str, Any]] = {}
+_lock: threading.RLock = threading.RLock()
 
 
 @dataclass
@@ -41,13 +46,14 @@ class PrivateTurn:
     result: dict | None = None
 
 
-def binding_for(sly_data):
+def binding_for(sly_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Return the live private binding for a chat, pruning expired bindings.
 
     :param sly_data: The chat's private sly_data.
     :return: The binding, or None when the chat has no live binding.
     """
+    handle: str
     with _lock:
         for handle in list(_bindings):
             if _bindings[handle]["local_until"] <= time.monotonic():
@@ -55,7 +61,7 @@ def binding_for(sly_data):
         return _bindings.get(sly_data.get(HANDLE))
 
 
-def start_binding(sly_data):
+def start_binding(sly_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Return the chat's private binding, creating one on first use.
 
@@ -63,12 +69,12 @@ def start_binding(sly_data):
     :return: The binding.
     :raises PermissionError: If the chat's earlier binding has expired or the runtime restarted.
     """
-    binding = binding_for(sly_data)
+    binding: Optional[Dict[str, Any]] = binding_for(sly_data)
     if binding:
         return binding
     if sly_data.get(HANDLE):
         raise PermissionError("Private booking context expired or the runtime restarted. Start a new private chat.")
-    handle = secrets.token_urlsafe(32)
+    handle: str = secrets.token_urlsafe(32)
     binding = {"session": secrets.token_urlsafe(32), "last_result": None,
                "presented_offer": None, "requested_budget": None,
                "local_until": time.monotonic() + 86400, "lock": threading.RLock()}
@@ -84,7 +90,7 @@ class ButterpinkCommerceGateway(CodedTool):
     """
 
     # pylint: disable-next=too-many-locals,too-many-branches,too-many-statements  # one linear policy check
-    async def async_invoke(self, args, sly_data):
+    async def async_invoke(self, args: Dict[str, Any], sly_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Validate a commerce operation against the private turn and relay it to the arbiter.
 
@@ -94,39 +100,40 @@ class ButterpinkCommerceGateway(CodedTool):
         """
         if not isinstance(args, dict) or not isinstance(sly_data, dict):
             return {"status": "DENIED", "error": "A private steward chat is required."}
-        turn = sly_data.get(TURN)
+        turn: Any = sly_data.get(TURN)
         if not isinstance(turn, PrivateTurn):
             return {"status": "DENIED", "error": "Use the Butterpink private steward in nsFlow."}
         # Framework invocation metadata and optional schema defaults confer no authority.
         args = {key: value for key, value in args.items() if value is not None
                 and key not in FRAMEWORK_ARGS}
-        operation = args.get("operation")
-        fields = {"operation", "arrival", "budget_cents"} if operation == "negotiate" else {"operation"}
+        operation: Any = args.get("operation")
+        fields: Set[str] = {"operation", "arrival", "budget_cents"} if operation == "negotiate" else {"operation"}
         if operation == "approve":
             fields.add("offer_id")
         try:
             if operation not in ("negotiate", "status", "approve", "cancel") or set(args) != fields:
                 raise ValueError("Use negotiate with arrival and budget_cents; approve with offer_id; "
                                  "or status/cancel without extra arguments.")
-            binding = start_binding(sly_data)
+            binding: Dict[str, Any] = start_binding(sly_data)
             if operation == "approve" and (not turn.confirmed_offer
                                            or args["offer_id"] != turn.confirmed_offer
                                            or args["offer_id"] != binding["presented_offer"]):
                 raise PermissionError("Present the exact offer first. The user must then reply "
                                       "'Confirm booking' in a later private chat turn.")
             if operation == "approve":
-                offers = (binding["last_result"] or {}).get("offers", [])
-                offer = next((item for item in offers if item["offer_id"] == args["offer_id"]), None)
+                offers: List[Dict[str, Any]] = (binding["last_result"] or {}).get("offers", [])
+                offer: Optional[Dict[str, Any]] = next((item for item in offers
+                                                        if item["offer_id"] == args["offer_id"]), None)
                 if not offer or offer["total_cents"] > (binding["requested_budget"] or 0):
                     raise PermissionError("This offer exceeds the user's latest stated maximum. "
                                           "Cancel it and negotiate a new mandate.")
-            endpoint = origin(os.environ.get("NSDEPLOY_COMMERCE_ARBITER_URL", "http://127.0.0.1:8105"))
-            deny_origins = os.environ.get('NSDEPLOY_STEWARD_DENY_ORIGINS', '')
-            denied = {item.strip().rstrip('/') for item in deny_origins.split(',')}
+            endpoint: str = origin(os.environ.get("NSDEPLOY_COMMERCE_ARBITER_URL", "http://127.0.0.1:8105"))
+            deny_origins: str = os.environ.get('NSDEPLOY_STEWARD_DENY_ORIGINS', '')
+            denied: Set[str] = {item.strip().rstrip('/') for item in deny_origins.split(',')}
             if endpoint in denied:
                 raise PermissionError("The arbiter is denied by the private steward's local policy.")
-            key = credential_path().read_text(encoding="utf-8").strip()
-            payload = {"session": binding["session"]}
+            key: str = credential_path().read_text(encoding="utf-8").strip()
+            payload: Dict[str, Any] = {"session": binding["session"]}
             if operation == "negotiate":
                 # An exact type check rejects bool, which isinstance(..., int) would accept.
                 # pylint: disable-next=unidiomatic-typecheck
@@ -136,7 +143,7 @@ class ButterpinkCommerceGateway(CodedTool):
                 if not binding["requested_budget"] or args["budget_cents"] != binding["requested_budget"]:
                     raise PermissionError("Ask the user to state the maximum as a dollar amount, "
                                           "for example 'under $500'. Never invent or increase their budget.")
-                arrival = date.fromisoformat(args["arrival"])
+                arrival: date = date.fromisoformat(args["arrival"])
                 payload.update(budget_cents=args["budget_cents"], trip={
                     "destination": "Cailville", "arrival": arrival.isoformat(),
                     "departure": (arrival + timedelta(days=1)).isoformat(),
@@ -145,17 +152,17 @@ class ButterpinkCommerceGateway(CodedTool):
                 payload["offer_id"] = args["offer_id"]
 
             # Avoid duplicate calls from parallel tool invocations in one private chat.
-            def call():
+            def call() -> Dict[str, Any]:
                 with binding["lock"]:
                     return post_json(endpoint + API + operation, payload, {KEY_HEADER: key})
-            result = await asyncio.to_thread(call)
+            result: Dict[str, Any] = await asyncio.to_thread(call)
             binding["last_result"] = result
             if result["state"] in ("CANCELLED", "EXPIRED", "NO_AGREEMENT"):
                 binding["presented_offer"] = None
         except urllib.error.HTTPError as exc:
             # Error bodies here are generated by our trusted adapter, never request echoes.
             try:
-                message = json.loads(exc.read(8192)).get("error", "Arbiter refused this action.")
+                message: Any = json.loads(exc.read(8192)).get("error", "Arbiter refused this action.")
             except (ValueError, OSError):
                 message = "Arbiter refused this action. Ask for booking status before retrying."
             finally:
@@ -171,14 +178,14 @@ class ButterpinkCommerceGateway(CodedTool):
         return result
 
 
-def add_to_private_network(network):
+def add_to_private_network(network: Dict[str, Any]) -> Dict[str, Any]:
     """
     Add the private commerce tool, middleware and instructions to a steward network.
 
     :param network: The steward network definition; modified in place.
     :return: The modified network.
     """
-    front = network["tools"][0]
+    front: Dict[str, Any] = network["tools"][0]
     front["allow"] = {"to_upstream": {"sly_data": [HANDLE]}}
     front["middleware"] = [{"class": "nsdeploy.commerce.middleware.ButterpinkCommerceBoundary",
                             "args": {"sly_data": True}}]

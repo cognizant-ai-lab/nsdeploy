@@ -26,11 +26,11 @@ import re
 import sys
 from pathlib import Path
 
-SERVICE = Path(__file__).resolve().parents[1]
-ROOT = SERVICE.parent
+SERVICE: Path = Path(__file__).resolve().parents[1]
+ROOT: Path = SERVICE.parent
 
 # --- the service must remain self-contained ---------------------------------
-SELF_CONTAINED = [
+SELF_CONTAINED: list[tuple[str, str]] = [
     ("nsdeploy_service/trust.py", "TLS trust is owned by the service"),
     ("nsdeploy_service/_bootstrap/sitecustomize.py",
      "child processes get trust without patching nsdeploy"),
@@ -41,7 +41,7 @@ SELF_CONTAINED = [
 
 # --- stdout strings summarize_build() scrapes --------------------------------
 # Mirrors nsdeploy_service/supervisor.py::_SECTIONS and _EXT_MCP_RE.
-REPORT_MARKERS = [
+REPORT_MARKERS: list[tuple[str, str, str]] = [
     ("nsdeploy/resolve.py", "Hostable tools", "hostable_tools names"),
     ("nsdeploy/resolve.py", "DEMO-MODE agents", "demo_mode_agents names"),
     ("nsdeploy/resolve.py", "Missing tools", "missing_tools names"),
@@ -56,7 +56,7 @@ REPORT_MARKERS = [
 # level, so a rename upstream stops the service at start-up rather than mid-request.
 # The last two entries are keyword arguments rather than imports: both are passed by
 # name, so a rename upstream is a TypeError on the first build, not at start-up.
-IN_PROCESS = [
+IN_PROCESS: list[tuple[str, str, str]] = [
     ("nsdeploy/generate.py", "def generate_site", "bundler generates the static bundle"),
     ("nsdeploy/generate.py", "def _theme_css", "themespec writes a build's own stylesheet"),
     ("nsdeploy/resolve.py", "def resolve_hocon", "bundler resolves the uploaded HOCON"),
@@ -82,7 +82,7 @@ IN_PROCESS = [
 ]
 
 # --- generated bundle contract ----------------------------------------------
-BUNDLE = [
+BUNDLE: list[tuple[str, str, str]] = [
     ("nsdeploy/generate.py", "agent-manifest.json", "manifest filename"),
     ("nsdeploy/generate.py", ".network.json", "network JSON filename"),
     ("nsdeploy/generate.py", "agent_mcp", "front_man lives under manifest.agent_mcp"),
@@ -93,7 +93,7 @@ BUNDLE = [
 ]
 
 # --- optional: only needed for the port-per-deployment model -----------------
-OPTIONAL = [
+OPTIONAL: list[tuple[str, str, str]] = [
     ("nsdeploy/__main__.py", '"--host"',
      "site --host flag — required only when DEPLOY_HOST is not 127.0.0.1 "
      "(port-per-deployment). Hostname routing does not need it."),
@@ -107,15 +107,19 @@ def read(rel: str) -> str | None:
         return None
 
 
-def section(title: str, items, kind: str = "fail") -> int:
+def section(title: str, items: list[tuple[str, str, str]], kind: str = "fail") -> int:
     print(f"\n{title}\n{'-' * len(title)}")
-    problems = 0
+    problems: int = 0
+    entry: tuple[str, str, str]
     for entry in items:
+        rel: str
+        needle: str
+        label: str
         rel, needle, label = entry[0], entry[1], entry[2]
-        text = read(rel)
-        ok = text is not None and needle in text
+        text: str | None = read(rel)
+        ok: bool = text is not None and needle in text
         if ok:
-            mark = "OK  "
+            mark: str = "OK  "
         elif kind == "warn":
             mark = "NOTE"
         else:
@@ -123,16 +127,18 @@ def section(title: str, items, kind: str = "fail") -> int:
             problems += 1
         print(f"  {mark}  {label}")
         if not ok:
-            reason = "file missing" if text is None else f"{needle!r} not found"
+            reason: str = "file missing" if text is None else f"{needle!r} not found"
             print(f"        in {rel}: {reason}")
     return problems
 
 
-def present(title: str, items) -> int:
+def present(title: str, items: list[tuple[str, str]]) -> int:
     print(f"\n{title}\n{'-' * len(title)}")
-    problems = 0
+    problems: int = 0
+    rel: str
+    label: str
     for rel, label in items:
-        ok = (ROOT / rel).exists()
+        ok: bool = (ROOT / rel).exists()
         print(f"  {'OK  ' if ok else 'FAIL'}  {label}")
         if not ok:
             problems += 1
@@ -142,18 +148,19 @@ def present(title: str, items) -> int:
 
 def cli_contract() -> int:
     print("\nCLI contract (service -> nsdeploy)\n" + "-" * 33)
-    main = read("nsdeploy/__main__.py") or ""
-    sup = read("nsdeploy_service/supervisor.py") or ""
-    accepted = set(re.findall(r'ap\.add_argument\("(--[a-z-]+)"', main))
+    main: str = read("nsdeploy/__main__.py") or ""
+    sup: str = read("nsdeploy_service/supervisor.py") or ""
+    accepted: set[str] = set(re.findall(r'ap\.add_argument\("(--[a-z-]+)"', main))
     try:
-        block = sup[sup.index("def _command"):sup.index("def _spawn")]
+        block: str = sup[sup.index("def _command"):sup.index("def _spawn")]
     except ValueError:
         print("  FAIL  could not locate Supervisor._command")
         return 1
-    passed = set(re.findall(r'"(--[a-z-]+)"', block))
+    passed: set[str] = set(re.findall(r'"(--[a-z-]+)"', block))
     # --host is emitted conditionally; it is covered under optional extras.
-    required = sorted(passed - {"--host"})
-    missing = [f for f in required if f not in accepted]
+    required: list[str] = sorted(passed - {"--host"})
+    missing: list[str] = [f for f in required if f not in accepted]
+    flag: str
     for flag in required:
         print(f"  {'OK  ' if flag in accepted else 'FAIL'}  {flag}")
     if missing:
@@ -164,7 +171,7 @@ def cli_contract() -> int:
 
 def main() -> int:
     print(f"nsdeploy integration check\nnsdeploy root: {ROOT}\nservice:       {SERVICE}")
-    problems = 0
+    problems: int = 0
     problems += present("Service is self-contained", SELF_CONTAINED)
     problems += cli_contract()
     problems += section("stdout markers scraped by summarize_build "

@@ -24,9 +24,16 @@ from typing import Tuple
 
 import httpx
 import uvicorn
+from anyio.streams.memory import MemoryObjectReceiveStream
+from anyio.streams.memory import MemoryObjectSendStream
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server.fastmcp import FastMCP
+from mcp.shared.message import SessionMessage
+from mcp.types import CallToolResult
+from mcp.types import ListToolsResult
+from mcp.types import Tool
+from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 
 from nsdeploy.byok import ByokCredentials
@@ -36,13 +43,13 @@ from nsdeploy.byok import forwarding_headers
 from nsdeploy.site_manifest import SiteManifest
 
 
-PUBLIC_SITE_CALL_BUDGET = 12
-PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS = float(
+PUBLIC_SITE_CALL_BUDGET: int = 12
+PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS: float = float(
     os.environ.get("NSDEPLOY_FACADE_SITE_TIMEOUT_SECONDS", "480")
 )
-MOCK_TOOL_CALLS_PER_AGENT = 1
-_CONTEXT_MARKER = "\n\n__NSDEPLOY_PUBLIC_CONTEXT__:"
-MAX_PUBLISHED_NETWORK_BYTES = 2 * 1024 * 1024
+MOCK_TOOL_CALLS_PER_AGENT: int = 1
+_CONTEXT_MARKER: str = "\n\n__NSDEPLOY_PUBLIC_CONTEXT__:"
+MAX_PUBLISHED_NETWORK_BYTES: int = 2 * 1024 * 1024
 
 
 @dataclass
@@ -66,12 +73,15 @@ class PublishedNetwork:
 
 
 def _published_target(site_url: str) -> Tuple[str, str]:
-    parsed = urllib.parse.urlparse(str(site_url).strip())
+    parsed: urllib.parse.ParseResult = urllib.parse.urlparse(str(site_url).strip())
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError("public agent site URL must use http or https")
-    origin = f"{parsed.scheme}://{parsed.netloc}"
-    path = parsed.path.rstrip("/")
+    origin: str = f"{parsed.scheme}://{parsed.netloc}"
+    path: str = parsed.path.rstrip("/")
+    site_base: str
+    requested: str
     if path:
+        parent: str
         parent, _, requested = path.rpartition("/")
         site_base = origin + parent
     else:
@@ -82,54 +92,57 @@ def _published_target(site_url: str) -> Tuple[str, str]:
 # pylint: disable-next=too-many-locals,too-many-branches  # sequential validation of the published payload
 async def load_published_network(site_url: str) -> PublishedNetwork:
     """Fetch and validate one public network without executing publisher code."""
+    site_base: str
+    requested: str
     site_base, requested = _published_target(site_url)
-    timeout = _mcp_http_timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS)
+    timeout: httpx.Timeout = _mcp_http_timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS)
+    client: httpx.AsyncClient
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        manifest_url = f"{site_base}/agent-manifest.json"
-        manifest_response = await client.get(manifest_url)
+        manifest_url: str = f"{site_base}/agent-manifest.json"
+        manifest_response: httpx.Response = await client.get(manifest_url)
         manifest_response.raise_for_status()
         if _site_key(str(getattr(manifest_response, "url", manifest_url))) != _site_key(site_base):
             raise ValueError("published agent manifest redirected to another origin")
         if len(manifest_response.content) > MAX_PUBLISHED_NETWORK_BYTES:
             raise ValueError("published agent manifest is too large")
-        manifest = manifest_response.json()
-        networks = manifest.get("networks") if isinstance(manifest, dict) else None
+        manifest: Any = manifest_response.json()
+        networks: Any = manifest.get("networks") if isinstance(manifest, dict) else None
         if not isinstance(networks, list) or not all(isinstance(item, dict) for item in networks):
             raise ValueError("published agent manifest has an invalid network list")
         if requested:
-            entry = next((item for item in networks if item.get("name") == requested), None)
+            entry: Optional[Dict[str, Any]] = next((item for item in networks if item.get("name") == requested), None)
         else:
             entry = networks[0] if len(networks) == 1 else None
         if not entry:
-            names = ", ".join(str(item.get("name", "")) for item in networks) or "none"
+            names: str = ", ".join(str(item.get("name", "")) for item in networks) or "none"
             raise ValueError(
                 f"no unique published network matching '{requested or '(site root)'}'; available: {names}"
             )
-        network = str(entry.get("name") or "")
-        hocon = entry.get("hocon")
+        network: str = str(entry.get("name") or "")
+        hocon: Any = entry.get("hocon")
         if not network or not isinstance(hocon, str) or not hocon:
             raise ValueError("published network entry is incomplete")
-        config_url = urllib.parse.urljoin(site_base + "/", hocon)
+        config_url: str = urllib.parse.urljoin(site_base + "/", hocon)
         if _site_key(config_url) != _site_key(site_base):
             raise ValueError("published network definition must stay on the site's origin")
-        config_response = await client.get(config_url)
+        config_response: httpx.Response = await client.get(config_url)
         config_response.raise_for_status()
         if _site_key(str(getattr(config_response, "url", config_url))) != _site_key(site_base):
             raise ValueError("published network definition redirected to another origin")
         if len(config_response.content) > MAX_PUBLISHED_NETWORK_BYTES:
             raise ValueError("published network definition is too large")
-        config = config_response.json()
-    tools = config.get("tools") if isinstance(config, dict) else None
+        config: Any = config_response.json()
+    tools: Any = config.get("tools") if isinstance(config, dict) else None
     if not isinstance(tools, list) or len(tools) > 200:
         raise ValueError("published network has an invalid tool list")
     # Public definitions are data, never import instructions. A static/deployed
     # network should contain agents only; Python class/toolbox entries fail closed.
     if any(not isinstance(item, dict) or "class" in item or "toolbox" in item for item in tools):
         raise ValueError("published network contains executable server-side tool definitions")
-    agents = [item for item in tools if item.get("name") and "instructions" in item]
+    agents: List[Dict[str, Any]] = [item for item in tools if item.get("name") and "instructions" in item]
     if not agents:
         raise ValueError("published network contains no runnable agents")
-    front_man = str(entry.get("front_man") or agents[0]["name"])
+    front_man: str = str(entry.get("front_man") or agents[0]["name"])
     if not any(item.get("name") == front_man for item in agents):
         raise ValueError(f"published front-man agent '{front_man}' was not found")
     return PublishedNetwork(site_base, network, front_man, config)
@@ -148,15 +161,15 @@ def _safe_name(value: str) -> str:
 
 
 def _site_key(value: str) -> str:
-    parsed = urllib.parse.urlparse(value)
+    parsed: urllib.parse.ParseResult = urllib.parse.urlparse(value)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return ""
     return f"{parsed.scheme}://{parsed.netloc}".rstrip("/").lower()
 
 
 def _is_public_site_ref(value: str) -> bool:
-    parsed = urllib.parse.urlparse(str(value))
-    path = parsed.path.rstrip("/")
+    parsed: urllib.parse.ParseResult = urllib.parse.urlparse(str(value))
+    path: str = parsed.path.rstrip("/")
     return (
         parsed.scheme in ("http", "https")
         and bool(parsed.netloc)
@@ -167,32 +180,34 @@ def _is_public_site_ref(value: str) -> bool:
 
 
 def _mcp_http_timeout(seconds: float) -> httpx.Timeout:
-    short = min(30.0, seconds)
+    short: float = min(30.0, seconds)
     return httpx.Timeout(seconds, connect=short, pool=short)
 
 
 def _pack_context(request: str, visited_sites: set[str], remaining_calls: int) -> str:
-    context = {
+    context: Dict[str, Any] = {
         "visited_sites": sorted(visited_sites),
         "remaining_calls": max(0, remaining_calls),
     }
-    encoded = base64.urlsafe_b64encode(json.dumps(context, separators=(",", ":")).encode()).decode()
+    encoded: str = base64.urlsafe_b64encode(json.dumps(context, separators=(",", ":")).encode()).decode()
     return f"{request}{_CONTEXT_MARKER}{encoded}"
 
 
 def _unpack_context(request: str) -> Tuple[str, set[str], int]:
     if _CONTEXT_MARKER not in request:
         return request, set(), PUBLIC_SITE_CALL_BUDGET
+    clean_request: str
+    encoded: str
     clean_request, encoded = request.rsplit(_CONTEXT_MARKER, 1)
     try:
-        context = json.loads(base64.urlsafe_b64decode(encoded.encode()).decode())
+        context: Any = json.loads(base64.urlsafe_b64decode(encoded.encode()).decode())
     except (ValueError, UnicodeError, binascii.Error):
         return request, set(), PUBLIC_SITE_CALL_BUDGET
     if not isinstance(context, dict):
         return request, set(), PUBLIC_SITE_CALL_BUDGET
-    visited = {str(item) for item in context.get("visited_sites", []) if isinstance(item, str)}
+    visited: set[str] = {str(item) for item in context.get("visited_sites", []) if isinstance(item, str)}
     try:
-        remaining = max(0, int(context.get("remaining_calls", PUBLIC_SITE_CALL_BUDGET)))
+        remaining: int = max(0, int(context.get("remaining_calls", PUBLIC_SITE_CALL_BUDGET)))
     except (TypeError, ValueError):
         remaining = PUBLIC_SITE_CALL_BUDGET
     return clean_request, visited, remaining
@@ -211,24 +226,24 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
     def __init__(self, config: Dict[str, Any], site_base: str, upstream: str, max_steps: int = 8,
                  *, credentials: Optional[ByokCredentials] = None,
                  public_network_mode: str = "mcp", network_name: str = "",
-                 denied_origins: Optional[set[str]] = None):
-        self.config = config
-        self.site_base = site_base.rstrip("/")
-        self.upstream = upstream.rstrip("/")
-        self.credentials = credentials
-        self.public_network_mode = public_network_mode
-        self.network_name = network_name or "network"
-        self.network_key = f"{self.site_base}::{self.network_name}".lower()
-        self.denied_origins = {
+                 denied_origins: Optional[set[str]] = None) -> None:
+        self.config: Dict[str, Any] = config
+        self.site_base: str = site_base.rstrip("/")
+        self.upstream: str = upstream.rstrip("/")
+        self.credentials: Optional[ByokCredentials] = credentials
+        self.public_network_mode: str = public_network_mode
+        self.network_name: str = network_name or "network"
+        self.network_key: str = f"{self.site_base}::{self.network_name}".lower()
+        self.denied_origins: set[str] = {
             origin for origin in (_site_key(item) for item in (denied_origins or set())) if origin
         }
-        self.model = (
+        self.model: str = (
             os.environ.get("NSDEPLOY_FACADE_MODEL")
             or (config.get("llm_config", {}) or {}).get("model_name")
             or "gpt-4o"
         )
-        self.max_steps = max_steps
-        self.agents = {
+        self.max_steps: int = max_steps
+        self.agents: Dict[str, Dict[str, Any]] = {
             item.get("name"): item for item in config.get("tools", []) or []
             if item.get("name") and "instructions" in item
         }
@@ -251,15 +266,15 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
         :raises PermissionError: If the site origin is denied.
         :raises ValueError: If the site URL or published network is invalid.
         """
-        denied = {
+        denied: set[str] = {
             origin for origin in (_site_key(item) for item in (denied_origins or set())) if origin
         }
         if _site_key(site_url) in denied:
             raise PermissionError(f"origin {_site_key(site_url)} is denied by the private web policy")
-        published = await load_published_network(site_url)
+        published: PublishedNetwork = await load_published_network(site_url)
         if _site_key(published.site_base) in denied:
             raise PermissionError(f"origin {published.site_base} is denied by the private web policy")
-        runner = cls(
+        runner: NetworkRunner = cls(
             published.config, published.site_base, upstream, max_steps=max_steps,
             credentials=credentials, public_network_mode="fetch",
             network_name=published.network, denied_origins=denied_origins,
@@ -279,56 +294,61 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
         """
         if front_man not in self.agents:
             return "Error: the deployed network has no front-man agent."
-        credentials = self._active_credentials()
+        credentials: Optional[ByokCredentials] = self._active_credentials()
         if not self.upstream.startswith("mock://") and not (credentials and credentials.available):
             return (
                 "Error: caller BYOK credentials are required for this public agent site. "
                 "The private steward must provide them for local execution."
             )
+        clean_request: str
+        visited_sites: set[str]
+        remaining_calls: int
         clean_request, visited_sites, remaining_calls = _unpack_context(request)
-        current_site = self.network_key if self.public_network_mode == "fetch" else _site_key(self.site_base)
+        current_site: str = self.network_key if self.public_network_mode == "fetch" else _site_key(self.site_base)
         if current_site:
             visited_sites.add(current_site)
-        budget = {"remaining": remaining_calls}
+        budget: Dict[str, int] = {"remaining": remaining_calls}
         return await self._run_agent(front_man, clean_request, 0, visited_sites, budget)
 
     async def _run_agent(self, name: str, request: str, depth: int,  # pylint: disable=too-many-locals
                          visited_sites: set[str], budget: Dict[str, int]) -> str:
         if depth > 5:
             return "The public network reached its delegation depth limit."
-        agent = self.agents[name]
-        tools = await self._tools_for(agent)
+        agent: Dict[str, Any] = self.agents[name]
+        tools: List[Dict[str, Any]] = await self._tools_for(agent)
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": str(agent.get("instructions", ""))},
             {"role": "user", "content": request},
         ]
         for _ in range(self.max_steps):
-            reply = await self._complete(messages, tools)
-            message = reply.get("message", {})
-            calls = message.get("tool_calls") or []
+            reply: Dict[str, Any] = await self._complete(messages, tools)
+            message: Dict[str, Any] = reply.get("message", {})
+            calls: List[Dict[str, Any]] = message.get("tool_calls") or []
             if not calls:
                 return _text(message.get("content", "")) or "The public network returned no text."
-            assistant = {"role": "assistant", "content": message.get("content"), "tool_calls": calls}
+            assistant: Dict[str, Any] = {"role": "assistant", "content": message.get("content"), "tool_calls": calls}
             messages.append(assistant)
+            call: Dict[str, Any]
             for call in calls:
-                function = call.get("function", {})
-                tool_name = function.get("name", "")
+                function: Dict[str, Any] = call.get("function", {})
+                tool_name: str = function.get("name", "")
                 try:
-                    arguments = json.loads(function.get("arguments") or "{}")
+                    arguments: Dict[str, Any] = json.loads(function.get("arguments") or "{}")
                 except json.JSONDecodeError:
                     arguments = {"request": function.get("arguments", "")}
-                result = await self._call_tool(tool_name, arguments, tools, depth,
-                                               visited_sites, budget)
+                result: str = await self._call_tool(tool_name, arguments, tools, depth,
+                                                    visited_sites, budget)
                 messages.append({"role": "tool", "tool_call_id": call.get("id", tool_name),
                                  "name": tool_name, "content": result})
         return "The public network reached its tool-step limit without a final answer."
 
     async def _tools_for(self, agent: Dict[str, Any]) -> List[Dict[str, Any]]:
         result: List[Dict[str, Any]] = []
+        ref: Any
         for ref in agent.get("tools", []) or []:
             if ref in self.agents:
-                spec = self.agents[ref]
-                function = spec.get("function", {}) or {}
+                spec: Dict[str, Any] = self.agents[ref]
+                function: Dict[str, Any] = spec.get("function", {}) or {}
                 result.append({"name": ref, "description": function.get("description", ref),
                                "parameters": function.get("parameters") or {
                                    "type": "object", "properties": {"request": {"type": "string"}},
@@ -337,7 +357,7 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
                 continue
             if _site_key(str(ref)) in self.denied_origins:
                 continue
-            endpoint = self._mcp_endpoint(ref)
+            endpoint: str = self._mcp_endpoint(ref)
             if not endpoint:
                 continue
             if _is_public_site_ref(str(ref)):
@@ -367,12 +387,13 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
                     "remote_name": "invoke_network",
                 })
                 continue
+            item: Dict[str, Any]
             for item in await self._discover_mcp(endpoint):
                 result.append(item)
         return result
 
     def _mcp_endpoint(self, ref: str) -> str:
-        parsed = urllib.parse.urlparse(str(ref))
+        parsed: urllib.parse.ParseResult = urllib.parse.urlparse(str(ref))
         if parsed.scheme not in ("http", "https"):
             return ""
         if parsed.path.rstrip("/").endswith("/mcp"):
@@ -382,6 +403,11 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
     async def _discover_mcp(self, endpoint: str) -> List[Dict[str, Any]]:
         if endpoint in self.mcp_cache:
             return self.mcp_cache[endpoint]
+        client: httpx.AsyncClient
+        read: MemoryObjectReceiveStream[SessionMessage | Exception]
+        write: MemoryObjectSendStream[SessionMessage]
+        session: ClientSession
+        response: ListToolsResult
         try:
             async with asyncio.timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS):
                 async with httpx.AsyncClient(
@@ -394,9 +420,10 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
                         async with ClientSession(read, write) as session:
                             await session.initialize()
                             response = await session.list_tools()
-            items = []
+            items: List[Dict[str, Any]] = []
+            tool: Tool
             for tool in response.tools:
-                name = f"{_safe_name(endpoint)}__{tool.name}"
+                name: str = f"{_safe_name(endpoint)}__{tool.name}"
                 items.append({"name": name, "description": tool.description or tool.name,
                               "parameters": tool.inputSchema or {"type": "object"},
                               "kind": "mcp", "endpoint": endpoint, "remote_name": tool.name})
@@ -411,17 +438,19 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
     async def _call_tool(self, name: str, arguments: Dict[str, Any],  # pylint: disable=too-many-return-statements
                          tools: List[Dict[str, Any]],
                          depth: int, visited_sites: set[str], budget: Dict[str, int]) -> str:
-        spec = next((item for item in tools if item["name"] == name), None)
+        spec: Optional[Dict[str, Any]] = next((item for item in tools if item["name"] == name), None)
         if not spec:
             return f"Unknown public-network tool: {name}"
         if spec["kind"] == "agent":
-            request = arguments.get("request") or arguments.get("inquiry") or next(iter(arguments.values()), "")
+            request: Any = arguments.get("request") or arguments.get("inquiry") or next(iter(arguments.values()), "")
             return await self._run_agent(name, _text(request), depth + 1,
                                          visited_sites, budget)
         if spec["kind"] == "network":
             request = arguments.get("request") or arguments.get("inquiry") or next(iter(arguments.values()), "")
             if budget["remaining"] <= 0:
                 return "Public-site call budget exhausted for this request."
+            child: NetworkRunner
+            published: PublishedNetwork
             try:
                 child, published = await self.from_public_site(
                     spec["endpoint"], self.upstream, credentials=self._active_credentials(),
@@ -430,7 +459,7 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
                 if published.key in visited_sites:
                     return f"Skipped recursive call to public network {published.key}."
                 budget["remaining"] -= 1
-                next_visited = set(visited_sites)
+                next_visited: set[str] = set(visited_sites)
                 next_visited.add(published.key)
                 return await child._run_agent(  # pylint: disable=protected-access; same class
                     published.front_man, _text(request), depth + 1, next_visited, budget,
@@ -439,7 +468,7 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
                 return f"Public network denied: {exc}"
             except Exception as exc:  # pylint: disable=broad-exception-caught; tool returns any failure as text
                 return f"Public network call failed: {exc}"
-        target_site = _site_key(spec.get("endpoint", ""))
+        target_site: str = _site_key(spec.get("endpoint", ""))
         if spec.get("remote_name") == "invoke_network":
             if target_site in visited_sites:
                 return f"Skipped recursive call to public site {target_site}."
@@ -453,9 +482,14 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
                 arguments["request"] = _pack_context(
                     _text(arguments["request"]), next_visited, budget["remaining"]
                 )
+        client: httpx.AsyncClient
+        read: MemoryObjectReceiveStream[SessionMessage | Exception]
+        write: MemoryObjectSendStream[SessionMessage]
+        session: ClientSession
+        result: CallToolResult
         try:
             async with asyncio.timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS):
-                client_headers = (
+                client_headers: Dict[str, str] = (
                     forwarding_headers()
                     if spec.get("remote_name") == "invoke_network"
                     else {}
@@ -481,68 +515,69 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
     # pylint: disable-next=too-many-locals
     async def _complete(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Dict[str, Any]:
         if self.upstream.startswith("mock://"):
-            called = {item.get("name") for item in messages if item.get("role") == "tool"}
-            available = [item for item in tools if item["name"] not in called]
+            called: set[Optional[str]] = {item.get("name") for item in messages if item.get("role") == "tool"}
+            available: List[Dict[str, Any]] = [item for item in tools if item["name"] not in called]
             if available and len(called) < MOCK_TOOL_CALLS_PER_AGENT:
-                first = available[0]
-                text = _text(next((item.get("content") for item in reversed(messages)
-                                   if item.get("role") == "user"), ""))
-                required = (first.get("parameters") or {}).get("required") or ["request"]
-                args = {key: text for key in required}
+                first: Dict[str, Any] = available[0]
+                text: str = _text(next((item.get("content") for item in reversed(messages)
+                                        if item.get("role") == "user"), ""))
+                required: List[str] = (first.get("parameters") or {}).get("required") or ["request"]
+                args: Dict[str, str] = {key: text for key in required}
                 return {"message": {"role": "assistant", "content": None, "tool_calls": [{
                     "id": "facade_call_" + first["name"], "type": "function",
                     "function": {"name": first["name"], "arguments": json.dumps(args)},
                 }]}}
-            results = [_text(item.get("content", "")) for item in messages if item.get("role") == "tool"]
+            results: List[str] = [_text(item.get("content", "")) for item in messages if item.get("role") == "tool"]
             return {"message": {"role": "assistant", "content":
                                 "(facade mock) " + " ".join(results)[:4000]}}
-        credentials = self._active_credentials()
+        credentials: Optional[ByokCredentials] = self._active_credentials()
         if not credentials or not credentials.available:
             return {"message": {"role": "assistant", "content":
                     "Facade LLM failed: caller BYOK credentials are required."}}
-        body = {"model": credentials.model or self.model,
-                "messages": messages, "stream": False}
+        body: Dict[str, Any] = {"model": credentials.model or self.model,
+                                "messages": messages, "stream": False}
         if tools:
             body["tools"] = [{"type": "function", "function": {"name": item["name"],
                                                                "description": item.get("description", item["name"]),
                                                                "parameters": item.get("parameters")
                                                                or {"type": "object"}}} for item in tools]
-        headers = {
+        headers: Dict[str, str] = {
             "Content-Type": "application/json",
             "Authorization": credentials.authorization,
         }
+        client: httpx.AsyncClient
         try:
             async with asyncio.timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS):
                 async with httpx.AsyncClient(
                     timeout=_mcp_http_timeout(PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS),
                     follow_redirects=True,
                 ) as client:
-                    response = await client.post(
+                    response: httpx.Response = await client.post(
                         self.upstream + "/chat/completions",
                         content=json.dumps(body).encode(),
                         headers=headers,
                     )
                     response.raise_for_status()
-                    payload = response.json()
+                    payload: Dict[str, Any] = response.json()
             return {"message": payload.get("choices", [{}])[0].get("message", {})}
         except (httpx.HTTPError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
             return {"message": {"role": "assistant", "content": f"Facade LLM failed: {exc}"}}
 
 
-async def _serve(config: Dict[str, Any], site_base: str, upstream: str, port: int, front_man: str):
-    runner = NetworkRunner(config, site_base, upstream)
-    mcp = FastMCP("nsdeploy-public-facade", port=port)
+async def _serve(config: Dict[str, Any], site_base: str, upstream: str, port: int, front_man: str) -> None:
+    runner: NetworkRunner = NetworkRunner(config, site_base, upstream)
+    mcp: FastMCP = FastMCP("nsdeploy-public-facade", port=port)
 
     async def invoke_network(request: str) -> str:
         return await runner.run(request, front_man)
 
     mcp.tool(name="invoke_network",
              description="Invoke this public agent network on behalf of a caller.")(invoke_network)
-    app = mcp.streamable_http_app()
+    app: Starlette = mcp.streamable_http_app()
     app.add_middleware(ByokContextMiddleware)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
                        expose_headers=["Mcp-Session-Id", "mcp-session-id"])
-    server = uvicorn.Server(uvicorn.Config(app, host=mcp.settings.host, port=port, log_level="warning"))
+    server: uvicorn.Server = uvicorn.Server(uvicorn.Config(app, host=mcp.settings.host, port=port, log_level="warning"))
     await server.serve()
 
 
@@ -552,17 +587,17 @@ def main() -> int:
 
     :return: The process exit code.
     """
-    parser = argparse.ArgumentParser(description="Run the nsDeploy public MCP facade.")
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(description="Run the nsDeploy public MCP facade.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--site-base", required=True)
     parser.add_argument("--front-man", default=None,
                         help="front-man agent; defaults to the one in the site's agent-manifest.json")
     parser.add_argument("--port", required=True, type=int)
     parser.add_argument("--upstream", default="mock://nsdeploy")
-    args = parser.parse_args()
-    config_path = Path(args.config)
-    config = json.loads(config_path.read_text(encoding="utf-8"))
-    front_man = args.front_man or SiteManifest.front_man(config_path)
+    args: argparse.Namespace = parser.parse_args()
+    config_path: Path = Path(args.config)
+    config: Dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
+    front_man: str = args.front_man or SiteManifest.front_man(config_path)
     asyncio.run(_serve(config, args.site_base, args.upstream, args.port, front_man))
     return 0
 

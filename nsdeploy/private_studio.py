@@ -6,10 +6,15 @@ studio behavior while adding the nsdeploy project back to the import path.
 """
 from __future__ import annotations
 
+import importlib.machinery
 import importlib.util
 import os
 import sys
 from pathlib import Path
+from types import ModuleType
+from typing import Any
+from typing import Callable
+from typing import Optional
 
 
 def _installed_cli_args(argv: list[str]) -> list[str]:
@@ -19,7 +24,8 @@ def _installed_cli_args(argv: list[str]) -> list[str]:
     the legacy ``--server-grpc-port`` or ``--no-html`` options.
     """
     translated: list[str] = []
-    skip_next = False
+    skip_next: bool = False
+    argument: str
     for argument in argv:
         if skip_next:
             skip_next = False
@@ -42,13 +48,13 @@ def main() -> int:
     :return: The process exit code.
     :raises SystemExit: If the studio project or its runner cannot be found or loaded.
     """
-    studio_root = Path(os.environ.get("NSDEPLOY_PRIVATE_STUDIO_ROOT", "")).resolve()
+    studio_root: Path = Path(os.environ.get("NSDEPLOY_PRIVATE_STUDIO_ROOT", "")).resolve()
     if not studio_root.is_dir():
         raise SystemExit(f"Private Neuro-SAN studio project not found: {studio_root}")
     sys.path.insert(0, str(studio_root))
     os.chdir(studio_root)
 
-    run_file = next((candidate for candidate in (
+    run_file: Optional[Path] = next((candidate for candidate in (
         studio_root / "run.py",
         studio_root / "neuro_san_studio" / "run.py",
         studio_root / "neuro-san-studio" / "run.py",
@@ -57,7 +63,7 @@ def main() -> int:
     # Recent neuro-san-studio releases are installed as a package and expose
     # a Typer CLI instead of the old top-level run.py module.
     if run_file is None:
-        command = [
+        command: list[str] = [
             sys.executable,
             "-m",
             "neuro_san_studio",
@@ -67,19 +73,19 @@ def main() -> int:
         os.execvpe(sys.executable, command, os.environ)
         raise AssertionError("execvpe returned unexpectedly")
 
-    spec = importlib.util.spec_from_file_location("run", run_file)
+    spec: Optional[importlib.machinery.ModuleSpec] = importlib.util.spec_from_file_location("run", run_file)
     if spec is None or spec.loader is None:
         raise SystemExit(f"Could not load Neuro-SAN studio runner: {run_file}")
-    studio_run = importlib.util.module_from_spec(spec)
+    studio_run: ModuleType = importlib.util.module_from_spec(spec)
     sys.modules["run"] = studio_run
     spec.loader.exec_module(studio_run)
 
-    original_set_environment = studio_run.NeuroSanRunner.set_environment_variables
+    original_set_environment: Callable[[Any], None] = studio_run.NeuroSanRunner.set_environment_variables
 
-    def set_environment_with_nsdeploy(self):
+    def set_environment_with_nsdeploy(self: Any) -> None:
         original_set_environment(self)
-        project_root = str(Path(__file__).resolve().parents[1])
-        current = os.environ.get("PYTHONPATH", "")
+        project_root: str = str(Path(__file__).resolve().parents[1])
+        current: str = os.environ.get("PYTHONPATH", "")
         os.environ["PYTHONPATH"] = os.pathsep.join(
             item for item in (project_root, current) if item
         )

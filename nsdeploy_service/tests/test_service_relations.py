@@ -7,13 +7,24 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Sequence
+from typing import Set
+from typing import Tuple
 
+import httpx
 from fastapi.testclient import TestClient
 
 from nsdeploy_service.app import create_app
 from nsdeploy_service.config import Settings
 from nsdeploy_service.relations import AgentRole
 from nsdeploy_service.relations import NetworkIdentity
+from nsdeploy_service.relations import SlotMatch
+from nsdeploy_service.relations import SuggestedRelation
+from nsdeploy_service.relations import Vocabulary
 from nsdeploy_service.relations import affinity
 from nsdeploy_service.relations import build_vocabulary
 from nsdeploy_service.relations import derive_relations
@@ -22,10 +33,12 @@ from nsdeploy_service.relations import load_identity
 from nsdeploy_service.relations import slot_matches
 from nsdeploy_service.relations import suggest_relations
 from nsdeploy_service.relations import tokens
+from nsdeploy_service.supervisor import Supervisor
 
 
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments  # fixture builder mirrors NetworkIdentity
-def identity(deployment_id, name, description="", agents=(), slots=(), queries=()):
+def identity(deployment_id: str, name: str, description: str = "", agents: Sequence[Tuple[str, str]] = (),
+             slots: Sequence[str] = (), queries: Sequence[str] = ()) -> NetworkIdentity:
     """
     Build a NetworkIdentity fixture.
 
@@ -46,7 +59,7 @@ def identity(deployment_id, name, description="", agents=(), slots=(), queries=(
 
 # Two complementary networks plus one unrelated, which is the shape real inference
 # has to get right: relate the first two, leave the third alone.
-ORDERS = identity(
+ORDERS: NetworkIdentity = identity(
     "d_orders", "store_order_management_system",
     description="Leads end-to-end store order operations across intake, fulfillment "
                 "and post-purchase service, setting SLAs and decision policies.",
@@ -54,14 +67,14 @@ ORDERS = identity(
             ("fulfillment_manager", "allocates inventory and schedules shipment")],
     slots=["carrier_shipping_manager", "fraud_and_payment_risk_manager"],
 )
-SHIPPING = identity(
+SHIPPING: NetworkIdentity = identity(
     "d_ship", "carrier_shipping_manager",
     description="Books carrier shipping, produces labels and tracks parcel delivery "
                 "exceptions for retail orders.",
     agents=[("label_agent", "produces carrier shipping labels"),
             ("tracking_agent", "monitors parcel delivery and carrier exceptions")],
 )
-RECIPES = identity(
+RECIPES: NetworkIdentity = identity(
     "d_food", "recipe_recommender",
     description="Suggests dinner recipes from pantry ingredients and dietary "
                 "preferences, with cooking steps.",
@@ -72,43 +85,44 @@ RECIPES = identity(
 
 class TokenizerTest(unittest.TestCase):
     """Tokenizes profile text into significant words."""
-    def test_splits_identifiers_into_words(self):
+    def test_splits_identifiers_into_words(self) -> None:
         """Splits identifiers into words."""
         self.assertEqual(tokens("order_intake-manager"), {"order", "intake", "manager"})
 
-    def test_drops_stop_words_and_short_words(self):
+    def test_drops_stop_words_and_short_words(self) -> None:
         """Drops stop words and short words."""
         self.assertEqual(tokens("the agent will handle a request for us"), set())
 
-    def test_is_case_insensitive(self):
+    def test_is_case_insensitive(self) -> None:
         """Is case insensitive."""
         self.assertEqual(tokens("Carrier SHIPPING"), {"carrier", "shipping"})
 
 
 class VocabularyTest(unittest.TestCase):
     """Weights terms by how rare they are across networks."""
-    def test_a_term_every_network_shares_is_worth_less_than_a_rare_one(self):
+    def test_a_term_every_network_shares_is_worth_less_than_a_rare_one(self) -> None:
         """Boilerplate identical across networks must not drive the score — this is
         what keeps the injected CRUSE directive out of the result without the scorer
         needing to know it exists. Uses a purpose-built corpus so the shared term is
         unambiguous."""
-        corpus = [
+        corpus: List[NetworkIdentity] = [
             identity("a", "alpha", description="boilerplate distinctive"),
             identity("b", "beta", description="boilerplate ordinary"),
             identity("c", "gamma", description="boilerplate ordinary"),
         ]
-        vocab = build_vocabulary(corpus)
+        vocab: Vocabulary = build_vocabulary(corpus)
         self.assertLess(vocab.weight("boilerplate"), vocab.weight("distinctive"))
 
-    def test_an_unseen_term_gets_the_highest_weight(self):
+    def test_an_unseen_term_gets_the_highest_weight(self) -> None:
         """An unseen term gets the highest weight."""
-        vocab = build_vocabulary([ORDERS, SHIPPING])
+        vocab: Vocabulary = build_vocabulary([ORDERS, SHIPPING])
         self.assertGreater(vocab.weight("never_mentioned"), vocab.weight("order"))
 
-    def test_weights_stay_positive_with_only_two_networks(self):
+    def test_weights_stay_positive_with_only_two_networks(self) -> None:
         """Weights stay positive with only two networks."""
         # Plain log(N/df) would zero out every shared term here.
-        vocab = build_vocabulary([ORDERS, SHIPPING])
+        vocab: Vocabulary = build_vocabulary([ORDERS, SHIPPING])
+        term: str
         for term in tokens(ORDERS.profile_text()):
             with self.subTest(term=term):
                 self.assertGreater(vocab.weight(term), 0)
@@ -116,22 +130,22 @@ class VocabularyTest(unittest.TestCase):
 
 class AffinityTest(unittest.TestCase):
     """Scores shared subject matter between two networks."""
-    def setUp(self):
-        self.vocab = build_vocabulary([ORDERS, SHIPPING, RECIPES])
+    def setUp(self) -> None:
+        self.vocab: Vocabulary = build_vocabulary([ORDERS, SHIPPING, RECIPES])
 
-    def test_same_domain_scores_above_different_domain(self):
+    def test_same_domain_scores_above_different_domain(self) -> None:
         """Same domain scores above different domain."""
-        related = affinity(ORDERS, SHIPPING, self.vocab).score
-        unrelated = affinity(ORDERS, RECIPES, self.vocab).score
+        related: float = affinity(ORDERS, SHIPPING, self.vocab).score
+        unrelated: float = affinity(ORDERS, RECIPES, self.vocab).score
         self.assertGreater(related, unrelated)
 
-    def test_reports_the_shared_vocabulary_as_evidence(self):
+    def test_reports_the_shared_vocabulary_as_evidence(self) -> None:
         """Reports the shared vocabulary as evidence."""
-        shared = set(affinity(ORDERS, SHIPPING, self.vocab).shared)
+        shared: Set[str] = set(affinity(ORDERS, SHIPPING, self.vocab).shared)
         self.assertIn("orders", shared)
         self.assertTrue(shared.issubset(tokens(ORDERS.profile_text())))
 
-    def test_open_slots_are_not_part_of_affinity(self):
+    def test_open_slots_are_not_part_of_affinity(self) -> None:
         """A slot is a demand, not a self-description. `carrier` reaches ORDERS only
         through its open slot, so it must not count as shared subject matter — that
         is what the capability signal is for."""
@@ -139,103 +153,105 @@ class AffinityTest(unittest.TestCase):
         self.assertNotIn("carrier", tokens(ORDERS.profile_text()))
         self.assertNotIn("carrier", affinity(ORDERS, SHIPPING, self.vocab).shared)
 
-    def test_is_symmetric(self):
+    def test_is_symmetric(self) -> None:
         """Is symmetric."""
         self.assertAlmostEqual(affinity(ORDERS, SHIPPING, self.vocab).score,
                                affinity(SHIPPING, ORDERS, self.vocab).score)
 
-    def test_an_empty_identity_scores_zero(self):
+    def test_an_empty_identity_scores_zero(self) -> None:
         """An empty identity scores zero."""
-        blank = identity("d_blank", "")
+        blank: NetworkIdentity = identity("d_blank", "")
         self.assertEqual(affinity(ORDERS, blank, self.vocab).score, 0.0)
 
 
 class SlotMatchTest(unittest.TestCase):
     """Matches a network's open slots to providers that cover them."""
-    def setUp(self):
-        self.vocab = build_vocabulary([ORDERS, SHIPPING, RECIPES])
+    def setUp(self) -> None:
+        self.vocab: Vocabulary = build_vocabulary([ORDERS, SHIPPING, RECIPES])
 
-    def test_matches_an_open_slot_to_a_provider_that_covers_it(self):
+    def test_matches_an_open_slot_to_a_provider_that_covers_it(self) -> None:
         """Matches an open slot to a provider that covers it."""
-        matches = slot_matches(ORDERS, SHIPPING, self.vocab)
+        matches: List[SlotMatch] = slot_matches(ORDERS, SHIPPING, self.vocab)
         self.assertEqual([match.reference for match in matches],
                          ["carrier_shipping_manager"])
 
-    def test_reports_which_terms_were_covered(self):
+    def test_reports_which_terms_were_covered(self) -> None:
         """Reports which terms were covered."""
-        match = slot_matches(ORDERS, SHIPPING, self.vocab)[0]
+        match: SlotMatch = slot_matches(ORDERS, SHIPPING, self.vocab)[0]
         self.assertIn("carrier", match.matched)
         self.assertGreaterEqual(match.coverage, 0.5)
 
-    def test_an_unrelated_provider_matches_nothing(self):
+    def test_an_unrelated_provider_matches_nothing(self) -> None:
         """An unrelated provider matches nothing."""
         self.assertEqual(slot_matches(ORDERS, RECIPES, self.vocab), [])
 
-    def test_a_network_with_no_open_slots_consumes_nothing(self):
+    def test_a_network_with_no_open_slots_consumes_nothing(self) -> None:
         """A network with no open slots consumes nothing."""
         self.assertEqual(slot_matches(SHIPPING, ORDERS, self.vocab), [])
 
 
 class DeriveRelationsTest(unittest.TestCase):
     """Derives directed relations across a set of networks."""
-    def test_capability_relation_wins_and_names_the_slot(self):
+    def test_capability_relation_wins_and_names_the_slot(self) -> None:
         """Capability relation wins and names the slot."""
-        relations = derive_relations([ORDERS, SHIPPING, RECIPES])
-        found = [r for r in relations if r.source == "d_orders" and r.target == "d_ship"]
+        relations: List[SuggestedRelation] = derive_relations([ORDERS, SHIPPING, RECIPES])
+        found: List[SuggestedRelation] = [r for r in relations if r.source == "d_orders" and r.target == "d_ship"]
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].kind, "capability")
         self.assertEqual(found[0].reference, "carrier_shipping_manager")
         self.assertIn("carrier_shipping_manager", found[0].reason)
 
-    def test_capability_always_outranks_affinity(self):
+    def test_capability_always_outranks_affinity(self) -> None:
         """Capability always outranks affinity."""
-        relations = derive_relations([ORDERS, SHIPPING, RECIPES])
-        capability = [r.score for r in relations if r.kind == "capability"]
-        affinities = [r.score for r in relations if r.kind == "affinity"]
+        relations: List[SuggestedRelation] = derive_relations([ORDERS, SHIPPING, RECIPES])
+        capability: List[float] = [r.score for r in relations if r.kind == "capability"]
+        affinities: List[float] = [r.score for r in relations if r.kind == "affinity"]
         if affinities:
             self.assertGreater(min(capability), max(affinities))
 
-    def test_unrelated_networks_are_not_related(self):
+    def test_unrelated_networks_are_not_related(self) -> None:
         """Unrelated networks are not related."""
-        relations = derive_relations([ORDERS, SHIPPING, RECIPES])
-        pairs = {(r.source, r.target) for r in relations}
+        relations: List[SuggestedRelation] = derive_relations([ORDERS, SHIPPING, RECIPES])
+        pairs: Set[Tuple[str, str]] = {(r.source, r.target) for r in relations}
         self.assertNotIn(("d_orders", "d_food"), pairs)
         self.assertNotIn(("d_food", "d_orders"), pairs)
 
-    def test_never_relates_a_network_to_itself(self):
+    def test_never_relates_a_network_to_itself(self) -> None:
         """Never relates a network to itself."""
+        relation: SuggestedRelation
         for relation in derive_relations([ORDERS, SHIPPING, RECIPES]):
             self.assertNotEqual(relation.source, relation.target)
 
-    def test_a_single_network_yields_nothing(self):
+    def test_a_single_network_yields_nothing(self) -> None:
         """A single network yields nothing."""
         self.assertEqual(derive_relations([ORDERS]), [])
 
-    def test_no_networks_yields_nothing(self):
+    def test_no_networks_yields_nothing(self) -> None:
         """No networks yields nothing."""
         self.assertEqual(derive_relations([]), [])
 
-    def test_respects_the_per_network_cap(self):
+    def test_respects_the_per_network_cap(self) -> None:
         """Respects the per network cap."""
-        many = [ORDERS, SHIPPING] + [
+        many: List[NetworkIdentity] = [ORDERS, SHIPPING] + [
             identity(f"d{i}", f"order_helper_{i}",
                      description="handles retail order fulfillment and delivery")
             for i in range(6)
         ]
-        relations = derive_relations(many, max_per_network=2)
+        relations: List[SuggestedRelation] = derive_relations(many, max_per_network=2)
+        source: str
         for source in {r.source for r in relations}:
             with self.subTest(source=source):
                 self.assertLessEqual(
                     sum(1 for r in relations if r.source == source), 2)
 
-    def test_relations_are_directed(self):
+    def test_relations_are_directed(self) -> None:
         """Orders declares the slot, so orders -> shipping is a capability edge and
         the reverse can never be one: direction comes from who states the need."""
-        relations = derive_relations([ORDERS, SHIPPING])
-        forward = next(r for r in relations
-                       if r.source == "d_orders" and r.target == "d_ship")
+        relations: List[SuggestedRelation] = derive_relations([ORDERS, SHIPPING])
+        forward: SuggestedRelation = next(r for r in relations
+                                          if r.source == "d_orders" and r.target == "d_ship")
         self.assertEqual(forward.kind, "capability")
-        reverse_capabilities = [
+        reverse_capabilities: List[SuggestedRelation] = [
             r for r in relations
             if r.source == "d_ship" and r.target == "d_orders" and r.kind == "capability"
         ]
@@ -244,15 +260,17 @@ class DeriveRelationsTest(unittest.TestCase):
 
 class IdentityLoadingTest(unittest.TestCase):
     """Loads a NetworkIdentity from a deployment row and its bundle."""
-    def setUp(self):
+    def setUp(self) -> None:
+        self._tmp: tempfile.TemporaryDirectory[str]
         self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
-        self.work = Path(self._tmp.name)
+        self.work: Path = Path(self._tmp.name)
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _row(self, name="net", with_bundle=True, agents=None):
-        out = self.work / "site"
+    def _row(self, name: str = "net", with_bundle: bool = True,
+             agents: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        out: Path = self.work / "site"
         if with_bundle:
             out.mkdir(parents=True, exist_ok=True)
             (out / f"{name}.network.json").write_text(json.dumps({
@@ -269,111 +287,124 @@ class IdentityLoadingTest(unittest.TestCase):
                         "link_slots": ["payment_manager"]},
         }
 
-    def test_reads_description_front_man_queries_and_slots_from_the_record(self):
+    def test_reads_description_front_man_queries_and_slots_from_the_record(self) -> None:
         """Reads description front man queries and slots from the record."""
-        loaded = load_identity(self._row())
+        loaded: NetworkIdentity = load_identity(self._row())
         self.assertEqual(loaded.description, "a shipping network")
         self.assertEqual(loaded.front_man, "front")
         self.assertEqual(loaded.sample_queries, ("where is my parcel",))
         self.assertEqual(loaded.open_slots, ("payment_manager",))
 
-    def test_reads_agent_roles_from_the_bundle(self):
+    def test_reads_agent_roles_from_the_bundle(self) -> None:
         """Reads agent roles from the bundle."""
-        loaded = load_identity(self._row())
+        loaded: NetworkIdentity = load_identity(self._row())
         self.assertEqual([a.name for a in loaded.agents], ["front"])
         self.assertEqual(loaded.agents[0].role, "coordinates carrier shipping")
 
-    def test_prefers_function_description_over_instructions(self):
+    def test_prefers_function_description_over_instructions(self) -> None:
         """Instructions carry AAOSA protocol text and the injected CRUSE directive,
         which are identical across networks and describe none of them."""
-        loaded = load_identity(self._row())
+        loaded: NetworkIdentity = load_identity(self._row())
         self.assertNotIn("protocol", loaded.agents[0].role)
 
-    def test_falls_back_to_instructions_when_there_is_no_description(self):
+    def test_falls_back_to_instructions_when_there_is_no_description(self) -> None:
         """Falls back to instructions when there is no description."""
-        row = self._row(agents=[{"name": "front", "instructions": "books freight"}])
+        row: Dict[str, Any] = self._row(agents=[{"name": "front", "instructions": "books freight"}])
         self.assertEqual(load_identity(row).agents[0].role, "books freight")
 
-    def test_a_missing_bundle_degrades_instead_of_failing(self):
+    def test_a_missing_bundle_degrades_instead_of_failing(self) -> None:
         """A missing bundle degrades instead of failing."""
-        loaded = load_identity(self._row(with_bundle=False))
+        loaded: NetworkIdentity = load_identity(self._row(with_bundle=False))
         self.assertEqual(loaded.agents, ())
         self.assertEqual(loaded.description, "a shipping network")
 
-    def test_skips_rows_with_no_network_name(self):
+    def test_skips_rows_with_no_network_name(self) -> None:
         """Skips rows with no network name."""
-        rows = [self._row(), {"id": "x", "name": "", "network": {}}]
+        rows: List[Dict[str, Any]] = [self._row(), {"id": "x", "name": "", "network": {}}]
         self.assertEqual(len(identities_from_rows(rows)), 1)
 
-    def test_sample_queries_do_not_pollute_capability_text(self):
+    def test_sample_queries_do_not_pollute_capability_text(self) -> None:
         """Sample queries do not pollute capability text."""
-        loaded = load_identity(self._row())
+        loaded: NetworkIdentity = load_identity(self._row())
         self.assertIn("parcel", loaded.profile_text())
         self.assertNotIn("parcel", loaded.capability_text())
 
 
 class LlmStrategyTest(unittest.TestCase):
     """Uses an injected chat function and falls back to the scorer."""
-    def test_uses_the_model_result_when_it_is_usable(self):
+    def test_uses_the_model_result_when_it_is_usable(self) -> None:
         """Uses the model result when it is usable."""
-        def chat(_system, _user):
+        def chat(_system: str, _user: str) -> str:
             return json.dumps({"relations": [
                 {"source": "d_orders", "target": "d_ship", "reason": "needs carriers"}]})
 
+        edges: List[SuggestedRelation]
+        strategy: str
         edges, strategy = suggest_relations([ORDERS, SHIPPING, RECIPES], chat=chat)
         self.assertEqual(strategy, "llm")
         self.assertEqual([(e.source, e.target) for e in edges], [("d_orders", "d_ship")])
         self.assertEqual(edges[0].reason, "needs carriers")
         self.assertEqual(edges[0].origin, "llm")
 
-    def test_tolerates_a_fenced_code_block(self):
+    def test_tolerates_a_fenced_code_block(self) -> None:
         """Tolerates a fenced code block."""
-        def chat(_system, _user):
+        def chat(_system: str, _user: str) -> str:
             return ('```json\n{"relations": [{"source": "d_orders", '
                     '"target": "d_ship", "reason": "r"}]}\n```')
 
+        edges: List[SuggestedRelation]
+        strategy: str
         edges, strategy = suggest_relations([ORDERS, SHIPPING], chat=chat)
         self.assertEqual(strategy, "llm")
         self.assertEqual(len(edges), 1)
 
-    def test_discards_ids_the_model_invented(self):
+    def test_discards_ids_the_model_invented(self) -> None:
         """Discards ids the model invented."""
-        def chat(_system, _user):
+        def chat(_system: str, _user: str) -> str:
             return json.dumps({"relations": [
                 {"source": "d_orders", "target": "does_not_exist", "reason": "x"},
                 {"source": "d_orders", "target": "d_ship", "reason": "ok"}]})
 
+        edges: List[SuggestedRelation]
         edges, _ = suggest_relations([ORDERS, SHIPPING], chat=chat)
         self.assertEqual([e.target for e in edges], ["d_ship"])
 
-    def test_discards_a_self_relation(self):
+    def test_discards_a_self_relation(self) -> None:
         """Discards a self relation."""
-        def chat(_system, _user):
+        def chat(_system: str, _user: str) -> str:
             return json.dumps({"relations": [
                 {"source": "d_orders", "target": "d_orders", "reason": "x"}]})
 
+        edges: List[SuggestedRelation]
+        strategy: str
         edges, strategy = suggest_relations([ORDERS, SHIPPING], chat=chat)
         self.assertEqual(strategy, "heuristic")  # nothing usable survived
         self.assertTrue(all(e.source != e.target for e in edges))
 
-    def test_falls_back_to_the_scorer_when_the_model_raises(self):
+    def test_falls_back_to_the_scorer_when_the_model_raises(self) -> None:
         """Falls back to the scorer when the model raises."""
-        def chat(_system, _user):
+        def chat(_system: str, _user: str) -> str:
             raise RuntimeError("provider down")
 
+        edges: List[SuggestedRelation]
+        strategy: str
         edges, strategy = suggest_relations([ORDERS, SHIPPING], chat=chat)
         self.assertEqual(strategy, "heuristic")
         self.assertTrue(edges)
 
-    def test_falls_back_when_the_model_returns_junk(self):
+    def test_falls_back_when_the_model_returns_junk(self) -> None:
         """Falls back when the model returns junk."""
+        edges: List[SuggestedRelation]
+        strategy: str
         edges, strategy = suggest_relations(
             [ORDERS, SHIPPING], chat=lambda system, user: "sorry, I cannot help")
         self.assertEqual(strategy, "heuristic")
         self.assertTrue(edges)
 
-    def test_no_chat_function_means_the_deterministic_scorer(self):
+    def test_no_chat_function_means_the_deterministic_scorer(self) -> None:
         """No chat function means the deterministic scorer."""
+        edges: List[SuggestedRelation]
+        strategy: str
         edges, strategy = suggest_relations([ORDERS, SHIPPING])
         self.assertEqual(strategy, "heuristic")
         self.assertTrue(edges)
@@ -382,12 +413,15 @@ class LlmStrategyTest(unittest.TestCase):
 class RelationsEndpointTest(unittest.TestCase):
     """The API projection, exercised through the real endpoints."""
 
-    def setUp(self):
+    def setUp(self) -> None:
+        self._tmp: tempfile.TemporaryDirectory[str]
         self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
-        self.root = Path(self._tmp.name)
+        self.root: Path = Path(self._tmp.name)
         # Bundles on disk; the rows themselves are written once the app is up.
+        deployment_id: str
+        spec: NetworkIdentity
         for deployment_id, spec in (("d_orders", ORDERS), ("d_ship", SHIPPING)):
-            out_dir = self.root / deployment_id / "site"
+            out_dir: Path = self.root / deployment_id / "site"
             out_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / f"{spec.name}.network.json").write_text(json.dumps({
                 "tools": [{"name": agent.name, "instructions": "x",
@@ -396,22 +430,24 @@ class RelationsEndpointTest(unittest.TestCase):
             }), encoding="utf-8")
             (self.root / deployment_id / "nsdeploy.log").write_text("", encoding="utf-8")
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _settings(self):
+    def _settings(self) -> Settings:
         return Settings(work_root=self.root, port_start=8860, port_end=8879)
 
-    def _seed(self, supervisor):
+    def _seed(self, supervisor: Supervisor) -> None:
         """Two complementary networks, published and serving.
 
         Written after start-up: reconcile_orphans settles any live row at boot, and
         the map now requires `ready`, so a row seeded beforehand would be `stopped`
         and absent from /graph.
         """
-        org = supervisor.fallback_org
+        org: Dict[str, Any] = supervisor.fallback_org
+        deployment_id: str
+        spec: NetworkIdentity
         for deployment_id, spec in (("d_orders", ORDERS), ("d_ship", SHIPPING)):
-            work_dir = self.root / deployment_id
+            work_dir: Path = self.root / deployment_id
             supervisor.store.save_deployment({
                 "id": deployment_id, "org_id": org["id"], "name": spec.name,
                 "status": "ready", "url": f"http://127.0.0.1:886{deployment_id[-1]}",
@@ -432,33 +468,34 @@ class RelationsEndpointTest(unittest.TestCase):
             # tests/test_service_publish.py covers).
             supervisor.store.set_published(deployment_id, "2026-09-23T18:00:00+00:00")
 
-    def _get(self, path):
+    def _get(self, path: str) -> Dict[str, Any]:
+        client: TestClient
         with TestClient(create_app(self._settings())) as client:
             self._seed(client.app.state.supervisor)
-            response = client.get(path)
+            response: httpx.Response = client.get(path)
             self.assertEqual(response.status_code, 200, response.text)
             return response.json()
 
-    def test_relations_endpoint_reports_the_capability_edge(self):
+    def test_relations_endpoint_reports_the_capability_edge(self) -> None:
         """Relations endpoint reports the capability edge."""
-        body = self._get("/relations")
+        body: Dict[str, Any] = self._get("/relations")
         self.assertEqual(body["strategy"], "heuristic")
         self.assertEqual(body["networks"], 2)
-        edge = next(e for e in body["edges"]
-                    if e["source"] == "d_orders" and e["target"] == "d_ship")
+        edge: Dict[str, Any] = next(e for e in body["edges"]
+                                    if e["source"] == "d_orders" and e["target"] == "d_ship")
         self.assertEqual(edge["kind"], "capability")
         self.assertEqual(edge["reference"], "carrier_shipping_manager")
         self.assertTrue(edge["reason"])
 
-    def test_graph_exposes_suggestions_separately_from_real_links(self):
+    def test_graph_exposes_suggestions_separately_from_real_links(self) -> None:
         """The map must never present an inference as a wired connection."""
-        body = self._get("/graph?suggest=true")
+        body: Dict[str, Any] = self._get("/graph?suggest=true")
         self.assertEqual(body["edges"], [])          # nothing is actually linked
         self.assertTrue(body["suggested_edges"])     # but a relation was inferred
         self.assertEqual(body["totals"]["suggested_edges"],
                          len(body["suggested_edges"]))
 
-    def test_graph_does_not_infer_relations_unless_asked(self):
+    def test_graph_does_not_infer_relations_unless_asked(self) -> None:
         """The default is off, and that is a performance contract, not a detail.
 
         The scorer is pairwise, so it grows with the square of the map: on a
@@ -466,33 +503,35 @@ class RelationsEndpointTest(unittest.TestCase):
         the payload, for suggestions views/map.js discards. A regression here would
         not fail any other test — it would just make the map slow to open again.
         """
-        body = self._get("/graph")
+        body: Dict[str, Any] = self._get("/graph")
         self.assertEqual(body["suggested_edges"], [])
         self.assertEqual(body["totals"]["suggested_edges"], 0)
         # The real links are unaffected by the switch.
         self.assertEqual(body["edges"], [])
         self.assertTrue(body["nodes"])
 
-    def test_suggested_edges_only_reference_visible_nodes(self):
+    def test_suggested_edges_only_reference_visible_nodes(self) -> None:
         """Suggested edges only reference visible nodes."""
         # Asks for suggestions explicitly: against the default they are empty and the
         # loop below would pass without examining anything.
-        body = self._get("/graph?suggest=true")
-        ids = {node["id"] for node in body["nodes"]}
+        body: Dict[str, Any] = self._get("/graph?suggest=true")
+        ids: Set[str] = {node["id"] for node in body["nodes"]}
         self.assertTrue(body["suggested_edges"], "nothing was inferred to check")
+        edge: Dict[str, Any]
         for edge in body["suggested_edges"]:
             with self.subTest(edge=edge):
                 self.assertIn(edge["source"], ids)
                 self.assertIn(edge["target"], ids)
 
-    def test_llm_strategy_falls_back_when_no_key_is_configured(self):
+    def test_llm_strategy_falls_back_when_no_key_is_configured(self) -> None:
         """Llm strategy falls back when no key is configured."""
         # RELATIONS_LLM is off by default, so asking for it must degrade, not fail.
-        body = self._get("/relations?strategy=llm")
+        body: Dict[str, Any] = self._get("/relations?strategy=llm")
         self.assertEqual(body["strategy"], "heuristic")
 
-    def test_unknown_org_filter_is_rejected(self):
+    def test_unknown_org_filter_is_rejected(self) -> None:
         """Unknown org filter is rejected."""
+        client: TestClient
         with TestClient(create_app(self._settings())) as client:
             self.assertEqual(client.get("/relations?org_id=nope").status_code, 404)
 
@@ -507,39 +546,43 @@ class ConsoleCachingTest(unittest.TestCase):
     manual hard reload cleared it.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
+        self._tmp: tempfile.TemporaryDirectory[str]
         self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
-        self.root = Path(self._tmp.name)
+        self.root: Path = Path(self._tmp.name)
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _client(self):
+    def _client(self) -> TestClient:
         return TestClient(create_app(
             Settings(work_root=self.root, port_start=8840, port_end=8849)))
 
-    def test_entry_document_is_not_heuristically_cacheable(self):
+    def test_entry_document_is_not_heuristically_cacheable(self) -> None:
         """Entry document is not heuristically cacheable."""
+        client: TestClient
         with self._client() as client:
-            response = client.get("/app/")
+            response: httpx.Response = client.get("/app/")
             self.assertEqual(response.status_code, 200)
             self.assertIn("text/html", response.headers["content-type"])
             self.assertEqual(response.headers.get("cache-control"), "no-cache")
 
-    def test_versioned_assets_are_left_cacheable(self):
+    def test_versioned_assets_are_left_cacheable(self) -> None:
         """Versioned assets are left cacheable."""
+        client: TestClient
         with self._client() as client:
-            response = client.get("/app/assets/styles/layout.css")
+            response: httpx.Response = client.get("/app/assets/styles/layout.css")
             self.assertEqual(response.status_code, 200)
             self.assertIsNone(response.headers.get("cache-control"))
 
-    def test_entry_document_still_revalidates_with_an_etag(self):
+    def test_entry_document_still_revalidates_with_an_etag(self) -> None:
         """no-cache means "ask first", not "never cache" — the 304 path must survive."""
+        client: TestClient
         with self._client() as client:
-            first = client.get("/app/")
-            etag = first.headers.get("etag")
+            first: httpx.Response = client.get("/app/")
+            etag: Optional[str] = first.headers.get("etag")
             self.assertIsNotNone(etag)
-            again = client.get("/app/", headers={"If-None-Match": etag})
+            again: httpx.Response = client.get("/app/", headers={"If-None-Match": etag})
             self.assertEqual(again.status_code, 304)
 
 

@@ -47,13 +47,13 @@ def env_path() -> Path:
     when it is set after this module is first imported — which is what lets a test
     point it at a temporary file instead of writing the real credentials.
     """
-    override = os.environ.get("NSDEPLOY_SERVICE_ENV_FILE", "").strip()
+    override: str = os.environ.get("NSDEPLOY_SERVICE_ENV_FILE", "").strip()
     if override:
         return Path(override)
-    root = REPO_ROOT / ".env"
+    root: Path = REPO_ROOT / ".env"
     if root.is_file():
         return root
-    packaged = SERVICE_ROOT / ".env"
+    packaged: Path = SERVICE_ROOT / ".env"
     if packaged.is_file():
         return packaged
     return root
@@ -62,14 +62,17 @@ def env_path() -> Path:
 def read_env_file() -> dict[str, str]:
     """Parse env_path() into a dict. A missing file is empty, not an error."""
     try:
-        text = env_path().read_text(encoding="utf-8")
+        text: str = env_path().read_text(encoding="utf-8")
     except OSError:
         return {}
     values: dict[str, str] = {}
+    line: str
     for line in text.splitlines():
-        stripped = line.strip()
+        stripped: str = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
+        key: str
+        value: str
         key, _, value = stripped.partition("=")
         values[key.strip()] = value.strip().strip('"')
     return values
@@ -82,6 +85,8 @@ def load_into_environ() -> None:
     a container, or a process manager) must win over a stale file, the same
     precedence config.py already gives NSDEPLOY_SERVICE_* elsewhere.
     """
+    key: str
+    value: str
     for key, value in read_env_file().items():
         os.environ.setdefault(key, value)
 
@@ -94,22 +99,24 @@ def write_env_values(updates: dict[str, str]) -> None:
     That merge is what lets the host's POST /settings and the admin panel both own
     part of the same file without either dropping the other's keys.
     """
-    path = env_path()
+    path: Path = env_path()
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines: list[str] = path.read_text(encoding="utf-8").splitlines()
     except OSError:
         lines = []
 
-    remaining = dict(updates)
-    out = []
+    remaining: dict[str, str] = dict(updates)
+    out: list[str] = []
+    line: str
     for line in lines:
-        stripped = line.strip()
+        stripped: str = line.strip()
         if stripped and not stripped.startswith("#") and "=" in stripped:
-            key = stripped.partition("=")[0].strip()
+            key: str = stripped.partition("=")[0].strip()
             if key in remaining:
                 out.append(f"{key}={remaining.pop(key)}")
                 continue
         out.append(line)
+    value: str
     for key, value in remaining.items():
         out.append(f"{key}={value}")
 

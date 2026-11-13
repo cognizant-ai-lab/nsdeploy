@@ -21,22 +21,28 @@ import os
 import tempfile
 import urllib.error
 import urllib.request
+from http.client import HTTPResponse
 from pathlib import Path
+from typing import Any
+from typing import Dict
+from typing import IO
 from typing import List
 from typing import Optional
+from typing import Tuple
 
 from typing_extensions import override
 
-RAW_URL = "https://raw.githubusercontent.com/{repo}/{ref}/{path}"
-TREE_URL = "https://api.github.com/repos/{repo}/git/trees/{ref}?recursive=1"
-DEFAULT_REPO = "cognizant-ai-lab/neuro-san-studio"
-DEFAULT_REF = "main"
+RAW_URL: str = "https://raw.githubusercontent.com/{repo}/{ref}/{path}"
+TREE_URL: str = "https://api.github.com/repos/{repo}/git/trees/{ref}?recursive=1"
+DEFAULT_REPO: str = "cognizant-ai-lab/neuro-san-studio"
+DEFAULT_REF: str = "main"
 # Directories of a local checkout that hold no studio sources.
-SKIPPED_CHECKOUT_DIRS = ("venv", "node_modules", "__pycache__")
+SKIPPED_CHECKOUT_DIRS: Tuple[str, ...] = ("venv", "node_modules", "__pycache__")
 
 
 def _http_get(url: str) -> Optional[str]:
-    req = urllib.request.Request(url, headers={"User-Agent": "nsdeploy", "Accept": "*/*"})
+    req: urllib.request.Request = urllib.request.Request(url, headers={"User-Agent": "nsdeploy", "Accept": "*/*"})
+    resp: HTTPResponse
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return resp.read().decode("utf-8")
@@ -52,7 +58,7 @@ class StudioSource:
     class mirrors the ones a build asks for into a local `root` at their logical paths.
     """
 
-    def __init__(self, cache_dir: Path):
+    def __init__(self, cache_dir: Path) -> None:
         """
         Create the mirror directory.
 
@@ -82,7 +88,7 @@ class StudioSource:
         :param rel_path: The file path relative to the studio root.
         :return: The file contents, or None when the file is unavailable.
         """
-        path = self.ensure(rel_path)
+        path: Optional[Path] = self.ensure(rel_path)
         return path.read_text(encoding="utf-8") if path else None
 
     def ensure_coded_tool(self, module_file: str) -> bool:
@@ -132,8 +138,9 @@ class StudioSource:
         base: str = rel_path.split("/")[-1]
         suffix_matches: List[str] = []
         name_matches: List[str] = []
+        path: str
         # Collect the paths that end with the logical path or with its file name.
-        for path in self._files:  # type: str
+        for path in self._files:
             if path.endswith("/" + rel_path):
                 suffix_matches.append(path)
             if path.endswith("/" + base) or path == base:
@@ -164,6 +171,7 @@ class StudioSource:
         dest.parent.mkdir(parents=True, exist_ok=True)
         # Concurrent builds share the mirror, so a reader must never see a partly written file,
         # and each writer needs its own temporary file.
+        partial: IO[str]
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=dest.parent, prefix=f".{dest.name}.",
                                          suffix=".tmp", delete=False) as partial:
             partial_path: Path = Path(partial.name)
@@ -197,7 +205,7 @@ class LocalStudio(StudioSource):
     copied into a cache on every request, so edits to the checkout apply to the next build.
     """
 
-    def __init__(self, path: str | Path, cache_dir: Optional[Path] = None):
+    def __init__(self, path: str | Path, cache_dir: Optional[Path] = None) -> None:
         """
         Use the checkout at `path`.
 
@@ -230,17 +238,22 @@ class LocalStudio(StudioSource):
         :return: The file paths relative to the checkout
         """
         files: List[str] = []
+        directory: str
+        dir_names: List[str]
+        file_names: List[str]
         # Walk the checkout, pruning directories that hold no studio sources.
-        for directory, dir_names, file_names in os.walk(self._checkout):  # type: str, List[str], List[str]
+        for directory, dir_names, file_names in os.walk(self._checkout):
             kept: List[str] = []
+            dir_name: str
             # Keep only the subdirectories that can hold studio sources.
-            for dir_name in dir_names:  # type: str
+            for dir_name in dir_names:
                 if not dir_name.startswith(".") and dir_name not in SKIPPED_CHECKOUT_DIRS:
                     kept.append(dir_name)
             dir_names[:] = kept
             relative: Path = Path(directory).relative_to(self._checkout)
+            file_name: str
             # Record each file by its path relative to the checkout.
-            for file_name in file_names:  # type: str
+            for file_name in file_names:
                 files.append((relative / file_name).as_posix())
         return files
 
@@ -261,10 +274,17 @@ class GithubStudio(StudioSource):
     Studio source that downloads files on demand from a GitHub repository into a local cache.
     """
 
-    def __init__(self, repo: str = DEFAULT_REPO, ref: str = DEFAULT_REF, cache_dir: Optional[Path] = None):
-        self.repo = repo
-        self.ref = ref
-        safe = repo.replace("/", "_")
+    def __init__(self, repo: str = DEFAULT_REPO, ref: str = DEFAULT_REF, cache_dir: Optional[Path] = None) -> None:
+        """
+        Use the GitHub repository `repo` at `ref`.
+
+        :param repo: The GitHub repository, as `owner/name`
+        :param ref: The branch, tag or commit to read
+        :param cache_dir: The mirror directory; defaults to one per repository and ref under `~/.cache/nsdeploy`
+        """
+        self.repo: str = repo
+        self.ref: str = ref
+        safe: str = repo.replace("/", "_")
         super().__init__(Path(cache_dir) if cache_dir else (Path.home() / ".cache" / "nsdeploy" / f"{safe}@{ref}"))
 
     @override
@@ -292,8 +312,9 @@ class GithubStudio(StudioSource):
         if data is None:
             raise RuntimeError(f"cannot read git tree for {self.repo}@{self.ref}")
         files: List[str] = []
+        entry: Dict[str, Any]
         # Keep the files; the tree also lists directories.
-        for entry in json.loads(data).get("tree", []):  # type: dict
+        for entry in json.loads(data).get("tree", []):
             if entry.get("type") == "blob":
                 files.append(entry.get("path"))
         return files

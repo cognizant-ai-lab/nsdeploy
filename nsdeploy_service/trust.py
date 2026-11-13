@@ -39,6 +39,7 @@ import os
 import ssl
 from pathlib import Path
 from typing import Any
+from typing import Callable
 from typing import Optional
 
 # Optional dependencies: each fallback is skipped when its package is absent.
@@ -61,7 +62,7 @@ def has_usable_store() -> bool:
     The path being *set* is not enough: Windows builds commonly report a
     build-time Unix path such as /usr/local/ssl/cert.pem that was never shipped.
     """
-    paths = ssl.get_default_verify_paths()
+    paths: ssl.DefaultVerifyPaths = ssl.get_default_verify_paths()
     return any(candidate and Path(candidate).exists()
                for candidate in (paths.cafile, paths.capath))
 
@@ -74,7 +75,7 @@ def _install_python_default(bundle: str) -> None:
     An explicit `cafile`/`capath`/`cadata` from the caller is passed through
     untouched — only the "no opinion" case is filled in.
     """
-    original = ssl.create_default_context
+    original: Callable[..., ssl.SSLContext] = ssl.create_default_context
 
     def create_default_context(*args: Any, **kwargs: Any) -> ssl.SSLContext:
         if not (kwargs.get("cafile") or kwargs.get("capath") or kwargs.get("cadata")):
@@ -111,7 +112,7 @@ def _try_certifi() -> Optional[str]:
     """Fall back to certifi's public roots. Enough for an un-inspected network."""
     if certifi is None:
         return None
-    bundle = certifi.where()
+    bundle: str = certifi.where()
     if not Path(bundle).is_file():
         return None
     _install_python_default(bundle)
