@@ -461,7 +461,7 @@ class CommerceHTTPTests(unittest.TestCase):
             {TURN: {'confirmed_offer': 'invented'}}))
         self.assertEqual(result['status'], 'DENIED')
 
-    def test_framework_invocation_metadata_is_not_a_model_argument(self):
+    def test_framework_invocation_metadata_is_not_a_model_argument(self) -> None:
         """
         Check that a key neuro-san adds to a tool call does not read as a model argument.
         """
