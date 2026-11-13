@@ -35,7 +35,7 @@ dependencies = { file = ["requirements.txt"] }
 # The vendored browser runtime (nsdeploy/runtime/) is data, not Python — ship it in the
 # wheel so non-editable installs can serve /runtime/*.
 [tool.setuptools.package-data]
-nsdeploy = ["runtime/*", "runtime/generated/*"]
+nsdeploy = ["runtime/*", "runtime/generated/*", "runtime/ts-package/*", "runtime/ts-package/generated/*/*"]
 "nsdeploy.commerce" = ["LICENSE.txt", "UPSTREAM_NOTICE", "PROVENANCE.md"]
 
 [tool.uv]

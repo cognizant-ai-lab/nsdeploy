@@ -19,6 +19,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -40,6 +41,9 @@ logger = logging.getLogger(__name__)
 # the package as data so editable and regular installs both find it. Overridable via
 # serve(..., runtime_dir=...) / --runtime-dir.
 DEFAULT_RUNTIME_DIR = Path(__file__).resolve().parent / "runtime"
+# The runtime on the neuro-san TS package, served in place of runtime/index.js unless
+# nsdeploy runs with --use-ts-package false. It imports the shared parts from the folder above.
+TS_PACKAGE_DIR = "ts-package"
 MIME = {
     ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
     ".mjs": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",
@@ -84,6 +88,12 @@ def _facade_command(python_exe: str, site_dir: Path, plan: DeploymentPlan, port:
             "--port", str(facade_port), "--upstream", facade_upstream]
 
 
+# The most text the mock LLM passes on, in a tool call's arguments or a summary.
+MOCK_TEXT_LIMIT = 1200
+# The most text the mock LLM puts in a search tool's query.
+MOCK_QUERY_LIMIT = 200
+
+
 def _sse(obj: Dict[str, Any]) -> bytes:
     return f"data: {json.dumps(obj)}\n\n".encode("utf-8")
 
@@ -100,10 +110,47 @@ def _called_tool_names(messages: List[Dict[str, Any]]) -> set:
     return {m.get("name") for m in messages if m.get("role") == "tool" and m.get("name")}
 
 
+def _responses_text(content: Any) -> str:
+    """The text of a Responses API message content: a string, or a list of parts."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+    return ""
+
+
+def _responses_to_chat(body: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    A Responses API request's input and tools, in the chat-completions shape the mock
+    router reads: messages with a "tool" role for each function result, named after
+    the call it answers, and tools as {"function": {...}}.
+    """
+    raw_input = body.get("input", [])
+    if isinstance(raw_input, str):
+        items = [{"type": "message", "role": "user", "content": raw_input}]
+    else:
+        items = raw_input or []
+    names_by_call: Dict[str, str] = {}
+    messages: List[Dict[str, Any]] = []
+    for item in items:
+        kind = item.get("type", "message")
+        if kind == "message":
+            messages.append({"role": item.get("role"), "content": _responses_text(item.get("content"))})
+        elif kind == "function_call":
+            names_by_call[item.get("call_id", "")] = item.get("name", "")
+            messages.append({"role": "assistant", "tool_calls": [{"function": {"name": item.get("name")}}]})
+        elif kind == "function_call_output":
+            messages.append({"role": "tool", "name": names_by_call.get(item.get("call_id", ""), ""),
+                             "content": item.get("output", "")})
+    tools = [{"function": {"name": t.get("name"), "parameters": t.get("parameters", {})}}
+             for t in body.get("tools", []) or [] if t.get("type") == "function"]
+    return messages, tools
+
+
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-statements  # closure-based handler
 def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: List[str],
                  local_mcps: Optional[List[str]] = None, facade_mcp: Optional[str] = None,
-                 commerce=None):
+                 commerce=None, ts_package: bool = True):
     """
     Build the HTTP request handler class for the deployed site origin.
 
@@ -114,6 +161,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
     :param local_mcps: Private local MCP server URLs proxied under /_mcp/<i>/mcp.
     :param facade_mcp: URL of the public MCP facade proxied under /mcp.
     :param commerce: Optional commerce service that handles /commerce requests.
+    :param ts_package: Whether /runtime/index.js serves the runtime on the neuro-san TS package.
     :return: A BaseHTTPRequestHandler subclass bound to these settings.
     """
     ext_mcp_re = re.compile(r"^/ext-mcp/(\d+)/mcp$")
@@ -160,8 +208,10 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             raw = self.rfile.read(length) if length else b""
             if path == "/v1/chat/completions":
                 return self._mock_router(raw)
-            if path == "/byok/v1/chat/completions":
-                return self._byok_proxy(raw)
+            if path == "/v1/responses":
+                return self._mock_responses(raw)
+            if path in ("/byok/v1/chat/completions", "/byok/v1/responses"):
+                return self._byok_proxy(raw, path[len("/byok/v1"):])
             if path == "/_nsdeploy/links":
                 return self._save_link(raw)
             if path == "/mcp" and facade_mcp:
@@ -236,56 +286,171 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             # pylint: disable-next=broad-exception-caught  # the mock answers any malformed body as empty
             except Exception:
                 body = {}
-            messages = body.get("messages", []) or []
-            tools = body.get("tools", []) or []
-            available = [t.get("function", {}).get("name") for t in tools if t.get("function")]
-            called = _called_tool_names(messages)
-            uncalled = [n for n in available if n not in called]
-            text = _last_user_text(messages)
+            call, summary = self._mock_decision(body.get("messages", []) or [], body.get("tools", []) or [])
+            tool_call: Optional[Dict[str, Any]] = None
+            if call:
+                name, arguments = call
+                tool_call = {"index": 0, "id": f"call_{name}", "type": "function",
+                             "function": {"name": name, "arguments": arguments}}
 
             self.send_response(200)
             self._cors()
+            self.send_header("X-Nsdeploy-LLM-Route", "mock")
+            if not body.get("stream"):
+                # A non-streaming request gets one chat.completion, as OpenAI answers it.
+                # The neuro-san agent loop asks this way whenever a network's llm_config
+                # does not turn streaming on.
+                message: Dict[str, Any] = {"role": "assistant", "content": None if tool_call else summary}
+                if tool_call:
+                    message["tool_calls"] = [{k: v for k, v in tool_call.items() if k != "index"}]
+                payload = json.dumps({
+                    # Unique per completion, as OpenAI's are. LangChain uses it as the message
+                    # id, and LangGraph replaces a message whose id it has already seen.
+                    "id": f"chatcmpl-neuro-san-mock-{uuid.uuid4().hex}", "object": "chat.completion",
+                    "model": "neuro-san-mock",
+                    "choices": [{"index": 0, "message": message,
+                                 "finish_reason": "tool_calls" if tool_call else "stop"}],
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                }).encode("utf-8")
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
-            self.send_header("X-Nsdeploy-LLM-Route", "mock")
             # No Content-Length: signal end-of-stream by closing the connection so the
             # browser's SSE reader gets `done` (mirrors res.end() in the Node demo).
             self.send_header("Connection", "close")
             self.close_connection = True  # pylint: disable=attribute-defined-outside-init  # base-class attribute
             self.end_headers()
-            if uncalled:
-                name = uncalled[0]
-                schema = next((t["function"].get("parameters", {}) for t in tools
-                               if t.get("function", {}).get("name") == name), {})
-                args: Dict[str, Any] = {}
-                for p in (schema.get("required") or []):
-                    args[p] = text
-                for common in ("request", "inquiry", "search_terms", "query", "input"):
-                    args.setdefault(common, text)
-                tc = {"index": 0, "id": f"call_{name}", "type": "function",
-                      "function": {"name": name, "arguments": json.dumps(args)}}
-                self.wfile.write(_sse({"choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [tc]}}]}))
+            if tool_call:
+                delta = {"role": "assistant", "tool_calls": [tool_call]}
+                self.wfile.write(_sse({"choices": [{"index": 0, "delta": delta}]}))
                 self.wfile.write(_sse({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}))
             else:
-                summary = self._summarize(messages)
-                for piece in summary.split(" "):
+                for i, piece in enumerate(summary.split(" ")):
+                    # The first delta carries the role, as OpenAI's stream does. The
+                    # neuro-san agent loop drops streamed content that never names one.
+                    delta = {"role": "assistant", "content": piece + " "} if i == 0 else {"content": piece + " "}
                     self.wfile.write(_sse({"model": "neuro-san-mock",
-                                           "choices": [{"index": 0, "delta": {"content": piece + " "}}]}))
+                                           "choices": [{"index": 0, "delta": delta}]}))
                 self.wfile.write(_sse({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}))
             self.wfile.write(b"data: [DONE]\n\n")
+
+        def _mock_decision(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]):
+            """
+            What the mock LLM does next, whichever API asked: call the first tool it
+            hasn't called yet, with the user's request as its arguments, or once every
+            tool has answered, summarize what they returned. Returns
+            ((tool name, arguments JSON) or None, summary text).
+            """
+            available = [t.get("function", {}).get("name") for t in tools if t.get("function")]
+            called = _called_tool_names(messages)
+            uncalled = [n for n in available if n not in called]
+            # Capped like the summary: each agent's request quotes the one before it,
+            # so passing it on whole would double its size at every hop of a deep
+            # chain of networks, where a real model writes a short request instead.
+            text = _last_user_text(messages)[:MOCK_TEXT_LIMIT]
+            if not uncalled:
+                return None, self._summarize(messages)
+            name = uncalled[0]
+            schema = next((t["function"].get("parameters", {}) for t in tools
+                           if t.get("function", {}).get("name") == name), {})
+            args: Dict[str, Any] = {}
+            for p in (schema.get("required") or []):
+                args[p] = text
+            for common in ("request", "inquiry", "search_terms", "query", "input"):
+                args.setdefault(common, text)
+            # A real model sends a search tool a short phrase. Some reject anything
+            # longer, like You.com's search, which stops at 400 characters.
+            for search in ("search_terms", "query"):
+                args[search] = args[search][:MOCK_QUERY_LIMIT]
+            return (name, json.dumps(args)), ""
+
+        def _mock_responses(self, raw: bytes):
+            """
+            The mock LLM on OpenAI's Responses API, which neuro-san uses for OpenAI
+            models by default ("use_responses_api" in its llm info). Same decisions as
+            _mock_router, answered as a response object, or streamed as the response.*
+            events OpenAI sends.
+            """
+            try:
+                body = json.loads(raw or b"{}")
+            # Malformed JSON or bytes that aren't UTF-8; the mock answers either as an empty request.
+            except ValueError:
+                body = {}
+            messages, tools = _responses_to_chat(body)
+            call, summary = self._mock_decision(messages, tools)
+            if call:
+                item: Dict[str, Any] = {"type": "function_call", "id": f"fc_{uuid.uuid4().hex}", "status": "completed",
+                                        "call_id": f"call_{call[0]}", "name": call[0], "arguments": call[1]}
+            else:
+                item = {"type": "message", "id": f"msg_{uuid.uuid4().hex}", "status": "completed", "role": "assistant",
+                        "content": [{"type": "output_text", "text": summary, "annotations": []}]}
+            response: Dict[str, Any] = {
+                "id": f"resp_neuro_san_mock_{uuid.uuid4().hex}", "object": "response",
+                "created_at": int(time.time()), "status": "completed",
+                "model": "neuro-san-mock", "output": [item],
+                "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            }
+
+            self.send_response(200)
+            self._cors()
+            self.send_header("X-Nsdeploy-LLM-Route", "mock")
+            if not body.get("stream"):
+                payload = json.dumps(response).encode("utf-8")
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.close_connection = True  # pylint: disable=attribute-defined-outside-init  # base-class attribute
+            self.end_headers()
+            sequence = iter(range(1_000_000))
+
+            def event(kind: str, **fields):
+                data = json.dumps({"type": kind, "sequence_number": next(sequence), **fields})
+                self.wfile.write(f"event: {kind}\ndata: {data}\n\n".encode("utf-8"))
+
+            event("response.created", response={**response, "status": "in_progress", "output": []})
+            if call:
+                event("response.output_item.added", output_index=0,
+                      item={**item, "status": "in_progress", "arguments": ""})
+                event("response.function_call_arguments.delta", item_id=item["id"], output_index=0,
+                      delta=item["arguments"])
+                event("response.function_call_arguments.done", item_id=item["id"], output_index=0,
+                      arguments=item["arguments"])
+            else:
+                event("response.output_item.added", output_index=0,
+                      item={**item, "status": "in_progress", "content": []})
+                part = {"type": "output_text", "text": "", "annotations": []}
+                event("response.content_part.added", item_id=item["id"], output_index=0, content_index=0, part=part)
+                for i, piece in enumerate(summary.split(" ")):
+                    event("response.output_text.delta", item_id=item["id"], output_index=0, content_index=0,
+                          delta=piece if i == 0 else " " + piece)
+                event("response.output_text.done", item_id=item["id"], output_index=0, content_index=0, text=summary)
+                event("response.content_part.done", item_id=item["id"], output_index=0, content_index=0,
+                      part={**part, "text": summary})
+            event("response.output_item.done", output_index=0, item=item)
+            event("response.completed", response=response)
 
         def _summarize(self, messages: List[Dict[str, Any]]) -> str:
             results = [m.get("content", "") for m in messages if m.get("role") == "tool"]
             if not results:
                 return "(mock) I have no grounded tool output to summarize for this request."
-            joined = " ".join(str(r) for r in results)[:1200]
+            joined = " ".join(str(r) for r in results)[:MOCK_TEXT_LIMIT]
             return "(mock summary) Based on the tools I consulted: " + joined
 
         # --- BYOK CORS pass-through proxy to a real OpenAI-compatible upstream ----
-        def _byok_proxy(self, raw: bytes):
+        def _byok_proxy(self, raw: bytes, endpoint: str):
+            """Pass one request on to the upstream's endpoint, e.g. /chat/completions or /responses."""
             auth = self.headers.get("Authorization", "")
             req = urllib.request.Request(
-                f"{upstream}/chat/completions", data=raw, method="POST",
+                f"{upstream}{endpoint}", data=raw, method="POST",
                 headers={"Content-Type": "application/json", "Authorization": auth, "Accept": "text/event-stream"},
             )
             try:
@@ -417,6 +582,11 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 return self._byok_models_proxy()
             if path == "/":
                 path = "/index.html"
+            # A redirect rather than serving the file under the old path, so the browser
+            # resolves the TS package runtime's own imports from its folder.
+            if ts_package and path == "/runtime/index.js":
+                return self._send(302, b"", "text/plain", {
+                    "Location": f"/runtime/{TS_PACKAGE_DIR}/index.js", "Cache-Control": "no-store"})
             if path.startswith("/runtime/"):
                 base_dir = runtime_dir
                 file_path = runtime_dir / path[len("/runtime/"):]
@@ -560,7 +730,7 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
           site_base: Optional[str] = None,
           upstream: str = "https://api.openai.com/v1", python_exe: Optional[str] = None,
           runtime_dir: Optional[Path] = None, ext_mcps: Optional[List[str]] = None,
-          facade_upstream: Optional[str] = None, mock_llm: bool = False) -> None:
+          facade_upstream: Optional[str] = None, mock_llm: bool = False, ts_package: bool = True) -> None:
     """
     Start the MCP tool servers and the public facade, then serve the site until interrupted.
 
@@ -575,9 +745,14 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
     :param ext_mcps: External MCP server URLs to proxy.
     :param facade_upstream: OpenAI-compatible upstream for the public MCP facade.
     :param mock_llm: Whether the site defaults to the mock LLM router.
+    :param ts_package: Whether the site runs on the runtime on the neuro-san TS package.
     """
     python_exe = python_exe or sys.executable
     runtime_dir = runtime_dir or DEFAULT_RUNTIME_DIR
+    generated = runtime_dir / TS_PACKAGE_DIR / "generated"
+    if ts_package and not (generated / "browser" / "neuro-san.mjs").is_file():
+        raise SystemExit(f"error: the browser runtime is not built ({generated} is missing). "
+                         "Run `npm install && npm run build` in runtime-build/ first.")
     ext_mcps = ext_mcps or []
     bindings = spawn_mcp_servers(plan, studio_root, python_exe)
     facade_proc: Optional[subprocess.Popen] = None
@@ -599,12 +774,13 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
         _wait_for_listener(facade_proc, facade_port)
         commerce = from_plan(plan, site_dir, site_base or f"http://127.0.0.1:{port}")
         handler = make_handler(site_dir, upstream, runtime_dir, ext_mcps, local_mcps,
-                               f"http://127.0.0.1:{facade_port}/mcp", commerce)
+                               f"http://127.0.0.1:{facade_port}/mcp", commerce, ts_package)
         httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
         url = (site_base or f"http://127.0.0.1:{port}").rstrip("/") + "/"
         print(f"\n🌐  {plan.network_name} is live:  {url}")
         if site_base:
             print(f"    Loopback backend: 127.0.0.1:{port}")
+        print(f"    Runtime: {'neuro-san TS package' if ts_package else 'original (--use-ts-package false)'}")
         llm_default = "mock /v1 (developer mode)" if mock_llm else "BYOK /byok/v1 (API key required)"
         print(f"    LLM default: {llm_default}  ·  BYOK upstream → {upstream}")
         print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: caller BYOK → {facade_upstream}"
