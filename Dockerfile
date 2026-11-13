@@ -11,6 +11,12 @@ COPY examples ./examples
 
 RUN pip install --no-cache-dir -e . && pip install --no-cache-dir -e ./nsdeploy_service
 
+# Builds read HOCON includes, toolbox_info.hocon and coded tools from this copy of
+# neuro-san-studio, not from the GitHub API, which allows 60 unauthenticated calls an hour.
+ARG NEURO_SAN_STUDIO_REF=main
+ADD https://github.com/cognizant-ai-lab/neuro-san-studio.git#${NEURO_SAN_STUDIO_REF} /opt/neuro-san-studio
+ENV NSDEPLOY_SERVICE_STUDIO=/opt/neuro-san-studio
+
 # Shown as "Build:" in the console header, like neuro-san-ui's NEXT_PUBLIC_NEURO_SAN_UI_VERSION.
 ARG NSDEPLOY_SERVICE_BUILD_VERSION=""
 ENV NSDEPLOY_SERVICE_BUILD_VERSION=${NSDEPLOY_SERVICE_BUILD_VERSION}

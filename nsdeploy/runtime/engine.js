@@ -11,7 +11,7 @@ import { TraceBus } from "./trace.js";
 import { fetchManifest, fetchText, resolveUrl, RemoteRegistry } from "./remote.js";
 import { runAgent } from "./runner.js";
 import { McpClient } from "./mcp.js";
-import { normalizeModelName } from "./model.js";
+import { fallbackModel, normalizeModelName } from "./model.js";
 import { interactionMessage } from "./cruse.js";
 import { createTurnEventStream } from "./execution-stream.js";
 import { TurnControl } from "./turn-control.js";
@@ -59,7 +59,7 @@ export function selectTopRouter(manifest, routerOverride, byokKey, modelOverride
 
   if ((hasRealKey || hasExplicitModel) && (!requested || requestedMock)) {
     if (!declared.byok_router) {
-      throw new Error("A real API key is configured, but this site publishes no BYOK router.");
+      throw new Error("A real API key is configured, but this site publishes no AI provider route.");
     }
     requested = declared.byok_router;
     return { baseUrl: requested, mock: false, upgradedToByok: true };
@@ -354,7 +354,7 @@ export class Engine {
       // Prior conversation turns ([{role,content}]), only for the top front-man.
       history: history || [],
       turnControl: turnControl || null,
-      defaultModel: network.config.llm_config?.model_name || "mock-1",
+      defaultModel: fallbackModel(network.config.llm_config?.model_name),
       isTop: !!isTop,
       frontMan: network.findFrontMan(),
       onAnswerDelta: isTop ? (t) => self.onAnswerDelta?.(t) : undefined,
