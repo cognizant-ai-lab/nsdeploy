@@ -32,10 +32,13 @@ from typing import Tuple
 
 from typing_extensions import override
 
+from nsdeploy.interfaces.toolbox_layout import ToolboxLayout
+
 RAW_URL: str = "https://raw.githubusercontent.com/{repo}/{ref}/{path}"
 TREE_URL: str = "https://api.github.com/repos/{repo}/git/trees/{ref}?recursive=1"
 DEFAULT_REPO: str = "cognizant-ai-lab/neuro-san-studio"
 DEFAULT_REF: str = "main"
+
 # Directories of a local checkout that hold no studio sources.
 SKIPPED_CHECKOUT_DIRS: Tuple[str, ...] = ("venv", "node_modules", "__pycache__")
 
@@ -98,11 +101,11 @@ class StudioSource:
         :param module_file: The file name of the coded-tool module, such as `web_fetch.py`
         :return: True when the module is available under root
         """
-        pkg_init: Path = self._root / "coded_tools" / "__init__.py"
+        pkg_init: Path = self._root / ToolboxLayout.CODED_TOOLS / "__init__.py"
         if not pkg_init.exists():
             pkg_init.parent.mkdir(parents=True, exist_ok=True)
             pkg_init.write_text("", encoding="utf-8")
-        return self.ensure(f"coded_tools/{module_file}") is not None
+        return self.ensure(ToolboxLayout.coded_tool_path(module_file)) is not None
 
     def _list_files(self) -> List[str]:
         """
