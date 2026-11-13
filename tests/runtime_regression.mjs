@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { Engine, assertRouterKey, isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopRouter } from "../nsdeploy/runtime/ts-package/engine.js";
+import { Engine, assertNetworkModels, assertRouterKey, isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopRouter } from "../nsdeploy/runtime/ts-package/engine.js";
 import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
 import { browserMockCompletion, isMockResponse, normalizeModelName } from "../nsdeploy/runtime/ts-package/model.js";
 import {
@@ -242,9 +242,26 @@ assert.match(consumeAgentBudget(agentBudget, 100), /agent invocations/);
 
 // BYOK guard: a real (non-mock) router is never contacted without a visitor-entered
 // key. The "demo" sentinel and an empty key are both rejected; the mock needs none.
-assert.throws(() => assertRouterKey({ baseUrl: "http://router.example/v1", mock: false }, "demo"), /API key is required/);
-assert.throws(() => assertRouterKey({ baseUrl: "http://router.example/v1", mock: false }, ""), /API key is required/);
+assert.throws(() => assertRouterKey({ baseUrl: "http://router.example/v1", mock: false }, "demo"), /provider key is required/);
+assert.throws(() => assertRouterKey({ baseUrl: "http://router.example/v1", mock: false }, ""), /provider key is required/);
 assert.doesNotThrow(() => assertRouterKey({ baseUrl: "http://router.example/v1", mock: false }, "sk-real"));
 assert.doesNotThrow(() => assertRouterKey({ baseUrl: "http://127.0.0.1:8091/v1", mock: true }, "demo"));
+
+// Model guard: a real (non-mock) router never gets the mock placeholder or no model.
+// A blank or quoted-empty name counts as not set, so the network's model is used.
+{
+  const network = (agentModel, networkModel) => ({
+    config: { llm_config: { model_name: networkModel }, tools: [{ name: "front", llm_config: { model_name: agentModel } }] },
+    findFrontMan: () => "front",
+    classifyTool: () => ({ kind: "agent" }),
+  });
+  const real = { mock: false, routerHost: "router.example" };
+  assert.throws(() => assertNetworkModels(network(undefined, undefined), real), /model is required for router\.example/);
+  assert.throws(() => assertNetworkModels(network("mock-1", undefined), real), /model is required/);
+  assert.throws(() => assertNetworkModels(network('""', "   "), real), /model is required/);
+  assert.doesNotThrow(() => assertNetworkModels(network("   ", "gpt-5.5"), real));
+  assert.doesNotThrow(() => assertNetworkModels(network("mock-1", undefined), { ...real, modelOverride: "gpt-5.5" }));
+  assert.doesNotThrow(() => assertNetworkModels(network(undefined, undefined), { ...real, mock: true }));
+}
 
 console.log("runtime regression tests passed");

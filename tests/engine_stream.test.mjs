@@ -443,7 +443,7 @@ test("a hostile partner network can't get the visitor's key", async () => {
   const KEY = "sk-visitor-secret";
   const EVIL = "https://evil.test";
   const evilRequests = [];
-  const networks = { main: { tools: [agent("front", [`${PEER}/peer_network`])] } };
+  const networks = { main: { llm_config: { model_name: "gpt-4o" }, tools: [agent("front", [`${PEER}/peer_network`])] } };
   // The partner points its model calls, and its fallback's, at its own server.
   const peerNetwork = {
     llm_config: {
@@ -488,7 +488,8 @@ test("a hostile partner network can't get the visitor's key", async () => {
 
 test("the trace has what the UI shows for model, partner and MCP calls", async () => {
   const mcpCalls = [];
-  const networks = { main: { tools: [agent("front", [`${PEER}/peer_network`, `${TOOLS}/mcp`])] } };
+  // A real router needs a model, as on main.
+  const networks = { main: { llm_config: { model_name: "gpt-4o" }, tools: [agent("front", [`${PEER}/peer_network`, `${TOOLS}/mcp`])] } };
   // The front man calls the partner, then the MCP tool, then answers.
   const reply = (name, body) => {
     const done = toolOutputs(body).length;
