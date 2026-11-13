@@ -1,7 +1,7 @@
 from typing import Tuple
 
 
-class NssLayout:
+class ToolboxLayout:
     """The paths and names nsdeploy expects a neuro-san-studio to publish.
 
     These four strings are the whole of the naming contract between nsdeploy and NSS.
@@ -11,7 +11,7 @@ class NssLayout:
 
     A logical path is what an agent network asks for, such as
     `registries/aaosa.hocon`. It is not necessarily where the source keeps the file —
-    resolving one to the other is `NssContent`'s business, not this class's.
+    resolving one to the other is `ToolboxContent`'s business, not this class's.
     """
 
     # The package of Python coded tools. nsdeploy imports from it by name, so this is
@@ -40,4 +40,4 @@ class NssLayout:
         :param module_file: The module's file name, such as `web_fetch.py`.
         :return: The logical path to ask a source for.
         """
-        return f"{NssLayout.CODED_TOOLS}/{module_file}"
+        return f"{ToolboxLayout.CODED_TOOLS}/{module_file}"

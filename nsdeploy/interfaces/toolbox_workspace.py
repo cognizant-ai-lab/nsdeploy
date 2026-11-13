@@ -2,11 +2,11 @@ from pathlib import Path
 from typing import Optional
 
 
-class NssWorkspace:
-    """What a build asks of a neuro-san-studio, over whatever `NssContent` supplies.
+class ToolboxWorkspace:
+    """What a build asks of a neuro-san-studio, over whatever `ToolboxContent` supplies.
 
     This is the consumer-facing half of the studio seam. `resolve.py` and the MCP
-    hosts depend on these methods; they never see an `NssContent`, so a build does not
+    hosts depend on these methods; they never see a `ToolboxContent`, so a build does not
     know or care whether its external toolbox is a checkout, a repository or an archive.
 
     Two of these methods hand back a real directory, which looks like a leak and is

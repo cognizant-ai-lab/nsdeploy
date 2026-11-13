@@ -2,14 +2,14 @@ from typing import List
 from typing import Optional
 
 
-class NssContent:
+class ToolboxContent:
     """Read-only access to one neuro-san-studio's files, however they are stored.
 
     This is the pluggable half of the studio seam: a checkout, a GitHub repository, a
     released archive, an installed package or a dictionary in a test each implement
     these four methods and nothing else. Everything nsdeploy does with the files —
     resolving a logical path, mirroring to disk, making `coded_tools` importable,
-    giving pyhocon an include base — belongs to `NssWorkspace`, which is written once
+    giving pyhocon an include base — belongs to `ToolboxWorkspace`, which is written once
     over any of them.
 
     Deliberately not in this interface:
@@ -25,7 +25,7 @@ class NssContent:
 
     Content is bytes, not text. Most studio files are UTF-8 HOCON or Python, but a
     source is the wrong place to decide an encoding, and a studio that grows an image
-    or a font should not need a new interface. `NssWorkspace` decodes.
+    or a font should not need a new interface. `ToolboxWorkspace` decodes.
     """
 
     def identity(self) -> str:
