@@ -47,6 +47,8 @@ class CodedToolModule:
         """
         if not isinstance(module, str):
             return None
+        package: str
+        module_leaf: str
         package, _, module_leaf = module.partition(".")
         if package != CodedToolModule.PACKAGE:
             return None

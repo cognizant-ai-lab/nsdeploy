@@ -22,6 +22,7 @@ from nsdeploy_service.envfile import load_into_environ
 from nsdeploy_service.site_env import SiteEnv
 
 
+# pylint: disable-next=too-many-statements  # one linear parse, override and banner sequence
 def main(argv: list[str] | None = None) -> int:
     """
     Parse command-line flags, build the service settings and run the uvicorn server.
@@ -29,8 +30,8 @@ def main(argv: list[str] | None = None) -> int:
     :param argv: Command-line arguments, or None to read sys.argv.
     :return: The process exit code.
     """
-    defaults = Settings()
-    ap = argparse.ArgumentParser(prog="nsdeploy_service", description=__doc__)
+    defaults: Settings = Settings()
+    ap: argparse.ArgumentParser = argparse.ArgumentParser(prog="nsdeploy_service", description=__doc__)
     ap.add_argument("--host", default=None, help=f"API bind address (default {defaults.host})")
     ap.add_argument("--port", type=int, default=None, help=f"API port (default {defaults.port})")
     ap.add_argument("--port-start", type=int, default=None,
@@ -54,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--api-token", default=None,
                     help="require this bearer token on every endpoint except /health")
     ap.add_argument("--reload", action="store_true", help="uvicorn autoreload (development)")
-    args = ap.parse_args(argv)
+    args: argparse.Namespace = ap.parse_args(argv)
 
     # Settings saved from the console's API-settings dialog (POST /settings) land in
     # this checkout's own .env, not the shell — so they must be folded into the
@@ -63,16 +64,18 @@ def main(argv: list[str] | None = None) -> int:
     load_into_environ()
 
     try:
-        settings = Settings.from_env()
+        settings: Settings = Settings.from_env()
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
+    flag: str
+    attr: str
     for flag, attr in (("host", "host"), ("port", "port"), ("port_start", "port_start"),
                        ("port_end", "port_end"), ("upstream", "upstream"), ("studio", "studio"),
                        ("ttl_seconds", "ttl_seconds"), ("max_deployments", "max_deployments"),
                        ("api_token", "api_token")):
-        value = getattr(args, flag)
+        value: object = getattr(args, flag)
         if value is not None:
             setattr(settings, attr, value)
     if args.work_root:

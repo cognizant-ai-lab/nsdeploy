@@ -11,38 +11,41 @@ from http.server import ThreadingHTTPServer
 import json
 from pathlib import Path
 import threading
+from typing import Any
+from typing import Dict
+from typing import List
 import uuid
 
 
 class DemoHandler(SimpleHTTPRequestHandler):
-    receipts = {}
-    lock = threading.Lock()
+    receipts: Dict[str, Dict[str, Any]] = {}
+    lock: threading.Lock = threading.Lock()
 
-    def end_headers(self):
+    def end_headers(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
         super().end_headers()
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         if self.path != "/api/reservations" or self.server.server_port != 8122:
             self.send_error(404)
             return
         try:
-            length = int(self.headers.get("Content-Length", "0"))
+            length: int = int(self.headers.get("Content-Length", "0"))
             if not 0 < length <= 4096:
                 raise ValueError("body size")
-            values = json.loads(self.rfile.read(length))
+            values: Any = json.loads(self.rfile.read(length))
             if (set(values) != {"date", "partySize"} or type(values["partySize"]) is not int
                     or not 1 <= values["partySize"] <= 12):
                 raise ValueError("invalid reservation")
             date.fromisoformat(values["date"])
-            key = self.headers.get("Idempotency-Key", "")
+            key: str = self.headers.get("Idempotency-Key", "")
             if not key or len(key) > 200:
                 raise ValueError("missing request ID")
             with self.lock:
                 if key in self.receipts and self.receipts[key]["request"] != values:
                     raise ValueError("request ID reused with different input")
                 self.receipts.setdefault(key, {"receipt": str(uuid.uuid4()), "demo": True, "request": values})
-                body = json.dumps(self.receipts[key]).encode()
+                body: bytes = json.dumps(self.receipts[key]).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -53,15 +56,18 @@ class DemoHandler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--caller", default=".nsdeploy/actions-demo/caller")
     parser.add_argument("--venue", default=".nsdeploy/actions-demo/venue")
-    args = parser.parse_args()
-    servers = []
+    args: argparse.Namespace = parser.parse_args()
+    servers: List[ThreadingHTTPServer] = []
+    port: int
+    directory: str
     for port, directory in [(8121, args.caller), (8122, args.venue)]:
         if not (Path(directory) / "agent-manifest.json").is_file():
             parser.error(f"Build the bundle first: {directory}")
-        server = ThreadingHTTPServer(("127.0.0.1", port), partial(DemoHandler, directory=directory))
+        server: ThreadingHTTPServer = ThreadingHTTPServer(("127.0.0.1", port),
+                                                          partial(DemoHandler, directory=directory))
         servers.append(server)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         print(f"http://127.0.0.1:{port}/ → {directory}", flush=True)

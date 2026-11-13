@@ -10,6 +10,7 @@ from __future__ import annotations
 import socket
 import threading
 from typing import Optional
+from typing import Sequence
 from typing import Set
 
 
@@ -29,11 +30,11 @@ class PortPool:
     def __init__(self, start: int, end: int, host: str = "127.0.0.1") -> None:
         if end < start:
             raise ValueError("end must be >= start")
-        self._start = start
-        self._end = end
-        self._host = host
+        self._start: int = start
+        self._end: int = end
+        self._host: str = host
         self._reserved: Set[int] = set()
-        self._lock = threading.Lock()
+        self._lock: threading.Lock = threading.Lock()
 
     @property
     def capacity(self) -> int:
@@ -59,6 +60,7 @@ class PortPool:
         between the check and nsdeploy's own bind. The caller surfaces that as a
         build failure, which is recoverable (retry gets a different port).
         """
+        probe: socket.socket
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             try:
                 probe.bind((self._host, port))
@@ -77,9 +79,10 @@ class PortPool:
         free port is better than failing the restart.
         """
         with self._lock:
-            candidates = range(self._start, self._end + 1)
+            candidates: Sequence[int] = range(self._start, self._end + 1)
             if preferred is not None and self._start <= preferred <= self._end:
                 candidates = [preferred, *(p for p in candidates if p != preferred)]
+            port: int
             for port in candidates:
                 if port in self._reserved:
                     continue

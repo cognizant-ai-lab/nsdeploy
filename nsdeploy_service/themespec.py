@@ -72,13 +72,13 @@ def is_color(value: Any) -> bool:
 # Everything an operator may edit directly. `welcome` is deliberately absent:
 # it is a CRUSE intake form the model proposes, not a visual token, and it is
 # preserved rather than edited (see merge below).
-TOKEN_FIELDS = ("brand", "icon", "tagline", "hero", "font", "radius")
-COLOR_KEYS = tuple(DEFAULT_COLORS)
+TOKEN_FIELDS: Tuple[str, ...] = ("brand", "icon", "tagline", "hero", "font", "radius")
+COLOR_KEYS: Tuple[str, ...] = tuple(DEFAULT_COLORS)
 
 
 def site_paths(work_dir: Path) -> Tuple[Path, Path]:
     """The built bundle and the editable source, as supervisor.py lays them out."""
-    work = Path(work_dir)
+    work: Path = Path(work_dir)
     return work / "site", work / "site-source"
 
 
@@ -90,13 +90,15 @@ def read_spec(work_dir: Path) -> Tuple[ThemeSpec, str]:
     before someone edited the files by hand. The built bundle is the fallback for
     a network deployed before any source existed; the default look is the floor.
     """
+    out_dir: Path
+    source_dir: Path
     out_dir, source_dir = site_paths(work_dir)
     if site_source_exists(source_dir):
         try:
             return load_site_theme(source_dir), "site-source"
         except (OSError, ValueError):
             pass  # corrupt or half-written: fall through to the built bundle
-    built = _built_spec(out_dir)
+    built: ThemeSpec | None = _built_spec(out_dir)
     if built is not None:
         return built, "built"
     return ThemeSpec(), "default"
@@ -111,7 +113,7 @@ def _built_spec(out_dir: Path) -> ThemeSpec | None:
     emit the fixed-shell rules for markup that is still composed. The build wrote
     this file from an already-coerced spec, so it round-trips.
     """
-    path = out_dir / "theme.json"
+    path: Path = out_dir / "theme.json"
     if not path.is_file():
         return None
     try:
@@ -125,10 +127,12 @@ def has_custom_layout(work_dir: Path) -> bool:
     than by what survives coercion — the console uses this only to warn that a
     generic preview will not show the real thing, and an unparseable layout is
     still a layout the operator should be warned about."""
+    out_dir: Path
+    source_dir: Path
     out_dir, source_dir = site_paths(work_dir)
     if (source_dir / "layout.html").is_file():
         return True
-    built = _built_spec(out_dir)
+    built: ThemeSpec | None = _built_spec(out_dir)
     return bool(built and built.body)
 
 
@@ -139,25 +143,28 @@ def apply_tokens(work_dir: Path, tokens: Dict[str, Any]) -> Tuple[ThemeSpec, boo
     the network has never been built (nothing on disk to restyle), in which case
     only the editable source is written and the change lands on the first build.
     """
+    out_dir: Path
+    source_dir: Path
     out_dir, source_dir = site_paths(work_dir)
+    current: ThemeSpec
     current, _ = read_spec(work_dir)
-    spec = _merge(current, tokens)
+    spec: ThemeSpec = _merge(current, tokens)
 
     # Metadata only, mirroring site_source.seed_site_source: layout.html and
     # theme.css in this directory own `body`/`style`, and rewriting theme.json
     # with them folded in would give the next build two sources for one thing.
     source_dir.mkdir(parents=True, exist_ok=True)
-    metadata = spec.to_dict()
+    metadata: Dict[str, Any] = spec.to_dict()
     metadata.pop("body", None)
     metadata.pop("style", None)
     _write_json(source_dir / "theme.json", metadata)
 
-    built = _built_spec(out_dir)
+    built: ThemeSpec | None = _built_spec(out_dir)
     if built is None or not (out_dir / "theme.css").is_file():
         return spec, False
     # Regenerated from what the bundle is actually serving, so the stylesheet
     # keeps matching the markup in its index.html — only the tokens move.
-    serving = _merge(built, tokens)
+    serving: ThemeSpec = _merge(built, tokens)
     (out_dir / "theme.css").write_text(theme_css(serving), encoding="utf-8")
     _write_json(out_dir / "theme.json", serving.to_dict())
     _patch_manifest(out_dir / "agent-manifest.json", serving)
@@ -174,11 +181,14 @@ def _merge(current: ThemeSpec, tokens: Dict[str, Any]) -> ThemeSpec:
     was valid on the way in is restored on the way out — a colour edit is not
     allowed to be a layout edit.
     """
-    data = current.to_dict()
+    data: Dict[str, Any] = current.to_dict()
+    field: str
     for field in TOKEN_FIELDS:
         if tokens.get(field) is not None:
             data[field] = tokens[field]
-    colors = dict(data.get("colors") or DEFAULT_COLORS)
+    colors: Dict[str, str] = dict(data.get("colors") or DEFAULT_COLORS)
+    key: str
+    value: Any
     for key, value in (tokens.get("colors") or {}).items():
         # Unparseable values are dropped here rather than passed to coerce, whose
         # fail-open would substitute the *default* colour and quietly undo an
@@ -186,7 +196,7 @@ def _merge(current: ThemeSpec, tokens: Dict[str, Any]) -> ThemeSpec:
         if key in DEFAULT_COLORS and is_color(value):
             colors[key] = value.strip()
     data["colors"] = colors
-    spec = ThemeSpec.coerce(data)
+    spec: ThemeSpec = ThemeSpec.coerce(data)
     if current.body and not spec.body:
         spec.body, spec.style = current.body, current.style
     return spec
@@ -204,22 +214,22 @@ def _patch_manifest(path: Path, spec: ThemeSpec) -> None:
     existing value alone is the only non-destructive reading.
     """
     try:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest: Any = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
     if not isinstance(manifest, dict):
         return
     if spec.brand:
         manifest["brand"] = f"{spec.icon} {spec.brand}".strip() if spec.icon else spec.brand
-    networks = manifest.get("networks")
+    networks: Any = manifest.get("networks")
     if spec.tagline and isinstance(networks, list) and networks and isinstance(networks[0], dict):
         networks[0]["description"] = spec.tagline
-    theme_block = manifest.get("theme")
+    theme_block: Any = manifest.get("theme")
     if isinstance(theme_block, dict):
         theme_block["primary"] = spec.colors["primary"]
     else:
         manifest["theme"] = {"primary": spec.colors["primary"]}
-    welcome = manifest.get("welcome")
+    welcome: Any = manifest.get("welcome")
     if spec.hero and isinstance(welcome, dict):
         welcome["message"] = spec.hero
     _write_json(path, manifest)

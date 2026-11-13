@@ -32,6 +32,7 @@ from contextlib import redirect_stderr
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 from typing import Dict
 from typing import List
@@ -39,6 +40,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from pyhocon import ConfigFactory
+from pyhocon import ConfigTree
 
 from nsdeploy.coded_tool_module import CodedToolModule
 from nsdeploy.interfaces.toolbox_layout import ToolboxLayout
@@ -46,18 +48,18 @@ from nsdeploy.studio import StudioSource
 
 # Substring that marks an agent as running in non-grounded "demo mode" (it is told
 # to fabricate realistic-looking answers). Matches the studio's demo_mode template.
-DEMO_MODE_MARKER = "part of a demo system"
+DEMO_MODE_MARKER: str = "part of a demo system"
 
 # `include "path"` / `include required("path")` / `include url("path")`
-_INCLUDE_RE = re.compile(r'include\s+(?:required\s*\(\s*|url\s*\(\s*)?["\']([^"\']+)["\']')
+_INCLUDE_RE: re.Pattern[str] = re.compile(r'include\s+(?:required\s*\(\s*|url\s*\(\s*)?["\']([^"\']+)["\']')
 
 # Auto-install a coded tool's missing pip dependency on demand (so the end user
 # needs no studio install). Toggle off by setting this to False.
-AUTO_INSTALL_TOOL_DEPS = True
+AUTO_INSTALL_TOOL_DEPS: bool = True
 
 # Server-side Neuro-SAN adapters that are intentionally unnecessary in the
 # browser runtime. Peer agents are exposed directly as tools by name.
-BROWSER_OMITTED_TOOLS = {"call_agent"}
+BROWSER_OMITTED_TOOLS: set[str] = {"call_agent"}
 
 
 @dataclass
@@ -108,6 +110,7 @@ def _prefetch_includes(text: str, source: StudioSource, missing: List[str], seen
     So nested includes are materialized at the parent-relative path pyhocon will
     look for first, falling back to the root-relative path.
     """
+    rel: str
     for rel in _INCLUDE_RE.findall(text):
         if rel.startswith(("http://", "https://")):
             continue
@@ -116,13 +119,14 @@ def _prefetch_includes(text: str, source: StudioSource, missing: List[str], seen
             candidates.append(posixpath.normpath(posixpath.join(parent_dir, rel)))
         if rel not in candidates:
             candidates.append(rel)
-        found = False
+        found: bool = False
+        logical: str
         for logical in candidates:
             if logical in seen:
                 found = True  # already attempted (and reported, if missing)
                 break
             seen.add(logical)
-            path = source.ensure(logical)
+            path: Optional[Path] = source.ensure(logical)
             if path is None:
                 continue
             found = True
@@ -151,20 +155,20 @@ def _parse_hocon_content(content: str, source: StudioSource) -> tuple[Dict[str, 
 
     class _IncludeCapture(logging.Handler):
         def emit(self, record: logging.LogRecord) -> None:
-            msg = record.getMessage()
+            msg: str = record.getMessage()
             if "Cannot include file" in msg or "does not exist" in msg.lower():
                 captured.append(msg)
 
-    handler = _IncludeCapture()
-    pyhocon_logger = logging.getLogger("pyhocon.config_parser")
+    handler: _IncludeCapture = _IncludeCapture()
+    pyhocon_logger: logging.Logger = logging.getLogger("pyhocon.config_parser")
     pyhocon_logger.addHandler(handler)
     try:
         with redirect_stderr(io.StringIO()):
-            cfg = ConfigFactory.parse_string(content, basedir=str(source.root))
+            cfg: ConfigTree = ConfigFactory.parse_string(content, basedir=str(source.root))
     finally:
         pyhocon_logger.removeHandler(handler)
     missing.extend(m for m in captured if m not in missing)
-    config = cfg.as_plain_ordered_dict() if hasattr(cfg, "as_plain_ordered_dict") else dict(cfg)
+    config: Dict[str, Any] = cfg.as_plain_ordered_dict() if hasattr(cfg, "as_plain_ordered_dict") else dict(cfg)
     return config, missing
 
 
@@ -172,7 +176,7 @@ def _network_ref_to_rel_path(ref: Any) -> Optional[str]:
     """Map /industry/foo to registries/industry/foo.hocon."""
     if not isinstance(ref, str) or not ref.startswith("/"):
         return None
-    logical = ref.strip("/")
+    logical: str = ref.strip("/")
     if not logical:
         return None
     if not logical.endswith(".hocon"):
@@ -183,7 +187,7 @@ def _network_ref_to_rel_path(ref: Any) -> Optional[str]:
 
 
 def _agent_prefix(ref: str) -> str:
-    stem = ref.strip("/")
+    stem: str = ref.strip("/")
     if stem.endswith(".hocon"):
         stem = stem[:-6]
     return re.sub(r"[^A-Za-z0-9_]+", "_", stem).strip("_") or "embedded"
@@ -194,6 +198,7 @@ def _is_llm_agent(entry: Dict[str, Any]) -> bool:
 
 
 def _find_front_man(config: Dict[str, Any]) -> str:
+    entry: Dict[str, Any]
     for entry in config.get("tools", []) or []:
         if _is_llm_agent(entry):
             return entry.get("name", "")
@@ -213,35 +218,40 @@ def expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
     def expand_ref(ref: str) -> Optional[str]:  # pylint: disable=too-many-return-statements
         if ref in aliases:
             return aliases[ref]
-        rel_path = _network_ref_to_rel_path(ref)
+        rel_path: Optional[str] = _network_ref_to_rel_path(ref)
         if not rel_path:
             return None
-        path = source.ensure(rel_path)
+        path: Optional[Path] = source.ensure(rel_path)
         if not path:
             return None
         if ref in expanded:
             return aliases.get(ref)
         expanded.add(ref)
 
+        child_config: Dict[str, Any]
+        child_missing: List[str]
         child_config, child_missing = _parse_hocon_content(path.read_text(encoding="utf-8"), source)
         missing_includes.extend(m for m in child_missing if m not in missing_includes)
-        child_aliases = expand_embedded_network_refs(child_config, source, missing_includes)
+        child_aliases: Dict[str, str] = expand_embedded_network_refs(child_config, source, missing_includes)
 
-        child_tools = child_config.get("tools", []) or []
-        child_agents = [copy.deepcopy(t) for t in child_tools if _is_llm_agent(t)]
+        child_tools: List[Dict[str, Any]] = child_config.get("tools", []) or []
+        child_agents: List[Dict[str, Any]] = [copy.deepcopy(t) for t in child_tools if _is_llm_agent(t)]
         if not child_agents:
             return None
 
-        prefix = _agent_prefix(ref)
+        prefix: str = _agent_prefix(ref)
+        name_map: Dict[str, str]
         name_map = {a.get("name", ""): f"{prefix}__{a.get('name', '')}" for a in child_agents if a.get("name")}
-        front_man = _find_front_man(child_config)
+        front_man: str = _find_front_man(child_config)
         if front_man not in name_map:
             return None
 
+        agent: Dict[str, Any]
         for agent in child_agents:
-            original_name = agent.get("name", "")
+            original_name: str = agent.get("name", "")
             agent["name"] = name_map.get(original_name, original_name)
             mapped_refs: List[Any] = []
+            tool_ref: Any
             for tool_ref in agent.get("tools", []) or []:
                 if tool_ref in name_map:
                     mapped_refs.append(name_map[tool_ref])
@@ -256,12 +266,14 @@ def expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
         aliases[ref] = name_map[front_man]
         return aliases[ref]
 
+    entry: Dict[str, Any]
     for entry in list(config.get("tools", []) or []):
         if not _is_llm_agent(entry):
             continue
         mapped_refs: List[Any] = []
+        ref: Any
         for ref in entry.get("tools", []) or []:
-            alias = expand_ref(ref) if isinstance(ref, str) and ref.startswith("/") else None
+            alias: Optional[str] = expand_ref(ref) if isinstance(ref, str) and ref.startswith("/") else None
             mapped_refs.append(alias or ref)
         if "tools" in entry:
             entry["tools"] = mapped_refs
@@ -270,10 +282,10 @@ def expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
 
 def load_toolbox_info(source: StudioSource) -> Dict[str, Any]:
     """Load toolbox_info.hocon from the source (name -> {class, description, parameters})."""
-    path = source.ensure(ToolboxLayout.TOOLBOX_INFO)
+    path: Optional[Path] = source.ensure(ToolboxLayout.TOOLBOX_INFO)
     if not path:
         return {}
-    cfg = ConfigFactory.parse_file(str(path))
+    cfg: ConfigTree = ConfigFactory.parse_file(str(path))
     return cfg.as_plain_ordered_dict() if hasattr(cfg, "as_plain_ordered_dict") else dict(cfg)
 
 
@@ -292,21 +304,23 @@ def _is_url(ref: Any) -> bool:
 
 def _looks_like_mcp(url: str) -> bool:
     """A URL pointing at an MCP server — by path (ignoring any query string)."""
-    path = urlparse(url).path.lower()
+    path: str = urlparse(url).path.lower()
     return path.endswith("/mcp") or "/mcp/" in path or path.endswith("/sse")
 
 
 def _configured_links(config: Dict[str, Any]) -> Dict[str, str]:
     """Normalize optional HOCON `links` entries into ref -> remote URL."""
     links: Dict[str, str] = {}
+    ref: Any
+    value: Any
     for ref, value in (config.get("links", {}) or {}).items():
-        url = value if isinstance(value, str) else (value or {}).get("url")
+        url: Any = value if isinstance(value, str) else (value or {}).get("url")
         if isinstance(ref, str) and isinstance(url, str) and _is_url(url):
             links[ref] = url.rstrip("/")
     return links
 
 
-def _import_with_autoinstall(module: str):
+def _import_with_autoinstall(module: str) -> Optional[ModuleType]:
     """Import `module`, pip-installing missing third-party dependencies (chained —
     a tool may need several) and retrying, so the user needs no studio install.
     Returns the module or None."""
@@ -316,7 +330,7 @@ def _import_with_autoinstall(module: str):
             importlib.invalidate_caches()  # see packages installed during this loop
             return importlib.import_module(module)
         except ModuleNotFoundError as e:
-            missing = e.name
+            missing: Optional[str] = e.name
             # Only install the tool's deps, and only once each; never the tool itself.
             if (not AUTO_INSTALL_TOOL_DEPS or not missing
                     # pylint: disable-next=no-member  # false positive: ModuleNotFoundError.name is a str here
@@ -338,7 +352,7 @@ def _import_with_autoinstall(module: str):
 def _can_construct_with_no_args(cls: Any) -> bool:
     """Standalone MCP hosts can only wrap plain coded tools with zero-arg constructors."""
     try:
-        sig = inspect.signature(cls)
+        sig: inspect.Signature = inspect.signature(cls)
     except (TypeError, ValueError):
         return True
     return all(
@@ -358,18 +372,20 @@ def _resolve_class(class_path: str, source: StudioSource) -> Optional[tuple[str,
     """
     if "." not in class_path:
         return None
+    module_part: str
+    class_name: str
     module_part, class_name = class_path.rsplit(".", 1)
-    module_leaf = module_part.split(".")[-1]
+    module_leaf: str = module_part.split(".")[-1]
     if not module_leaf.isidentifier() or not class_name.isidentifier():
         return None
     if not source.ensure_coded_tool(f"{module_leaf}.py"):
         return None
     if str(source.root) not in sys.path:
         sys.path.insert(0, str(source.root))
-    module = CodedToolModule.find(source.root, module_leaf)
+    module: Optional[str] = CodedToolModule.find(source.root, module_leaf)
     if module is None:
         return None
-    mod = _import_with_autoinstall(module)
+    mod: Optional[ModuleType] = _import_with_autoinstall(module)
     if mod and hasattr(mod, class_name) and _can_construct_with_no_args(getattr(mod, class_name)):
         return module, class_name
     return None
@@ -381,12 +397,12 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],  # pylint: 
                include_python_tools: bool = True) -> DeploymentPlan:
     """Classify the resolved config into a DeploymentPlan."""
     config = copy.deepcopy(config)
-    all_missing_includes = list(missing_includes)
+    all_missing_includes: List[str] = list(missing_includes)
     expand_embedded_network_refs(config, source, all_missing_includes)
-    tools = config.get("tools", []) or []
-    agent_names = {t["name"] for t in tools if "name" in t and "instructions" in t}
+    tools: List[Dict[str, Any]] = config.get("tools", []) or []
+    agent_names: set[str] = {t["name"] for t in tools if "name" in t and "instructions" in t}
 
-    plan = DeploymentPlan(
+    plan: DeploymentPlan = DeploymentPlan(
         network_name=network_name,
         config=config,
         front_man="",
@@ -394,6 +410,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],  # pylint: 
     )
 
     # First agent with instructions and no class/toolbox is the front-man.
+    t: Dict[str, Any]
     for t in tools:
         if "instructions" in t and "class" not in t and "toolbox" not in t:
             plan.front_man = t.get("name", "")
@@ -405,19 +422,21 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],  # pylint: 
     referenced_links: Dict[str, set[str]] = {}
     external_mcp: set[str] = set()
     external_networks: set[str] = set()
-    configured_links = _configured_links(config)
-    demo_leaf_names = {
+    configured_links: Dict[str, str] = _configured_links(config)
+    demo_leaf_names: set[str] = {
         t.get("name", "") for t in tools
         if t.get("name") and _is_demo_leaf(t)
     }
     referenced_demo_leaves: Dict[str, set[str]] = {}
+    owner: Dict[str, Any]
     for owner in tools:
         if not _is_llm_agent(owner):
             continue
+        ref: Any
         for ref in owner.get("tools", []) or []:
             if ref in demo_leaf_names and ref != owner.get("name"):
                 referenced_demo_leaves.setdefault(ref, set()).add(owner.get("name", ""))
-    replaced_demo_leaves = set(configured_links) & set(referenced_demo_leaves)
+    replaced_demo_leaves: set[str] = set(configured_links) & set(referenced_demo_leaves)
 
     def resolve_leaf(name: str, spec: Dict[str, Any]) -> None:
         """Classify a non-agent tool entry (toolbox/class) as hostable or missing."""
@@ -426,11 +445,11 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],  # pylint: 
         if name in BROWSER_OMITTED_TOOLS or not include_python_tools:
             referenced_omitted.add(name)
             return
-        class_path = None
-        description = (spec.get("function") or {}).get("description") or spec.get("description") or name
+        class_path: Optional[str] = None
+        description: str = (spec.get("function") or {}).get("description") or spec.get("description") or name
         parameters: Dict[str, Any] = (spec.get("function") or {}).get("parameters") or {}
         if "toolbox" in spec:
-            info = toolbox_info.get(spec["toolbox"])
+            info: Optional[Dict[str, Any]] = toolbox_info.get(spec["toolbox"])
             if not info:
                 referenced_missing.add(name)
                 return
@@ -442,20 +461,22 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],  # pylint: 
         if not class_path:
             referenced_missing.add(name)
             return
-        resolved = _resolve_class(class_path, source)
+        resolved: Optional[tuple[str, str]] = _resolve_class(class_path, source)
         if not resolved:
             referenced_missing.add(name)
             return
+        module: str
+        class_name: str
         module, class_name = resolved
         seen_hostable[name] = HostableTool(
             name=name, class_path=class_path, module=module, class_name=class_name,
             description=description, parameters=parameters,
         )
 
-    specs_by_name = {t["name"]: t for t in tools if "name" in t}
+    specs_by_name: Dict[str, Dict[str, Any]] = {t["name"]: t for t in tools if "name" in t}
 
     for t in tools:
-        name = t.get("name", "")
+        name: str = t.get("name", "")
         if "instructions" in t and "class" not in t and "toolbox" not in t:
             if name in replaced_demo_leaves:
                 continue
@@ -466,6 +487,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],  # pylint: 
             resolve_leaf(name, t)
 
     # Walk agent tool references to catch URL/MCP refs and references to leaves.
+    agent: Dict[str, Any]
     for agent in plan.agents:
         for ref in agent.get("tools", []) or []:
             if _is_url(ref):
@@ -511,6 +533,8 @@ def format_report(plan: DeploymentPlan, static_bundle: bool = False) -> str:
     out.append(f"Agents:    {len(plan.agents)}")
     out.append("")
     out.append(f"✅ Hostable tools (will run as local MCP servers): {len(plan.hostable_tools)}")
+    index: int
+    tool: HostableTool
     for index, tool in enumerate(plan.hostable_tools):
         out.append(f"   • {tool.name}  →  {tool.class_path}  (MCP /_mcp/{index}/mcp)")
     if plan.demo_mode_agents:
@@ -518,6 +542,7 @@ def format_report(plan: DeploymentPlan, static_bundle: bool = False) -> str:
         out.append(f"⚠️  DEMO-MODE agents — NOT GROUNDED ({len(plan.demo_mode_agents)}): these fabricate")
         out.append("    realistic-looking answers instead of using real data/tools. Ground them later")
         out.append("    by giving each a real tool/data source and removing demo_mode from its instructions.")
+        name: str
         for name in plan.demo_mode_agents:
             out.append(f"   • {name}")
     if plan.missing_tools:
@@ -528,18 +553,20 @@ def format_report(plan: DeploymentPlan, static_bundle: bool = False) -> str:
         for name in plan.missing_tools:
             out.append(f"   • {name}")
     if plan.link_slots:
-        linked = set(plan.links)
+        linked: set[str] = set(plan.links)
         out.append("")
         out.append(f"🔗 Agent-network link slots ({len(plan.link_slots)}):")
         out.append("    demo leaf fallbacks remain local until linked; undefined references remain callable.")
+        ref: str
+        callers: List[str]
         for ref, callers in plan.link_slots.items():
             if ref in linked:
-                status = f"linked → {plan.links[ref]} (demo leaf replaced)"
+                status: str = f"linked → {plan.links[ref]} (demo leaf replaced)"
             elif ref in plan.demo_link_fallbacks:
                 status = "demo fallback active (replaceable at link time)"
             else:
                 status = "pending (link at deploy time or on first call)"
-            owner = f"; called by {', '.join(callers)}" if callers else ""
+            owner: str = f"; called by {', '.join(callers)}" if callers else ""
             out.append(f"   • {ref}: {status}{owner}")
     if plan.omitted_tools:
         out.append("")
@@ -561,6 +588,7 @@ def format_report(plan: DeploymentPlan, static_bundle: bool = False) -> str:
             out.append(f"🔌 External MCP servers — PROXIED & callable ({len(plan.external_mcps)}): reached")
             out.append("    via a same-origin proxy (so browser CORS is a non-issue); the call still")
             out.append("    requires the remote server to be reachable + the user to consent at run time.")
+        url: str
         for url in plan.external_mcps:
             out.append(f"   • {url}")
     if plan.external_networks:
@@ -572,6 +600,7 @@ def format_report(plan: DeploymentPlan, static_bundle: bool = False) -> str:
     if plan.missing_includes:
         out.append("")
         out.append(f"ℹ️  Missing includes (non-fatal, {len(plan.missing_includes)}):")
+        msg: str
         for msg in plan.missing_includes:
             out.append(f"   • {msg}")
     return "\n".join(out)

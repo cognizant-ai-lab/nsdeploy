@@ -27,11 +27,13 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Set
+from typing import Tuple
 
-UNATTRIBUTED_NAME = "Unattributed"
-RESTART_REASON = "the deployment did not survive a service restart"
+UNATTRIBUTED_NAME: str = "Unattributed"
+RESTART_REASON: str = "the deployment did not survive a service restart"
 
-SCHEMA = """
+SCHEMA: str = """
 CREATE TABLE IF NOT EXISTS organizations (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
@@ -75,12 +77,12 @@ CREATE INDEX IF NOT EXISTS idx_deployments_org ON deployments(org_id);
 CREATE INDEX IF NOT EXISTS idx_deployments_created ON deployments(created_at DESC);
 """
 
-LIVE_STATUSES = ("queued", "building", "ready")
+LIVE_STATUSES: Tuple[str, ...] = ("queued", "building", "ready")
 
 # Columns added after the first release. CREATE TABLE IF NOT EXISTS will not add a
 # column to a table that already exists, so an existing database needs them applied
 # explicitly. Keep this list append-only and every entry nullable.
-ADDED_COLUMNS = (
+ADDED_COLUMNS: Tuple[Tuple[str, str, str], ...] = (
     ("deployments", "options_json", "TEXT"),
     ("deployments", "hocon_path", "TEXT"),
     # Map coordinates, assigned once at deploy time so pins never move.
@@ -123,13 +125,13 @@ class Store:
     # file at once — the newcomer gets "unable to open database file" and dies, so
     # the platform keeps the old replica and the rollout never completes. Waiting
     # out the drain turns that deadlock into a slow start-up.
-    OPEN_TIMEOUT_SECONDS = 120.0
+    OPEN_TIMEOUT_SECONDS: float = 120.0
 
     def __init__(self, db_path: Path) -> None:
-        self.db_path = db_path
+        self.db_path: Path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
-        self._conn = self._open(db_path)
+        self._lock: threading.Lock = threading.Lock()
+        self._conn: sqlite3.Connection = self._open(db_path)
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.execute("PRAGMA foreign_keys=ON")
@@ -149,11 +151,11 @@ class Store:
         Both the connect and the first statement are retried: whether a file held by
         another replica reports as unopenable or as locked depends on the mount.
         """
-        deadline = time.monotonic() + cls.OPEN_TIMEOUT_SECONDS
-        delay = 0.5
+        deadline: float = time.monotonic() + cls.OPEN_TIMEOUT_SECONDS
+        delay: float = 0.5
         while True:
             try:
-                conn = sqlite3.connect(str(db_path), check_same_thread=False)
+                conn: sqlite3.Connection = sqlite3.connect(str(db_path), check_same_thread=False)
                 try:
                     conn.execute("PRAGMA journal_mode=WAL")
                 except sqlite3.OperationalError:
@@ -167,9 +169,12 @@ class Store:
 
     def _migrate(self) -> None:
         """Add post-release columns to a database created by an earlier version."""
-        added = set()
+        added: Set[str] = set()
+        table: str
+        column: str
+        decl: str
         for table, column, decl in ADDED_COLUMNS:
-            existing = {
+            existing: Set[str] = {
                 row["name"]
                 for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
             }
@@ -216,12 +221,12 @@ class Store:
         :return: The new organization row.
         :raises StoreError: If the name is empty or already taken.
         """
-        clean = " ".join((name or "").split())
+        clean: str = " ".join((name or "").split())
         if not clean:
             raise StoreError("organization name is required")
         if len(clean) > 120:
             raise StoreError("organization name must be 120 characters or fewer")
-        row = {
+        row: Dict[str, str] = {
             "id": uuid.uuid4().hex[:12],
             "name": clean,
             "name_key": org_name_key(clean),
@@ -247,7 +252,7 @@ class Store:
         :return: The organization row, or None if it does not exist.
         """
         with self._lock:
-            row = self._conn.execute(
+            row: Optional[sqlite3.Row] = self._conn.execute(
                 "SELECT * FROM organizations WHERE id = ?", (org_id,)).fetchone()
         return dict(row) if row else None
 
@@ -259,14 +264,14 @@ class Store:
         :return: The organization row, or None if no organization has that name.
         """
         with self._lock:
-            row = self._conn.execute(
+            row: Optional[sqlite3.Row] = self._conn.execute(
                 "SELECT * FROM organizations WHERE name_key = ?",
                 (org_name_key(name),)).fetchone()
         return dict(row) if row else None
 
     def ensure_org(self, name: str, address: str = "", contact: str = "") -> Dict[str, Any]:
         """Get-or-create by name. Used to seed the fallback organization."""
-        existing = self.find_org_by_name(name)
+        existing: Optional[Dict[str, Any]] = self.find_org_by_name(name)
         if existing:
             return existing
         try:
@@ -280,9 +285,9 @@ class Store:
 
     def list_orgs(self) -> List[Dict[str, Any]]:
         """Every organization, newest first, with live and total deployment counts."""
-        placeholders = ",".join("?" * len(LIVE_STATUSES))
+        placeholders: str = ",".join("?" * len(LIVE_STATUSES))
         with self._lock:
-            rows = self._conn.execute(
+            rows: List[sqlite3.Row] = self._conn.execute(
                 f"""
                 SELECT o.*,
                        (SELECT COUNT(*) FROM deployments d WHERE d.org_id = o.id)
@@ -303,20 +308,20 @@ class Store:
         :return: The updated organization row, or None if it does not exist.
         :raises StoreError: If the new name is blank or already taken.
         """
-        allowed = {k: v for k, v in fields.items()
-                   if k in ("name", "address", "contact") and v is not None}
+        allowed: Dict[str, str] = {k: v for k, v in fields.items()
+                                   if k in ("name", "address", "contact") and v is not None}
         if not allowed:
             return self.get_org(org_id)
         if "name" in allowed:
-            clean = " ".join(allowed["name"].split())
+            clean: str = " ".join(allowed["name"].split())
             if not clean:
                 raise StoreError("organization name cannot be blank")
             allowed["name"] = clean
             allowed["name_key"] = org_name_key(clean)
-        assignments = ", ".join(f"{key} = :{key}" for key in allowed)
+        assignments: str = ", ".join(f"{key} = :{key}" for key in allowed)
         with self._lock:
             try:
-                cursor = self._conn.execute(
+                cursor: sqlite3.Cursor = self._conn.execute(
                     f"UPDATE organizations SET {assignments} WHERE id = :id",
                     {**allowed, "id": org_id})
                 self._conn.commit()
@@ -327,22 +332,22 @@ class Store:
     def delete_org(self, org_id: str) -> bool:
         """Remove an organization. Refuses while it still owns deployment records."""
         with self._lock:
-            owned = self._conn.execute(
+            owned: int = self._conn.execute(
                 "SELECT COUNT(*) AS n FROM deployments WHERE org_id = ?", (org_id,)).fetchone()["n"]
             if owned:
                 raise StoreError(
                     f"this organization still owns {owned} deployment record(s); "
                     f"stop and remove them first")
-            cursor = self._conn.execute("DELETE FROM organizations WHERE id = ?", (org_id,))
+            cursor: sqlite3.Cursor = self._conn.execute("DELETE FROM organizations WHERE id = ?", (org_id,))
             self._conn.commit()
         return bool(cursor.rowcount)
 
     # --- deployments ------------------------------------------------------
     # Nullable columns default to None when a caller omits them, so adding another
     # optional column never breaks an existing write path.
-    OPTIONAL_COLUMNS = ("url", "port", "ready_at", "stopped_at", "expires_at", "error",
-                        "pid", "network_json", "warnings_json", "options_json", "hocon_path",
-                        "position_json", "published_at")
+    OPTIONAL_COLUMNS: Tuple[str, ...] = ("url", "port", "ready_at", "stopped_at", "expires_at", "error",
+                                         "pid", "network_json", "warnings_json", "options_json", "hocon_path",
+                                         "position_json", "published_at")
 
     def save_deployment(self, row: Dict[str, Any]) -> None:
         """Insert or replace one deployment record (write-through from the supervisor)."""
@@ -383,7 +388,7 @@ class Store:
         :return: The decoded deployment row, or None if it does not exist.
         """
         with self._lock:
-            row = self._conn.execute(
+            row: Optional[sqlite3.Row] = self._conn.execute(
                 """SELECT d.*, o.name AS org_name FROM deployments d
                      JOIN organizations o ON o.id = d.org_id
                     WHERE d.id = ?""", (deployment_id,)).fetchone()
@@ -398,6 +403,8 @@ class Store:
         :param status: Restrict to this status, if given.
         :return: The decoded deployment rows.
         """
+        clauses: List[str]
+        params: List[str]
         clauses, params = [], []
         if org_id:
             clauses.append("d.org_id = ?")
@@ -405,9 +412,9 @@ class Store:
         if status:
             clauses.append("d.status = ?")
             params.append(status)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        where: str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._lock:
-            rows = self._conn.execute(
+            rows: List[sqlite3.Row] = self._conn.execute(
                 f"""SELECT d.*, o.name AS org_name FROM deployments d
                       JOIN organizations o ON o.id = d.org_id
                     {where} ORDER BY d.created_at DESC""", params).fetchall()
@@ -464,7 +471,7 @@ class Store:
         :return: The deployment ids.
         """
         with self._lock:
-            rows = self._conn.execute(
+            rows: List[sqlite3.Row] = self._conn.execute(
                 "SELECT id FROM deployments WHERE position_json IS NULL"
                 " ORDER BY created_at ASC").fetchall()
         return [row["id"] for row in rows]
@@ -472,7 +479,7 @@ class Store:
     def delete_deployment(self, deployment_id: str) -> bool:
         """Forget a terminal record. Callers must stop the process first."""
         with self._lock:
-            cursor = self._conn.execute("DELETE FROM deployments WHERE id = ?", (deployment_id,))
+            cursor: sqlite3.Cursor = self._conn.execute("DELETE FROM deployments WHERE id = ?", (deployment_id,))
             self._conn.commit()
         return bool(cursor.rowcount)
 
@@ -483,7 +490,7 @@ class Store:
         :return: A mapping from status to deployment count.
         """
         with self._lock:
-            rows = self._conn.execute(
+            rows: List[sqlite3.Row] = self._conn.execute(
                 "SELECT status, COUNT(*) AS n FROM deployments GROUP BY status").fetchall()
         return {row["status"]: row["n"] for row in rows}
 
@@ -494,13 +501,13 @@ class Store:
         killed them. Any row still claiming queued/building/ready is stale and must not
         keep advertising a URL that answers nothing.
         """
-        placeholders = ",".join("?" * len(LIVE_STATUSES))
-        now = _now_iso()
+        placeholders: str = ",".join("?" * len(LIVE_STATUSES))
+        now: str = _now_iso()
         with self._lock:
-            rows = self._conn.execute(
+            rows: List[sqlite3.Row] = self._conn.execute(
                 f"SELECT id FROM deployments WHERE status IN ({placeholders})",
                 LIVE_STATUSES).fetchall()
-            orphans = [row["id"] for row in rows]
+            orphans: List[str] = [row["id"] for row in rows]
             if orphans:
                 self._conn.execute(
                     f"""UPDATE deployments
@@ -513,12 +520,14 @@ class Store:
 
     @staticmethod
     def _decode(row: sqlite3.Row) -> Dict[str, Any]:
-        record = dict(row)
+        record: Dict[str, Any] = dict(row)
+        field: str
+        target: str
         for field, target in (("network_json", "network"),
                               ("warnings_json", "warnings"),
                               ("options_json", "options"),
                               ("position_json", "position")):
-            raw = record.pop(field, None)
+            raw: Optional[str] = record.pop(field, None)
             try:
                 record[target] = json.loads(raw) if raw else None
             except ValueError:

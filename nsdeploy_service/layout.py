@@ -39,7 +39,7 @@ from typing import Tuple
 # These slots are only reached when the map is already crowded — choose_position
 # maximises clearance, so a handful of networks still spread across the full width and
 # never touch an interleaved column.
-COLUMNS = (22, 27, 32, 37, 42, 47, 52, 57, 62, 67, 72, 77, 82, 86, 91)
+COLUMNS: Tuple[int, ...] = (22, 27, 32, 37, 42, 47, 52, 57, 62, 67, 72, 77, 82, 86, 91)
 # 11 rows x 15 columns = 165 slots, comfortably above the 100-network event target.
 #
 # Both axes were grown by interleaving rather than by re-spacing: every original value
@@ -49,10 +49,10 @@ COLUMNS = (22, 27, 32, 37, 42, 47, 52, 57, 62, 67, 72, 77, 82, 86, 91)
 #
 # Rows are deliberately left at 11. Interleaving them too would put rows 3.5% apart —
 # ~25px on a 700px stage, which a ~26px tight-mode marker would overlap vertically.
-ROWS = (12, 19, 26, 33, 40, 47, 54, 61, 68, 75, 82)
+ROWS: Tuple[int, ...] = (12, 19, 26, 33, 40, 47, 54, 61, 68, 75, 82)
 # Vertical space is scarcer than horizontal (labels are wide, rows are short), so
 # distance is weighted to prefer spreading sideways before stacking.
-VERTICAL_WEIGHT = 1.35
+VERTICAL_WEIGHT: float = 1.35
 
 
 def _candidates() -> List[Tuple[int, int]]:
@@ -66,7 +66,7 @@ def choose_position(occupied: Iterable[Dict[str, Any]]) -> Dict[str, int]:
     top-left so the first few deployments land somewhere predictable rather than in a
     corner.
     """
-    points = [
+    points: List[Tuple[float, float]] = [
         (float(pos["x"]), float(pos["y"]))
         for pos in occupied
         if isinstance(pos, dict) and pos.get("x") is not None and pos.get("y") is not None
@@ -80,7 +80,7 @@ def choose_position(occupied: Iterable[Dict[str, Any]]) -> Dict[str, int]:
             for x, y in points
         )
 
-    best = max(_candidates(), key=lambda point: (clearance(point), -point[1], -point[0]))
+    best: Tuple[int, int] = max(_candidates(), key=lambda point: (clearance(point), -point[1], -point[0]))
     return {"x": best[0], "y": best[1]}
 
 
