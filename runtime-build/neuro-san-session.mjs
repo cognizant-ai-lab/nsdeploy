@@ -177,6 +177,11 @@ class PeerSessionFactory extends ExternalAgentSessionFactory {
   create_session(agentUrl, invocationContext = null, invocation = null) {
     return new PeerSession(agentUrl, invocationContext, invocation);
   }
+
+  // neuro-san 0.7.22 asks for external sessions through this one.
+  async async_create_session(agentUrl, invocationContext = null, invocation = null) {
+    return this.create_session(agentUrl, invocationContext, invocation);
+  }
 }
 
 class PeerSession {
