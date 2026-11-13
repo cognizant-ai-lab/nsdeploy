@@ -93,7 +93,8 @@ class ButterpinkCommerceGateway(CodedTool):
             return {"status": "DENIED", "error": "Use the Butterpink private steward in nsFlow."}
         # Framework invocation metadata and optional schema defaults confer no authority.
         args = {key: value for key, value in args.items() if value is not None
-                and key not in {"origin", "origin_str", "progress_reporter", "reservationist"}}
+                and key not in {"origin", "origin_str", "progress_reporter", "reservationist",
+                                "activation_capsule"}}
         operation = args.get("operation")
         fields = {"operation", "arrival", "budget_cents"} if operation == "negotiate" else {"operation"}
         if operation == "approve":

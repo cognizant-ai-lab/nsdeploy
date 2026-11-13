@@ -14,16 +14,25 @@ on demand, caching them under `~/.cache/nsdeploy/`. Files are located by suffix-
 matching the repo's git tree, so the repo's internal layout doesn't matter. Any pip
 dependency a hosted tool imports (e.g. `ddgs`) is auto-installed on demand.
 
-The browser runs the agents on a **vendored copy of the neuro-san-web runtime** (in
-[`nsdeploy/runtime/`](nsdeploy/runtime) — dependency-free ES modules). A normal
-served deployment uses Python for the build-time HOCON resolver, the web launcher,
-and one small MCP server per hostable tool. A static bundle uses Python only while
-building; the resulting webroot has no Python or nsDeploy runtime dependency.
+The browser runs the agents on **neuro-san's own agent loop**, from
+[`@cognizant-ai-lab/neuro-san-ts-package`](https://github.com/cognizant-ai-lab/neuro-san-ts-package)
+(the real neuro-san Python transpiled to TypeScript), bundled by
+[`runtime-build/`](runtime-build) into `nsdeploy/runtime/ts-package/generated/` and driven by the page
+runtime in [`nsdeploy/runtime/ts-package/`](nsdeploy/runtime/ts-package), which shares the rest of
+[`nsdeploy/runtime/`](nsdeploy/runtime) with the original runtime (`--use-ts-package false`). See
+[The agent loop](#the-agent-loop). A normal served deployment uses Python for the
+build-time HOCON resolver, the web launcher, and one small MCP server per hostable
+tool. A static bundle uses Python only while building; the resulting webroot has no
+Python or nsDeploy runtime dependency.
 
 ## Install & run
 
 ```bash
 pip install -r requirements.txt    # or `uv sync` if you use uv; pyproject.toml reads the same file
+
+# Build the browser runtime before the first run, and after each neuro-san package update.
+# It is build output, so it is not checked in (see The agent loop).
+(cd runtime-build && npm install && npm run build)
 
 # Tools are pulled from GitHub automatically — no --studio needed:
 python -m nsdeploy examples/travel_agent_system.hocon --port 8080
@@ -50,7 +59,9 @@ instead of GitHub), `--no-serve` (generate only), `--port`, `--out` (site dir),
 `--site-url` (public origin), `--link`/`--links` (outbound network bindings),
 `--upstream` (BYOK proxy upstream), `--runtime-dir` (override the vendored runtime),
 `--no-cruse` (skip generative-UI injection), `--mock-llm` (developer-only keyless
-mock mode), and the theming flags below.
+mock mode), `--use-ts-package true|false` (run the agents on the neuro-san TS package,
+true by default; false, or `USE_TS_PACKAGE=0` for Cailville, runs the original runtime),
+and the theming flags below.
 
 ## Shared subdomain gateway
 
@@ -290,6 +301,82 @@ Stop the complete demo from another terminal:
 ./cailville/stop_all.sh
 ```
 
+### Test Cailville in a browser
+
+With Cailville running, `tests/cailville_browser.ts` opens the map and every site in
+headless Chromium. It also tests the airline, the travel agency linked to it with
+`--link`, and the travel agent system, which it starts itself on 8192, 8191 and 8120.
+On each site it sends the first sample query, approves the partner sites the agent
+asks to contact, and waits for the run to finish. Then it checks the site's execution
+trace. It runs on the mock LLM by default, so no key is needed. Start Cailville on the
+mock LLM for it, since nsdeploy sites only use the mock with `--mock-llm`:
+
+```bash
+NSDEPLOY_MOCK_LLM=1 ./cailville/launch_all.sh
+```
+
+It tests the runtime on the neuro-san TS package, which Cailville runs by default, and
+every check passes there. With the original runtime
+(`USE_TS_PACKAGE=0 ./cailville/launch_all.sh`), 12 of the Cailville sites fail,
+because they stop at the original runtime's per-query limit of 24 agent invocations
+before every agent has run.
+
+It first builds the runtime from the TS package version `runtime-build/package.json`
+pins, and runs `npm ci` there if `npm ls` says what's installed doesn't match. To test
+a new package release, run
+`npm install @cognizant-ai-lab/neuro-san-ts-package@<version>` in `runtime-build/`,
+which updates `package.json` and the lock, then run the test.
+
+```bash
+npm install
+npx playwright install chromium
+npm run test:cailville              # everything
+npm run test:cailville -- 8091 8191 # just these ports
+npm run test:cailville -- scenarios # just the checks below for when the user says no
+npm run test:cailville -- mcp       # just the MCP checks
+npm run test:cailville -- live      # just the checks on a running turn
+HEADED=1 npm run test:cailville -- 8091  # watch it in a visible browser
+TEST_REAL_LLM=1 npm run test:cailville -- 8191  # use $OPENAI_API_KEY instead of the mock
+```
+
+A site fails if:
+
+- the page shows an error or a request fails
+- the run doesn't finish
+- any step in the trace ends in an error
+- it asks to link an agent, since every agent on these sites is defined or linked
+- on the mock, any agent the front man can reach never ran (the mock calls every tool)
+- the travel agency never calls the airline
+
+Then it checks what happens when the user doesn't go along with the agent. It uses
+`tests/fixtures/open_link_travel_agency.hocon`, a travel agency that doesn't define the
+airline, on 8193:
+
+- cancel the link prompt: the run finishes and the agent is told the airline isn't linked
+- enter the airline's URL in the link prompt: the airline gets called
+- decline the airline contact on the travel agency: the airline is never called, and the agent is told
+- pick the real router with no key: the chat asks for a key, no run starts, and nothing reaches the router
+
+It checks MCP on the travel agent system on 8120, which has its own coded tools hosted
+as MCP servers under `/_mcp` and You.com's MCP server behind the site's `/ext-mcp` proxy:
+
+- call an MCP tool: a call goes out and comes back with something, and You.com's notifications show as the
+  tool's progress
+- decline an MCP call: nothing reaches an outside MCP server, discovery included, while the site's own MCP
+  tools still run
+
+And it checks a turn while it runs, on the same site:
+
+- show what's happening: the chat's status line shows what the agents are doing and is gone once the answer
+  is, and the answer's text streams into the trace
+- steer a running turn: guidance sent while the front man's first model call runs shows as a steering
+  message, cancels that call, and goes into the calls after it
+
+A real LLM run uses OpenAI's `gpt-4o` to keep the cost down, and `TEST_MODEL=<id>` picks another model. It
+skips the MCP checks and the checks for when the user says no, which rely on the mock's answers, but runs the
+checks on a running turn, since steering has to work on a real model too.
+Screenshots go to `.nsdeploy/cailville-browser-test/`.
+
 ### Book through Butterpink's private steward in nsFlow
 
 The Cailville map includes **Cailville Commerce Arbiter**, connected to **Seabreeze
@@ -488,7 +575,7 @@ additions from the private-steward manifest.
    `<network>.network.json` + `agent-mcp.json` + `theme.json` from the editable site
    source and network. Application-hosted deployments also generate
    `<network>_private_steward.hocon`; static bundles do not.
-6. **Serve** one static origin (site + the `neuro-san-web` runtime, with the
+6. **Serve** one static origin (site + the browser runtime, with the
    sandbox-worker CSP), a mock LLM router at `/v1`, a BYOK proxy at `/byok/v1`, and an
    local-MCP proxy at `/_mcp/<i>/mcp`, an external-MCP proxy at
    `/ext-mcp/<i>/mcp`, plus the private local MCP server subprocesses. Every site
@@ -666,7 +753,7 @@ Each child returns its answer **and a presentation proposal to its parent**. Eac
 parent is instructed to consolidate its children's proposals during its normal
 response: merge redundant questions, use known answers, preserve distinct needs,
 and choose the right presentation for the current request. This applies across
-local agents and linked networks, with both manual and LangChain runners. Only the
+local agents and linked networks. Only the
 final root composition is rendered; child proposals remain in the developer trace.
 Exact duplicate components are also removed by the runtime; semantic consolidation
 is performed by the model, so quality still depends on the selected model.
@@ -1266,9 +1353,56 @@ non-empty API key. For local deploy-time theming, pass
 proxy target.) Bigger local models give richer layouts; `qwen2.5:7b` is a good
 low-footprint default (~4.7 GB).
 
+## The agent loop
+
+Agents run on neuro-san's `DirectAgentSession`, not on a reimplementation of it.
+The package is built for the browser: its Node stand-ins and third-party libraries are
+bundled into it. [`runtime-build/`](runtime-build) builds nsdeploy's adapters over it with
+Vite into `nsdeploy/runtime/ts-package/generated/`. That folder is build output, like a `dist`, so
+it is not checked in: build it before running nsdeploy or building a wheel, which ships
+whatever is there. The layout:
+
+- `browser/`: our code from `runtime-build/` (the agent network and session adapters),
+  unminified. `browser/neuro-san.mjs` is the entry.
+- `neuro-san/neuro-san.mjs`: the package, minified and pinned by
+  `runtime-build/package-lock.json`.
+
+The package comes from npmjs, so installing needs no token.
+
+```bash
+cd runtime-build
+npm install
+npm run build   # DEBUG=1 npm run build leaves the package unminified and adds source maps
+```
+
+neuro-san uses OpenAI's Responses API for OpenAI models by default, and the launcher's
+mock router and BYOK proxy both speak it as well as chat completions. For a local model
+that only speaks chat completions, set `"use_responses_api": false` in the network's
+`llm_config`.
+
+What comes from neuro-san: the config filter chain, `AgentNetwork`, the network
+validators, `sly_data` redaction, external agent and MCP reference parsing, and the
+whole loop, including sub-agents, MCP tools (`LangChainMcpAdapter`) and partner networks
+(`ExternalActivation`). What stays nsdeploy's own, in
+[`engine.js`](nsdeploy/runtime/ts-package/engine.js) and
+[`composition.js`](nsdeploy/runtime/ts-package/composition.js): router selection and the BYOK
+guarantee, consent before contacting a partner or an MCP server, per-query composition
+limits, link slots, the trace the UI draws, and CRUSE widget extraction. neuro-san's loop
+calls into those through hooks in
+[`runtime-build/neuro-san-session.mjs`](runtime-build/neuro-san-session.mjs).
+
+A partner network is still fetched and run in this browser: neuro-san asks the engine
+for the partner's published network the first time an agent calls it, after consent, and
+runs it as its own `AsyncDirectAgentSession` with the caller's router.
+
+Two gaps in the package are worked around in `runtime-build/`, never by editing the
+package, so a rebundled package stays reproducible from its transpiling source. Its
+`urlparse` differs from Python's on some URLs, and it doesn't export `BaseToolFactory`.
+Each is marked `WORKAROUND` / `PORT BACK` with what to fix upstream.
+
 ## Runtime UI
 
-The served page (the vendored neuro-san-web runtime) is consumer-grade, not a raw
+The served page is consumer-grade, not a raw
 chatbot:
 
 - **Clean answers.** neuro-san agents reply in the AAOSA wire format (a JSON envelope

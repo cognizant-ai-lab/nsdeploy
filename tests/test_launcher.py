@@ -71,7 +71,7 @@ class StaticHeaderTests(unittest.TestCase):
             served: Dict[str, bytes] = {
                 "/index.html": b"<html>site</html>",
                 "/alias.html": b"<html>site</html>",
-                "/runtime/index.js": (DEFAULT_RUNTIME_DIR / "index.js").read_bytes(),
+                "/runtime/ts-package/index.js": (DEFAULT_RUNTIME_DIR / "ts-package" / "index.js").read_bytes(),
             }
             # An absolute path after /runtime/, a ".." segment or a symlink must not reach a file outside.
             blocked: List[str] = [
@@ -360,6 +360,7 @@ class _ChatUpstreamHandler(BaseHTTPRequestHandler):
     """Fake OpenAI-compatible upstream: records what the BYOK proxy forwards."""
     headers_seen = {}
     body_seen = b""
+    path_seen = ""
 
     def log_message(self, *args):
         pass
@@ -368,6 +369,7 @@ class _ChatUpstreamHandler(BaseHTTPRequestHandler):
         """
         Record the forwarded headers and body, and reject requests without a key.
         """
+        type(self).path_seen = self.path
         type(self).headers_seen = dict(self.headers.items())
         length = int(self.headers.get("Content-Length", 0) or 0)
         type(self).body_seen = self.rfile.read(length)
@@ -452,6 +454,69 @@ class ByokOnlyTests(unittest.TestCase):
         self.assertFalse(_ChatUpstreamHandler.headers_seen.get("Authorization"))
         self.assertNotIn("server-secret", json.dumps(_ChatUpstreamHandler.headers_seen))
 
+    def test_byok_responses_proxy_forwards_to_the_upstream_responses_endpoint(self):
+        """
+        Check that the BYOK proxy forwards a Responses API request and its key unchanged to the upstream's /responses.
+        """
+        port = self._serve(_ChatUpstreamHandler, lambda p: f"http://127.0.0.1:{p}", Path("."), [])
+        body = json.dumps({"model": "visitor-model", "input": "hi", "stream": True}).encode()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/byok/v1/responses", data=body, method="POST",
+            headers={"Content-Type": "application/json", "Authorization": "Bearer visitor-key"})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertEqual(response.status, 200)
+        self.assertEqual(_ChatUpstreamHandler.path_seen, "/responses")
+        self.assertEqual(_ChatUpstreamHandler.headers_seen.get("Authorization"), "Bearer visitor-key")
+        self.assertEqual(_ChatUpstreamHandler.body_seen, body)
+
+    def _mock_responses(self, port: int, body: dict) -> str:
+        """
+        Post one request to the mock router's Responses API and check it answers as the mock.
+
+        :param port: The launcher proxy port.
+        :param body: The Responses API request body.
+        :return: The response text.
+        """
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("POST", "/v1/responses", body=json.dumps(body), headers={"Content-Type": "application/json"})
+        response = conn.getresponse()
+        text = response.read().decode()
+        conn.close()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("X-Nsdeploy-LLM-Route"), "mock")
+        return text
+
+    def test_mock_responses_calls_the_next_tool_then_summarizes_its_output(self):
+        """
+        Check that the mock Responses API calls the next tool, then summarizes what the tool returned.
+        """
+        port = self._serve(None, "http://unused", Path("."), [])
+        tools = [{"type": "function", "name": "lookup", "parameters": {"type": "object", "required": ["q"]}}]
+        user = {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "find it"}]}
+        with patch("urllib.request.urlopen", side_effect=AssertionError("mock router must not call out")):
+            first = json.loads(self._mock_responses(port, {"model": "m", "input": [user], "tools": tools}))
+            call = first["output"][0]
+            self.assertEqual(call["type"], "function_call")
+            self.assertEqual(call["name"], "lookup")
+            self.assertEqual(json.loads(call["arguments"])["q"], "find it")
+
+            answered = [user, call, {"type": "function_call_output", "call_id": call["call_id"], "output": "found it"}]
+            second = json.loads(self._mock_responses(port, {"model": "m", "input": answered, "tools": tools}))
+        message = second["output"][0]
+        self.assertEqual(message["type"], "message")
+        self.assertIn("found it", message["content"][0]["text"])
+
+    def test_mock_responses_streams_response_events(self):
+        """
+        Check that a streamed mock Responses API answer is the response.* events OpenAI sends.
+        """
+        port = self._serve(None, "http://unused", Path("."), [])
+        text = self._mock_responses(port, {"model": "m", "input": "hi", "stream": True})
+        events = [line[len("event: "):] for line in text.splitlines() if line.startswith("event: ")]
+        self.assertEqual(events[0], "response.created")
+        self.assertIn("response.output_text.delta", events)
+        self.assertEqual(events[-1], "response.completed")
+
     def test_mock_router_makes_no_network_call(self):
         """
         Check that the mock router answers with a tool call without any network call.
@@ -471,6 +536,26 @@ class ByokOnlyTests(unittest.TestCase):
         self.assertEqual(response.getheader("X-Nsdeploy-LLM-Route"), "mock")
         self.assertIn('"tool_calls"', text)
         self.assertIn('"name": "lookup"', text)
+
+    def test_runtime_index_is_the_ts_package_runtime_unless_switched_off(self):
+        """
+        Check that /runtime/index.js redirects to the TS package runtime unless the switch is off.
+        """
+        temp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; removed in cleanup
+        self.addCleanup(temp.cleanup)
+        runtime = Path(temp.name)
+        (runtime / "index.js").write_text("// original\n")
+        for ts_package, status, location in ((True, 302, "/runtime/ts-package/index.js"), (False, 200, None)):
+            port = self._serve(None, "http://unused", runtime, [], None, None, None, ts_package)
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request("GET", "/runtime/index.js")
+            response = conn.getresponse()
+            body = response.read()
+            conn.close()
+            self.assertEqual(response.status, status)
+            self.assertEqual(response.getheader("Location"), location)
+            if not ts_package:
+                self.assertEqual(body, b"// original\n")
 
     @staticmethod
     def _mcp_urls(port):

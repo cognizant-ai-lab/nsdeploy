@@ -54,6 +54,16 @@ except ImportError as _exc:
     _CAILVILLE_IMPORT_ERROR = _exc
 
 
+def _on_off(value: str) -> bool:
+    """An on/off flag's value: true/false, on/off, yes/no or 1/0."""
+    text = value.strip().lower()
+    if text in ("true", "on", "yes", "1"):
+        return True
+    if text in ("false", "off", "no", "0"):
+        return False
+    raise argparse.ArgumentTypeError(f"expected true or false, got {value!r}")
+
+
 def _load_cailville():
     """Return the Cailville community helpers, or None when they are unavailable.
 
@@ -128,6 +138,9 @@ def main() -> int:
                          "host-side LLM key; the facade only uses the caller's BYOK credentials")
     ap.add_argument("--runtime-dir", default=None,
                     help="neuro-san-web runtime dir (default: vendored nsdeploy/runtime)")
+    ap.add_argument("--use-ts-package", type=_on_off, default=True, metavar="true|false",
+                    help="run agents on the neuro-san TS package (default true); "
+                         "false runs them on the original runtime")
     ap.add_argument("--links", default=None, help="link sidecar JSON (default: <hocon>.links.json when present)")
     ap.add_argument("--link", action="append", default=[], metavar="REF=URL",
                     help="bind a dangling agent reference to a remote nsDeploy network (repeatable)")
@@ -358,7 +371,7 @@ def main() -> int:
                   action_host_page=args.action_host_page,
                   action_caller_origins=args.action_caller_origin,
                   discovered_actions=discovered_actions,
-                  mock_llm=args.mock_llm)
+                  mock_llm=args.mock_llm, ts_package=args.use_ts_package)
     bundle_label = "static bundle" if args.static_bundle else "site"
     print(f"✅ Generated {bundle_label} → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))
     if args.static_bundle:
@@ -387,7 +400,7 @@ def main() -> int:
     serve(out_dir, plan, source.root, port=args.port, site_base=site_base,
           upstream=args.upstream,
           runtime_dir=runtime_dir, ext_mcps=plan.external_mcps,
-          facade_upstream=args.facade_upstream, mock_llm=args.mock_llm)
+          facade_upstream=args.facade_upstream, mock_llm=args.mock_llm, ts_package=args.use_ts_package)
     return 0
 
 

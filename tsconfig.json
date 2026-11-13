@@ -1,0 +1,22 @@
+{
+  // Type-checks tests/*.ts. Node runs those files directly by stripping the
+  // types, so nothing gets built.
+  "compilerOptions": {
+    // Check the ES modules the way Node loads them. This also picks the target
+    // and the Node types.
+    "module": "nodenext",
+    // Node's own types, from @types/node. TypeScript 7 no longer loads those
+    // by default.
+    "types": ["node"],
+    // Only check. Node runs the .ts files itself.
+    "noEmit": true,
+    // The same as our other TypeScript projects.
+    "strict": true,
+    // Node can only strip types, so reject TypeScript it can't run, like enums.
+    "erasableSyntaxOnly": true,
+    // Node keeps every import it sees, so an import used only as a type has to
+    // say `import type`.
+    "verbatimModuleSyntax": true
+  },
+  "include": ["tests/**/*.ts"]
+}
