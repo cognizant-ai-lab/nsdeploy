@@ -26,6 +26,8 @@ import {
 } from "./composition.js";
 import { agentPresentationContext, interactionMessage, parseAgentResponse } from "../cruse.js";
 import { BROWSER_MOCK_ROUTER, browserMockResponse, isMockResponse, normalizeModelName } from "./model.js";
+import { assertModelForRouter, effectiveModel } from "../model.js";
+import { ProviderError } from "../provider-error.js";
 import { createTurnEventStream } from "../execution-stream.js";
 import { applyPendingSteering, runInterruptibleModelCall, TurnControl } from "../turn-control.js";
 import { ActionRegistry, actionBindings, actionContext, cloneData, proposalRefs } from "../actions.js";
@@ -73,7 +75,7 @@ export function selectTopRouter(manifest, routerOverride, byokKey, modelOverride
 
   if ((hasRealKey || hasExplicitModel) && (!requested || requestedMock)) {
     if (!declared.byok_router) {
-      throw new Error("A real API key is configured, but this site publishes no BYOK router.");
+      throw new Error("A real API key is configured, but this site publishes no AI provider route.");
     }
     requested = declared.byok_router;
     return { baseUrl: requested, mock: false, upgradedToByok: true };
@@ -112,24 +114,25 @@ export function selectPeerRouter(callerRouter) {
 // shared or reloaded URL keeps a real router but this browser has no saved key.
 export function assertRouterKey(llm, apiKey) {
   if (!llm?.mock && (!apiKey || apiKey === "demo")) {
-    throw new Error(`An LLM API key is required for ${hostOf(llm?.baseUrl) || "the configured provider"}. Open ⚙ BYOK / router settings, enter your key, then click Apply, save & reload. Your key stays in this browser and is sent only to the configured provider.`);
+    throw new Error(`An AI provider key is required for ${hostOf(llm?.baseUrl) || "the configured provider"}. Open ⚙ AI model settings, paste your key, then select Save and start. Your key stays in this browser and is sent only to the configured provider.`);
   }
 }
 
-// With a real router and no model chosen, each partner agent that calls a model has to
-// name one, itself or through its network. neuro-san would otherwise send its default
-// model, which the visitor's router may not have. This matches the settings panel,
-// which asks for a model when an agent of the top network has none.
-export function assertPartnerModels(network, { mock, modelOverride, routerHost } = {}) {
-  if (mock || normalizeModelName(modelOverride)) return;
+// With a real router, each agent that calls a model has to send a real one: the
+// visitor's, its own or its network's, never the mock placeholder or no model at all,
+// which the visitor's router would reject. This is main's check (effectiveModel and
+// assertModelForRouter), so it matches the settings panel, and it runs for the top
+// network and for each partner network before its turn.
+export function assertNetworkModels(network, { mock, modelOverride, routerHost } = {}) {
+  if (mock) return;
+  const override = normalizeModelName(modelOverride);
   const networkModel = normalizeModelName(network.config?.llm_config?.model_name);
   const frontMan = network.findFrontMan();
   for (const spec of network.config?.tools || []) {
     const callsModel = spec?.name === frontMan || network.classifyTool(spec?.name).kind === "agent";
-    if (callsModel && !normalizeModelName(spec?.llm_config?.model_name) && !networkModel) {
-      throw new Error(`A model is required for ${routerHost || "the configured provider"}. `
-        + "Open ⚙ BYOK / router settings, enter a model your provider supports in the Model field, "
-        + "then click Apply, save & reload.");
+    if (callsModel) {
+      assertModelForRouter(effectiveModel(override, normalizeModelName(spec?.llm_config?.model_name), networkModel),
+        mock, routerHost);
     }
   }
 }
@@ -710,7 +713,7 @@ export class Engine {
       const fetchedUrls = { manifest: `${peerBase}/agent-manifest.json`, hocon: resolveUrl(peerBase, entry.hocon) };
       compiled = await this._compile(peerBase, manifest, entry);
       compiled.base = peerBase;
-      assertPartnerModels(compiled.network, {
+      assertNetworkModels(compiled.network, {
         mock: this.mockLLM, modelOverride: this.modelOverride, routerHost: hostOf(this.top.llm?.baseUrl),
       });
       await registerRemoteActions(this.actions, { base: peerBase, network: compiled.network.name }, manifest);
@@ -775,7 +778,12 @@ export class Engine {
       // An unreadable response asks for no tools, so nothing waits on it.
       const settle = (read) => batch?.resolve(read ? functionCallNames(read.text) : []);
       // A static bundle's mock answers here, with no server to send the call to.
-      const send = router === BROWSER_MOCK_ROUTER ? async () => browserMockResponse(url, body || {}) : originalFetch;
+      const call = router === BROWSER_MOCK_ROUTER ? async () => browserMockResponse(url, body || {}) : originalFetch;
+      // A call that never reaches the router gets main's advice on why (CORS, a local
+      // router that isn't running), instead of the browser's bare "Failed to fetch".
+      const send = async (...args) => {
+        try { return await call(...args); } catch (err) { throw ProviderError.friendly(err, base); }
+      };
       // Only the top front man is steered. Work already handed to tools and other
       // agents finishes as it is, so nothing runs twice.
       if (caller?.isTopFrontMan && this.turnControl && body) {
@@ -1151,6 +1159,9 @@ export class Engine {
     consumeAgentBudget(this.composition);
     try {
       assertRouterKey(this.top.llm, this.byokKey);
+      assertNetworkModels(this.top.network, {
+        mock: this.mockLLM, modelOverride: this.modelOverride, routerHost: hostOf(this.top.llm?.baseUrl),
+      });
       const session = neuroSanSession();
       session.setEnv({
         OPENAI_API_KEY: this.byokKey || "demo",
@@ -1317,8 +1328,17 @@ const LLM_CONFIG_FIELDS = new Set([
   "include", "tool_strict", "tiktoken_model_name",
 ]);
 
-const allowedLlmFields = (config) =>
-  Object.fromEntries(Object.entries(config || {}).filter(([key]) => LLM_CONFIG_FIELDS.has(key)));
+// A blank or quoted-empty model_name counts as not set, as on main, so the agent falls
+// back to its network's model.
+const allowedLlmFields = (config) => {
+  const fields = Object.fromEntries(Object.entries(config || {}).filter(([key]) => LLM_CONFIG_FIELDS.has(key)));
+  if ("model_name" in fields) {
+    const model = normalizeModelName(fields.model_name);
+    if (model) fields.model_name = model;
+    else delete fields.model_name;
+  }
+  return fields;
+};
 
 // A partner reference as main's engine reads it: the site is the folder the network
 // URL is in, and the network is the URL's last path segment.

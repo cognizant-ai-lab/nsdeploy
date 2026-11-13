@@ -45,7 +45,7 @@ export async function boot(rootSelector = "#app", opts = {}) {
   }
   if (ignoredParams.length) {
     const names = ignoredParams.join(", ");
-    console.warn(`Inference settings in the page URL are ignored (${names}). Set them in BYOK / router settings.`);
+    console.warn(`Inference settings in the page URL are ignored (${names}). Set them in AI model settings.`);
   }
   const savedProfile = getSelectedByokProfile();
   const tabSetup = loadTabByokSetup(savedProfile);
