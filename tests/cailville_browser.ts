@@ -372,7 +372,7 @@ async function runPage(browser: Browser, port: string, answers: Answers, label =
     }
     if (answers.noKey) {
       // The chat asks for a key instead of starting a run, so there is no run to wait for.
-      const prompt = page.locator(".ns-msg.bot", { hasText: "needs your LLM API key" }).last();
+      const prompt = page.locator(".ns-msg.bot", { hasText: "add an AI provider key" }).last();
       run.keyPrompt = await prompt.waitFor({ timeout: 10000 }).then(() => true, () => false);
       await page.waitForTimeout(2000);
       run.finished = true;
