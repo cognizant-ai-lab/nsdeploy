@@ -119,7 +119,7 @@ site, so there is no pin that could carry that message.
 > and an open tab compares it with its own and offers a **Reload to update** bar. If
 > the console ever seems not to respond to a click, hard-reload it first (Ctrl+Shift+R).
 
-Everything else `POST /deployments` accepts (network name, TTL, BYOK upstream, CRUSE,
+Everything else `POST /deployments` accepts (network name, TTL, CRUSE,
 theming) comes from the service defaults rather than the screen — the API still takes
 all of it for scripted callers. Stop, restart and remove live in the
 Manage-deployments view, off the main path but one click away in the footer.
@@ -183,7 +183,7 @@ before it can serve. Expect **~20s warm**, considerably longer on a cold cache.
 | `GET` | `/directory` | every organization and the networks it deployed |
 | `GET` | `/graph` | the same records as a network map: nodes, resolved links, and inferred relations |
 | `GET` | `/relations` | relations between deployed networks, inferred from their descriptions (`strategy=heuristic\|llm`) |
-| `POST` | `/deployments` | multipart upload (`file`, plus optional `org_id`, `org_name`, `name`, `upstream`, `theme`, `theme_model`, `cruse`, `ttl_seconds`) → `202`. `org_name` is created on first use |
+| `POST` | `/deployments` | multipart upload (`file`, plus optional `org_id`, `org_name`, `name`, `theme`, `theme_model`, `cruse`, `ttl_seconds`) → `202`. `org_name` is created on first use. `upstream` is not settable: a value other than the service's own `UPSTREAM` is refused with `400` |
 | `POST` | `/deployments/raw?name=…` | same, with the HOCON as the raw request body |
 | `GET` | `/deployments?org_id=…` | list all, plus pool capacity |
 | `GET` | `/deployments/{id}` | poll one |
@@ -195,7 +195,7 @@ before it can serve. Expect **~20s warm**, considerably longer on a cold cache.
 | `DELETE` | `/deployments/{id}?purge=false` | kill the process tree, free the port; `purge=true` also drops the record, and is refused while the deployment is live |
 | `POST` | `/bundles` | multipart upload (`file`, plus optional `name`, `site_url`, `upstream`, `theme`, `theme_model`, `theme_refresh`, `theme_prompt`, `cruse`) → `200 application/gzip`. Builds a static bundle and returns it in the same request; nothing is kept |
 | `POST` | `/bundles/raw?name=…` | same, with the HOCON as the raw request body |
-| `GET` | `/deployments/{id}/bundle?site_url=…` | `200 application/gzip`. Rebuilds a `ready` or `stopped` deployment as a static bundle, inheriting its name, upstream, CRUSE setting and look; `409` while `queued`, `building` or `failed`, `410` if its HOCON is gone |
+| `GET` | `/deployments/{id}/bundle?site_url=…` | `200 application/gzip`. Rebuilds a `ready` or `stopped` deployment as a static bundle, inheriting its name, CRUSE setting and look, with the service's `UPSTREAM` as its BYOK target unless `upstream` is given; `409` while `queued`, `building` or `failed`, `410` if its HOCON is gone |
 | `GET` | `/health` | capacity, environment, warnings, console `ui_version` — unauthenticated for probes |
 <!-- pyml enable md013 -->
 
@@ -328,9 +328,9 @@ everything (see [config.py](nsdeploy_service/config.py)).
 | `WORK_ROOT` | `.nsdeploy/service` | per-deployment HOCON, bundle, and log |
 | `DB_PATH` | `<work_root>/service.db` | SQLite file holding organizations and deployment records |
 | `UI_DIR` | `nsdeploy_service/ui` | the console's static files; point elsewhere to serve it from a CDN |
-| `UPSTREAM` | `https://api.openai.com/v1` | each site's BYOK proxy target |
+| `UPSTREAM` | `https://api.openai.com/v1` | every site's BYOK proxy target; a deployment cannot choose its own |
 | `STUDIO` | *(empty)* | local neuro-san-studio checkout; avoids per-build GitHub fetches |
-| `THEME` | `off` | deploy-time LLM theming; needs `OPENAI_API_KEY` and adds minutes |
+| `THEME` | `off` | deploy-time LLM theming; needs `OPENAI_API_KEY` listed in `SITE_ENV_ALLOW` (see below) and adds minutes |
 | `AUTOPUBLISH` | `on` | put a new deployment on the map the moment it is created; `off` restores the draft → publish workflow |
 | `TTL_SECONDS` | `0` | auto-stop after N seconds; `0` (the default) keeps deployments up until stopped |
 | `MAX_DEPLOYMENTS` | `60` | live ceiling; must be <= the port pool, and <= the map grid (88 slots) or pins stack |
@@ -344,9 +344,22 @@ everything (see [config.py](nsdeploy_service/config.py)).
 | `MAX_CONCURRENT_BUNDLE_BUILDS` | `4` | bounds `POST /bundles`, separately from deployments so a bundle never queues behind a cold build |
 | `BUILD_VERSION` | *(empty)* | build shown in the console header; the Dockerfile sets it from the `NSDEPLOY_SERVICE_BUILD_VERSION` build arg, and it falls back to the package version |
 | `API_TOKEN` | *(empty)* | when set, every route except `/health` needs `Authorization: Bearer …` |
+| `CONSOLE_PROXY` | `false` | when true, the console's requests to `/console-api/…` carry `API_TOKEN` server-side, so the console does not ask for it and the token never reaches the browser. Anyone can then make the requests the console makes; `POST /settings` and `/bundles` still need the token
 | `CORS_ORIGINS` | *(empty)* | comma-separated origins allowed to call this API from a browser on another host, e.g. `https://app.example.com,http://127.0.0.1:5173`. Empty sends no CORS headers at all. Each entry is `scheme://host[:port]` with no path; `*` allows any origin and is only safe with `API_TOKEN` set |
+| `SITE_ENV_ALLOW` | *(empty)* | comma-separated environment variables a site process still receives although they look like provider credentials, e.g. `OPENAI_API_KEY`. Any uploaded network can read a listed variable (see below). The service's own `*_TOKEN`, `*_KEY`, `*_SECRET` and `*_PASSWORD` settings are never passed |
 | `ENV_FILE` | `<repo root>/.env` | where credentials are read from and `POST /settings` writes; put it on a volume in a container, or saved settings are lost on restart |
 <!-- pyml enable md013 -->
+
+**Site processes do not get the service's secrets.** A site runs code from the uploaded network, so the service
+starts it without its own credentials (`NSDEPLOY_SERVICE_*` names ending in `_TOKEN`, `_KEY`, `_SECRET` or
+`_PASSWORD`) and without LLM-provider keys (`OPENAI_*`, `ANTHROPIC_*`, `*_API_KEY`, … — the names nsdeploy keeps
+from its `/mcp` facade). Everything else, such as `PATH`, proxy and TLS settings, is passed on. `SITE_ENV_ALLOW`
+passes a listed provider variable through, for a coded tool that reads one; the service's own credentials are
+never passed. `THEME` needs `OPENAI_API_KEY` in that list, because theming runs inside the site's build; without
+it nsdeploy prints `--theme set but no key` and uses the default look, and the service warns at start-up and on
+`/health`. Any uploaded network can read a listed variable, through a `${NAME}` substitution in its HOCON or
+through its coded tools, so list a key only when everyone who may upload may also see that key. This is not
+isolation: a site still runs as the service's OS user and can read the files that user can, such as `.env`.
 
 **Deployments are long-lived and records are persisted.** Organizations, deployment
 records, the uploaded HOCON, and the options chosen for it all persist, so the directory
@@ -503,9 +516,11 @@ settled before this is reachable by anyone else:
 > importing the Python classes it names and `pip install`ing their missing dependencies
 > ([`resolve.py::_import_with_autoinstall`](nsdeploy/resolve.py#L299), with
 > `AUTO_INSTALL_TOOL_DEPS = True` as a module constant and no environment override). Tool
-> subprocesses also inherit the full host environment — a gap nsdeploy itself flags at
-> [`launcher.py:441-443`](nsdeploy/launcher.py#L441-L443). Accepting uploads from untrusted
-> callers therefore means running untrusted code with the service's privileges.
+> subprocesses also inherit the site's environment — a gap nsdeploy itself flags in
+> [`launcher.py::spawn_mcp_servers`](nsdeploy/launcher.py). The service keeps its own credentials, and provider
+> keys not listed in `SITE_ENV_ALLOW`, out of that environment (see Configuration), but the code still runs as
+> the service's OS user. Accepting uploads from untrusted callers therefore means running untrusted code with the
+> service's privileges.
 
 So the hosted phase is a containerisation and routing exercise, roughly:
 

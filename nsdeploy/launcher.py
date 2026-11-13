@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import os
 import re
 import socket
@@ -37,6 +38,8 @@ from nsdeploy.commerce.service import CommerceSite
 from nsdeploy.commerce.service import from_plan
 from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.resolve import HostableTool
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 # The vendored neuro-san-web browser runtime (self-contained ES modules) ships inside
 # the package as data so editable and regular installs both find it. Overridable via
@@ -427,13 +430,26 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             if path == "/":
                 path = "/index.html"
             file_path: Path
+            base_dir: Path
             if path.startswith("/runtime/"):
+                base_dir = runtime_dir
                 file_path = runtime_dir / path[len("/runtime/"):]
             else:
+                base_dir = site_dir
                 file_path = site_dir / path.lstrip("/")
-            if ".." in path or not file_path.is_file():
+            # An absolute path after /runtime/ replaces the base directory, and a symlink can point anywhere,
+            # so serve a file only when its resolved path is inside the resolved base directory.
+            real_path: Path = file_path
+            inside: bool = False
+            try:
+                real_path = file_path.resolve()
+                inside = real_path.is_relative_to(base_dir.resolve())
+            except (OSError, RuntimeError, ValueError) as exc:
+                # A symlink loop or a NUL byte in the request cannot be resolved; treat it as a missing file.
+                logger.warning("Cannot resolve static path %r: %r", path, exc)
+            if ".." in path or not inside or not real_path.is_file():
                 return self._send(404, b"404 " + path.encode(), "text/plain", cors=False)
-            data: bytes = file_path.read_bytes()
+            data: bytes = real_path.read_bytes()
             extra: Dict[str, str] = {}
             if path == "/runtime/sandbox-worker.js":
                 extra["Content-Security-Policy"] = WORKER_CSP

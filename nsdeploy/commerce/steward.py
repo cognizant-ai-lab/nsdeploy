@@ -27,6 +27,12 @@ from nsdeploy.commerce.service import origin
 from nsdeploy.commerce.service import post_json
 
 HANDLE: str = "nsdeploy_butterpink_commerce_binding"
+# Keys neuro-san puts into every coded-tool call. They are framework plumbing rather
+# than arguments the model supplied, and the set grows with the framework:
+# "activation_capsule" arrived in neuro-san 0.7.23. Each one has to be dropped before
+# the argument check below, which refuses any key the operation does not name.
+FRAMEWORK_ARGS: Set[str] = {"origin", "origin_str", "progress_reporter", "reservationist",
+                            "activation_capsule"}
 TURN: str = "nsdeploy_butterpink_commerce_turn"
 _bindings: Dict[str, Dict[str, Any]] = {}
 _lock: threading.RLock = threading.RLock()
@@ -99,7 +105,7 @@ class ButterpinkCommerceGateway(CodedTool):
             return {"status": "DENIED", "error": "Use the Butterpink private steward in nsFlow."}
         # Framework invocation metadata and optional schema defaults confer no authority.
         args = {key: value for key, value in args.items() if value is not None
-                and key not in {"origin", "origin_str", "progress_reporter", "reservationist"}}
+                and key not in FRAMEWORK_ARGS}
         operation: Any = args.get("operation")
         fields: Set[str] = {"operation", "arrival", "budget_cents"} if operation == "negotiate" else {"operation"}
         if operation == "approve":

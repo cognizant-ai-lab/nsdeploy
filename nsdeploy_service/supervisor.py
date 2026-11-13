@@ -59,6 +59,7 @@ from nsdeploy_service.models import SUMMARY_SCHEMA_VERSION
 from nsdeploy_service.ports import PortPool
 from nsdeploy_service.ports import PortPoolExhausted
 from nsdeploy_service.shared_byok import sync_shared_byok
+from nsdeploy_service.site_env import SiteEnv
 from nsdeploy_service.store import UNATTRIBUTED_NAME
 from nsdeploy_service.store import Store
 from nsdeploy_service.store import StoreError
@@ -1157,7 +1158,10 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             # manifests, .well-known, steward HOCON), so it must be declared now and
             # must match the URL we hand back.
             "--site-url", dep.url,
-            "--upstream", opts.upstream or s.upstream,
+            # Always the service-wide upstream. The site's /byok/v1 forwards every
+            # visitor's API key there, so a deployment does not choose it, and an
+            # `upstream` still stored in a record's options is ignored.
+            "--upstream", s.upstream,
         ]
         # `--host` is the ONE flag this service has ever needed that upstream nsdeploy
         # does not ship. Three successive engine drops have removed it, each time
@@ -1213,7 +1217,17 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         return cmd
 
     def _spawn(self, dep: Deployment) -> subprocess.Popen:
-        env: Dict[str, str] = dict(os.environ)
+        """
+        Start the nsdeploy process that builds and serves a deployment.
+
+        :param dep: The deployment to start. Its output goes to its log file.
+        :return: The started process.
+        :raises OSError: If the log file cannot be opened or the process cannot start.
+        :raises DeploymentError: If DEPLOY_HOST needs a --host flag this nsdeploy lacks.
+        """
+        # The site runs code from the uploaded network, so it gets none of the service's
+        # credentials or the host's provider keys. See site_env.py.
+        env: Dict[str, str] = SiteEnv.build(os.environ, self.settings.site_env_allow)
         env["PYTHONUNBUFFERED"] = "1"
         # nsdeploy's report is emoji-rich; without this the child's stdout is written
         # in the console codepage and the log comes back mojibaked.

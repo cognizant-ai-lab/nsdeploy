@@ -214,13 +214,16 @@ class Bundler:
 
         :param row: The persisted deployment record.
         :param site_url: Where the client will host this bundle, if stated.
-        :param upstream: A BYOK upstream for this bundle only, if stated.
+        :param upstream: A BYOK upstream for this bundle only, if stated. Without
+                         one, the bundle uses the service-wide upstream.
         :return: The options for this build.
         """
         stored: Dict[str, Any] = row.get("options") or {}
         deployed: DeployOptions = DeployOptions(**stored)
+        # An upstream stored in the record is not replayed. The uploader chose it, and
+        # the deployed site forwards to the service-wide upstream, so the bundle does too.
         return BundleOptions(name=row.get("name"), site_url=site_url,
-                             upstream=upstream or deployed.upstream,
+                             upstream=upstream,
                              cruse=deployed.cruse, theme=False)
 
     # pylint: disable-next=too-many-locals  # one linear build pipeline

@@ -67,6 +67,7 @@ from nsdeploy_service.bundle_error import BundleError
 from nsdeploy_service.bundle_result import BundleResult
 from nsdeploy_service.bundler import Bundler
 from nsdeploy_service.config import Settings
+from nsdeploy_service.console_proxy import ConsoleProxy
 from nsdeploy_service.models import ORG_NAME_MAX
 from nsdeploy_service.models import ORG_NAME_PATTERN
 from nsdeploy_service.models import AgentGraphEdge
@@ -103,6 +104,7 @@ from nsdeploy_service.relations import NetworkIdentity
 from nsdeploy_service.relations import SuggestedRelation
 from nsdeploy_service.relations import identities_from_rows
 from nsdeploy_service.relations import suggest_relations
+from nsdeploy_service.site_env import SiteEnv
 from nsdeploy_service.siteproxy import SiteProxy
 from nsdeploy_service.store import Store
 from nsdeploy_service.store import StoreError
@@ -115,6 +117,7 @@ from nsdeploy_service.supervisor import is_publishable
 from nsdeploy_service.supervisor import network_topology
 from nsdeploy_service.supervisor import publish_refusal
 from nsdeploy_service.trust import ensure_ca_bundle
+from nsdeploy_service.upload_upstream import UploadUpstream
 
 # Optional drop-in folder: a checkout without it still runs.
 try:
@@ -470,6 +473,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             max_age=600,
         )
 
+    # Added after CORS, so it is the outer layer: a cross-origin preflight to /console-api gets a 403, and only
+    # the same-origin console can use the server's token.
+    app.add_middleware(ConsoleProxy, settings=settings)
+
     def require_token(request: Request) -> None:
         """Bearer-token gate. Disabled when no token is configured (loopback default)."""
         if not settings.api_token:
@@ -519,7 +526,22 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     # --- create ----------------------------------------------------------
-    async def _accept(request: Request, hocon: bytes, options: DeployOptions) -> DeploymentView:
+    async def _accept(request: Request, hocon: bytes, options: DeployOptions,
+                      upstream: Optional[str]) -> DeploymentView:
+        """
+        Create a deployment from an upload and schedule its build.
+
+        :param request: The incoming request.
+        :param hocon: The uploaded HOCON.
+        :param options: The deploy options from the request.
+        :param upstream: The BYOK upstream the upload named, if any.
+        :return: The new deployment, in status queued.
+        :raises DeploymentError: If the upload names an upstream other than the service's own.
+        """
+        # Checked before anything is created, so a refused upload leaves no record behind.
+        refusal: Optional[str] = UploadUpstream.refusal(upstream, settings.upstream)
+        if refusal:
+            raise DeploymentError(refusal)
         supervisor: Supervisor = supervisor_of(request)
         dep: Deployment = supervisor.create(hocon, options)
         supervisor.start(dep)
@@ -547,7 +569,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                         "when org_id is given. Letters, digits and & ' ( ) . , - / + # "
                         f"only, {ORG_NAME_MAX} characters maximum")] = None,
         name: Annotated[Optional[str], Form()] = None,
-        upstream: Annotated[Optional[str], Form()] = None,
+        upstream: Annotated[Optional[str], Form(
+            description="not supported; leave it out. Every site forwards BYOK requests "
+                        "to the service-wide upstream, and any other value is refused "
+                        "with 400")] = None,
         theme: Annotated[Optional[bool], Form()] = None,
         theme_model: Annotated[Optional[str], Form()] = None,
         theme_refresh: Annotated[Optional[bool], Form()] = None,
@@ -562,11 +587,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             (file.filename or "network").replace("\\", "/")).name
         options: DeployOptions = DeployOptions(
             name=candidate, org_id=org_id, org_name=org_name,
-            upstream=upstream, theme=theme, theme_model=theme_model,
+            theme=theme, theme_model=theme_model,
             theme_refresh=theme_refresh, theme_prompt=theme_prompt,
             cruse=cruse, ttl_seconds=ttl_seconds,
         )
-        view: DeploymentView = await _accept(request, await file.read(), options)
+        view: DeploymentView = await _accept(request, await file.read(), options, upstream)
         response.headers["Location"] = f"/deployments/{view.id}"
         return view
 
@@ -583,17 +608,20 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             description="owning organization by name, created on first use. Letters, "
                         "digits and & ' ( ) . , - / + # only, "
                         f"{ORG_NAME_MAX} characters maximum")] = None,
-        upstream: Annotated[Optional[str], Query()] = None,
+        upstream: Annotated[Optional[str], Query(
+            description="not supported; leave it out. Every site forwards BYOK requests "
+                        "to the service-wide upstream, and any other value is refused "
+                        "with 400")] = None,
         theme: Annotated[Optional[bool], Query()] = None,
         theme_model: Annotated[Optional[str], Query()] = None,
         cruse: Annotated[Optional[bool], Query()] = None,
         ttl_seconds: Annotated[Optional[int], Query(ge=0)] = None,
     ) -> DeploymentView:
         options: DeployOptions = DeployOptions(name=name, org_id=org_id, org_name=org_name,
-                                               upstream=upstream, theme=theme,
+                                               theme=theme,
                                                theme_model=theme_model, cruse=cruse,
                                                ttl_seconds=ttl_seconds)
-        view: DeploymentView = await _accept(request, await request.body(), options)
+        view: DeploymentView = await _accept(request, await request.body(), options, upstream)
         response.headers["Location"] = f"/deployments/{view.id}"
         return view
 
@@ -1158,7 +1186,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                         "own URL, which is this service's loopback port")] = None,
         upstream: Annotated[Optional[str], Query(
             description="BYOK upstream for this bundle only; defaults to the "
-                        "deployment's own")] = None,
+                        "service-wide upstream, which deployed sites also use")] = None,
     ) -> Response:
         row: Dict[str, Any] = find_row(request, deployment_id)
         status: DeploymentStatus = DeploymentStatus(row.get("status"))
@@ -1224,6 +1252,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 f"terminates TLS on each port in that range. Host where the range is "
                 f"reachable, or set SUBDOMAIN_TEMPLATE (see nsdeploy_service/README.md)."
             )
+        # Theming runs in each site's build, which receives the key only when SITE_ENV_ALLOW
+        # lists it. Checked per request, because POST /settings can turn THEME on at runtime.
+        theme_warning: Optional[str] = SiteEnv.theme_key_warning(settings.theme, os.environ, settings.site_env_allow)
+        if theme_warning:
+            warnings.append(theme_warning)
+        # Sites never receive the service's own credentials, so listing one in SITE_ENV_ALLOW does nothing.
+        allow_warning: Optional[str] = SiteEnv.allow_list_warning(settings.site_env_allow)
+        if allow_warning:
+            warnings.append(allow_warning)
         # Reconciliation is routine housekeeping at startup, not a fault, and it is a
         # one-off event rather than an ongoing condition — so it is reported as a
         # plain count, never in `warnings`. Putting it in `warnings` made every
@@ -1312,9 +1349,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 # from the same place the check reads.
                 value: str = str(settings.api_token or "")
             else:
-                # The environment is correct for the LLM key: supervisor._spawn copies
-                # os.environ into every build subprocess, so that is literally what
-                # deploy-time theming will use.
+                # The LLM key lives in the service's environment. A site build receives it
+                # only when SITE_ENV_ALLOW lists it, which deploy-time theming needs; see
+                # site_env.py.
                 value = os.environ.get(env_key) or stored.get(env_key, "")
             fields[field_name] = {
                 "is_set": bool(value), "last4": value[-4:] if value else "",

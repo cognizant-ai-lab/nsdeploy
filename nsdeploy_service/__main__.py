@@ -8,7 +8,9 @@ the flags below just cover the ones worth typing.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import textwrap
 from pathlib import Path
 
 import uvicorn
@@ -17,8 +19,10 @@ from nsdeploy_service import PRODUCT_NAME
 from nsdeploy_service.app import create_app
 from nsdeploy_service.config import Settings
 from nsdeploy_service.envfile import load_into_environ
+from nsdeploy_service.site_env import SiteEnv
 
 
+# pylint: disable-next=too-many-statements  # one linear parse, override and banner sequence
 def main(argv: list[str] | None = None) -> int:
     """
     Parse command-line flags, build the service settings and run the uvicorn server.
@@ -46,7 +50,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-deployments", type=int, default=None,
                     help=f"live-deployment ceiling (default {defaults.max_deployments})")
     ap.add_argument("--theme", action="store_true",
-                    help="enable deploy-time LLM theming for every build (needs OPENAI_API_KEY)")
+                    help="enable deploy-time LLM theming for every build (needs OPENAI_API_KEY, "
+                         "listed in NSDEPLOY_SERVICE_SITE_ENV_ALLOW)")
     ap.add_argument("--api-token", default=None,
                     help="require this bearer token on every endpoint except /health")
     ap.add_argument("--reload", action="store_true", help="uvicorn autoreload (development)")
@@ -98,6 +103,18 @@ def main(argv: list[str] | None = None) -> int:
         print("\n  WARNING: bound off-loopback with no --api-token. An uploaded HOCON can "
               "execute\n           arbitrary Python on this host. See nsdeploy_service/README.md.\n",
               file=sys.stderr)
+    # Theming runs in each site's build, which receives the key only when SITE_ENV_ALLOW lists it, and
+    # SITE_ENV_ALLOW can never pass the service's own credentials.
+    site_env_warnings: list[str | None] = [
+        SiteEnv.theme_key_warning(settings.theme, os.environ, settings.site_env_allow),
+        SiteEnv.allow_list_warning(settings.site_env_allow),
+    ]
+    warning: str | None
+    # Print each warning that applies, wrapped to the banner's width.
+    for warning in site_env_warnings:
+        if warning:
+            text: str = textwrap.fill(warning, width=88, initial_indent="  WARNING: ", subsequent_indent=" " * 11)
+            print(f"\n{text}\n", file=sys.stderr)
 
     if args.reload:
         uvicorn.run("nsdeploy_service.app:app", host=settings.host, port=settings.port, reload=True)

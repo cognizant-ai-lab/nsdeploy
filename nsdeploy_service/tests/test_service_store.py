@@ -410,15 +410,28 @@ class RestartTest(unittest.TestCase):
 
     def test_replays_the_original_options_not_current_defaults(self) -> None:
         """A restart replays the original options, not the current defaults."""
-        supervisor: Supervisor = self._supervisor(upstream="https://service-default/v1")
-        original: Deployment = self._stopped(supervisor, upstream="https://chosen/v1", cruse=False)
+        supervisor: Supervisor = self._supervisor()
+        original: Deployment = self._stopped(supervisor, cruse=False)
 
         restarted: Deployment = supervisor.restart(original.id)
         command: List[str]
         command = supervisor._command(restarted)  # pylint: disable=protected-access; exercises an internal step
 
-        self.assertEqual(command[command.index("--upstream") + 1], "https://chosen/v1")
         self.assertIn("--no-cruse", command)
+
+    def test_a_stored_upstream_is_not_replayed(self) -> None:
+        """A restart passes the service upstream even when the stored options name another."""
+        supervisor: Supervisor = self._supervisor(upstream="https://router.example/v1")
+        original: Deployment = self._stopped(supervisor, upstream="https://uploader.example/v1")
+        stored: Dict[str, Any] = supervisor.store.get_deployment(original.id).get("options") or {}
+        self.assertEqual(stored.get("upstream"), "https://uploader.example/v1")
+
+        restarted: Deployment = supervisor.restart(original.id)
+        command: List[str]
+        command = supervisor._command(restarted)  # pylint: disable=protected-access; exercises an internal step
+
+        self.assertEqual(command[command.index("--upstream") + 1], "https://router.example/v1")
+        self.assertNotIn("https://uploader.example/v1", command)
 
     def test_keeps_the_owning_organization(self) -> None:
         """A restart keeps the owning organization."""

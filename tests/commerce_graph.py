@@ -26,7 +26,8 @@ from neuro_san.interfaces.agent_session import AgentSession
 from nsdeploy.commerce.steward import binding_for
 
 
-class ScriptedStewardModel(BaseChatModel):
+# BaseChatModel streams only when _stream is overridden, so the scripted model leaves it unimplemented.
+class ScriptedStewardModel(BaseChatModel):  # pylint: disable=abstract-method
     """Chat model that returns scripted commerce tool calls based on the latest prompt."""
 
     @property

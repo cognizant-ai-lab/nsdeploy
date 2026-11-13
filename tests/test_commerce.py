@@ -38,6 +38,7 @@ from nsdeploy.commerce.service import KEY_HEADER
 from nsdeploy.commerce.service import CommerceSite
 from nsdeploy.commerce.service import from_plan
 from nsdeploy.commerce.steward import ButterpinkCommerceGateway
+from nsdeploy.commerce.steward import PrivateTurn
 from nsdeploy.commerce.steward import TURN
 from nsdeploy.cailville import choose_position
 from nsdeploy.gateway import make_gateway_handler
@@ -191,7 +192,9 @@ class ArbiterStateTests(unittest.TestCase):
                 self.engine.create(default_trip(), budget)
 
 
-class CommerceHTTPTests(unittest.TestCase):  # pylint: disable=too-many-instance-attributes; two-site fixture
+class CommerceHTTPTests(unittest.TestCase):
+    # pylint: disable=too-many-instance-attributes,too-many-public-methods
+    # A two-site fixture, and one test per policy the steward enforces.
     """
     Tests for the commerce boundary between a real arbiter site and seller site over HTTP.
     """
@@ -516,6 +519,15 @@ class CommerceHTTPTests(unittest.TestCase):  # pylint: disable=too-many-instance
             {'operation': 'approve', 'offer_id': 'invented'},
             {TURN: {'confirmed_offer': 'invented'}}))
         self.assertEqual(result['status'], 'DENIED')
+
+    def test_framework_invocation_metadata_is_not_a_model_argument(self) -> None:
+        """
+        Check that a key neuro-san adds to a tool call does not read as a model argument.
+        """
+        result: Dict[str, Any] = asyncio.run(ButterpinkCommerceGateway().async_invoke(
+            {'operation': 'status', 'progress_reporter': object(), 'activation_capsule': object()},
+            {TURN: PrivateTurn(nonce=secrets.token_urlsafe(8))}))
+        self.assertNotIn('without extra arguments', result.get('error', ''))
 
     def test_real_graph_no_agreement_missing_details_and_cancellation(self) -> None:
         """
