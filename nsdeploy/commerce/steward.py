@@ -104,8 +104,14 @@ class ButterpinkCommerceGateway(CodedTool):
         if not isinstance(turn, PrivateTurn):
             return {"status": "DENIED", "error": "Use the Butterpink private steward in nsFlow."}
         # Framework invocation metadata and optional schema defaults confer no authority.
-        args = {key: value for key, value in args.items() if value is not None
-                and key not in FRAMEWORK_ARGS}
+        filtered_args: Dict[str, Any] = {}
+        arg_key: str
+        arg_value: Any
+        # Drop unset arguments and framework metadata.
+        for arg_key, arg_value in args.items():
+            if arg_value is not None and arg_key not in FRAMEWORK_ARGS:
+                filtered_args[arg_key] = arg_value
+        args = filtered_args
         operation: Any = args.get("operation")
         fields: Set[str] = {"operation", "arrival", "budget_cents"} if operation == "negotiate" else {"operation"}
         if operation == "approve":
@@ -122,14 +128,23 @@ class ButterpinkCommerceGateway(CodedTool):
                                       "'Confirm booking' in a later private chat turn.")
             if operation == "approve":
                 offers: List[Dict[str, Any]] = (binding["last_result"] or {}).get("offers", [])
-                offer: Optional[Dict[str, Any]] = next((item for item in offers
-                                                        if item["offer_id"] == args["offer_id"]), None)
+                offer: Optional[Dict[str, Any]] = None
+                candidate_offer: Dict[str, Any]
+                # Find the first offer whose id matches the requested one.
+                for candidate_offer in offers:
+                    if candidate_offer["offer_id"] == args["offer_id"]:
+                        offer = candidate_offer
+                        break
                 if not offer or offer["total_cents"] > (binding["requested_budget"] or 0):
                     raise PermissionError("This offer exceeds the user's latest stated maximum. "
                                           "Cancel it and negotiate a new mandate.")
             endpoint: str = origin(os.environ.get("NSDEPLOY_COMMERCE_ARBITER_URL", "http://127.0.0.1:8105"))
             deny_origins: str = os.environ.get('NSDEPLOY_STEWARD_DENY_ORIGINS', '')
-            denied: Set[str] = {item.strip().rstrip('/') for item in deny_origins.split(',')}
+            denied: Set[str] = set()
+            deny_item: str
+            # Normalize every comma-separated denied origin.
+            for deny_item in deny_origins.split(','):
+                denied.add(deny_item.strip().rstrip('/'))
             if endpoint in denied:
                 raise PermissionError("The arbiter is denied by the private steward's local policy.")
             key: str = credential_path().read_text(encoding="utf-8").strip()

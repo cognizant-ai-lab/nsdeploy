@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from typing import ClassVar
 from typing import Dict
+from typing import Iterator
 from typing import List
 from typing import Optional
 from typing import Set
@@ -407,6 +408,21 @@ class _ChatUpstreamHandler(BaseHTTPRequestHandler):
 class ByokOnlyTests(unittest.TestCase):
     """A served site must never use an LLM credential configured on the host."""
 
+    @staticmethod
+    def _handler_args(make_handler_args: Tuple[Any, ...],
+                      upstream: Optional[ThreadingHTTPServer]) -> Iterator[Any]:
+        """
+        Resolve the make_handler arguments, calling each callable one with the upstream port.
+
+        :param make_handler_args: Arguments for make_handler after the root; callables receive the upstream port.
+        :param upstream: The upstream server, required when any argument is callable.
+        :return: An iterator over the resolved arguments, in order.
+        """
+        handler_arg: Any
+        # Call each callable argument with the upstream port; pass the others through unchanged.
+        for handler_arg in make_handler_args:
+            yield handler_arg(upstream.server_port) if callable(handler_arg) else handler_arg
+
     def _serve(self, handler_cls: Optional[Type[BaseHTTPRequestHandler]], *make_handler_args: Any) -> int:
         """
         Start an optional upstream and a launcher proxy, and register their cleanup.
@@ -422,7 +438,7 @@ class ByokOnlyTests(unittest.TestCase):
         temp: tempfile.TemporaryDirectory[str] = (
             tempfile.TemporaryDirectory())  # pylint: disable=consider-using-with; removed in cleanup
         root: Path = Path(temp.name)
-        args: List[Any] = [a(upstream.server_port) if callable(a) else a for a in make_handler_args]
+        args: List[Any] = list(self._handler_args(make_handler_args, upstream))
         proxy: ThreadingHTTPServer = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(root, *args))
         threading.Thread(target=proxy.serve_forever, daemon=True).start()
 
@@ -559,7 +575,12 @@ class ByokOnlyTests(unittest.TestCase):
             "python", Path("/site"), plan, 8091, 50000, "https://api.example/v1",
             "https://net.agents.example.com",
         )
-        flags: Set[str] = {arg for arg in cmd if arg.startswith("--")}
+        flags: Set[str] = set()
+        arg: str
+        # Collect the command-line flags.
+        for arg in cmd:
+            if arg.startswith("--"):
+                flags.add(arg)
         self.assertEqual(flags, {"--config", "--site-base", "--port", "--upstream"})
         self.assertNotIn("front", cmd)
         self.assertNotIn("--api-key", cmd)

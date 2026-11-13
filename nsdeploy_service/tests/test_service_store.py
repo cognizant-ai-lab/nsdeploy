@@ -17,6 +17,7 @@ from nsdeploy_service.config import Settings
 from nsdeploy_service.models import SUMMARY_SCHEMA_VERSION
 from nsdeploy_service.models import DeploymentStatus
 from nsdeploy_service.models import DeployOptions
+from nsdeploy_service.models import NetworkLink
 from nsdeploy_service.models import NetworkSummary
 from nsdeploy_service.ports import PortPool
 from nsdeploy_service.ports import PortPoolExhausted
@@ -182,8 +183,18 @@ class DeploymentStoreTest(StoreTempCase):
         other: Dict[str, Any] = self.store.create_org("Globex")
         self.store.save_deployment(self._deployment_row("d1", self.org["id"], status="ready"))
         self.store.save_deployment(self._deployment_row("d2", other["id"], status="failed"))
-        self.assertEqual([r["id"] for r in self.store.list_deployments(org_id=self.org["id"])], ["d1"])
-        self.assertEqual([r["id"] for r in self.store.list_deployments(status="failed")], ["d2"])
+        org_ids: List[str] = []
+        org_row: Dict[str, Any]
+        # Collect the ids of the organization's deployments.
+        for org_row in self.store.list_deployments(org_id=self.org["id"]):
+            org_ids.append(org_row["id"])
+        self.assertEqual(org_ids, ["d1"])
+        failed_ids: List[str] = []
+        failed_row: Dict[str, Any]
+        # Collect the ids of the failed deployments.
+        for failed_row in self.store.list_deployments(status="failed"):
+            failed_ids.append(failed_row["id"])
+        self.assertEqual(failed_ids, ["d2"])
 
     def test_unknown_reads_are_none_not_errors(self) -> None:
         """Reads of an unknown deployment return None rather than raising."""
@@ -512,11 +523,15 @@ class RestartTest(unittest.TestCase):
         supervisor: Supervisor = self._supervisor()
         original: Deployment = self._stopped(supervisor)
         row: Optional[Dict[str, Any]] = supervisor.store.get_deployment(original.id)
+        kept: Dict[str, Any] = {}
+        key: str
+        # Copy the columns that are kept as they are.
+        for key in ("id", "org_id", "name", "status", "url", "port", "created_at",
+                    "ready_at", "stopped_at", "expires_at", "error", "pid",
+                    "log_path", "work_dir", "hocon_path"):
+            kept[key] = row[key]
         supervisor.store.save_deployment({
-            **{k: row[k] for k in (
-                "id", "org_id", "name", "status", "url", "port", "created_at",
-                "ready_at", "stopped_at", "expires_at", "error", "pid",
-                "log_path", "work_dir", "hocon_path")},
+            **kept,
             "network_json": None, "warnings_json": None,
             "options_json": "{not json",
         })
@@ -563,16 +578,24 @@ class BundleReadinessCase(unittest.TestCase):
         self._tmp.cleanup()
 
     def _write_bundle(self, name: str = "net", agents: int = 2, links: Sequence[Tuple[str, str]] = ()) -> None:
+        imports: List[Dict[str, Any]] = []
+        reference: str
+        target: str
+        # Describe each resolved link as a linked import.
+        for reference, target in links:
+            imports.append({"reference": reference, "target": target, "status": "linked", "callers": ["front"]})
         (self.out / "agent-manifest.json").write_text(json.dumps({
             "brand": "Net", "networks": [{"name": name, "description": "d"}],
             "agent_mcp": {"front_man": "front"},
-            "linking": {"imports": [
-                {"reference": r, "target": t, "status": "linked", "callers": ["front"]}
-                for r, t in links
-            ]},
+            "linking": {"imports": imports},
         }), encoding="utf-8")
+        tools: List[Dict[str, Any]] = []
+        index: int
+        # Describe each agent.
+        for index in range(agents):
+            tools.append({"name": f"a{index}"})
         (self.out / f"{name}.network.json").write_text(json.dumps({
-            "tools": [{"name": f"a{i}"} for i in range(agents)],
+            "tools": tools,
         }), encoding="utf-8")
 
     def test_bundle_is_not_ready_before_nsdeploy_writes_it(self) -> None:
@@ -599,8 +622,12 @@ class BundleReadinessCase(unittest.TestCase):
         self._write_bundle(links=[("peer_net", "http://127.0.0.1:8101/peer_net")])
         summary: NetworkSummary = summarize_build(self.out, "net", "")
         self.assertEqual(summary.agent_count, 2)
-        self.assertEqual([link.target for link in summary.links],
-                         ["http://127.0.0.1:8101/peer_net"])
+        targets: List[str] = []
+        link: NetworkLink
+        # Collect the target of each link.
+        for link in summary.links:
+            targets.append(link.target)
+        self.assertEqual(targets, ["http://127.0.0.1:8101/peer_net"])
 
 
 class SummaryRepairCase(unittest.TestCase):
@@ -632,13 +659,16 @@ class SummaryRepairCase(unittest.TestCase):
         work_dir: Path = self.root / "dep1"
         out_dir: Path = work_dir / "site"
         out_dir.mkdir(parents=True, exist_ok=True)
+        imports: List[Dict[str, Any]] = []
+        reference: str
+        target: str
+        # Describe each resolved link as a linked import.
+        for reference, target in links:
+            imports.append({"reference": reference, "target": target, "status": "linked", "callers": ["front"]})
         (out_dir / "agent-manifest.json").write_text(json.dumps({
             "brand": "Net", "networks": [{"name": name, "description": "a network"}],
             "agent_mcp": {"front_man": "front"},
-            "linking": {"imports": [
-                {"reference": r, "target": t, "status": "linked", "callers": ["front"]}
-                for r, t in links
-            ]},
+            "linking": {"imports": imports},
         }), encoding="utf-8")
         (out_dir / f"{name}.network.json").write_text(json.dumps({
             "tools": [{"name": "front"}, {"name": "second"}],
@@ -668,8 +698,12 @@ class SummaryRepairCase(unittest.TestCase):
         self.assertEqual(row["network"]["front_man"], "front")
         self.assertEqual(row["network"]["agent_count"], 2)
         self.assertEqual(row["network"]["description"], "a network")
-        self.assertEqual([link["target"] for link in row["network"]["links"]],
-                         ["http://127.0.0.1:8701/peer_net"])
+        targets: List[str] = []
+        link: Dict[str, Any]
+        # Collect the target of each stored link.
+        for link in row["network"]["links"]:
+            targets.append(link["target"])
+        self.assertEqual(targets, ["http://127.0.0.1:8701/peer_net"])
 
     def test_repair_also_restores_the_lost_warnings(self) -> None:
         """The repair also restores the lost warnings."""
@@ -679,7 +713,14 @@ class SummaryRepairCase(unittest.TestCase):
         reopened: Supervisor = self._supervisor()
         self.assertEqual(reopened.resummarized, ["dep1"])
         row: Optional[Dict[str, Any]] = reopened.store.get_deployment("dep1")
-        self.assertTrue(any("unlinked_peer" in warning for warning in row["warnings"]))
+        found: bool = False
+        warning: str
+        # Look for the warning about the unlinked peer.
+        for warning in row["warnings"]:
+            if "unlinked_peer" in warning:
+                found = True
+                break
+        self.assertTrue(found)
 
     def test_repair_leaves_a_populated_summary_alone(self) -> None:
         """The repair leaves a populated summary alone."""

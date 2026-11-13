@@ -91,7 +91,13 @@ class DiscoveryTests(unittest.TestCase):
         doc: Dict[str, Any] = discover('https://forms.test/form', site_url='https://agent.test', max_pages=1,
                                        fetcher=fetch)
         self.assertEqual(doc['visited'], ['https://forms.test/form'])
-        self.assertEqual([method for _, method in calls], ['GET', 'OPTIONS', 'OPTIONS'])
+        call_methods: List[str] = []
+        _call_url: str
+        call_method: str
+        # Collect the HTTP method of each recorded call.
+        for _call_url, call_method in calls:
+            call_methods.append(call_method)
+        self.assertEqual(call_methods, ['GET', 'OPTIONS', 'OPTIONS'])
         self.assertEqual(doc['actions'][0]['cors']['checks'][0]['status'], 'preflight-permitted')
 
     def test_missing_cors_stays_unverified(self) -> None:
@@ -120,7 +126,14 @@ class DiscoveryTests(unittest.TestCase):
             return links, {}, 200
         doc: Dict[str, Any] = discover('https://docs.test/', fetcher=fetch)
         self.assertEqual(len(doc['actions']), 3)
-        self.assertEqual([u for u, m in calls if m == 'GET'], ['https://docs.test/', 'https://docs.test/openapi.json'])
+        get_urls: List[str] = []
+        call_url: str
+        call_method: str
+        # Collect the URLs of the recorded GET calls.
+        for call_url, call_method in calls:
+            if call_method == 'GET':
+                get_urls.append(call_url)
+        self.assertEqual(get_urls, ['https://docs.test/', 'https://docs.test/openapi.json'])
 
     def test_lock_review_reuse_refresh_and_source_mismatch(self) -> None:
         """Check lock review reuse refresh and source mismatch."""

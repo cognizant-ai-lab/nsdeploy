@@ -61,11 +61,12 @@ class PublicAgentNetworkGateway(CodedTool):
         site_parsed: urllib.parse.ParseResult = urllib.parse.urlparse(site_url)
         if site_parsed.scheme not in ("http", "https") or not site_parsed.netloc:
             return "Error: site_url must resolve to an http(s) public agent site."
-        denied: set[str] = {
-            item.strip().rstrip("/")
-            for item in os.environ.get("NSDEPLOY_STEWARD_DENY_ORIGINS", "").split(",")
-            if item.strip()
-        }
+        denied: set[str] = set()
+        deny_item: str
+        # Normalize every non-empty comma-separated denied origin.
+        for deny_item in os.environ.get("NSDEPLOY_STEWARD_DENY_ORIGINS", "").split(","):
+            if deny_item.strip():
+                denied.add(deny_item.strip().rstrip("/"))
         if _origin(site_url).rstrip("/") in denied:
             return "Denied by the steward's NSDEPLOY_STEWARD_DENY_ORIGINS policy."
         api_key: str = (
@@ -137,11 +138,22 @@ class PublicAgentNetworkGateway(CodedTool):
                             tools: List[Tool] = (await session.list_tools()).tools
                             if not tools:
                                 return "Error: the public site exposed no MCP tools."
-                            tool: Tool = next((item for item in tools if item.name == "invoke_network"), tools[0])
+                            tool: Tool = tools[0]
+                            candidate_tool: Tool
+                            # Prefer the first tool named invoke_network over the first listed tool.
+                            for candidate_tool in tools:
+                                if candidate_tool.name == "invoke_network":
+                                    tool = candidate_tool
+                                    break
                             fields: Dict[str, Any] = (tool.inputSchema or {}).get("properties", {}) or {}
                             argument_name: str = "request" if "request" in fields else (next(iter(fields), "request"))
                             result: CallToolResult = await session.call_tool(tool.name, {argument_name: request})
-            return " ".join(getattr(item, "text", str(item)) for item in (result.content or []))
+            texts: List[str] = []
+            content_item: Any
+            # Render every result content block as text.
+            for content_item in result.content or []:
+                texts.append(getattr(content_item, "text", str(content_item)))
+            return " ".join(texts)
         except TimeoutError:
             return (
                 f"Public agent site timed out after {PUBLIC_SITE_REQUEST_TIMEOUT_SECONDS:g} seconds; "

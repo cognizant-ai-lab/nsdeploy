@@ -348,7 +348,12 @@ class PublishEndpointTest(unittest.TestCase):
             self._seed(client.app.state.supervisor)
             self.assertEqual(client.post("/deployments/d0/publish").status_code, 200)
             graph: Dict[str, Any] = client.get("/graph").json()
-            self.assertEqual([node["name"] for node in graph["nodes"]], ["net0"])
+            node_names: List[str] = []
+            node: Dict[str, Any]
+            # Collect the name of each node on the map.
+            for node in graph["nodes"]:
+                node_names.append(node["name"])
+            self.assertEqual(node_names, ["net0"])
 
     def test_the_deployment_list_still_shows_drafts(self) -> None:
         """Only map visibility is gated — the owner must still see what they built."""
@@ -357,7 +362,14 @@ class PublishEndpointTest(unittest.TestCase):
             self._seed(client.app.state.supervisor)
             body: Dict[str, Any] = client.get("/deployments").json()
             self.assertEqual(len(body["deployments"]), 2)
-            self.assertFalse(any(d["published"] for d in body["deployments"]))
+            any_published: bool = False
+            deployment: Dict[str, Any]
+            # Look for any published deployment.
+            for deployment in body["deployments"]:
+                if deployment["published"]:
+                    any_published = True
+                    break
+            self.assertFalse(any_published)
 
     def test_the_directory_still_lists_drafts(self) -> None:
         """The directory still lists drafts."""
@@ -365,7 +377,14 @@ class PublishEndpointTest(unittest.TestCase):
         with self._client() as client:
             self._seed(client.app.state.supervisor)
             body: Dict[str, Any] = client.get("/directory").json()
-            names: List[str] = [d["name"] for org in body["organizations"] for d in org["deployments"]]
+            names: List[str] = []
+            org: Dict[str, Any]
+            # Collect the deployment names of every organization.
+            for org in body["organizations"]:
+                deployment: Dict[str, Any]
+                # Collect the name of each of the organization's deployments.
+                for deployment in org["deployments"]:
+                    names.append(deployment["name"])
             self.assertCountEqual(names, ["net0", "net1"])
 
     def test_the_view_reports_publish_state(self) -> None:
@@ -397,7 +416,11 @@ class PublishEndpointTest(unittest.TestCase):
             self._seed(client.app.state.supervisor)
             client.post("/deployments/d0/publish")
             graph: Dict[str, Any] = client.get("/graph").json()
-            ids: Set[str] = {node["id"] for node in graph["nodes"]}
+            ids: Set[str] = set()
+            node: Dict[str, Any]
+            # Collect the id of each node on the map.
+            for node in graph["nodes"]:
+                ids.add(node["id"])
             edge: Dict[str, Any]
             for edge in graph["suggested_edges"]:
                 self.assertIn(edge["source"], ids)
@@ -472,7 +495,12 @@ class MapStatusFilterTest(unittest.TestCase):
             supervisor.store.set_published(deployment_id, "2026-09-23T22:00:00+00:00")
 
     def _names(self, client: TestClient) -> Set[str]:
-        return {node["name"] for node in client.get("/graph").json()["nodes"]}
+        names: Set[str] = set()
+        node: Dict[str, Any]
+        # Collect the name of each node on the map.
+        for node in client.get("/graph").json()["nodes"]:
+            names.add(node["name"])
+        return names
 
     def test_a_building_network_is_not_on_the_map_yet(self) -> None:
         """A pin appears when the network is finished, not when it is started.
@@ -505,7 +533,14 @@ class MapStatusFilterTest(unittest.TestCase):
             self._seed(supervisor, "d2", "ready")
             nodes: List[Dict[str, Any]] = client.get("/graph").json()["nodes"]
             self.assertEqual(len(nodes), 1)
-            self.assertTrue(all(node["url"] for node in nodes))
+            all_have_url: bool = True
+            node: Dict[str, Any]
+            # Check that every node carries a URL.
+            for node in nodes:
+                if not node["url"]:
+                    all_have_url = False
+                    break
+            self.assertTrue(all_have_url)
 
     def test_failed_and_stopped_networks_leave_the_map(self) -> None:
         """Failed and stopped networks leave the map."""
@@ -667,7 +702,12 @@ class MapVisibilityTest(unittest.TestCase):
         with self._client() as client:
             self._row(client.app.state.supervisor, "ready")
             nodes: List[Dict[str, Any]] = client.get("/graph").json()["nodes"]
-            self.assertEqual([n["name"] for n in nodes], ["netd"])
+            node_names: List[str] = []
+            node: Dict[str, Any]
+            # Collect the name of each node on the map.
+            for node in nodes:
+                node_names.append(node["name"])
+            self.assertEqual(node_names, ["netd"])
 
     def test_a_pin_carries_a_url_so_it_can_be_opened(self) -> None:
         """The map renders a pin as a link only when the node has a URL; without
@@ -808,20 +848,48 @@ class PublishedOriginWarningTest(unittest.TestCase):
         """Https with port per deployment is flagged."""
         found: List[str] = self._warnings(public_scheme="https",
                                           public_host="x.eastus.azurecontainerapps.io")
-        self.assertTrue(any("will not resolve" in w for w in found), found)
+        flagged: bool = False
+        warning: str
+        # Look for the unresolvable-URL warning.
+        for warning in found:
+            if "will not resolve" in warning:
+                flagged = True
+                break
+        self.assertTrue(flagged, found)
 
     def test_the_warning_names_the_port_pool(self) -> None:
         """The warning names the port pool."""
         found: List[str] = self._warnings(public_scheme="https", public_host="x.example.com")
-        self.assertTrue(any("8710-8719" in w for w in found), found)
+        flagged: bool = False
+        warning: str
+        # Look for a warning that names the port pool.
+        for warning in found:
+            if "8710-8719" in warning:
+                flagged = True
+                break
+        self.assertTrue(flagged, found)
 
     def test_a_subdomain_template_clears_it(self) -> None:
         """A subdomain template clears it."""
         found: List[str] = self._warnings(public_scheme="https", public_host="x.example.com",
                                           subdomain_template="{id}")
-        self.assertFalse(any("will not resolve" in w for w in found), found)
+        flagged: bool = False
+        warning: str
+        # Look for the unresolvable-URL warning.
+        for warning in found:
+            if "will not resolve" in warning:
+                flagged = True
+                break
+        self.assertFalse(flagged, found)
 
     def test_plain_http_is_not_flagged(self) -> None:
         """Plain http is not flagged."""
         found: List[str] = self._warnings(public_scheme="http", public_host="10.1.2.3")
-        self.assertFalse(any("will not resolve" in w for w in found), found)
+        flagged: bool = False
+        warning: str
+        # Look for the unresolvable-URL warning.
+        for warning in found:
+            if "will not resolve" in warning:
+                flagged = True
+                break
+        self.assertFalse(flagged, found)

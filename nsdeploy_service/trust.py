@@ -63,8 +63,12 @@ def has_usable_store() -> bool:
     build-time Unix path such as /usr/local/ssl/cert.pem that was never shipped.
     """
     paths: ssl.DefaultVerifyPaths = ssl.get_default_verify_paths()
-    return any(candidate and Path(candidate).exists()
-               for candidate in (paths.cafile, paths.capath))
+    candidate: Optional[str]
+    # Stop at the first configured path that exists on disk.
+    for candidate in (paths.cafile, paths.capath):
+        if candidate and Path(candidate).exists():
+            return True
+    return False
 
 
 def _install_python_default(bundle: str) -> None:

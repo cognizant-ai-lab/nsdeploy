@@ -35,9 +35,17 @@ class CruseDeploymentTests(unittest.TestCase):
 
     def test_every_prompt_example_is_valid_json_and_covers_rich_outputs(self) -> None:
         """Check every prompt example is valid json and covers rich outputs."""
-        examples: List[Dict[str, Any]] = [json.loads(line) for line in CRUSE_DIRECTIVE.splitlines()
-                                          if line.startswith("{")]
-        kinds: Set[Optional[str]] = {example.get("kind") for example in examples}
+        examples: List[Dict[str, Any]] = []
+        line: str
+        # Parse every directive line that holds a JSON example.
+        for line in CRUSE_DIRECTIVE.splitlines():
+            if line.startswith("{"):
+                examples.append(json.loads(line))
+        kinds: Set[Optional[str]] = set()
+        example: Dict[str, Any]
+        # Collect the kind of every example.
+        for example in examples:
+            kinds.add(example.get("kind"))
         self.assertTrue({"form", "choice", "confirm", "info", "report", "table", "chart", "html"} <= kinds)
         block: Optional[re.Match[str]] = re.search(r"```cruse-ui\n(.*?)\n```", CRUSE_DIRECTIVE, re.S)
         self.assertEqual(json.loads(block[1])["version"], 1)

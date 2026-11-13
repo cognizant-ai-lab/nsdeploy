@@ -119,7 +119,15 @@ class _HtmlSanitizer(HTMLParser):
         return "".join(parts)
 
     def _is_app(self, attrs: List[Tuple[str, Optional[str]]]) -> bool:
-        return not self.app_seen and any((n or "").lower() == "id" and (v or "") == "app" for n, v in attrs)
+        if self.app_seen:
+            return False
+        attr_name: str
+        attr_value: Optional[str]
+        # Report whether any attribute is id="app", stopping at the first match.
+        for attr_name, attr_value in attrs:
+            if (attr_name or "").lower() == "id" and (attr_value or "") == "app":
+                return True
+        return False
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         if self.skip:
@@ -183,7 +191,13 @@ def _valid_composed_layout(body: str) -> bool:
     """A composed theme is usable only when every runtime surface has one target."""
     if 'data-ns-layout="composed"' not in body:
         return True
-    required: bool = all(body.count(f'data-ns-slot="{slot}"') == 1 for slot in ("header", "chat", "agents"))
+    required: bool = True
+    slot: str
+    # Require exactly one target per mandatory slot, stopping at the first failure.
+    for slot in ("header", "chat", "agents"):
+        if body.count(f'data-ns-slot="{slot}"') != 1:
+            required = False
+            break
     # Settings remains optional here so prompt-v12 cached/editable themes stay
     # valid; prompt v13 requires exactly one. Prompt v10 briefly emitted activity.
     return (required
@@ -303,14 +317,27 @@ def _clean_welcome(val: Any) -> Optional[Dict[str, Any]]:
 def _identity(plan: DeploymentPlan) -> Dict[str, Any]:
     """The design-relevant facts we send to the LLM (no secrets / sly_data)."""
     meta: Dict[str, Any] = plan.config.get("metadata", {}) or {}
-    front_fn: Dict[str, Any] = next((a.get("function", {}) for a in plan.agents if a.get("name") == plan.front_man), {})
-    return {
+    front_fn: Dict[str, Any] = {}
+    front_agent: Dict[str, Any]
+    # Use the function block of the first agent that is the front man.
+    for front_agent in plan.agents:
+        if front_agent.get("name") == plan.front_man:
+            front_fn = front_agent.get("function", {})
+            break
+    identity: Dict[str, Any] = {
         "network": plan.network_name,
         "description": (front_fn.get("description") or meta.get("description") or "").strip()[:600],
         "sample_queries": (meta.get("sample_queries") or [])[:4],
-        "agents": [{"name": a.get("name"), "role": (a.get("function", {}).get("description") or "").strip()[:160],
-                    "tags": (a.get("metadata", {}) or {}).get("tags")} for a in plan.agents][:12],
     }
+    agents: List[Dict[str, Any]] = []
+    agent: Dict[str, Any]
+    # Summarize every agent's name, role and tags.
+    for agent in plan.agents:
+        agents.append({"name": agent.get("name"),
+                       "role": (agent.get("function", {}).get("description") or "").strip()[:160],
+                       "tags": (agent.get("metadata", {}) or {}).get("tags")})
+    identity["agents"] = agents[:12]
+    return identity
 
 
 _WELCOME_SHAPE: str = ('{"message":"...","widget":{"title":"...","icon":"📝","schema":{"type":"object",'
@@ -452,8 +479,12 @@ def _salvage_meta(text: str) -> Dict[str, Any]:
     data: Dict[str, Any] = {}
     cm: Optional[re.Match[str]] = re.search(r'"colors"\s*:\s*\{([^{}]*)\}', text, re.S)
     if cm:
-        # pylint: disable-next=unnecessary-comprehension  # kept to preserve behavior
-        cols: Dict[str, str] = {k: v for k, v in re.findall(r'"([a-z_]+)"\s*:\s*"(#[0-9a-fA-F]{3,8})"', cm.group(1))}
+        cols: Dict[str, str] = {}
+        color_name: str
+        color_value: str
+        # Map every recovered color name to its hex value; a later duplicate wins.
+        for color_name, color_value in re.findall(r'"([a-z_]+)"\s*:\s*"(#[0-9a-fA-F]{3,8})"', cm.group(1)):
+            cols[color_name] = color_value
         if cols:
             data["colors"] = cols
     key: str

@@ -95,7 +95,12 @@ class ArbiterStateTests(unittest.TestCase):
         bid: Dict[str, Any]
         offers, seller, bid = self.market()
         self.assertEqual(offers[0]['total_cents'], 47750)
-        self.assertEqual(sum(line['cents'] for line in offers[0]['line_items']), 47750)
+        line_total: int = 0
+        line: Dict[str, Any]
+        # Add up the cents of every line item in the first offer.
+        for line in offers[0]['line_items']:
+            line_total += line['cents']
+        self.assertEqual(line_total, 47750)
         self.assertEqual(bid['status'], 'BID_COMMITTED')
         public: str = json.dumps([self.engine.public_request(seller, 'seabreeze_inn'), offers, bid])
         secret: str
@@ -143,7 +148,14 @@ class ArbiterStateTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=6) as pool:
             list(pool.map(lambda _: self.engine.authorize(owner, offers[0]['offer_id']), range(8)))
             receipts: List[Dict[str, Any]] = list(pool.map(lambda _: self.engine.confirm(owner), range(8)))
-        self.assertTrue(all(receipt == receipts[0] for receipt in receipts))
+        receipts_match: bool = True
+        receipt: Dict[str, Any]
+        # Check that every receipt equals the first, stopping at the first mismatch.
+        for receipt in receipts:
+            if receipt != receipts[0]:
+                receipts_match = False
+                break
+        self.assertTrue(receipts_match)
         db: sqlite3.Connection
         with self.engine.db() as db:
             self.assertEqual(db.execute('SELECT COUNT(*) FROM ledger').fetchone()[0], 1)
@@ -252,6 +264,23 @@ class CommerceHTTPTests(unittest.TestCase):
         (site / 'index.html').write_text('existing agent site')
         return make_handler(site, '', DEFAULT_RUNTIME_DIR, [], commerce=service)
 
+    @staticmethod
+    def without_none_values(values: Dict[str, Optional[str]]) -> Dict[str, Optional[str]]:
+        """
+        Copy a header mapping without the headers whose value is None.
+
+        :param values: The header names mapped to their values; None marks a removed header.
+        :return: A new mapping that holds only the headers with a value.
+        """
+        kept_values: Dict[str, Optional[str]] = {}
+        header_key: str
+        header_value: Optional[str]
+        # Drop every header whose override value is None.
+        for header_key, header_value in values.items():
+            if header_value is not None:
+                kept_values[header_key] = header_value
+        return kept_values
+
     # pylint: disable-next=too-many-arguments,too-many-positional-arguments
     def request(self, operation: str = '', body: Optional[Dict[str, Any]] = None, user: str = 'alice',
                 headers: Optional[Mapping[str, Optional[str]]] = None, server: Optional[ThreadingHTTPServer] = None,
@@ -271,7 +300,7 @@ class CommerceHTTPTests(unittest.TestCase):
         values: Dict[str, Optional[str]] = {'Connection': 'close', KEY_HEADER: self.key,
                                             'Content-Type': 'application/json'}
         values.update(headers or {})
-        values = {key: value for key, value in values.items() if value is not None}
+        values = self.without_none_values(values)
         if body is not None and operation not in ('provider-bid', 'seller-bid'):
             body = {'session': self.sessions[user], **body}
         connection: http.client.HTTPConnection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=20)
@@ -415,7 +444,14 @@ class CommerceHTTPTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=4) as pool:
             receipts: List[Dict[str, Any]] = list(pool.map(lambda _: self.request('approve', payload)[1]['receipt'],
                                                            range(4)))
-        self.assertTrue(all(item == receipts[0] for item in receipts))
+        receipts_match: bool = True
+        item: Dict[str, Any]
+        # Check that every receipt equals the first, stopping at the first mismatch.
+        for item in receipts:
+            if item != receipts[0]:
+                receipts_match = False
+                break
+        self.assertTrue(receipts_match)
 
     def test_seller_capability_cannot_approve_or_forge_a_bid(self) -> None:
         """
@@ -471,7 +507,15 @@ class CommerceHTTPTests(unittest.TestCase):
                                                                   timeout=120, env=env, check=False)
         self.assertEqual(result.returncode, 0, result.stderr[-4000:] + result.stdout[-4000:])
         self.assertNotIn(self.key, result.stdout + result.stderr)
-        return json.loads(next(line[7:] for line in result.stdout.splitlines() if line.startswith('RESULT:')))
+        result_text: Optional[str] = None
+        line: str
+        # Take the payload of the first RESULT: line in the output.
+        for line in result.stdout.splitlines():
+            if line.startswith('RESULT:'):
+                result_text = line[7:]
+                break
+        self.assertIsNotNone(result_text, result.stdout[-4000:])
+        return json.loads(result_text)
 
     def test_real_graph_books_from_natural_request_and_subsequent_confirmation(self) -> None:
         """
@@ -563,7 +607,14 @@ class CommerceDeploymentTests(unittest.TestCase):
             self.assertIn('butterpink_commerce', private['tools'][0]['tools'])
             self.assertIn('public_agent_mcp_gateway', private['tools'][0]['tools'])
             self.assertIn('middleware', private['tools'][0])
-            commerce: Dict[str, Any] = next(tool for tool in private['tools'] if tool['name'] == 'butterpink_commerce')
+            commerce: Optional[Dict[str, Any]] = None
+            tool: Dict[str, Any]
+            # Find the first private steward tool named butterpink_commerce.
+            for tool in private['tools']:
+                if tool['name'] == 'butterpink_commerce':
+                    commerce = tool
+                    break
+            self.assertIsNotNone(commerce)
             self.assertEqual(commerce['function']['parameters']['properties']['budget_cents']['type'], 'int')
             self.assertNotIn('ButterpinkCommerceGateway', (root/'butterpink_family.network.json').read_text())
             self.assertNotIn('Commerce demo', (root/'index.html').read_text())
@@ -598,7 +649,12 @@ class CommerceDeploymentTests(unittest.TestCase):
             community: Dict[str, Any] = json.loads(path.read_text())
             self.assertIn(['butterpink_family', 'commerce_arbiter'], community['relationships'])
             self.assertIn(['seabreeze_inn', 'commerce_arbiter'], community['relationships'])
-            rightmost: int = max(site['position']['my_px'] for site in community['sites'])
+            site_positions: List[int] = []
+            site: Dict[str, Any]
+            # Collect the horizontal position of every site on the map.
+            for site in community['sites']:
+                site_positions.append(site['position']['my_px'])
+            rightmost: int = max(site_positions)
             self.assertGreater(choose_position(community['sites'])['my_px'], rightmost)
         page: str = (root / 'cailville.html').read_text()
         self.assertIn('stewards-toggle', page)

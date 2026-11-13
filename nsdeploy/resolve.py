@@ -166,7 +166,7 @@ def _parse_hocon_content(content: str, source: StudioSource) -> tuple[Dict[str, 
             cfg: ConfigTree = ConfigFactory.parse_string(content, basedir=str(source.root))
     finally:
         pyhocon_logger.removeHandler(handler)
-    missing.extend(m for m in captured if m not in missing)
+    _append_new(missing, captured)
     config: Dict[str, Any] = cfg.as_plain_ordered_dict() if hasattr(cfg, "as_plain_ordered_dict") else dict(cfg)
     return config, missing
 
@@ -204,6 +204,53 @@ def _find_front_man(config: Dict[str, Any]) -> str:
     return ""
 
 
+def _append_new(target: List[str], items: List[str]) -> None:
+    """
+    Append each item not already in the target, in order; a repeated item is appended only once.
+
+    :param target: The list that receives the new items.
+    :param items: The candidate items.
+    """
+    item: str
+    # Check each item against the target as it grows, so repeats within items are skipped too.
+    for item in items:
+        if item not in target:
+            target.append(item)
+
+
+def _llm_agent_copies(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Deep-copy the LLM agents among the tool entries.
+
+    :param tools: The tool entries of a network configuration.
+    :return: Deep copies of the LLM agent entries, in configuration order.
+    """
+    agents: List[Dict[str, Any]] = []
+    tool: Dict[str, Any]
+    # Deep-copy each entry that is an LLM agent.
+    for tool in tools:
+        if _is_llm_agent(tool):
+            agents.append(copy.deepcopy(tool))
+    return agents
+
+
+def _prefixed_name_map(agents: List[Dict[str, Any]], prefix: str) -> Dict[str, str]:
+    """
+    Map each named agent to its prefixed embedded name.
+
+    :param agents: The agent entries.
+    :param prefix: The prefix for the embedded names.
+    :return: The prefixed name by original name; a later duplicate name replaces an earlier one.
+    """
+    name_map: Dict[str, str] = {}
+    agent: Dict[str, Any]
+    # Map the name of each named agent to its prefixed name.
+    for agent in agents:
+        if agent.get("name"):
+            name_map[agent.get("name", "")] = f"{prefix}__{agent.get('name', '')}"
+    return name_map
+
+
 def expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
                                  missing_includes: List[str]) -> Dict[str, str]:
     """Fetch slash-referenced registry HOCONs and inline their agents.
@@ -230,17 +277,16 @@ def expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
         child_config: Dict[str, Any]
         child_missing: List[str]
         child_config, child_missing = _parse_hocon_content(path.read_text(encoding="utf-8"), source)
-        missing_includes.extend(m for m in child_missing if m not in missing_includes)
+        _append_new(missing_includes, child_missing)
         child_aliases: Dict[str, str] = expand_embedded_network_refs(child_config, source, missing_includes)
 
         child_tools: List[Dict[str, Any]] = child_config.get("tools", []) or []
-        child_agents: List[Dict[str, Any]] = [copy.deepcopy(t) for t in child_tools if _is_llm_agent(t)]
+        child_agents: List[Dict[str, Any]] = _llm_agent_copies(child_tools)
         if not child_agents:
             return None
 
         prefix: str = _agent_prefix(ref)
-        name_map: Dict[str, str]
-        name_map = {a.get("name", ""): f"{prefix}__{a.get('name', '')}" for a in child_agents if a.get("name")}
+        name_map: Dict[str, str] = _prefixed_name_map(child_agents, prefix)
         front_man: str = _find_front_man(child_config)
         if front_man not in name_map:
             return None
@@ -353,11 +399,13 @@ def _can_construct_with_no_args(cls: Any) -> bool:
         sig: inspect.Signature = inspect.signature(cls)
     except (TypeError, ValueError):
         return True
-    return all(
-        param.default is not inspect.Parameter.empty
-        or param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-        for param in sig.parameters.values()
-    )
+    param: inspect.Parameter
+    # Reject the class at the first parameter that has no default and is not variadic.
+    for param in sig.parameters.values():
+        if not (param.default is not inspect.Parameter.empty
+                or param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)):
+            return False
+    return True
 
 
 def _resolve_class(class_path: str, source: StudioSource) -> Optional[tuple[str, str]]:
@@ -398,7 +446,12 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],  # pylint: 
     all_missing_includes: List[str] = list(missing_includes)
     expand_embedded_network_refs(config, source, all_missing_includes)
     tools: List[Dict[str, Any]] = config.get("tools", []) or []
-    agent_names: set[str] = {t["name"] for t in tools if "name" in t and "instructions" in t}
+    agent_names: set[str] = set()
+    named_tool: Dict[str, Any]
+    # Collect the names of the entries that have instructions.
+    for named_tool in tools:
+        if "name" in named_tool and "instructions" in named_tool:
+            agent_names.add(named_tool["name"])
 
     plan: DeploymentPlan = DeploymentPlan(
         network_name=network_name,
@@ -421,10 +474,12 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],  # pylint: 
     external_mcp: set[str] = set()
     external_networks: set[str] = set()
     configured_links: Dict[str, str] = _configured_links(config)
-    demo_leaf_names: set[str] = {
-        t.get("name", "") for t in tools
-        if t.get("name") and _is_demo_leaf(t)
-    }
+    demo_leaf_names: set[str] = set()
+    demo_tool: Dict[str, Any]
+    # Collect the names of the demo-mode leaf agents.
+    for demo_tool in tools:
+        if demo_tool.get("name") and _is_demo_leaf(demo_tool):
+            demo_leaf_names.add(demo_tool.get("name", ""))
     referenced_demo_leaves: Dict[str, set[str]] = {}
     owner: Dict[str, Any]
     for owner in tools:
@@ -471,7 +526,12 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],  # pylint: 
             description=description, parameters=parameters,
         )
 
-    specs_by_name: Dict[str, Dict[str, Any]] = {t["name"]: t for t in tools if "name" in t}
+    specs_by_name: Dict[str, Dict[str, Any]] = {}
+    spec_tool: Dict[str, Any]
+    # Index the named entries by name; a later duplicate replaces an earlier one.
+    for spec_tool in tools:
+        if "name" in spec_tool:
+            specs_by_name[spec_tool["name"]] = spec_tool
 
     for t in tools:
         name: str = t.get("name", "")
@@ -512,11 +572,26 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],  # pylint: 
     plan.omitted_tools = sorted(referenced_omitted)
     plan.external_mcps = sorted(external_mcp)
     plan.external_networks = sorted(external_networks)
-    plan.link_slots = {
-        ref: sorted(name for name in callers if name)
-        for ref, callers in sorted(referenced_links.items())
-    }
-    plan.links = {ref: configured_links[ref] for ref in plan.link_slots if ref in configured_links}
+    link_slots: Dict[str, List[str]] = {}
+    slot_ref: str
+    slot_callers: set[str]
+    # Build a sorted caller list for each link slot, in reference order, dropping empty names.
+    for slot_ref, slot_callers in sorted(referenced_links.items()):
+        caller_names: List[str] = []
+        caller_name: str
+        # Keep only non-empty caller names.
+        for caller_name in slot_callers:
+            if caller_name:
+                caller_names.append(caller_name)
+        link_slots[slot_ref] = sorted(caller_names)
+    plan.link_slots = link_slots
+    links: Dict[str, str] = {}
+    link_ref: str
+    # Keep the configured links for the slots that have one.
+    for link_ref in plan.link_slots:
+        if link_ref in configured_links:
+            links[link_ref] = configured_links[link_ref]
+    plan.links = links
     plan.demo_link_fallbacks = sorted(set(referenced_demo_leaves) - set(plan.links))
     plan.replaced_agents = sorted(set(referenced_demo_leaves) & set(plan.links))
     return plan

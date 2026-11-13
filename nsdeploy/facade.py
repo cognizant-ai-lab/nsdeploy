@@ -89,7 +89,77 @@ def _published_target(site_url: str) -> Tuple[str, str]:
     return site_base, requested
 
 
-# pylint: disable-next=too-many-locals,too-many-branches  # sequential validation of the published payload
+def _select_published_entry(networks: Any, requested: str) -> Dict[str, Any]:
+    """
+    Validate a published network list and select the requested entry from it.
+
+    :param networks: The "networks" value from the published agent manifest.
+    :param requested: The requested network name, or empty to select the only network.
+    :return: The selected network entry.
+    :raises ValueError: If the network list is invalid or no unique entry matches.
+    """
+    valid_networks: bool = isinstance(networks, list)
+    if valid_networks:
+        network_item: Any
+        # Require every network entry to be an object; stop at the first one that is not.
+        for network_item in networks:
+            if not isinstance(network_item, dict):
+                valid_networks = False
+                break
+    if not valid_networks:
+        raise ValueError("published agent manifest has an invalid network list")
+    if requested:
+        entry: Optional[Dict[str, Any]] = None
+        candidate_entry: Dict[str, Any]
+        # Select the first network whose name matches the request.
+        for candidate_entry in networks:
+            if candidate_entry.get("name") == requested:
+                entry = candidate_entry
+                break
+    else:
+        entry = networks[0] if len(networks) == 1 else None
+    if not entry:
+        network_names: List[str] = []
+        named_entry: Dict[str, Any]
+        # Collect the name of every published network for the error message.
+        for named_entry in networks:
+            network_names.append(str(named_entry.get("name", "")))
+        names: str = ", ".join(network_names) or "none"
+        raise ValueError(
+            f"no unique published network matching '{requested or '(site root)'}'; available: {names}"
+        )
+    return entry
+
+
+def _runnable_agents(tools: List[Any]) -> List[Dict[str, Any]]:
+    """
+    Reject executable tool definitions and return the runnable agents of a published network.
+
+    :param tools: The "tools" list from the published network definition.
+    :return: The named tool entries that carry instructions.
+    :raises ValueError: If an entry is executable or not an object, or no runnable agent exists.
+    """
+    executable_tool: bool = False
+    tool_item: Any
+    # Stop at the first entry that is not plain agent data.
+    for tool_item in tools:
+        if not isinstance(tool_item, dict) or "class" in tool_item or "toolbox" in tool_item:
+            executable_tool = True
+            break
+    if executable_tool:
+        raise ValueError("published network contains executable server-side tool definitions")
+    agents: List[Dict[str, Any]] = []
+    tool_entry: Dict[str, Any]
+    # Keep the named entries that carry instructions.
+    for tool_entry in tools:
+        if tool_entry.get("name") and "instructions" in tool_entry:
+            agents.append(tool_entry)
+    if not agents:
+        raise ValueError("published network contains no runnable agents")
+    return agents
+
+
+# pylint: disable-next=too-many-locals  # sequential validation of the published payload
 async def load_published_network(site_url: str) -> PublishedNetwork:
     """Fetch and validate one public network without executing publisher code."""
     site_base: str
@@ -107,17 +177,7 @@ async def load_published_network(site_url: str) -> PublishedNetwork:
             raise ValueError("published agent manifest is too large")
         manifest: Any = manifest_response.json()
         networks: Any = manifest.get("networks") if isinstance(manifest, dict) else None
-        if not isinstance(networks, list) or not all(isinstance(item, dict) for item in networks):
-            raise ValueError("published agent manifest has an invalid network list")
-        if requested:
-            entry: Optional[Dict[str, Any]] = next((item for item in networks if item.get("name") == requested), None)
-        else:
-            entry = networks[0] if len(networks) == 1 else None
-        if not entry:
-            names: str = ", ".join(str(item.get("name", "")) for item in networks) or "none"
-            raise ValueError(
-                f"no unique published network matching '{requested or '(site root)'}'; available: {names}"
-            )
+        entry: Dict[str, Any] = _select_published_entry(networks, requested)
         network: str = str(entry.get("name") or "")
         hocon: Any = entry.get("hocon")
         if not network or not isinstance(hocon, str) or not hocon:
@@ -137,13 +197,16 @@ async def load_published_network(site_url: str) -> PublishedNetwork:
         raise ValueError("published network has an invalid tool list")
     # Public definitions are data, never import instructions. A static/deployed
     # network should contain agents only; Python class/toolbox entries fail closed.
-    if any(not isinstance(item, dict) or "class" in item or "toolbox" in item for item in tools):
-        raise ValueError("published network contains executable server-side tool definitions")
-    agents: List[Dict[str, Any]] = [item for item in tools if item.get("name") and "instructions" in item]
-    if not agents:
-        raise ValueError("published network contains no runnable agents")
+    agents: List[Dict[str, Any]] = _runnable_agents(tools)
     front_man: str = str(entry.get("front_man") or agents[0]["name"])
-    if not any(item.get("name") == front_man for item in agents):
+    front_man_found: bool = False
+    agent: Dict[str, Any]
+    # Stop at the first agent named as the front man.
+    for agent in agents:
+        if agent.get("name") == front_man:
+            front_man_found = True
+            break
+    if not front_man_found:
         raise ValueError(f"published front-man agent '{front_man}' was not found")
     return PublishedNetwork(site_base, network, front_man, config)
 
@@ -152,7 +215,15 @@ def _text(value: Any) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, list):
-        return " ".join(_text(item.get("text", item)) if isinstance(item, dict) else _text(item) for item in value)
+        parts: List[str] = []
+        item: Any
+        # Flatten each list element to text, preferring the "text" field of an object.
+        for item in value:
+            if isinstance(item, dict):
+                parts.append(_text(item.get("text", item)))
+            else:
+                parts.append(_text(item))
+        return " ".join(parts)
     return json.dumps(value, default=str)
 
 
@@ -205,7 +276,12 @@ def _unpack_context(request: str) -> Tuple[str, set[str], int]:
         return request, set(), PUBLIC_SITE_CALL_BUDGET
     if not isinstance(context, dict):
         return request, set(), PUBLIC_SITE_CALL_BUDGET
-    visited: set[str] = {str(item) for item in context.get("visited_sites", []) if isinstance(item, str)}
+    visited: set[str] = set()
+    item: Any
+    # Keep only the string site keys from the decoded context.
+    for item in context.get("visited_sites", []):
+        if isinstance(item, str):
+            visited.add(str(item))
     try:
         remaining: int = max(0, int(context.get("remaining_calls", PUBLIC_SITE_CALL_BUDGET)))
     except (TypeError, ValueError):
@@ -234,19 +310,28 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
         self.public_network_mode: str = public_network_mode
         self.network_name: str = network_name or "network"
         self.network_key: str = f"{self.site_base}::{self.network_name}".lower()
-        self.denied_origins: set[str] = {
-            origin for origin in (_site_key(item) for item in (denied_origins or set())) if origin
-        }
+        denied_keys: set[str] = set()
+        denied_item: str
+        denied_key: str
+        # Normalize each denied origin and drop the ones that do not parse.
+        for denied_item in denied_origins or set():
+            denied_key = _site_key(denied_item)
+            if denied_key:
+                denied_keys.add(denied_key)
+        self.denied_origins: set[str] = denied_keys
         self.model: str = (
             os.environ.get("NSDEPLOY_FACADE_MODEL")
             or (config.get("llm_config", {}) or {}).get("model_name")
             or "gpt-4o"
         )
         self.max_steps: int = max_steps
-        self.agents: Dict[str, Dict[str, Any]] = {
-            item.get("name"): item for item in config.get("tools", []) or []
-            if item.get("name") and "instructions" in item
-        }
+        agents_by_name: Dict[str, Dict[str, Any]] = {}
+        agent_item: Dict[str, Any]
+        # Index the named entries that carry instructions by agent name.
+        for agent_item in config.get("tools", []) or []:
+            if agent_item.get("name") and "instructions" in agent_item:
+                agents_by_name[agent_item.get("name")] = agent_item
+        self.agents: Dict[str, Dict[str, Any]] = agents_by_name
         self.mcp_cache: Dict[str, List[Dict[str, Any]]] = {}
 
     @classmethod
@@ -266,9 +351,14 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
         :raises PermissionError: If the site origin is denied.
         :raises ValueError: If the site URL or published network is invalid.
         """
-        denied: set[str] = {
-            origin for origin in (_site_key(item) for item in (denied_origins or set())) if origin
-        }
+        denied: set[str] = set()
+        denied_item: str
+        denied_key: str
+        # Normalize each denied origin and drop the ones that do not parse.
+        for denied_item in denied_origins or set():
+            denied_key = _site_key(denied_item)
+            if denied_key:
+                denied.add(denied_key)
         if _site_key(site_url) in denied:
             raise PermissionError(f"origin {_site_key(site_url)} is denied by the private web policy")
         published: PublishedNetwork = await load_published_network(site_url)
@@ -433,12 +523,31 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
             self.mcp_cache[endpoint] = []
             return []
 
+    @staticmethod
+    def _find_tool_spec(tools: List[Dict[str, Any]], name: str) -> Optional[Dict[str, Any]]:
+        """
+        Find the first tool spec with the given name.
+
+        :param tools: The tool specs available to the agent.
+        :param name: The tool name to look up.
+        :return: The first matching tool spec, or None if no tool has that name.
+        :raises KeyError: If a tool spec before the match has no "name" key.
+        """
+        spec: Optional[Dict[str, Any]] = None
+        tool_spec: Dict[str, Any]
+        # Select the first tool whose name matches the call.
+        for tool_spec in tools:
+            if tool_spec["name"] == name:
+                spec = tool_spec
+                break
+        return spec
+
     # One dispatcher per tool kind.
     # pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
     async def _call_tool(self, name: str, arguments: Dict[str, Any],  # pylint: disable=too-many-return-statements
                          tools: List[Dict[str, Any]],
                          depth: int, visited_sites: set[str], budget: Dict[str, int]) -> str:
-        spec: Optional[Dict[str, Any]] = next((item for item in tools if item["name"] == name), None)
+        spec: Optional[Dict[str, Any]] = self._find_tool_spec(tools, name)
         if not spec:
             return f"Unknown public-network tool: {name}"
         if spec["kind"] == "agent":
@@ -505,31 +614,71 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
                         async with ClientSession(read, write) as session:
                             await session.initialize()
                             result = await session.call_tool(spec["remote_name"], arguments)
-            return _text([getattr(item, "text", str(item)) for item in result.content])
+            content_texts: List[Any] = []
+            content_item: Any
+            # Extract the text of each content block in the tool result.
+            for content_item in result.content:
+                content_texts.append(getattr(content_item, "text", str(content_item)))
+            return _text(content_texts)
         except TimeoutError:
             return (f"MCP tool call timed out after {PUBLIC_MCP_REQUEST_TIMEOUT_SECONDS} seconds: "
                     f"{spec.get('endpoint', '')}")
         except Exception as exc:  # pylint: disable=broad-exception-caught; tool returns any failure as text
             return f"MCP tool call failed: {exc}"
 
-    # pylint: disable-next=too-many-locals
+    @staticmethod
+    def _mock_complete(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Produce a deterministic mock completion that calls each tool once and then echoes the results.
+
+        :param messages: The chat messages so far.
+        :param tools: The tool specs available to the agent.
+        :return: A chat-completions style reply containing a tool call or the final text.
+        """
+        called: set[Optional[str]] = set()
+        called_message: Dict[str, Any]
+        # Record the names of the tools that already answered.
+        for called_message in messages:
+            if called_message.get("role") == "tool":
+                called.add(called_message.get("name"))
+        available: List[Dict[str, Any]] = []
+        available_tool: Dict[str, Any]
+        # Keep the tools that have not been called yet.
+        for available_tool in tools:
+            if available_tool["name"] not in called:
+                available.append(available_tool)
+        if available and len(called) < MOCK_TOOL_CALLS_PER_AGENT:
+            first: Dict[str, Any] = available[0]
+            user_content: Any = ""
+            user_message: Dict[str, Any]
+            # Select the content of the most recent user message.
+            for user_message in reversed(messages):
+                if user_message.get("role") == "user":
+                    user_content = user_message.get("content")
+                    break
+            text: str = _text(user_content)
+            required: List[str] = (first.get("parameters") or {}).get("required") or ["request"]
+            args: Dict[str, str] = {}
+            key: str
+            # Pass the user text as every required argument.
+            for key in required:
+                args[key] = text
+            return {"message": {"role": "assistant", "content": None, "tool_calls": [{
+                "id": "facade_call_" + first["name"], "type": "function",
+                "function": {"name": first["name"], "arguments": json.dumps(args)},
+            }]}}
+        results: List[str] = []
+        result_message: Dict[str, Any]
+        # Collect the text of every tool result.
+        for result_message in messages:
+            if result_message.get("role") == "tool":
+                results.append(_text(result_message.get("content", "")))
+        return {"message": {"role": "assistant", "content":
+                            "(facade mock) " + " ".join(results)[:4000]}}
+
     async def _complete(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Dict[str, Any]:
         if self.upstream.startswith("mock://"):
-            called: set[Optional[str]] = {item.get("name") for item in messages if item.get("role") == "tool"}
-            available: List[Dict[str, Any]] = [item for item in tools if item["name"] not in called]
-            if available and len(called) < MOCK_TOOL_CALLS_PER_AGENT:
-                first: Dict[str, Any] = available[0]
-                text: str = _text(next((item.get("content") for item in reversed(messages)
-                                        if item.get("role") == "user"), ""))
-                required: List[str] = (first.get("parameters") or {}).get("required") or ["request"]
-                args: Dict[str, str] = {key: text for key in required}
-                return {"message": {"role": "assistant", "content": None, "tool_calls": [{
-                    "id": "facade_call_" + first["name"], "type": "function",
-                    "function": {"name": first["name"], "arguments": json.dumps(args)},
-                }]}}
-            results: List[str] = [_text(item.get("content", "")) for item in messages if item.get("role") == "tool"]
-            return {"message": {"role": "assistant", "content":
-                                "(facade mock) " + " ".join(results)[:4000]}}
+            return self._mock_complete(messages, tools)
         credentials: Optional[ByokCredentials] = self._active_credentials()
         if not credentials or not credentials.available:
             return {"message": {"role": "assistant", "content":
@@ -537,10 +686,15 @@ class NetworkRunner:  # pylint: disable=too-many-instance-attributes
         body: Dict[str, Any] = {"model": credentials.model or self.model,
                                 "messages": messages, "stream": False}
         if tools:
-            body["tools"] = [{"type": "function", "function": {"name": item["name"],
-                                                               "description": item.get("description", item["name"]),
-                                                               "parameters": item.get("parameters")
-                                                               or {"type": "object"}}} for item in tools]
+            tool_schemas: List[Dict[str, Any]] = []
+            schema_tool: Dict[str, Any]
+            # Describe each tool in the chat-completions function format.
+            for schema_tool in tools:
+                tool_schemas.append({"type": "function", "function": {
+                    "name": schema_tool["name"],
+                    "description": schema_tool.get("description", schema_tool["name"]),
+                    "parameters": schema_tool.get("parameters") or {"type": "object"}}})
+            body["tools"] = tool_schemas
         headers: Dict[str, str] = {
             "Content-Type": "application/json",
             "Authorization": credentials.authorization,

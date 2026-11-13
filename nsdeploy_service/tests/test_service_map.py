@@ -72,7 +72,11 @@ class LayoutTest(unittest.TestCase):
         placed: List[Dict[str, int]] = []
         for _ in range(12):
             placed.append(choose_position(placed))
-        unique: Set[Tuple[int, int]] = {(p["x"], p["y"]) for p in placed}
+        unique: Set[Tuple[int, int]] = set()
+        pos: Dict[str, int]
+        # Collect the distinct (x, y) slots in use.
+        for pos in placed:
+            unique.add((pos["x"], pos["y"]))
         self.assertEqual(len(unique), len(placed), "each pin must get its own slot")
 
     def test_the_grid_holds_an_event_sized_map_without_stacking(self) -> None:
@@ -82,7 +86,11 @@ class LayoutTest(unittest.TestCase):
         placed: List[Dict[str, int]] = []
         for _ in range(100):
             placed.append(choose_position(placed))
-        unique: Set[Tuple[int, int]] = {(p["x"], p["y"]) for p in placed}
+        unique: Set[Tuple[int, int]] = set()
+        pos: Dict[str, int]
+        # Collect the distinct (x, y) slots in use.
+        for pos in placed:
+            unique.add((pos["x"], pos["y"]))
         self.assertEqual(len(unique), 100, "100 networks must not share slots")
 
     def test_grid_capacity_leaves_headroom_above_the_event_target(self) -> None:
@@ -149,7 +157,12 @@ class ResolvedLinkCaptureTest(unittest.TestCase):
     def test_pending_imports_are_not_edges(self) -> None:
         """Pending imports do not become edges."""
         summary: NetworkSummary = self._summary(MANIFEST_WITH_LINK)
-        self.assertNotIn("hotel_desk", [link.reference for link in summary.links])
+        references: List[str] = []
+        summary_link: NetworkLink
+        # Collect the reference of each link.
+        for summary_link in summary.links:
+            references.append(summary_link.reference)
+        self.assertNotIn("hotel_desk", references)
 
     def test_no_linking_section_yields_no_links(self) -> None:
         """A manifest with no linking section yields no links."""
@@ -182,14 +195,19 @@ class GraphProjectionTest(unittest.TestCase):
     def _ready(self, name: str, links: Sequence[Tuple[str, str]] = ()) -> Deployment:
         dep: Deployment = self.supervisor.create(b"x", DeployOptions(name=name))
         row: Dict[str, Any] = dep.as_row()
+        link_entries: List[Dict[str, Any]] = []
+        reference: str
+        target: str
+        # Describe each resolved link.
+        for reference, target in links:
+            link_entries.append({"reference": reference, "target": target, "callers": ["c"]})
         row.update({
             "status": "ready",
             "url": f"http://127.0.0.1:{dep.port}",
             "network_json": json.dumps({
                 "front_man": f"{name}_boss", "agent_count": 3,
                 "hostable_tools": ["t1"], "link_slots": [],
-                "links": [{"reference": r, "target": t, "callers": ["c"]}
-                          for r, t in links],
+                "links": link_entries,
             }),
         })
         self.supervisor.store.save_deployment(row)
@@ -225,7 +243,12 @@ class GraphProjectionTest(unittest.TestCase):
         self._ready("agency", links=[("airline", f"http://127.0.0.1:{airline.port}/airline")])
 
         rows: List[Dict[str, Any]] = self.supervisor.store.list_deployments()
-        by_origin: Dict[str, str] = {r["url"]: r["id"] for r in rows if r["url"]}
+        by_origin: Dict[str, str] = {}
+        origin_row: Dict[str, Any]
+        # Index the deployment ids by origin URL.
+        for origin_row in rows:
+            if origin_row["url"]:
+                by_origin[origin_row["url"]] = origin_row["id"]
         edges: List[Tuple[str, str]] = []
         row: Dict[str, Any]
         for row in rows:
@@ -242,12 +265,21 @@ class GraphProjectionTest(unittest.TestCase):
         """A link target outside this service produces no edge."""
         self._ready("agency", links=[("peer", "http://10.0.0.9:9000/peer")])
         rows: List[Dict[str, Any]] = self.supervisor.store.list_deployments()
-        by_origin: Dict[str, str] = {r["url"]: r["id"] for r in rows if r["url"]}
-        matched: List[Dict[str, Any]] = [
-            link for row in rows
-            for link in ((row.get("network") or {}).get("links") or [])
-            if by_origin.get(link["target"].rsplit("/", 1)[0])
-        ]
+        by_origin: Dict[str, str] = {}
+        origin_row: Dict[str, Any]
+        # Index the deployment ids by origin URL.
+        for origin_row in rows:
+            if origin_row["url"]:
+                by_origin[origin_row["url"]] = origin_row["id"]
+        matched: List[Dict[str, Any]] = []
+        matched_row: Dict[str, Any]
+        # Collect every link whose target is one of this service's deployments.
+        for matched_row in rows:
+            matched_link: Dict[str, Any]
+            # Check each of the deployment's links.
+            for matched_link in ((matched_row.get("network") or {}).get("links") or []):
+                if by_origin.get(matched_link["target"].rsplit("/", 1)[0]):
+                    matched.append(matched_link)
         self.assertEqual(matched, [], "an off-service peer cannot be a node on this map")
 
 
@@ -273,7 +305,11 @@ class GridCapacityTest(unittest.TestCase):
         placed: List[Dict[str, int]] = []
         for _ in range(Settings().max_deployments):
             placed.append(choose_position(placed))
-        keys: List[Tuple[int, int]] = [(p["x"], p["y"]) for p in placed]
+        keys: List[Tuple[int, int]] = []
+        pos: Dict[str, int]
+        # Collect the (x, y) slot of each placed pin.
+        for pos in placed:
+            keys.append((pos["x"], pos["y"]))
         self.assertEqual(len(set(keys)), len(keys), "two pins landed on the same slot")
 
     def test_positions_already_in_use_are_still_recognised(self) -> None:
@@ -320,7 +356,11 @@ class PositionBackfillTest(unittest.TestCase):
     def test_backfills_missing_positions_at_startup(self) -> None:
         """Missing positions are backfilled at startup."""
         first: Supervisor = self._supervisor()
-        ids: List[str] = [first.create(b"x", DeployOptions(name=f"n{i}")).id for i in range(3)]
+        ids: List[str] = []
+        index: int
+        # Create three deployments and record their ids.
+        for index in range(3):
+            ids.append(first.create(b"x", DeployOptions(name=f"n{index}")).id)
         self._strip_positions(first)
         self.assertEqual(sorted(first.store.deployments_without_position()), sorted(ids))
         first.store.close()
@@ -342,25 +382,35 @@ class PositionBackfillTest(unittest.TestCase):
         first.store.close()
 
         second: Supervisor = self._supervisor()
-        placed: Set[Tuple[int, int]] = {
-            (row["position"]["x"], row["position"]["y"])
-            for row in second.store.list_deployments()
-        }
+        placed: Set[Tuple[int, int]] = set()
+        placed_row: Dict[str, Any]
+        # Collect the distinct (x, y) slot of each deployment.
+        for placed_row in second.store.list_deployments():
+            placed.add((placed_row["position"]["x"], placed_row["position"]["y"]))
         self.assertEqual(len(placed), 4)
 
     def test_existing_pins_do_not_move_when_a_new_one_is_added(self) -> None:
         """Adding a deployment does not move existing pins."""
         # The guarantee the regression broke.
         supervisor: Supervisor = self._supervisor()
-        existing: List[Deployment] = [supervisor.create(b"x", DeployOptions(name=f"n{i}")) for i in range(3)]
-        before: Dict[str, Any] = {
-            row["id"]: row["position"]
-            for row in supervisor.store.list_deployments()
-        }
+        existing: List[Deployment] = []
+        index: int
+        # Create three deployments.
+        for index in range(3):
+            existing.append(supervisor.create(b"x", DeployOptions(name=f"n{index}")))
+        before: Dict[str, Any] = {}
+        before_row: Dict[str, Any]
+        # Record each deployment's position before the new one is added.
+        for before_row in supervisor.store.list_deployments():
+            before[before_row["id"]] = before_row["position"]
 
         supervisor.create(b"x", DeployOptions(name="newcomer"))
 
-        after: Dict[str, Any] = {row["id"]: row["position"] for row in supervisor.store.list_deployments()}
+        after: Dict[str, Any] = {}
+        after_row: Dict[str, Any]
+        # Record each deployment's position after the new one is added.
+        for after_row in supervisor.store.list_deployments():
+            after[after_row["id"]] = after_row["position"]
         dep: Deployment
         for dep in existing:
             self.assertEqual(after[dep.id], before[dep.id], f"{dep.name} moved")

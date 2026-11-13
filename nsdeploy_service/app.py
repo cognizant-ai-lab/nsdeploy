@@ -343,6 +343,21 @@ def _suggested_edge(relation: SuggestedRelation) -> SuggestedEdge:
     )
 
 
+def _suggested_edges(relations: List[SuggestedRelation]) -> List[SuggestedEdge]:
+    """
+    Convert suggested relations into API edges.
+
+    :param relations: The suggested relations.
+    :return: One edge per relation, in the same order.
+    """
+    edges: List[SuggestedEdge] = []
+    relation: SuggestedRelation
+    # Convert every suggested relation into an edge.
+    for relation in relations:
+        edges.append(_suggested_edge(relation))
+    return edges
+
+
 def _relations_chat(settings: Settings) -> Optional[ChatFn]:
     """An OpenAI-compatible transport for the LLM relation strategy, or None.
 
@@ -385,6 +400,57 @@ def _org_view(row: dict) -> OrgView:
         deployment_count=row.get("deployment_count", 0),
         live_count=row.get("live_count", 0),
     )
+
+
+def _org_views(rows: List[Dict[str, Any]]) -> List[OrgView]:
+    """
+    Convert organization records into API views.
+
+    :param rows: The organization records.
+    :return: One view per record, in the same order.
+    """
+    views: List[OrgView] = []
+    row: Dict[str, Any]
+    # Convert every organization record into its view.
+    for row in rows:
+        views.append(_org_view(row))
+    return views
+
+
+def _stripped_updates(payload: Dict[str, Any], keys: Dict[str, str]) -> Dict[str, str]:
+    """
+    Map the submitted text fields named in `keys` to their stripped values.
+
+    :param payload: The submitted settings fields.
+    :param keys: The environment key of each field this mapping covers.
+    :return: The environment updates for the covered fields.
+    """
+    updates: Dict[str, str] = {}
+    field_name: str
+    value: Any
+    # Map each covered field to its environment key with the value stripped.
+    for field_name, value in payload.items():
+        if field_name in keys:
+            updates[keys[field_name]] = value.strip()
+    return updates
+
+
+def _flag_updates(payload: Dict[str, Any], keys: Dict[str, str]) -> Dict[str, str]:
+    """
+    Map the submitted boolean fields named in `keys` to "true" or "false".
+
+    :param payload: The submitted settings fields.
+    :param keys: The environment key of each field this mapping covers.
+    :return: The environment updates for the covered fields.
+    """
+    updates: Dict[str, str] = {}
+    field_name: str
+    value: Any
+    # Map each covered field to its environment key as "true" or "false".
+    for field_name, value in payload.items():
+        if field_name in keys:
+            updates[keys[field_name]] = "true" if value else "false"
+    return updates
 
 
 # pylint: disable-next=too-many-locals,too-many-statements  # routes are closures over settings and app
@@ -637,7 +703,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
              summary="List organizations with deployment counts")
     async def list_orgs(request: Request) -> OrgList:
         rows: List[Dict[str, Any]] = supervisor_of(request).store.list_orgs()
-        return OrgList(organizations=[_org_view(row) for row in rows])
+        return OrgList(organizations=_org_views(rows))
 
     @app.get("/orgs/{org_id}", response_model=OrgView, dependencies=AUTH,
              summary="One organization")
@@ -677,7 +743,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         supervisor: Supervisor = supervisor_of(request)
         orgs: List[Dict[str, Any]] = supervisor.store.list_orgs()
         rows: List[Dict[str, Any]] = supervisor.store.list_deployments()
-        grouped: dict = {org["id"]: [] for org in orgs}
+        grouped: dict = {}
+        org: Dict[str, Any]
+        # Start every organization with an empty deployment list.
+        for org in orgs:
+            grouped[org["id"]] = []
         row: Dict[str, Any]
         for row in rows:
             view: DeploymentView = _row_view(row, settings)
@@ -685,17 +755,27 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     DeploymentStatus.QUEUED, DeploymentStatus.BUILDING, DeploymentStatus.READY):
                 continue
             grouped.setdefault(row["org_id"], []).append(view)
-        entries: List[DirectoryOrg] = [
-            DirectoryOrg(organization=_org_view(org), deployments=grouped.get(org["id"], []))
-            for org in orgs
-        ]
+        entries: List[DirectoryOrg] = []
+        # Pair every organization with its grouped deployments.
+        for org in orgs:
+            entries.append(DirectoryOrg(organization=_org_view(org), deployments=grouped.get(org["id"], [])))
+        deployment_total: int = 0
+        ready_total: int = 0
+        entry: DirectoryOrg
+        # Count the deployments and the ready deployments across all organizations.
+        for entry in entries:
+            deployment_total += len(entry.deployments)
+            listed: DeploymentView
+            # Count the ready deployments of this organization.
+            for listed in entry.deployments:
+                if listed.status is DeploymentStatus.READY:
+                    ready_total += 1
         return DirectoryView(
             organizations=entries,
             totals={
                 "organizations": len(entries),
-                "deployments": sum(len(e.deployments) for e in entries),
-                "ready": sum(1 for e in entries for d in e.deployments
-                             if d.status is DeploymentStatus.READY),
+                "deployments": deployment_total,
+                "ready": ready_total,
             },
         )
 
@@ -723,10 +803,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # A link target is an absolute URL; map it back to whichever node serves that
         # origin. Targets outside this service (a peer run elsewhere) cannot become an
         # edge, so they are counted on the source node instead of silently dropped.
-        by_origin: Dict[str, str] = {
-            _origin_of(row["url"]): row["id"]
-            for row in rows if row.get("url")
-        }
+        by_origin: Dict[str, str] = {}
+        origin_row: Dict[str, Any]
+        # Index the node id of every record that serves a URL by its origin.
+        for origin_row in rows:
+            if origin_row.get("url"):
+                by_origin[_origin_of(origin_row["url"])] = origin_row["id"]
 
         nodes: List[GraphNode] = []
         edges: List[GraphEdge] = []
@@ -807,18 +889,28 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 max_per_network=settings.relations_max_per_network,
             )
 
+        suggested_edges: List[SuggestedEdge] = _suggested_edges(suggested)
+        organizations: List[OrgView] = _org_views(supervisor.store.list_orgs())
+        ready_nodes: int = 0
+        node_org_ids: Set[str] = set()
+        node: GraphNode
+        # Count the ready nodes and collect the distinct organizations on the map.
+        for node in nodes:
+            if node.status is DeploymentStatus.READY:
+                ready_nodes += 1
+            node_org_ids.add(node.org_id)
         return GraphView(
             nodes=nodes,
             edges=edges,
-            suggested_edges=[_suggested_edge(item) for item in suggested],
-            organizations=[_org_view(org) for org in supervisor.store.list_orgs()],
+            suggested_edges=suggested_edges,
+            organizations=organizations,
             refresh_seconds=settings.map_refresh_seconds,
             totals={
                 "nodes": len(nodes),
                 "edges": len(edges),
                 "suggested_edges": len(suggested),
-                "ready": sum(1 for node in nodes if node.status is DeploymentStatus.READY),
-                "organizations": len({node.org_id for node in nodes}),
+                "ready": ready_nodes,
+                "organizations": len(node_org_ids),
             },
             generated_at=_iso(_utcnow()) or "",
         )
@@ -839,10 +931,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             find_org(request, org_id)
         rows: List[Dict[str, Any]] = supervisor.store.list_deployments(org_id=org_id)
         if live_only:
-            rows = [row for row in rows
-                    if DeploymentStatus(row["status"]) in (DeploymentStatus.QUEUED,
-                                                           DeploymentStatus.BUILDING,
-                                                           DeploymentStatus.READY)]
+            live_rows: List[Dict[str, Any]] = []
+            row: Dict[str, Any]
+            # Keep the records that are queued, building or ready.
+            for row in rows:
+                if DeploymentStatus(row["status"]) in (DeploymentStatus.QUEUED,
+                                                       DeploymentStatus.BUILDING,
+                                                       DeploymentStatus.READY):
+                    live_rows.append(row)
+            rows = live_rows
         chat: Optional[ChatFn] = _relations_chat(settings) if strategy == "llm" else None
 
         def infer() -> Tuple[List[NetworkIdentity], List[SuggestedRelation], str]:
@@ -861,7 +958,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         used: str
         identities, suggested, used = await asyncio.to_thread(infer)
         return RelationsView(
-            edges=[_suggested_edge(item) for item in suggested],
+            edges=_suggested_edges(suggested),
             strategy=used,
             networks=len(identities),
             generated_at=_iso(_utcnow()) or "",
@@ -871,10 +968,21 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     def _deployment_list(request: Request, org_id: Optional[str] = None) -> DeploymentList:
         supervisor: Supervisor = supervisor_of(request)
         rows: List[Dict[str, Any]] = supervisor.store.list_deployments(org_id=org_id)
+        views: List[DeploymentView] = []
+        row: Dict[str, Any]
+        # Convert every deployment record into its view.
+        for row in rows:
+            views.append(_row_view(row, settings))
+        live: int = 0
+        dep: Deployment
+        # Count the deployments that are currently live.
+        for dep in supervisor.list():
+            if dep.is_live:
+                live += 1
         return DeploymentList(
-            deployments=[_row_view(row, settings) for row in rows],
+            deployments=views,
             capacity={
-                "live": sum(1 for d in supervisor.list() if d.is_live),
+                "live": live,
                 "max_deployments": settings.max_deployments,
                 "ports_reserved": sorted(supervisor.ports.reserved()),
                 "port_range": f"{settings.port_start}-{settings.port_end}",
@@ -1323,10 +1431,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if context is None:
             return set()
         try:
-            return {
-                field for field, kind in SETTINGS_PANEL_KIND.items()
-                if context.store.default_key(kind) is not None
-            }
+            managed: Set[str] = set()
+            panel_field: str
+            kind: str
+            # Collect the fields whose credential kind has a default in the admin panel.
+            for panel_field, kind in SETTINGS_PANEL_KIND.items():
+                if context.store.default_key(kind) is not None:
+                    managed.add(panel_field)
+            return managed
         except Exception:  # pylint: disable=broad-exception-caught; the panel's faults stay out of the host
             # The panel's own store is its business; a fault there must not take
             # out the host's settings dialog.
@@ -1376,18 +1488,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
               summary="Save API credentials and deploy defaults to this checkout's .env")
     async def update_settings(body: SettingsUpdate) -> SettingsView:
         payload: Dict[str, Any] = body.model_dump(exclude_none=True)
-        updates: Dict[str, str] = {
-            SETTINGS_SECRET_KEYS[field]: value.strip()
-            for field, value in payload.items() if field in SETTINGS_SECRET_KEYS
-        }
-        updates.update({
-            SETTINGS_TEXT_KEYS[field]: value.strip()
-            for field, value in payload.items() if field in SETTINGS_TEXT_KEYS
-        })
-        updates.update({
-            SETTINGS_BOOL_KEYS[field]: "true" if value else "false"
-            for field, value in payload.items() if field in SETTINGS_BOOL_KEYS
-        })
+        updates: Dict[str, str] = _stripped_updates(payload, SETTINGS_SECRET_KEYS)
+        updates.update(_stripped_updates(payload, SETTINGS_TEXT_KEYS))
+        updates.update(_flag_updates(payload, SETTINGS_BOOL_KEYS))
 
         if updates:
             envfile.write_env_values(updates)

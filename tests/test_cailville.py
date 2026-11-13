@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Set
 
 from nsdeploy.cailville import CommunityDraft
 from nsdeploy.cailville import DATA_END
@@ -126,7 +127,12 @@ class CailvilleCommunityTests(unittest.TestCase):
             cailville_dir=self.cailville, base_map=True,
             use_model=False, studio=str(self.root),
         )
-        self.assertNotIn("old_demo", {site["id"] for site in draft.community["sites"]})
+        site_ids: Set[str] = set()
+        site: Dict[str, Any]
+        # Collect the ID of every site in the draft community.
+        for site in draft.community["sites"]:
+            site_ids.add(site["id"])
+        self.assertNotIn("old_demo", site_ids)
         self.assertEqual(draft.site["port"], 8088)
         self.assertIn("main_street_exchange", draft.connect_to)
         front: Dict[str, Any] = draft.augmented_config["tools"][0]
@@ -184,7 +190,12 @@ class CailvilleCommunityTests(unittest.TestCase):
         self.assertEqual(first_draft.site["port"], 8089)
         self.assertEqual(second_draft.site["port"], 8090)
         self.assertNotEqual(first_draft.site["position"], second_draft.site["position"])
-        self.assertIn("bakery", {site["id"] for site in second_draft.community["sites"]})
+        site_ids: Set[str] = set()
+        site: Dict[str, Any]
+        # Collect the ID of every site in the second draft community.
+        for site in second_draft.community["sites"]:
+            site_ids.add(site["id"])
+        self.assertIn("bakery", site_ids)
 
 
 if __name__ == "__main__":

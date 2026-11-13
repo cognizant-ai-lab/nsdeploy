@@ -142,7 +142,13 @@ class Page(HTMLParser):
         :param attrs: The list of (name, value) attribute pairs.
         """
         attrs = dict(attrs)
-        attrs = {k: v or "" for k, v in attrs.items()}
+        cleaned: Dict[str, str] = {}
+        attr_key: str
+        attr_value: Optional[str]
+        # Replace valueless attributes with empty strings.
+        for attr_key, attr_value in attrs.items():
+            cleaned[attr_key] = attr_value or ""
+        attrs = cleaned
         if tag == "script":
             self.scripts += 1
         if tag in ("a", "link") and attrs.get("href"):
@@ -214,7 +220,15 @@ def form_action(page_url: str, form: Dict[str, Any], index: int) -> Dict[str, An
     :raises ValueError: If the form uses unsupported features.
     """
     attrs: Dict[str, str] = form["attributes"]
-    if not attrs.get("action") or any(k.startswith("on") for k in attrs):
+    inline_js: bool = False
+    if attrs.get("action"):
+        attr_name: str
+        # Detect inline event handler attributes on the form element.
+        for attr_name in attrs:
+            if attr_name.startswith("on"):
+                inline_js = True
+                break
+    if not attrs.get("action") or inline_js:
         raise ValueError("Form has no native action or uses inline JavaScript.")
     endpoint: str = public_url(urljoin(page_url, attrs["action"]))
     if origin(endpoint) != origin(page_url):
@@ -242,7 +256,14 @@ def form_action(page_url: str, form: Dict[str, Any], index: int) -> Dict[str, An
             continue
         if tag != "select":
             current_select = None
-        if (any(k.startswith("on") or k.startswith("form") for k in a)
+        control_script: bool = False
+        control_key: str
+        # Detect inline event handler or form-override attributes on the control.
+        for control_key in a:
+            if control_key.startswith("on") or control_key.startswith("form"):
+                control_script = True
+                break
+        if (control_script
                 or kind in ("password", "hidden", "file", "image") or (name and SENSITIVE.search(name))):
             raise ValueError("Form needs JavaScript, credentials, hidden state, or unsupported controls.")
         if not name or "disabled" in a:
@@ -342,7 +363,13 @@ def scalar_schema(schema: Dict[str, Any], spec: Dict[str, Any]) -> Dict[str, Any
         raise ValueError("Only scalar API parameters and explicit free-form JSON body fields are supported.")
     if schema.get("format") not in (None, "email", "date", "int32", "int64", "float", "double"):
         raise ValueError("Unsupported API parameter format.")
-    result: Dict[str, Any] = {k: v for k, v in schema.items() if k not in ("example", "deprecated", "format")}
+    result: Dict[str, Any] = {}
+    schema_key: str
+    schema_value: Any
+    # Copy every schema keyword except the dropped annotations.
+    for schema_key, schema_value in schema.items():
+        if schema_key not in ("example", "deprecated", "format"):
+            result[schema_key] = schema_value
     if schema.get("format") in ("email", "date"):
         result["format"] = schema["format"]
     return result
@@ -424,7 +451,14 @@ def api_actions(spec: Dict[str, Any], source: str,
                             props[name] = scalar_schema(field, spec)
                         bindings.append({"name": name, "in": "body"})
                     required += schema.get("required", [])
-                if set(re.findall(r"\{([^}]+)\}", endpoint)) != {p["name"] for p in bindings if p["in"] == "path"}:
+                template_names: Set[str] = set(re.findall(r"\{([^}]+)\}", endpoint))
+                path_names: Set[str] = set()
+                binding: Dict[str, str]
+                # Collect the names of the path-parameter bindings.
+                for binding in bindings:
+                    if binding["in"] == "path":
+                        path_names.add(binding["name"])
+                if template_names != path_names:
                     raise ValueError("Path parameters do not match the endpoint template.")
                 result.append({"name": action_name(method, endpoint),
                                "description": op.get("summary", label) + f" ({method.upper()} {endpoint})",
@@ -471,12 +505,24 @@ def cors_probe(action: Dict[str, Any], site_url: str,
             response: Dict[str, str]
             status: int
             _, response, status = fetcher(re.sub(r"\{[^}]+\}", "nsdeploy-probe", url), "OPTIONS", headers)
-            response = {k.lower(): v for k, v in response.items()}
+            lowered: Dict[str, str] = {}
+            header_name: str
+            header_value: str
+            # Normalize response header names to lowercase.
+            for header_name, header_value in response.items():
+                lowered[header_name.lower()] = header_value
+            response = lowered
             allow: bool = response.get("access-control-allow-origin") in ("*", origin(site_url))
-            methods: Set[str]
-            methods = {x.strip().upper() for x in response.get("access-control-allow-methods", "").split(",")}
-            allowed_headers: Set[str]
-            allowed_headers = {x.strip().lower() for x in response.get("access-control-allow-headers", "").split(",")}
+            methods: Set[str] = set()
+            allowed_method: str
+            # Collect the uppercase allowed methods.
+            for allowed_method in response.get("access-control-allow-methods", "").split(","):
+                methods.add(allowed_method.strip().upper())
+            allowed_headers: Set[str] = set()
+            allowed_header: str
+            # Collect the lowercase allowed request headers.
+            for allowed_header in response.get("access-control-allow-headers", "").split(","):
+                allowed_headers.add(allowed_header.strip().lower())
             preflight: bool = (200 <= status < 300 and allow and (method in methods or "*" in methods)
                                and ("Access-Control-Request-Headers" not in headers
                                     or bool(allowed_headers & {"*", "content-type"})))
@@ -487,6 +533,21 @@ def cors_probe(action: Dict[str, Any], site_url: str,
     return {"checks": checks,
             "note": "OPTIONS only; actual browser execution and response CORS remain unverified. "
                     "No business operation was run."}
+
+
+def _unique_by_name(actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Collapse actions that share a name, keeping the last one in first-seen name order.
+
+    :param actions: The list of action dictionaries.
+    :return: The deduplicated list of action dictionaries.
+    """
+    unique_actions: Dict[str, Dict[str, Any]] = {}
+    found_action: Dict[str, Any]
+    # Keep the last action seen for each name, in first-seen order.
+    for found_action in actions:
+        unique_actions[found_action["name"]] = found_action
+    return list(unique_actions.values())
 
 
 # pylint: disable-next=too-many-locals,too-many-branches
@@ -554,7 +615,7 @@ def discover(site: str, spec_path: Optional[str] = None, site_url: str = "", max
         except (ValueError, OSError) as exc:
             issues.append({"source": url, "reason": str(exc)})
     # Identical operations reached from multiple documentation links are one capability.
-    actions = list({a["name"]: a for a in actions}.values())
+    actions = _unique_by_name(actions)
     if len(actions) > 100:
         raise ValueError("Discovery found more than 100 operations; narrow the source specification.")
     action: Dict[str, Any]
@@ -563,6 +624,22 @@ def discover(site: str, spec_path: Optional[str] = None, site_url: str = "", max
     return {"version": 1, "source": site, "spec": str(spec_path) if spec_path else None,
             "siteOrigin": origin(site_url) if site_url else None, "visited": visited,
             "actions": actions, "issues": issues}
+
+
+def _enabled_count(actions: List[Dict[str, Any]]) -> int:
+    """
+    Count the actions whose enabled field is exactly True.
+
+    :param actions: The list of action dictionaries.
+    :return: The number of enabled actions.
+    """
+    count: int = 0
+    counted_action: Dict[str, Any]
+    # Count the actions explicitly enabled.
+    for counted_action in actions:
+        if counted_action.get("enabled") is True:
+            count += 1
+    return count
 
 
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments
@@ -594,7 +671,12 @@ def prepare_actions(lock_path: Union[str, Path], site: Optional[str] = None, spe
         if not site:
             raise ValueError("--action-site is required for initial discovery or refresh.")
         doc = discover(site, spec, site_url, max_pages)
-    unknown: Set[str] = set(allow) - {a["name"] for a in doc["actions"]}
+    known_names: Set[str] = set()
+    known_action: Dict[str, Any]
+    # Collect the names of every discovered action.
+    for known_action in doc["actions"]:
+        known_names.add(known_action["name"])
+    unknown: Set[str] = set(allow) - known_names
     if unknown:
         raise ValueError("Unknown --action-allow names: " + ", ".join(sorted(unknown)))
     action: Dict[str, Any]
@@ -603,7 +685,7 @@ def prepare_actions(lock_path: Union[str, Path], site: Optional[str] = None, spe
             action["enabled"] = True
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    count: int = sum(a.get("enabled") is True for a in doc["actions"])
+    count: int = _enabled_count(doc["actions"])
     print(f"   discovered actions: {count}/{len(doc['actions'])} enabled; review {lock_path}")
     issue: Dict[str, Any]
     for issue in doc["issues"]:

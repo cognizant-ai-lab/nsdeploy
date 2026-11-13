@@ -67,7 +67,14 @@ def validate_trip(trip: Any) -> Dict[str, Any]:
     if (trip["destination"] != "Cailville" or type(trip["travelers"]) is not int
             or trip["travelers"] != 2 or trip["amenities"] != ["parking", "wifi"]):
         raise ValueError("This fixture is a Cailville stay for two adults with parking and Wi-Fi.")
-    if not all(isinstance(trip[key], str) for key in ("arrival", "departure")):
+    dates_are_strings: bool = True
+    date_key: str
+    # Check that every date field holds a string, stopping at the first one that does not.
+    for date_key in ("arrival", "departure"):
+        if not isinstance(trip[date_key], str):
+            dates_are_strings = False
+            break
+    if not dates_are_strings:
         raise ValueError("Dates must use YYYY-MM-DD.")
     arrival: date
     departure: date
