@@ -449,10 +449,18 @@ export class Engine {
     // when there are fallbacks, so each one streams too.
     // Only the settings in LLM_CONFIG_FIELDS come from the network, so a partner can't
     // choose where its model calls go or which key they carry.
+    // neuro-san's OpenAI class can use the Responses API, which other providers'
+    // OpenAI-compatible APIs may not have (Google's doesn't). So, as on main, any router
+    // other than OpenAI's own, the site's relay to the service's upstream, or the mock
+    // gets Chat Completions.
+    const llm = this.top?.llm;
+    const keepsResponses = llm?.mock || llm?.baseUrl === BROWSER_MOCK_ROUTER
+      || hostOf(llm?.baseUrl) === "api.openai.com" || (this.byokRouter && sameRouter(llm?.baseUrl, this.byokRouter));
+    const api = keepsResponses ? {} : { use_responses_api: false };
     const llmConfig = (agentConfig) => {
-      const out = { ...allowedLlmFields(agentConfig), class: "openai", streaming: true, ...override };
+      const out = { ...allowedLlmFields(agentConfig), class: "openai", streaming: true, ...api, ...override };
       if (!this.modelOverride && Array.isArray(agentConfig?.fallbacks)) {
-        out.fallbacks = agentConfig.fallbacks.map((fallback) => ({ ...allowedLlmFields(fallback), class: "openai", streaming: true }));
+        out.fallbacks = agentConfig.fallbacks.map((fallback) => ({ ...allowedLlmFields(fallback), class: "openai", streaming: true, ...api }));
       }
       return out;
     };
@@ -752,6 +760,12 @@ export class Engine {
         return originalFetch(input, init);
       }
       assertRouterKey(this.top.llm, this.byokKey);
+      // Anthropic answers a browser only with this opt-in header, as on main.
+      if (hostOf(base) === "api.anthropic.com") {
+        const headers = new Headers(init?.headers);
+        headers.set("anthropic-dangerous-direct-browser-access", "true");
+        init = { ...init, headers };
+      }
       let body = null;
       try { body = JSON.parse(init?.body || "{}"); } catch {}
       const caller = body ? this._modelCaller(body) : null;
