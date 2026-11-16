@@ -43,18 +43,21 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from http.client import HTTPResponse
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
-SERVICE = Path(__file__).resolve().parent
-ROOT = SERVICE.parent
-STARTUP_TIMEOUT_SECONDS = 45
+SERVICE: Path = Path(__file__).resolve().parent
+ROOT: Path = SERVICE.parent
+STARTUP_TIMEOUT_SECONDS: int = 45
 
 _results: list[tuple[str, bool, str]] = []
 # Wall-clock per step, printed at the end. Without it there is no way to tell a slow
 # step from a stuck one, which is the whole difficulty with this script.
 _timings: list[tuple[str, float]] = []
-_step_started = 0.0  # pylint: disable=invalid-name; mutable step state, not a constant
-_step_title = ""  # pylint: disable=invalid-name; mutable step state, not a constant
+_step_started: float = 0.0  # pylint: disable=invalid-name; mutable step state, not a constant
+_step_title: str = ""  # pylint: disable=invalid-name; mutable step state, not a constant
 
 
 def step(number: int, title: str) -> None:
@@ -103,6 +106,7 @@ def fail(label: str, detail: str = "") -> bool:
     :return: Always False.
     """
     print(f"  FAIL  {label}")
+    line: str
     for line in (detail or "").splitlines():
         print(f"        {line}")
     _results.append((label, False, detail))
@@ -133,14 +137,15 @@ def stream(args: list[str], cwd: Path = ROOT, keep: int = 40) -> tuple[int, str]
     Only pip's own progress verbs are echoed, so the log stays a few lines per
     package instead of a wall of wheel URLs.
     """
-    interesting = ("Collecting", "Downloading", "Building", "Installing",
-                   "Successfully", "Using cached", "ERROR", "error:", "WARNING")
+    interesting: tuple[str, ...] = ("Collecting", "Downloading", "Building", "Installing",
+                                    "Successfully", "Using cached", "ERROR", "error:", "WARNING")
     tail: list[str] = []
     # pylint: disable-next=consider-using-with  # process lifetime kept as-is to preserve behavior
-    process = subprocess.Popen(
+    process: subprocess.Popen[str] = subprocess.Popen(
         args, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1)
     assert process.stdout is not None
+    line: str
     for line in process.stdout:
         line = line.rstrip()
         tail.append(line)
@@ -170,6 +175,7 @@ def free_port() -> int:
 
     :return: The port number.
     """
+    probe: socket.socket
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return int(probe.getsockname()[1])
@@ -183,7 +189,7 @@ def check_placement() -> bool:
     :return: True when placement is correct.
     """
     step(1, "Placement")
-    good = True
+    good: bool = True
     if SERVICE.name != "nsdeploy_service":
         good = fail(f"the folder is named {SERVICE.name!r}",
                     "It must be called nsdeploy_service — the package name is imported "
@@ -220,9 +226,10 @@ def already_installed() -> bool:
     records its files inside site-packages (via a .pth/finder shim), so metadata
     reports the wrong root and the check silently answered False.
     """
+    name: str
     try:
         for name in ("nsdeploy", "nsdeploy_service"):
-            module = importlib.import_module(name)
+            module: ModuleType = importlib.import_module(name)
             if not module.__file__:
                 return False
             if Path(module.__file__).resolve().parent.parent != ROOT:
@@ -248,15 +255,21 @@ def install(skip: bool) -> bool:
         print("  NOTE  both packages already point at this checkout. Re-resolving the")
         print("  NOTE  dependency tree still takes ~35s per package and changes nothing;")
         print("  NOTE  pass --skip-install to go straight to verification.")
+    base: list[str]
+    tool: str
     base, tool = installer()
     print(f"  ..    using {tool}"
           + ("" if tool == "uv" else "  (install uv for a much faster resolve)"))
     print("  ..    nsdeploy pulls ~99 packages (neuro-san brings langchain/openai);")
     print("  ..    the first run downloads them all and can take several minutes.")
-    good = True
+    good: bool = True
+    label: str
+    target: str
     for label, target in (("nsdeploy", "."), ("nsdeploy-service", "./nsdeploy_service")):
         print(f"  ..    {tool} install -e {target}")
-        started = time.monotonic()
+        started: float = time.monotonic()
+        code: int
+        tail: str
         code, tail = stream([*base, "-e", target])
         if code == 0:
             ok(label, f"{time.monotonic() - started:.0f}s")
@@ -273,7 +286,7 @@ def check_nsdeploy_cli() -> bool:
     :return: True when the CLI runs.
     """
     step(3, "nsdeploy CLI")
-    result = run([sys.executable, "-m", "nsdeploy", "--help"])
+    result: subprocess.CompletedProcess = run([sys.executable, "-m", "nsdeploy", "--help"])
     if result.returncode != 0:
         return fail("python -m nsdeploy --help",
                     "Every deployment shells out to exactly this, so nothing will work "
@@ -295,15 +308,15 @@ def check_contract() -> bool:
     :return: True when the contract matches.
     """
     step(4, "Contract with this nsdeploy")
-    script = SERVICE / "scripts" / "check-nsdeploy-integration.py"
+    script: Path = SERVICE / "scripts" / "check-nsdeploy-integration.py"
     if not script.is_file():
         return fail("check script missing", f"expected {script}")
-    result = run([sys.executable, str(script)])
+    result: subprocess.CompletedProcess = run([sys.executable, str(script)])
     if result.returncode == 0:
         ok("stdout markers, bundle keys and CLI flags all match")
         return True
-    detail = "\n".join(line for line in result.stdout.splitlines()
-                       if line.strip().startswith(("FAIL", "in ", "->")))
+    detail: str = "\n".join(line for line in result.stdout.splitlines()
+                            if line.strip().startswith(("FAIL", "in ", "->")))
     return fail("contract mismatch", detail or result.stdout[-800:])
 
 
@@ -319,10 +332,10 @@ def run_tests(skip: bool) -> bool:
     if skip:
         print("  ..    skipped (--skip-tests)")
         return True
-    result = run([sys.executable, "-m", "unittest", "discover",
-                  "-s", "nsdeploy_service/tests", "-t", "."])
-    tail = (result.stderr or "").strip().splitlines()
-    summary = next((line for line in reversed(tail) if line.startswith("Ran ")), "")
+    result: subprocess.CompletedProcess = run([sys.executable, "-m", "unittest", "discover",
+                                               "-s", "nsdeploy_service/tests", "-t", "."])
+    tail: list[str] = (result.stderr or "").strip().splitlines()
+    summary: str = next((line for line in reversed(tail) if line.startswith("Ran ")), "")
     if result.returncode == 0:
         return ok("service test suite", summary)
     return fail("service test suite",
@@ -339,12 +352,12 @@ def check_connection(port: int) -> bool:
     :return: True when every probe answers.
     """
     step(6, "Connection")
-    work = Path(tempfile.mkdtemp(prefix="nsdeploy-bootstrap-"))
+    work: Path = Path(tempfile.mkdtemp(prefix="nsdeploy-bootstrap-"))
     # A throwaway work root and a port pool clear of the API port, so this never
     # touches real deployment records.
-    env_port_start = port + 1
+    env_port_start: int = port + 1
     # pylint: disable-next=consider-using-with  # the finally block below terminates the child
-    child = subprocess.Popen(
+    child: subprocess.Popen[str] = subprocess.Popen(
         [sys.executable, "-m", "nsdeploy_service",
          "--host", "127.0.0.1", "--port", str(port),
          "--work-root", str(work),
@@ -352,13 +365,14 @@ def check_connection(port: int) -> bool:
          "--max-deployments", "5"],
         cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
-        base = f"http://127.0.0.1:{port}"
-        deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
-        health = None
+        base: str = f"http://127.0.0.1:{port}"
+        deadline: float = time.monotonic() + STARTUP_TIMEOUT_SECONDS
+        health: dict[str, Any] | None = None
         while time.monotonic() < deadline:
             if child.poll() is not None:
                 return fail("the service exited during start-up",
                             (child.stdout.read() if child.stdout else "")[-800:])
+            response: HTTPResponse
             try:
                 with urllib.request.urlopen(f"{base}/health", timeout=3) as response:
                     health = json.loads(response.read().decode("utf-8"))
@@ -370,7 +384,9 @@ def check_connection(port: int) -> bool:
                         f"waited {STARTUP_TIMEOUT_SECONDS}s on {base}")
         ok("GET /health", f"status={health.get('status')} v{health.get('version')}")
 
-        good = True
+        good: bool = True
+        path: str
+        label: str
         for path, label in (("/app/", "console"), ("/docs", "OpenAPI docs"),
                             ("/deployments", "deployment API")):
             try:
@@ -381,6 +397,7 @@ def check_connection(port: int) -> bool:
             except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught; report any probe failure
                 good = fail(f"GET {path}", f"{type(exc).__name__}: {exc}")
 
+        warning: Any
         for warning in health.get("warnings") or []:
             print(f"  NOTE  health warning: {warning}")
         return good
@@ -399,7 +416,7 @@ def main(argv: list[str] | None = None) -> int:
     :param argv: Command-line arguments, or None to read sys.argv.
     :return: The process exit code.
     """
-    parser = argparse.ArgumentParser(
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
         prog="bootstrap", description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--skip-install", action="store_true",
@@ -407,7 +424,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-tests", action="store_true", help="skip the test suite")
     parser.add_argument("--port", type=int, default=None,
                         help="port for the connection test (default: an unused one)")
-    args = parser.parse_args(argv)
+    args: argparse.Namespace = parser.parse_args(argv)
 
     # Spelled out rather than imported from nsdeploy_service: this script runs
     # before the environment it is setting up exists, and is deliberately
@@ -421,7 +438,7 @@ def main(argv: list[str] | None = None) -> int:
     if not check_placement():
         print("\nFAILED at placement. Fix that before anything else.")
         return 1
-    steps = [
+    steps: list[bool] = [
         install(args.skip_install),
         check_nsdeploy_cli(),
         check_contract(),
@@ -430,15 +447,16 @@ def main(argv: list[str] | None = None) -> int:
     ]
 
     close_timings()
-    failures = [label for label, passed, _ in _results if not passed]
+    failures: list[str] = [label for label, passed, _ in _results if not passed]
     print("\n" + "=" * 60)
-    total = sum(seconds for _, seconds in _timings)
+    total: float = sum(seconds for _, seconds in _timings)
     print(f"Time: {total:.0f}s total — " + ", ".join(
         f"{title.lower()} {seconds:.0f}s" for title, seconds in _timings))
     if total > 90:
         print("Re-runs are much faster with:  --skip-install --skip-tests")
     if failures or not all(steps):
         print(f"NOT READY — {len(failures)} check(s) failed:")
+        label: str
         for label in failures:
             print(f"  - {label}")
         print("\nScroll up for the detail under each step.")

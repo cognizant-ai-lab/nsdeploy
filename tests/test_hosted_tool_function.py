@@ -1,10 +1,15 @@
 import asyncio
 import inspect
+from types import MappingProxyType
+from typing import Any
+from typing import Dict
+from typing import List
 import unittest
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import Tool
 
 from nsdeploy.hosted_tool_function import HostedToolFunction
 
@@ -21,8 +26,8 @@ class TestHostedToolFunction(unittest.TestCase):
         """
         Tests that required and optional parameters become typed keyword-only parameters.
         """
-        hosted = HostedToolFunction(MagicMock(spec=["invoke"]), "search", "Search", self.PARAMETERS)
-        params = inspect.signature(hosted).parameters
+        hosted: HostedToolFunction = HostedToolFunction(MagicMock(spec=["invoke"]), "search", "Search", self.PARAMETERS)
+        params: MappingProxyType[str, inspect.Parameter] = inspect.signature(hosted).parameters
         self.assertEqual(list(params), ["query", "limit"])
         self.assertIs(params.get("query").annotation, str)
         self.assertIs(params.get("query").default, inspect.Parameter.empty)
@@ -33,9 +38,9 @@ class TestHostedToolFunction(unittest.TestCase):
         """
         Tests that a call drops unset arguments and JSON-encodes a non-string result.
         """
-        coded = MagicMock(spec=["invoke"])
+        coded: MagicMock = MagicMock(spec=["invoke"])
         coded.invoke.return_value = {"ok": True}
-        result = asyncio.run(HostedToolFunction(coded, "search", "Search", self.PARAMETERS)(query="q", limit=None))
+        result: str = asyncio.run(HostedToolFunction(coded, "search", "Search", self.PARAMETERS)(query="q", limit=None))
         coded.invoke.assert_called_once_with({"query": "q"}, {})
         self.assertEqual(result, '{"ok": true}')
 
@@ -43,7 +48,7 @@ class TestHostedToolFunction(unittest.TestCase):
         """
         Tests that a tool with only `async_invoke` is awaited.
         """
-        coded = MagicMock(spec=["async_invoke"])
+        coded: MagicMock = MagicMock(spec=["async_invoke"])
         coded.async_invoke = AsyncMock(return_value="done")
         self.assertEqual(asyncio.run(HostedToolFunction(coded, "search", "Search", self.PARAMETERS)(query="q")), "done")
         coded.async_invoke.assert_awaited_once_with({"query": "q"}, {})
@@ -52,11 +57,11 @@ class TestHostedToolFunction(unittest.TestCase):
         """
         Tests that FastMCP advertises the schema and routes a tool call through the callable.
         """
-        coded = MagicMock(spec=["invoke"])
+        coded: MagicMock = MagicMock(spec=["invoke"])
         coded.invoke.return_value = "hit"
-        mcp = FastMCP("test")
+        mcp: FastMCP = FastMCP("test")
         mcp.tool(name="search", description="Search")(HostedToolFunction(coded, "search", "Search", self.PARAMETERS))
-        tools = asyncio.run(mcp.list_tools())
+        tools: List[Tool] = asyncio.run(mcp.list_tools())
         self.assertEqual(tools[0].inputSchema.get("required"), ["query"])
         self.assertEqual(list(tools[0].inputSchema.get("properties")), ["query", "limit"])
         asyncio.run(mcp.call_tool("search", {"query": "q", "limit": 2}))
@@ -66,7 +71,7 @@ class TestHostedToolFunction(unittest.TestCase):
         """
         Tests that a parameter name that is not an identifier raises instead of running as code.
         """
-        parameters = {"properties": {"x=__import__('os').system('true')": {"type": "string"}}}
+        parameters: Dict[str, Any] = {"properties": {"x=__import__('os').system('true')": {"type": "string"}}}
         with self.assertRaises(ValueError):
             HostedToolFunction(MagicMock(spec=["invoke"]), "search", "Search", parameters)
 

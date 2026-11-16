@@ -25,37 +25,41 @@ from dataclasses import asdict
 from dataclasses import dataclass
 from dataclasses import field
 from html.parser import HTMLParser
+from http.client import HTTPResponse
 from pathlib import Path
 from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Set
 from typing import Tuple
 
-PROMPT_VERSION = "13"
-CACHE_DIR = Path.home() / ".cache" / "nsdeploy" / "themes"
-DEFAULT_THEME_MODEL = "gpt-5.6"
+from nsdeploy.resolve import DeploymentPlan
+
+PROMPT_VERSION: str = "13"
+CACHE_DIR: Path = Path.home() / ".cache" / "nsdeploy" / "themes"
+DEFAULT_THEME_MODEL: str = "gpt-5.6"
 
 # ---- HTML/CSS sanitization for LLM-authored creative layouts -----------------
 # Strict allowlist: the output can only ever contain these presentational tags +
 # attributes. Anything else (scripts, event handlers, iframes, forms, svg, …) is
 # dropped. The boot script and #app mount are injected by nsdeploy, never the LLM.
-_ALLOWED_TAGS = {
+_ALLOWED_TAGS: Set[str] = {
     "div", "section", "header", "footer", "main", "aside", "nav", "article",
     "span", "p", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6",
     "ul", "ol", "li", "strong", "em", "b", "i", "u", "small", "blockquote",
     "figure", "figcaption", "img", "style", "details", "summary",
 }
 # Tags whose entire contents are discarded (not just the wrapper).
-_DROP_CONTENT_TAGS = {
+_DROP_CONTENT_TAGS: Set[str] = {
     "script", "iframe", "object", "embed", "template", "noscript", "svg", "canvas",
     "audio", "video", "source", "head", "form", "select", "textarea", "button", "input",
     "link", "meta", "base", "math", "a",
 }
-_VOID_TAGS = {"br", "hr", "img"}
-_GLOBAL_ATTRS = {"class", "id", "title", "role", "width", "height", "alt", "lang", "dir", "open"}
-_MAX_HTML = 24000
-_MAX_CSS = 24000
+_VOID_TAGS: Set[str] = {"br", "hr", "img"}
+_GLOBAL_ATTRS: Set[str] = {"class", "id", "title", "role", "width", "height", "alt", "lang", "dir", "open"}
+_MAX_HTML: int = 24000
+_MAX_CSS: int = 24000
 
 
 def _sanitize_css(css: str) -> str:
@@ -71,11 +75,11 @@ def _sanitize_css(css: str) -> str:
     css = re.sub(r"behavior\s*:[^;]*;?", "", css, flags=re.I)
     css = re.sub(r"(javascript|vbscript)\s*:", "", css, flags=re.I)
 
-    def _url(m):
-        inner = m.group(1).strip().strip("\"'")
-        ok = (inner.startswith("data:image/") or inner.startswith("https://") or
-              inner.startswith("/assets/") or inner.startswith("./assets/") or
-              inner.startswith("assets/") or inner == "" or inner.lower() == "none")
+    def _url(m: re.Match[str]) -> str:
+        inner: str = m.group(1).strip().strip("\"'")
+        ok: bool = (inner.startswith("data:image/") or inner.startswith("https://") or
+                    inner.startswith("/assets/") or inner.startswith("./assets/") or
+                    inner.startswith("assets/") or inner == "" or inner.lower() == "none")
         return f"url({m.group(1)})" if ok else "none"
 
     css = re.sub(r"url\(([^)]*)\)", _url, css, flags=re.I)
@@ -83,16 +87,18 @@ def _sanitize_css(css: str) -> str:
 
 
 class _HtmlSanitizer(HTMLParser):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.out: List[str] = []
-        self.skip = 0          # >0 while inside a drop-content tag
-        self.skip_tag = ""
-        self.in_style = 0
-        self.app_seen = False  # preserve the first #app mount; strip duplicate ids
+        self.skip: int = 0          # >0 while inside a drop-content tag
+        self.skip_tag: str = ""
+        self.in_style: int = 0
+        self.app_seen: bool = False  # preserve the first #app mount; strip duplicate ids
 
     def _attrs(self, attrs: List[Tuple[str, Optional[str]]]) -> str:
-        parts = []
+        parts: List[str] = []
+        name: str
+        val: Optional[str]
         for name, val in attrs:
             name = (name or "").lower()
             val = val or ""
@@ -101,21 +107,21 @@ class _HtmlSanitizer(HTMLParser):
             if name == "id" and val == "app" and self.app_seen:
                 continue
             if name == "style":
-                css = _sanitize_css(val)
+                css: str = _sanitize_css(val)
                 if css.strip():
                     parts.append(f' style="{_htmlmod.escape(css, quote=True)}"')
             elif name == "src":  # img only; allow inline data images or https
-                v = _htmlmod.unescape(val).strip().lower()
+                v: str = _htmlmod.unescape(val).strip().lower()
                 if v.startswith("data:image/") or v.startswith("https://"):
                     parts.append(f' src="{_htmlmod.escape(val, quote=True)}"')
             elif name in _GLOBAL_ATTRS or name.startswith("aria-") or name.startswith("data-"):
                 parts.append(f' {name}="{_htmlmod.escape(val, quote=True)}"')
         return "".join(parts)
 
-    def _is_app(self, attrs) -> bool:
+    def _is_app(self, attrs: List[Tuple[str, Optional[str]]]) -> bool:
         return not self.app_seen and any((n or "").lower() == "id" and (v or "") == "app" for n, v in attrs)
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         if self.skip:
             if tag == self.skip_tag:
                 self.skip += 1
@@ -135,7 +141,7 @@ class _HtmlSanitizer(HTMLParser):
                 return
             self.out.append("<" + tag + self._attrs(attrs) + (" />" if tag in _VOID_TAGS else ">"))
 
-    def handle_startendtag(self, tag, attrs):
+    def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         if self.skip:
             return
         if self._is_app(attrs):
@@ -144,7 +150,7 @@ class _HtmlSanitizer(HTMLParser):
         elif tag in _ALLOWED_TAGS and tag != "style":
             self.out.append("<" + tag + self._attrs(attrs) + " />")
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag: str) -> None:
         if self.skip:
             if tag == self.skip_tag:
                 self.skip -= 1
@@ -157,7 +163,7 @@ class _HtmlSanitizer(HTMLParser):
         elif tag in _ALLOWED_TAGS and tag not in _VOID_TAGS:
             self.out.append("</" + tag + ">")
 
-    def handle_data(self, data):
+    def handle_data(self, data: str) -> None:
         if self.in_style:
             self.out.append(_sanitize_css(data))
         elif not self.skip:
@@ -167,7 +173,7 @@ class _HtmlSanitizer(HTMLParser):
 def _sanitize_html(s: str) -> str:
     if not isinstance(s, str):
         return ""
-    p = _HtmlSanitizer()
+    p: _HtmlSanitizer = _HtmlSanitizer()
     p.feed(s[:_MAX_HTML * 2])
     p.close()
     return "".join(p.out)[:_MAX_HTML]
@@ -177,7 +183,7 @@ def _valid_composed_layout(body: str) -> bool:
     """A composed theme is usable only when every runtime surface has one target."""
     if 'data-ns-layout="composed"' not in body:
         return True
-    required = all(body.count(f'data-ns-slot="{slot}"') == 1 for slot in ("header", "chat", "agents"))
+    required: bool = all(body.count(f'data-ns-slot="{slot}"') == 1 for slot in ("header", "chat", "agents"))
     # Settings remains optional here so prompt-v12 cached/editable themes stay
     # valid; prompt v13 requires exactly one. Prompt v10 briefly emitted activity.
     return (required
@@ -186,7 +192,7 @@ def _valid_composed_layout(body: str) -> bool:
 
 
 # A validated color: #hex, rgb()/hsl(), or a bare CSS keyword. Nothing else.
-_COLOR_RE = re.compile(r"^(#[0-9a-fA-F]{3,8}|(rgb|hsl)a?\([0-9.,%\s/]+\)|[a-zA-Z]+)$")
+_COLOR_RE: re.Pattern[str] = re.compile(r"^(#[0-9a-fA-F]{3,8}|(rgb|hsl)a?\([0-9.,%\s/]+\)|[a-zA-Z]+)$")
 
 # The default look (== today's generated page). Used keyless and as the fail-open.
 DEFAULT_COLORS: Dict[str, str] = {
@@ -194,7 +200,7 @@ DEFAULT_COLORS: Dict[str, str] = {
     "fg": "#0f2a43", "muted": "#5b7a97", "border": "#cfe6fb", "msgbg": "#e0f2fe",
     "panelbg": "#f7fcff",
 }
-DEFAULT_FONT = '"Segoe UI", system-ui, sans-serif'
+DEFAULT_FONT: str = '"Segoe UI", system-ui, sans-serif'
 
 
 @dataclass
@@ -227,7 +233,7 @@ class ThemeSpec:  # pylint: disable=too-many-instance-attributes
     def coerce(cls, data: Dict[str, Any]) -> "ThemeSpec":
         """Build a ThemeSpec from untrusted data, validating/sanitizing every field
         and falling back to defaults for anything missing or invalid."""
-        spec = cls()
+        spec: ThemeSpec = cls()
         if not isinstance(data, dict):
             return spec
         spec.brand = _clean_text(data.get("brand"), 60)
@@ -236,7 +242,9 @@ class ThemeSpec:  # pylint: disable=too-many-instance-attributes
         spec.hero = _clean_text(data.get("hero"), 280)
         spec.font = _clean_font(data.get("font"))
         spec.radius = _clean_radius(data.get("radius"))
-        colors = dict(DEFAULT_COLORS)
+        colors: Dict[str, str] = dict(DEFAULT_COLORS)
+        key: Any
+        val: Any
         for key, val in (data.get("colors") or {}).items():
             if key in DEFAULT_COLORS and isinstance(val, str) and _COLOR_RE.match(val.strip()):
                 colors[key] = val.strip()
@@ -245,7 +253,7 @@ class ThemeSpec:  # pylint: disable=too-many-instance-attributes
         # Creative layout (sanitized). Keep it only if the body still has the #app
         # mount after sanitizing — otherwise the layout would be unusable, so we drop
         # it and fall back to the fixed template.
-        body = _sanitize_html(data.get("body") or "")
+        body: str = _sanitize_html(data.get("body") or "")
         if ('id="app"' in body or "id='app'" in body) and _valid_composed_layout(body):
             spec.body = body
             spec.style = _sanitize_css(data.get("style") or "")
@@ -256,14 +264,14 @@ def _clean_text(val: Any, limit: int) -> str:
     if not isinstance(val, str):
         return ""
     # strip control chars; collapse whitespace; cap length (escaped later at render)
-    out = re.sub(r"[\x00-\x1f\x7f]", " ", val).strip()
+    out: str = re.sub(r"[\x00-\x1f\x7f]", " ", val).strip()
     return re.sub(r"\s+", " ", out)[:limit]
 
 
 def _clean_font(val: Any) -> str:
     if not isinstance(val, str):
         return DEFAULT_FONT
-    out = re.sub(r"[^A-Za-z0-9 ,\"'\-]", "", val).strip()[:120]
+    out: str = re.sub(r"[^A-Za-z0-9 ,\"'\-]", "", val).strip()[:120]
     if not out:
         return DEFAULT_FONT
     if not re.search(r"(serif|sans-serif|monospace|system-ui)\s*$", out):
@@ -283,7 +291,7 @@ def _clean_welcome(val: Any) -> Optional[Dict[str, Any]]:
     renders/escapes it safely; here we just gate the shape)."""
     if not isinstance(val, dict):
         return None
-    widget = val.get("widget")
+    widget: Any = val.get("widget")
     if not isinstance(widget, dict) or not (widget.get("schema") or widget.get("kind")):
         return None
     out: Dict[str, Any] = {"widget": widget}
@@ -292,10 +300,10 @@ def _clean_welcome(val: Any) -> Optional[Dict[str, Any]]:
     return out
 
 
-def _identity(plan) -> Dict[str, Any]:
+def _identity(plan: DeploymentPlan) -> Dict[str, Any]:
     """The design-relevant facts we send to the LLM (no secrets / sly_data)."""
-    meta = plan.config.get("metadata", {}) or {}
-    front_fn = next((a.get("function", {}) for a in plan.agents if a.get("name") == plan.front_man), {})
+    meta: Dict[str, Any] = plan.config.get("metadata", {}) or {}
+    front_fn: Dict[str, Any] = next((a.get("function", {}) for a in plan.agents if a.get("name") == plan.front_man), {})
     return {
         "network": plan.network_name,
         "description": (front_fn.get("description") or meta.get("description") or "").strip()[:600],
@@ -305,11 +313,11 @@ def _identity(plan) -> Dict[str, Any]:
     }
 
 
-_WELCOME_SHAPE = ('{"message":"...","widget":{"title":"...","icon":"📝","schema":{"type":"object",'
-                  '"properties":{"field":{"type":"string","title":"...","description":"..."}},'
-                  '"required":["field"]},"submitLabel":"..."}}')
+_WELCOME_SHAPE: str = ('{"message":"...","widget":{"title":"...","icon":"📝","schema":{"type":"object",'
+                       '"properties":{"field":{"type":"string","title":"...","description":"..."}},'
+                       '"required":["field"]},"submitLabel":"..."}}')
 
-_SYSTEM_PROMPT = (
+_SYSTEM_PROMPT: str = (
     "You are a world-class web/brand designer. Design a STRIKING, one-of-a-kind landing "
     "page for this agent network — its layout, typography, color and mood must feel "
     "unmistakably of its domain (a sports assistant electric and bold; a recipe app warm "
@@ -421,12 +429,14 @@ _SYSTEM_PROMPT = (
 
 
 def _extract_json(content: str) -> Dict[str, Any]:
-    text = content.strip()
+    text: str = content.strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text)
     try:
         return json.loads(text)
     except json.JSONDecodeError:
+        start: int
+        end: int
         start, end = text.find("{"), text.rfind("}")
         if end > start >= 0:
             return json.loads(text[start:end + 1])
@@ -440,20 +450,21 @@ def _salvage_meta(text: str) -> Dict[str, Any]:
     template — the STYLE/BODY sections (raw text) are unaffected. The optional welcome
     form is skipped (it's the most likely thing to be malformed)."""
     data: Dict[str, Any] = {}
-    cm = re.search(r'"colors"\s*:\s*\{([^{}]*)\}', text, re.S)
+    cm: Optional[re.Match[str]] = re.search(r'"colors"\s*:\s*\{([^{}]*)\}', text, re.S)
     if cm:
         # pylint: disable-next=unnecessary-comprehension  # kept to preserve behavior
-        cols = {k: v for k, v in re.findall(r'"([a-z_]+)"\s*:\s*"(#[0-9a-fA-F]{3,8})"', cm.group(1))}
+        cols: Dict[str, str] = {k: v for k, v in re.findall(r'"([a-z_]+)"\s*:\s*"(#[0-9a-fA-F]{3,8})"', cm.group(1))}
         if cols:
             data["colors"] = cols
+    key: str
     for key in ("brand", "icon", "tagline", "hero", "font"):
-        m = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        m: Optional[re.Match[str]] = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
         if m:
             try:
                 data[key] = json.loads(f'"{m.group(1)}"')
             except json.JSONDecodeError:
                 data[key] = m.group(1)
-    rm = re.search(r'"radius"\s*:\s*(\d+)', text)
+    rm: Optional[re.Match[str]] = re.search(r'"radius"\s*:\s*(\d+)', text)
     if rm:
         data["radius"] = int(rm.group(1))
     return data
@@ -466,16 +477,19 @@ def _lenient_meta(text: str) -> Dict[str, Any]:
     text = (text or "").strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
+    start: int
+    end: int
     start, end = text.find("{"), text.rfind("}")
-    candidate = text[start:end + 1] if end > start >= 0 else text
+    candidate: str = text[start:end + 1] if end > start >= 0 else text
+    attempt: str
     for attempt in (candidate, re.sub(r",\s*([}\]])", r"\1", candidate)):
         try:
-            d = json.loads(attempt)
+            d: Any = json.loads(attempt)
             if isinstance(d, dict):
                 return d
         except json.JSONDecodeError:
             pass
-    salvaged = _salvage_meta(candidate)
+    salvaged: Dict[str, Any] = _salvage_meta(candidate)
     print(f"   …theme: META JSON was malformed; salvaged {len(salvaged)} field(s) by regex "
           f"(palette/identity kept, design preserved)", flush=True)
     return salvaged
@@ -487,11 +501,12 @@ def _parse_sections(content: str) -> Dict[str, Any]:
     valid. Falls back to plain-JSON parsing when no markers are present."""
     if "===META===" not in content:
         return _extract_json(content)
-    parts = re.split(r"===\s*(META|STYLE|BODY)\s*===", content)
+    parts: List[str] = re.split(r"===\s*(META|STYLE|BODY)\s*===", content)
     sections: Dict[str, str] = {}
+    i: int
     for i in range(1, len(parts) - 1, 2):
         sections[parts[i].upper()] = parts[i + 1]
-    data = _lenient_meta(sections.get("META", "{}"))
+    data: Dict[str, Any] = _lenient_meta(sections.get("META", "{}"))
     if not isinstance(data, dict):
         data = {}
     if sections.get("STYLE", "").strip():
@@ -502,18 +517,19 @@ def _parse_sections(content: str) -> Dict[str, Any]:
 
 
 def _chat(upstream: str, api_key: str, model: str, system: str, user: str) -> str:
-    payload = {
+    payload: Dict[str, Any] = {
         "model": model, "stream": False,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
     }
     if not re.match(r"^gpt-5(?:[.-]|$)", model, flags=re.I):
         payload["temperature"] = 0.2
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
+    body: bytes = json.dumps(payload).encode("utf-8")
+    req: urllib.request.Request = urllib.request.Request(
         f"{upstream.rstrip('/')}/chat/completions", data=body, method="POST",
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"})
+    resp: HTTPResponse
     with urllib.request.urlopen(req, timeout=180) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+        data: Dict[str, Any] = json.loads(resp.read().decode("utf-8"))
     return data["choices"][0]["message"]["content"]
 
 
@@ -523,28 +539,28 @@ def load_theme_file(path: Path) -> ThemeSpec:
 
 
 # pylint: disable-next=too-many-arguments  # keyword-only options
-def propose_theme(plan, *, model: str, api_key: str, upstream: str, refresh: bool = False,
+def propose_theme(plan: DeploymentPlan, *, model: str, api_key: str, upstream: str, refresh: bool = False,
                   theme_prompt: Optional[str] = None) -> ThemeSpec:
     """Ask the LLM for a theme (cached). Falls back to the default on any failure."""
-    ident = _identity(plan)
-    extra_instructions = (theme_prompt or "").strip()
-    cache_identity = [ident, model, PROMPT_VERSION]
+    ident: Dict[str, Any] = _identity(plan)
+    extra_instructions: str = (theme_prompt or "").strip()
+    cache_identity: List[Any] = [ident, model, PROMPT_VERSION]
     if extra_instructions:
         cache_identity.append(extra_instructions)
-    digest = hashlib.sha256(
+    digest: str = hashlib.sha256(
         json.dumps(cache_identity, sort_keys=True).encode()
     ).hexdigest()[:16]
-    cache_path = CACHE_DIR / f"{digest}.json"
+    cache_path: Path = CACHE_DIR / f"{digest}.json"
     if not refresh and cache_path.exists():
         try:
             return ThemeSpec.coerce(json.loads(cache_path.read_text(encoding="utf-8")))
         except Exception:  # pylint: disable=broad-exception-caught; a bad cache entry is regenerated
             pass
     try:
-        user_prompt = json.dumps(ident)
+        user_prompt: str = json.dumps(ident)
         if extra_instructions:
             user_prompt += "\n\nAdditional theme instructions from the deployer:\n" + extra_instructions
-        spec = ThemeSpec.coerce(
+        spec: ThemeSpec = ThemeSpec.coerce(
             _parse_sections(_chat(upstream, api_key, model, _SYSTEM_PROMPT, user_prompt))
         )
         # ThemeSpec also loads older editable prompt-v12 layouts, where settings

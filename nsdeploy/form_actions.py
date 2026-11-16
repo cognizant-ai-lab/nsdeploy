@@ -1,8 +1,15 @@
 """Public, data-only configuration for runtime form discovery."""
+from typing import Any
+from typing import Dict
+from typing import Iterable
+from typing import Optional
+from urllib.parse import SplitResult
 from urllib.parse import urlsplit
 
 
-def action_discovery_config(pages=None, modules=None, callers=None, host_page=False, discovered=False):
+def action_discovery_config(pages: Optional[Iterable[str]] = None, modules: Optional[Iterable[str]] = None,
+                            callers: Optional[Iterable[str]] = None, host_page: bool = False,
+                            discovered: bool = False) -> Dict[str, Any]:
     """
     Build the data-only action discovery configuration for a deployment.
 
@@ -15,14 +22,16 @@ def action_discovery_config(pages=None, modules=None, callers=None, host_page=Fa
     :raises ValueError: If a path or caller origin is malformed, or callers are given without pages.
     """
     pages, modules, callers = list(pages or []), list(modules or []), list(callers or [])
+    path: str
     for path in pages + modules:
         # Origin-relative paths keep bundles portable and cannot point discovery
         # at a third-party application the publisher does not control.
-        url = urlsplit(path)
+        url: SplitResult = urlsplit(path)
         # pylint: disable-next=too-many-boolean-expressions  # flat validation list
         if (not path.startswith("/") or path.startswith("//") or "\\" in path
                 or url.scheme or url.netloc or url.fragment):
             raise ValueError("Action pages/modules require origin-relative paths such as /booking.")
+    caller: str
     for caller in callers:
         url = urlsplit(caller)
         # pylint: disable-next=too-many-boolean-expressions  # flat validation list

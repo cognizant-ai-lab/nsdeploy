@@ -4,6 +4,10 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
+from typing import Callable
+from typing import List
+from typing import NoReturn
 from unittest import mock
 
 from nsdeploy_service.store import Store
@@ -12,8 +16,9 @@ from nsdeploy_service.store import Store
 class OpenTest(unittest.TestCase):
     """Opens the store on filesystems that refuse WAL or are briefly held by another replica."""
     def setUp(self) -> None:
+        self._dir: tempfile.TemporaryDirectory[str]
         self._dir = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up via addCleanup
-        self.db = Path(self._dir.name) / "nested" / "service.db"
+        self.db: Path = Path(self._dir.name) / "nested" / "service.db"
         self.addCleanup(self._dir.cleanup)
 
     def test_opens_normally(self) -> None:
@@ -27,16 +32,16 @@ class OpenTest(unittest.TestCase):
         sqlite3.Connection is immutable, so the refusal is injected by wrapping the
         connection rather than by patching its execute.
         """
-        seen = []
-        real_connect = sqlite3.connect
+        seen: List[str] = []
+        real_connect: Callable[..., sqlite3.Connection] = sqlite3.connect
 
         class NoWal:
             """Delegates everything, but refuses WAL the way an SMB mount does."""
 
-            def __init__(self, wrapped):
-                self._wrapped = wrapped
+            def __init__(self, wrapped: sqlite3.Connection) -> None:
+                self._wrapped: sqlite3.Connection = wrapped
 
-            def execute(self, sql, *args):
+            def execute(self, sql: str, *args: Any) -> sqlite3.Cursor:
                 """
                 Records the statement and refuses WAL, delegating everything else.
 
@@ -50,10 +55,10 @@ class OpenTest(unittest.TestCase):
                     raise sqlite3.OperationalError("database is locked")
                 return self._wrapped.execute(sql, *args)
 
-            def __getattr__(self, name):
+            def __getattr__(self, name: str) -> Any:
                 return getattr(self._wrapped, name)
 
-            def __setattr__(self, name, value):
+            def __setattr__(self, name: str, value: Any) -> None:
                 if name == "_wrapped":
                     object.__setattr__(self, name, value)
                 else:
@@ -67,10 +72,10 @@ class OpenTest(unittest.TestCase):
 
     def test_retries_while_another_replica_holds_the_file(self) -> None:
         """The first attempts fail as they do mid-rollout; the open must still succeed."""
-        real_connect = sqlite3.connect
-        attempts = []
+        real_connect: Callable[..., sqlite3.Connection] = sqlite3.connect
+        attempts: List[int] = []
 
-        def connect(*args, **kwargs):
+        def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
             attempts.append(1)
             if len(attempts) < 3:
                 raise sqlite3.OperationalError("unable to open database file")
@@ -85,7 +90,7 @@ class OpenTest(unittest.TestCase):
 
     def test_gives_up_once_the_deadline_passes(self) -> None:
         """A permanently unopenable path must raise, not hang forever."""
-        def connect(*args, **kwargs):
+        def connect(*args: Any, **kwargs: Any) -> NoReturn:
             raise sqlite3.OperationalError("unable to open database file")
 
         with mock.patch.object(Store, "OPEN_TIMEOUT_SECONDS", 0.0), \
