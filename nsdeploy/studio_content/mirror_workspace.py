@@ -186,6 +186,8 @@ class MirrorWorkspace(ToolboxWorkspace):
         :raises OSError: If the module cannot be written.
         """
         marker: Path = self._mirror / ToolboxLayout.CODED_TOOLS / "__init__.py"
+        if not self._inside(marker):
+            return False
         if not marker.exists():
             marker.parent.mkdir(parents=True, exist_ok=True)
             self._write(marker, b"")
