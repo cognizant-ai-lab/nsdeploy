@@ -10,9 +10,9 @@ from nsdeploy_service.shared_byok import sync_shared_byok
 
 class SharedByokTests(unittest.TestCase):
     """Generates and syncs the shared BYOK script block."""
-    def test_script_is_48_hours_secure_and_adds_no_ui_content(self):
+    def test_script_is_48_hours_secure_and_adds_no_ui_content(self) -> None:
         """The script uses a 48-hour secure cookie and adds no UI content."""
-        script = shared_byok_script()
+        script: str = shared_byok_script()
         self.assertIn("48 * 60 * 60", script)
         self.assertIn("SameSite=Strict; Secure", script)
         self.assertIn("__Secure-nsdeploy_shared_byok_v1", script)
@@ -22,33 +22,35 @@ class SharedByokTests(unittest.TestCase):
         self.assertNotIn("textContent", script)
         self.assertNotIn("innerHTML", script)
 
-    def test_sync_preserves_authored_javascript_and_is_idempotent(self):
+    def test_sync_preserves_authored_javascript_and_is_idempotent(self) -> None:
         """Sync preserves authored JavaScript and is idempotent."""
+        tmp: str
         with tempfile.TemporaryDirectory() as tmp:
-            work = Path(tmp)
-            source = work / "site-source" / "site.js"
-            built = work / "site" / "site.js"
+            work: Path = Path(tmp)
+            source: Path = work / "site-source" / "site.js"
+            built: Path = work / "site" / "site.js"
             source.parent.mkdir(parents=True)
             built.parent.mkdir(parents=True)
-            authored = "export function customize() { window.authored = true; }\n"
+            authored: str = "export function customize() { window.authored = true; }\n"
             source.write_text(authored, encoding="utf-8")
             built.write_text(authored, encoding="utf-8")
 
             self.assertEqual(set(sync_shared_byok(work)), {source, built})
-            once = source.read_text(encoding="utf-8")
+            once: str = source.read_text(encoding="utf-8")
             self.assertIn(authored.strip(), once)
             self.assertEqual(once.count(START_MARKER), 1)
             self.assertEqual(once.count(END_MARKER), 1)
             self.assertEqual(sync_shared_byok(work), [])
             self.assertEqual(source.read_text(encoding="utf-8"), once)
 
-    def test_disable_is_the_rollback_and_removes_only_the_marked_block(self):
+    def test_disable_is_the_rollback_and_removes_only_the_marked_block(self) -> None:
         """Disabling removes only the marked block, restoring the authored file."""
+        tmp: str
         with tempfile.TemporaryDirectory() as tmp:
-            work = Path(tmp)
-            path = work / "site" / "site.js"
+            work: Path = Path(tmp)
+            path: Path = work / "site" / "site.js"
             path.parent.mkdir(parents=True)
-            authored = "export const customerCode = true;\n"
+            authored: str = "export const customerCode = true;\n"
             path.write_text(authored, encoding="utf-8")
             sync_shared_byok(work)
 

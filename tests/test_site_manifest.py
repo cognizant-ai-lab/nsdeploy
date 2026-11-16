@@ -3,6 +3,8 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Dict
+from typing import List
 
 from nsdeploy.site_manifest import SiteManifest
 
@@ -18,7 +20,8 @@ class TestSiteManifest(unittest.TestCase):
         """
         self.site: Path = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.site)
-        networks = [{"name": "other", "front_man": "wrong"}, {"name": "net", "front_man": "front"}]
+        networks: List[Dict[str, str]] = [{"name": "other", "front_man": "wrong"},
+                                          {"name": "net", "front_man": "front"}]
         (self.site / "agent-manifest.json").write_text(json.dumps({"networks": networks}), encoding="utf-8")
 
     def test_front_man_comes_from_matching_network(self) -> None:

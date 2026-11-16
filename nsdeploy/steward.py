@@ -12,32 +12,40 @@ import json
 import os
 import urllib.parse
 import urllib.request
+from http.client import HTTPResponse
 from typing import Any
 from typing import Dict
+from typing import List
 
 import httpx
+from anyio.streams.memory import MemoryObjectReceiveStream
+from anyio.streams.memory import MemoryObjectSendStream
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.message import SessionMessage
+from mcp.types import CallToolResult
+from mcp.types import Tool
 from neuro_san.interfaces.coded_tool import CodedTool
 
 from nsdeploy.byok import ByokCredentials
 from nsdeploy.byok import authorization_for_key
 from nsdeploy.byok import byok_headers
 from nsdeploy.facade import NetworkRunner
+from nsdeploy.facade import PublishedNetwork
 
 
-PUBLIC_SITE_REQUEST_TIMEOUT_SECONDS = float(
+PUBLIC_SITE_REQUEST_TIMEOUT_SECONDS: float = float(
     os.environ.get("NSDEPLOY_STEWARD_SITE_TIMEOUT_SECONDS", "720")
 )
 
 
 def _origin(url: str) -> str:
-    parsed = urllib.parse.urlparse(url)
+    parsed: urllib.parse.ParseResult = urllib.parse.urlparse(url)
     return f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
 
 
-def _mcp_http_timeout(seconds: float):
-    short = min(30.0, seconds)
+def _mcp_http_timeout(seconds: float) -> httpx.Timeout:
+    short: float = min(30.0, seconds)
     return httpx.Timeout(seconds, connect=short, pool=short)
 
 
@@ -46,38 +54,40 @@ class PublicAgentNetworkGateway(CodedTool):
 
     # pylint: disable-next=too-many-locals,too-many-return-statements  # flat validation and fallback flow
     async def async_invoke(self, args: Dict[str, Any], sly_data: Dict[str, Any]) -> str:
-        site_url = str(args.get("site_url", "")).strip()
-        request = str(args.get("request", "")).strip()
+        site_url: str = str(args.get("site_url", "")).strip()
+        request: str = str(args.get("request", "")).strip()
         if not site_url or not request:
             return "Error: site_url and request are required."
-        site_parsed = urllib.parse.urlparse(site_url)
+        site_parsed: urllib.parse.ParseResult = urllib.parse.urlparse(site_url)
         if site_parsed.scheme not in ("http", "https") or not site_parsed.netloc:
             return "Error: site_url must resolve to an http(s) public agent site."
-        denied = {
+        denied: set[str] = {
             item.strip().rstrip("/")
             for item in os.environ.get("NSDEPLOY_STEWARD_DENY_ORIGINS", "").split(",")
             if item.strip()
         }
         if _origin(site_url).rstrip("/") in denied:
             return "Denied by the steward's NSDEPLOY_STEWARD_DENY_ORIGINS policy."
-        api_key = (
+        api_key: str = (
             os.environ.get("NSDEPLOY_STEWARD_BYOK_API_KEY", "").strip()
             or os.environ.get("OPENAI_API_KEY", "").strip()
         )
-        model = os.environ.get("NSDEPLOY_STEWARD_BYOK_MODEL", "gpt-4o").strip()
-        caller_headers = byok_headers(api_key, model)
+        model: str = os.environ.get("NSDEPLOY_STEWARD_BYOK_MODEL", "gpt-4o").strip()
+        caller_headers: dict[str, str] = byok_headers(api_key, model)
         if not caller_headers:
             return (
                 "Error: caller BYOK credentials are required. Set "
                 "NSDEPLOY_STEWARD_BYOK_API_KEY (or OPENAI_API_KEY) on the private Neuro-SAN server."
             )
-        upstream = (
+        upstream: str = (
             os.environ.get("NSDEPLOY_STEWARD_LLM_UPSTREAM", "").strip()
             or os.environ.get("OPENAI_BASE_URL", "").strip()
             or "https://api.openai.com/v1"
         ).rstrip("/")
-        credentials = ByokCredentials(authorization_for_key(api_key), model)
+        credentials: ByokCredentials = ByokCredentials(authorization_for_key(api_key), model)
 
+        runner: NetworkRunner
+        published: PublishedNetwork
         try:
             async with asyncio.timeout(PUBLIC_SITE_REQUEST_TIMEOUT_SECONDS):
                 runner, published = await NetworkRunner.from_public_site(
@@ -92,26 +102,30 @@ class PublicAgentNetworkGateway(CodedTool):
         except Exception as fetch_exc:  # pylint: disable=broad-exception-caught; any failure tries the MCP fallback
             # Older nsDeploy sites may publish only the MCP facade contract. Keep
             # them reachable while fetch-and-run becomes the default.
-            fallback = await self._invoke_mcp(site_url, request, caller_headers, denied)
+            fallback: str = await self._invoke_mcp(site_url, request, caller_headers, denied)
             if not fallback.startswith("Public agent site call failed:"):
                 return fallback
             return f"Public agent network load failed: {fetch_exc}. MCP fallback: {fallback}"
 
     async def _invoke_mcp(self, site_url: str, request: str,  # pylint: disable=too-many-locals
                           caller_headers: Dict[str, str], denied: set[str]) -> str:
-        endpoint = await asyncio.to_thread(self._endpoint_for, site_url)
-        parsed = urllib.parse.urlparse(endpoint)
+        endpoint: str = await asyncio.to_thread(self._endpoint_for, site_url)
+        parsed: urllib.parse.ParseResult = urllib.parse.urlparse(endpoint)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             return "Public agent site call failed: invalid MCP endpoint."
         if _origin(endpoint).rstrip("/") in denied:
             return "Denied by the steward's NSDEPLOY_STEWARD_DENY_ORIGINS policy."
+        client: httpx.AsyncClient
+        read: MemoryObjectReceiveStream[SessionMessage | Exception]
+        write: MemoryObjectSendStream[SessionMessage]
+        session: ClientSession
         try:
             # Do not wait indefinitely for a remote public network. Disabling
             # automatic DELETE on context exit also lets cancellation interrupt
             # a long-lived SSE stream immediately; a timed-out request must not
             # hold the private steward's whole execution open.
             async with asyncio.timeout(PUBLIC_SITE_REQUEST_TIMEOUT_SECONDS):
-                timeout = _mcp_http_timeout(PUBLIC_SITE_REQUEST_TIMEOUT_SECONDS)
+                timeout: httpx.Timeout = _mcp_http_timeout(PUBLIC_SITE_REQUEST_TIMEOUT_SECONDS)
                 async with httpx.AsyncClient(
                     timeout=timeout, follow_redirects=True, headers=caller_headers
                 ) as client:
@@ -120,13 +134,13 @@ class PublicAgentNetworkGateway(CodedTool):
                     ) as (read, write, _):
                         async with ClientSession(read, write) as session:
                             await session.initialize()
-                            tools = (await session.list_tools()).tools
+                            tools: List[Tool] = (await session.list_tools()).tools
                             if not tools:
                                 return "Error: the public site exposed no MCP tools."
-                            tool = next((item for item in tools if item.name == "invoke_network"), tools[0])
-                            fields = (tool.inputSchema or {}).get("properties", {}) or {}
-                            argument_name = "request" if "request" in fields else (next(iter(fields), "request"))
-                            result = await session.call_tool(tool.name, {argument_name: request})
+                            tool: Tool = next((item for item in tools if item.name == "invoke_network"), tools[0])
+                            fields: Dict[str, Any] = (tool.inputSchema or {}).get("properties", {}) or {}
+                            argument_name: str = "request" if "request" in fields else (next(iter(fields), "request"))
+                            result: CallToolResult = await session.call_tool(tool.name, {argument_name: request})
             return " ".join(getattr(item, "text", str(item)) for item in (result.content or []))
         except TimeoutError:
             return (
@@ -138,16 +152,17 @@ class PublicAgentNetworkGateway(CodedTool):
 
     @staticmethod
     def _endpoint_for(site_url: str) -> str:
-        parsed = urllib.parse.urlparse(site_url)
+        parsed: urllib.parse.ParseResult = urllib.parse.urlparse(site_url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             return ""
         if parsed.path.rstrip("/").endswith("/mcp"):
             return site_url.rstrip("/")
-        root = f"{parsed.scheme}://{parsed.netloc}"
+        root: str = f"{parsed.scheme}://{parsed.netloc}"
+        response: HTTPResponse
         try:
             with urllib.request.urlopen(root + "/.well-known/nsdeploy-agent.json", timeout=40) as response:
-                descriptor = json.loads(response.read().decode("utf-8"))
-            endpoint = descriptor.get("endpoint")
+                descriptor: Dict[str, Any] = json.loads(response.read().decode("utf-8"))
+            endpoint: Any = descriptor.get("endpoint")
             if isinstance(endpoint, str) and endpoint:
                 return urllib.parse.urljoin(root + "/", endpoint)
         except Exception:  # pylint: disable=broad-exception-caught; descriptor is optional, fall back to /mcp

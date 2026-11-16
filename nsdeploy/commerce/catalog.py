@@ -5,14 +5,20 @@ The buyer ceiling and seller floor are withheld from the opposite party.
 """
 from datetime import date
 from datetime import timedelta
+from typing import Any
+from typing import Dict
+from typing import NoReturn
+from typing import Tuple
 
+PROVIDERS: Tuple[str, ...]
+CONNECTED: Tuple[str, ...]
 PROVIDERS = CONNECTED = ("seabreeze_inn",)
-RETAIL_SCOPE = "Retail transactions are not enabled."
-CAVEAT = (
+RETAIL_SCOPE: str = "Retail transactions are not enabled."
+CAVEAT: str = (
     "Informational, fixed catalogue price; no reservation or payment. "
     "Ask your private steward in nsFlow to negotiate through Cailville Commerce Arbiter."
 )
-CATALOG = {
+CATALOG: Dict[str, Dict[str, Any]] = {
     "seabreeze_inn": {
         "item_id": "seabreeze-one-night-stay",
         "title": "Seabreeze Inn · one-night coastal stay for two",
@@ -23,7 +29,7 @@ CATALOG = {
 }
 
 
-def providers_for(kind):
+def providers_for(kind: str) -> Tuple[str, ...]:
     """
     Return the providers that serve a commerce kind.
 
@@ -33,20 +39,20 @@ def providers_for(kind):
     return PROVIDERS if kind == "travel" else ()
 
 
-def default_trip():
+def default_trip() -> Dict[str, Any]:
     """
     Build the default one-night Cailville trip, arriving on next week's Friday.
 
     :return: The default trip fields.
     """
-    today = date.today()
-    arrival = today + timedelta(days=7 - today.weekday() + 4)
+    today: date = date.today()
+    arrival: date = today + timedelta(days=7 - today.weekday() + 4)
     return {"destination": "Cailville", "arrival": arrival.isoformat(),
             "departure": (arrival + timedelta(days=1)).isoformat(),
             "travelers": 2, "amenities": ["parking", "wifi"]}
 
 
-def validate_trip(trip):
+def validate_trip(trip: Any) -> Dict[str, Any]:
     """
     Validate a trip against the fixture's supported stay.
 
@@ -63,6 +69,8 @@ def validate_trip(trip):
         raise ValueError("This fixture is a Cailville stay for two adults with parking and Wi-Fi.")
     if not all(isinstance(trip[key], str) for key in ("arrival", "departure")):
         raise ValueError("Dates must use YYYY-MM-DD.")
+    arrival: date
+    departure: date
     arrival, departure = date.fromisoformat(trip["arrival"]), date.fromisoformat(trip["departure"])
     if (arrival.isoformat() != trip["arrival"] or departure.isoformat() != trip["departure"]
             or arrival < date.today() or departure - arrival != timedelta(days=1)):
@@ -70,7 +78,7 @@ def validate_trip(trip):
     return {**trip, "amenities": list(trip["amenities"])}
 
 
-def validate_retail_purchase(purchase):  # pylint: disable=unused-argument; arbiter catalog interface
+def validate_retail_purchase(purchase: Any) -> NoReturn:  # pylint: disable=unused-argument; arbiter catalog interface
     """
     Reject retail purchases, which this fixture does not support.
 
@@ -81,7 +89,7 @@ def validate_retail_purchase(purchase):  # pylint: disable=unused-argument; arbi
     raise ValueError(RETAIL_SCOPE)
 
 
-def travel_scope(trip):  # pylint: disable=unused-argument; arbiter catalog interface
+def travel_scope(trip: Dict[str, Any]) -> str:  # pylint: disable=unused-argument; arbiter catalog interface
     """
     Describe what the fixture travel offer includes.
 
@@ -93,7 +101,8 @@ def travel_scope(trip):  # pylint: disable=unused-argument; arbiter catalog inte
             "Fixture inventory and simulated payment only; no real reservation.")
 
 
-def travel_item(provider, trip):  # pylint: disable=unused-argument; arbiter catalog interface
+# pylint: disable-next=unused-argument  # arbiter catalog interface
+def travel_item(provider: str, trip: Dict[str, Any]) -> Dict[str, Any]:
     """
     Return the catalog item a provider offers for a trip.
 
@@ -104,7 +113,7 @@ def travel_item(provider, trip):  # pylint: disable=unused-argument; arbiter cat
     return dict(CATALOG[provider])
 
 
-def public_catalog(provider, subject, kind="travel"):
+def public_catalog(provider: str, subject: Any, kind: str = "travel") -> Dict[str, Any]:
     """
     Build the public, information-only catalog entry for a provider.
 
@@ -117,7 +126,7 @@ def public_catalog(provider, subject, kind="travel"):
     if provider not in PROVIDERS or kind != "travel":
         raise ValueError("Provider is outside this demo's scope.")
     subject = validate_trip(subject)
-    item = CATALOG[provider]
+    item: Dict[str, Any] = CATALOG[provider]
     return {"provider": provider, "status": "INFORMATION_ONLY", "simulation": True,
             "item_id": item["item_id"], "title": item["title"], "trip": subject,
             "currency": "USD", "total_cents": item["list_cents"],

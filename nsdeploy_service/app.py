@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import http.client
 import json
 import os
 import platform
@@ -29,8 +30,15 @@ from datetime import timezone
 from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Annotated
+from typing import Any
+from typing import AsyncIterator
+from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Set
+from typing import Tuple
+from typing import Union
+from urllib.parse import SplitResult
 from urllib.parse import urlsplit
 
 from fastapi import Depends
@@ -47,6 +55,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.types import Scope
+
+from nsdeploy.theme import ThemeSpec
 
 from nsdeploy_service import PRODUCT_NAME
 from nsdeploy_service import __version__
@@ -59,6 +70,8 @@ from nsdeploy_service.config import Settings
 from nsdeploy_service.console_proxy import ConsoleProxy
 from nsdeploy_service.models import ORG_NAME_MAX
 from nsdeploy_service.models import ORG_NAME_PATTERN
+from nsdeploy_service.models import AgentGraphEdge
+from nsdeploy_service.models import AgentGraphNode
 from nsdeploy_service.models import AgentGraphView
 from nsdeploy_service.models import BundleOptions
 from nsdeploy_service.models import DeploymentList
@@ -87,11 +100,13 @@ from nsdeploy_service.layout import next_position
 from nsdeploy_service.models import RelationsView
 from nsdeploy_service.models import SuggestedEdge
 from nsdeploy_service.relations import ChatFn
+from nsdeploy_service.relations import NetworkIdentity
 from nsdeploy_service.relations import SuggestedRelation
 from nsdeploy_service.relations import identities_from_rows
 from nsdeploy_service.relations import suggest_relations
 from nsdeploy_service.site_env import SiteEnv
 from nsdeploy_service.siteproxy import SiteProxy
+from nsdeploy_service.store import Store
 from nsdeploy_service.store import StoreError
 from nsdeploy_service.supervisor import Deployment
 from nsdeploy_service.supervisor import DeploymentError
@@ -110,7 +125,7 @@ try:
 except ImportError:
     install_admin_panel = None
 
-WAIT_POLL_SECONDS = 0.4
+WAIT_POLL_SECONDS: float = 0.4
 
 
 def read_ui_version(ui_dir: Path) -> str:
@@ -128,10 +143,10 @@ def read_ui_version(ui_dir: Path) -> str:
     rather than as a mismatch — an unreadable version must not nag on every poll.
     """
     try:
-        html = (ui_dir / "index.html").read_text(encoding="utf-8")
+        html: str = (ui_dir / "index.html").read_text(encoding="utf-8")
     except OSError:
         return ""
-    found = re.findall(r"\?v=([A-Za-z0-9._-]+)", html)
+    found: List[str] = re.findall(r"\?v=([A-Za-z0-9._-]+)", html)
     # One document pins every asset to the same version; if it ever disagrees with
     # itself, the highest-cardinality answer is meaningless, so report nothing.
     return found[0] if found and len(set(found)) == 1 else ""
@@ -159,10 +174,10 @@ class ConsoleFiles(StaticFiles):
     more here than saving a conditional request.
     """
 
-    REVALIDATE = ("text/html", "text/javascript", "application/javascript")
+    REVALIDATE: Tuple[str, ...] = ("text/html", "text/javascript", "application/javascript")
 
-    async def get_response(self, path: str, scope):  # type: ignore[override]
-        response = await super().get_response(path, scope)
+    async def get_response(self, path: str, scope: Scope) -> Response:  # type: ignore[override]
+        response: Response = await super().get_response(path, scope)
         if response.headers.get("content-type", "").startswith(self.REVALIDATE):
             response.headers["Cache-Control"] = "no-cache"
         return response
@@ -170,7 +185,7 @@ class ConsoleFiles(StaticFiles):
 
 # Only the deliberate GET /relations?strategy=llm call may wait on a provider; the
 # polled map never does.
-RELATIONS_LLM_TIMEOUT_SECONDS = 60
+RELATIONS_LLM_TIMEOUT_SECONDS: int = 60
 
 # Statuses a published network is drawn on the map in. A pin must either lead
 # somewhere or be visibly on its way there, so the live states qualify and the
@@ -184,7 +199,7 @@ RELATIONS_LLM_TIMEOUT_SECONDS = 60
 # reader is waiting for is lost in the noise. The launch dialog already covers the
 # wait — it watches the build and only opens the map once the site answers — so
 # nothing is left unexplained by holding a pin back until it means something.
-MAP_STATUSES = (DeploymentStatus.READY,)
+MAP_STATUSES: Tuple[DeploymentStatus, ...] = (DeploymentStatus.READY,)
 
 # Organization-name rules (ORG_NAME_MAX, ORG_NAME_PATTERN) live in models.py, so the
 # upload endpoints here, the /orgs endpoints and the console all enforce one rule.
@@ -232,11 +247,11 @@ def _row_view(row: dict, settings: Settings) -> DeploymentView:  # pylint: disab
     work without any in-memory Deployment. `endpoints` is derived rather than stored,
     since it is a pure function of a ready site's URL.
     """
-    status = DeploymentStatus(row["status"])
-    url = row.get("url")
+    status: DeploymentStatus = DeploymentStatus(row["status"])
+    url: Optional[str] = row.get("url")
     endpoints: dict = {}
     if status is DeploymentStatus.READY and url:
-        base = url.rstrip("/")
+        base: str = url.rstrip("/")
         endpoints = {
             "site": f"{base}/",
             "mock_llm": f"{base}/v1/chat/completions",
@@ -245,8 +260,8 @@ def _row_view(row: dict, settings: Settings) -> DeploymentView:  # pylint: disab
             "agent_manifest": f"{base}/agent-manifest.json",
             "well_known": f"{base}/.well-known/nsdeploy-agent.json",
         }
-    network = row.get("network")
-    options = row.get("options") or {}
+    network: Any = row.get("network")
+    options: Dict[str, Any] = row.get("options") or {}
     return DeploymentView(
         id=row["id"], name=row["name"],
         org_id=row["org_id"], org_name=row.get("org_name", ""),
@@ -269,7 +284,7 @@ def _row_view(row: dict, settings: Settings) -> DeploymentView:  # pylint: disab
     )
 
 
-def _tokens(spec) -> ThemeTokens:
+def _tokens(spec: ThemeSpec) -> ThemeTokens:
     """A ThemeSpec's editable fields, for the console's design editor.
 
     Narrower than the spec on purpose: `welcome` and the model-authored
@@ -287,7 +302,7 @@ def _tokens(spec) -> ThemeTokens:
 # proxy enforces one — commonly 8 KB for the whole block — so the list is trimmed
 # rather than risking a 431 on a build that did produce a bundle. json.dumps escapes
 # non-ASCII, which keeps the value inside what a header is allowed to carry.
-MAX_BUNDLE_WARNING_HEADER_CHARS = 2000
+MAX_BUNDLE_WARNING_HEADER_CHARS: int = 2000
 
 
 def _bundle_warning_header(warnings: List[str]) -> str:
@@ -308,7 +323,7 @@ def _bundle_warning_header(warnings: List[str]) -> str:
 
 def _bundle_headers(result: BundleResult) -> dict:
     """What a bundle build produced, for a response whose body is the archive."""
-    headers = {
+    headers: Dict[str, str] = {
         "Content-Disposition": f'attachment; filename="{result.name}.tar.gz"',
         "X-Bundle-Name": result.name,
         "X-Bundle-Files": str(result.files),
@@ -337,26 +352,27 @@ def _relations_chat(settings: Settings) -> Optional[ChatFn]:
     """
     if not settings.relations_llm:
         return None
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    api_key: str = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
         return None
-    upstream = (settings.upstream or "https://api.openai.com/v1").rstrip("/")
-    model = settings.relations_model
+    upstream: str = (settings.upstream or "https://api.openai.com/v1").rstrip("/")
+    model: str = settings.relations_model
 
     def chat(system: str, user: str) -> str:
-        payload = {
+        payload: Dict[str, Any] = {
             "model": model, "stream": False,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
         }
-        request = urllib.request.Request(
+        request: urllib.request.Request = urllib.request.Request(
             f"{upstream}/chat/completions",
             data=json.dumps(payload).encode("utf-8"), method="POST",
             headers={"Content-Type": "application/json",
                      "Authorization": f"Bearer {api_key}"},
         )
+        response: http.client.HTTPResponse
         with urllib.request.urlopen(request, timeout=RELATIONS_LLM_TIMEOUT_SECONDS) as response:
-            body = json.loads(response.read().decode("utf-8"))
+            body: Dict[str, Any] = json.loads(response.read().decode("utf-8"))
         return body["choices"][0]["message"]["content"]
 
     return chat
@@ -388,7 +404,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     ensure_ca_bundle()
 
     @contextlib.asynccontextmanager
-    async def lifespan(app: FastAPI):  # pylint: disable=redefined-outer-name; FastAPI passes the app
+    # pylint: disable-next=redefined-outer-name  # FastAPI passes the app
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Built inside the loop so the build semaphore binds to the right one.
         app.state.settings = settings
         app.state.supervisor = Supervisor(settings)
@@ -400,7 +417,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if app.state.supervisor.resummarized:
             print(f"rebuilt the network summary for {len(app.state.supervisor.resummarized)} "
                   f"deployment record(s) from their generated bundle", file=sys.stderr)
-        reaper = asyncio.create_task(_reaper(app.state.supervisor), name="ttl-reaper")
+        reaper: asyncio.Task[None] = asyncio.create_task(_reaper(app.state.supervisor), name="ttl-reaper")
         try:
             yield
         finally:
@@ -411,13 +428,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             await app.state.supervisor.shutdown()
 
     async def _reaper(supervisor: Supervisor) -> None:
-        interval = max(5, supervisor.settings.reap_interval_seconds)
+        interval: int = max(5, supervisor.settings.reap_interval_seconds)
         while True:
             await asyncio.sleep(interval)
             with contextlib.suppress(Exception):
                 await supervisor.reap_expired()
 
-    app = FastAPI(  # pylint: disable=redefined-outer-name; module-level `app` is this function's result
+    app: FastAPI = FastAPI(  # pylint: disable=redefined-outer-name; module-level `app` is this function's result
         title=PRODUCT_NAME,
         version=__version__,
         summary="Deploy a neuro-san agent-network HOCON as a live website over HTTP.",
@@ -464,14 +481,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         """Bearer-token gate. Disabled when no token is configured (loopback default)."""
         if not settings.api_token:
             return
-        header = request.headers.get("Authorization", "")
+        header: str = request.headers.get("Authorization", "")
+        scheme: str
+        value: str
         scheme, _, value = header.partition(" ")
         if scheme.lower() != "bearer" or value.strip() != settings.api_token:
             raise HTTPException(status_code=401, detail="a valid bearer token is required")
 
     # Applied per route rather than as a parameter: the gate injects nothing into the
     # handler, and a route-level dependency keeps it out of the OpenAPI parameter list.
-    AUTH = [Depends(require_token)]  # pylint: disable=invalid-name; route-level constant
+    AUTH: List[Any] = [Depends(require_token)]  # pylint: disable=invalid-name; route-level constant
 
     def supervisor_of(request: Request) -> Supervisor:
         return request.app.state.supervisor
@@ -480,13 +499,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return request.app.state.bundler
 
     def find_row(request: Request, deployment_id: str) -> dict:
-        row = supervisor_of(request).store.get_deployment(deployment_id)
+        row: Optional[Dict[str, Any]] = supervisor_of(request).store.get_deployment(deployment_id)
         if row is None:
             raise HTTPException(status_code=404, detail=f"no deployment {deployment_id!r}")
         return row
 
     def find_org(request: Request, org_id: str) -> dict:
-        org = supervisor_of(request).store.get_org(org_id)
+        org: Optional[Dict[str, Any]] = supervisor_of(request).store.get_org(org_id)
         if org is None:
             raise HTTPException(status_code=404, detail=f"no organization {org_id!r}")
         return org
@@ -523,8 +542,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         refusal: Optional[str] = UploadUpstream.refusal(upstream, settings.upstream)
         if refusal:
             raise DeploymentError(refusal)
-        supervisor = supervisor_of(request)
-        dep = supervisor.create(hocon, options)
+        supervisor: Supervisor = supervisor_of(request)
+        dep: Deployment = supervisor.create(hocon, options)
         supervisor.start(dep)
         return _view(dep)
 
@@ -564,15 +583,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # An explicit name is validated verbatim so a bad one is rejected, not renamed.
         # An upload filename may legitimately arrive as a full path from older clients,
         # so basename that — but only that, and only here where it is intended.
-        candidate = name.strip() if name and name.strip() else PurePosixPath(
+        candidate: str = name.strip() if name and name.strip() else PurePosixPath(
             (file.filename or "network").replace("\\", "/")).name
-        options = DeployOptions(
+        options: DeployOptions = DeployOptions(
             name=candidate, org_id=org_id, org_name=org_name,
             theme=theme, theme_model=theme_model,
             theme_refresh=theme_refresh, theme_prompt=theme_prompt,
             cruse=cruse, ttl_seconds=ttl_seconds,
         )
-        view = await _accept(request, await file.read(), options, upstream)
+        view: DeploymentView = await _accept(request, await file.read(), options, upstream)
         response.headers["Location"] = f"/deployments/{view.id}"
         return view
 
@@ -598,11 +617,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         cruse: Annotated[Optional[bool], Query()] = None,
         ttl_seconds: Annotated[Optional[int], Query(ge=0)] = None,
     ) -> DeploymentView:
-        options = DeployOptions(name=name, org_id=org_id, org_name=org_name,
-                                theme=theme,
-                                theme_model=theme_model, cruse=cruse,
-                                ttl_seconds=ttl_seconds)
-        view = await _accept(request, await request.body(), options, upstream)
+        options: DeployOptions = DeployOptions(name=name, org_id=org_id, org_name=org_name,
+                                               theme=theme,
+                                               theme_model=theme_model, cruse=cruse,
+                                               ttl_seconds=ttl_seconds)
+        view: DeploymentView = await _accept(request, await request.body(), options, upstream)
         response.headers["Location"] = f"/deployments/{view.id}"
         return view
 
@@ -610,14 +629,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.post("/orgs", status_code=201, response_model=OrgView, dependencies=AUTH,
               summary="Create an organization profile")
     async def create_org(request: Request, payload: OrgCreate) -> OrgView:
-        store = supervisor_of(request).store
-        row = store.create_org(payload.name, payload.address, payload.contact)
+        store: Store = supervisor_of(request).store
+        row: Dict[str, Any] = store.create_org(payload.name, payload.address, payload.contact)
         return _org_view({**row, "deployment_count": 0, "live_count": 0})
 
     @app.get("/orgs", response_model=OrgList, dependencies=AUTH,
              summary="List organizations with deployment counts")
     async def list_orgs(request: Request) -> OrgList:
-        rows = supervisor_of(request).store.list_orgs()
+        rows: List[Dict[str, Any]] = supervisor_of(request).store.list_orgs()
         return OrgList(organizations=[_org_view(row) for row in rows])
 
     @app.get("/orgs/{org_id}", response_model=OrgView, dependencies=AUTH,
@@ -628,9 +647,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.patch("/orgs/{org_id}", response_model=OrgView, dependencies=AUTH,
                summary="Update an organization profile")
     async def update_org(request: Request, org_id: str, payload: OrgUpdate) -> OrgView:
-        store = supervisor_of(request).store
+        store: Store = supervisor_of(request).store
         find_org(request, org_id)
-        updated = store.update_org(org_id, **payload.model_dump(exclude_none=True))
+        updated: Optional[Dict[str, Any]] = store.update_org(org_id, **payload.model_dump(exclude_none=True))
         if updated is None:
             raise HTTPException(status_code=404, detail=f"no organization {org_id!r}")
         return _org_view(updated)
@@ -655,17 +674,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         request: Request,
         live_only: Annotated[bool, Query(description="hide stopped and failed records")] = False,
     ) -> DirectoryView:
-        supervisor = supervisor_of(request)
-        orgs = supervisor.store.list_orgs()
-        rows = supervisor.store.list_deployments()
+        supervisor: Supervisor = supervisor_of(request)
+        orgs: List[Dict[str, Any]] = supervisor.store.list_orgs()
+        rows: List[Dict[str, Any]] = supervisor.store.list_deployments()
         grouped: dict = {org["id"]: [] for org in orgs}
+        row: Dict[str, Any]
         for row in rows:
-            view = _row_view(row, settings)
+            view: DeploymentView = _row_view(row, settings)
             if live_only and view.status not in (
                     DeploymentStatus.QUEUED, DeploymentStatus.BUILDING, DeploymentStatus.READY):
                 continue
             grouped.setdefault(row["org_id"], []).append(view)
-        entries = [
+        entries: List[DirectoryOrg] = [
             DirectoryOrg(organization=_org_view(org), deployments=grouped.get(org["id"], []))
             for org in orgs
         ]
@@ -682,7 +702,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # --- map --------------------------------------------------------------
     def _origin_of(url: str) -> str:
         """Scheme+host+port of a URL, for matching a link target back to a node."""
-        parsed = urlsplit(url)
+        parsed: SplitResult = urlsplit(url)
         return f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme else ""
 
     @app.get("/graph", response_model=GraphView, dependencies=AUTH,
@@ -695,15 +715,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         suggest: Annotated[bool, Query(
             description="also infer suggested relations (slow on a large map)")] = False,
     ) -> GraphView:
-        supervisor = supervisor_of(request)
+        supervisor: Supervisor = supervisor_of(request)
         if org_id:
             find_org(request, org_id)
-        rows = supervisor.store.list_deployments(org_id=org_id)
+        rows: List[Dict[str, Any]] = supervisor.store.list_deployments(org_id=org_id)
 
         # A link target is an absolute URL; map it back to whichever node serves that
         # origin. Targets outside this service (a peer run elsewhere) cannot become an
         # edge, so they are counted on the source node instead of silently dropped.
-        by_origin = {
+        by_origin: Dict[str, str] = {
             _origin_of(row["url"]): row["id"]
             for row in rows if row.get("url")
         }
@@ -712,8 +732,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         edges: List[GraphEdge] = []
         placed: List[dict] = []
         visible: List[dict] = []
+        row: Dict[str, Any]
         for row in rows:
-            status = DeploymentStatus(row["status"])
+            status: DeploymentStatus = DeploymentStatus(row["status"])
             # The map shows published networks that finished building — see
             # MAP_STATUSES above for why queued and building are held back at event
             # scale, and why the launch dialog rather than the map covers the wait.
@@ -727,16 +748,17 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             if not row.get("published_at") or status not in MAP_STATUSES:
                 continue
             visible.append(row)
-            summary = row.get("network") or {}
+            summary: Dict[str, Any] = row.get("network") or {}
             # Both ways of calling a peer count as an edge. A slot-bound link arrives
             # as `links`; a URL written straight into an agent's `tools` arrives as
             # `peer_urls`, because nsdeploy reports those as external_networks and
             # never as linking.imports. Treating only the first as real left a
             # network that was wired up with plain URLs looking unconnected.
-            links = list(summary.get("links") or []) + list(summary.get("peer_urls") or [])
-            external = 0
+            links: List[Dict[str, Any]] = list(summary.get("links") or []) + list(summary.get("peer_urls") or [])
+            external: int = 0
+            link: Dict[str, Any]
             for link in links:
-                target_id = by_origin.get(_origin_of(link.get("target", "")))
+                target_id: Optional[str] = by_origin.get(_origin_of(link.get("target", "")))
                 if target_id and target_id != row["id"]:
                     edges.append(GraphEdge(
                         source=row["id"], target=target_id,
@@ -749,7 +771,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             # Positions are backfilled at startup, so a stored one is the norm. The
             # fallback only covers a record written between backfill and now; it is
             # not persisted here because GET must not mutate.
-            position = row.get("position") or next_position(placed)
+            position: Dict[str, Any] = row.get("position") or next_position(placed)
             placed.append(position)
             nodes.append(GraphNode(
                 id=row["id"], name=row["name"],
@@ -812,26 +834,31 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                         "(needs RELATIONS_LLM and OPENAI_API_KEY; falls back to "
                         "heuristic on any failure)")] = "heuristic",
     ) -> RelationsView:
-        supervisor = supervisor_of(request)
+        supervisor: Supervisor = supervisor_of(request)
         if org_id:
             find_org(request, org_id)
-        rows = supervisor.store.list_deployments(org_id=org_id)
+        rows: List[Dict[str, Any]] = supervisor.store.list_deployments(org_id=org_id)
         if live_only:
             rows = [row for row in rows
                     if DeploymentStatus(row["status"]) in (DeploymentStatus.QUEUED,
                                                            DeploymentStatus.BUILDING,
                                                            DeploymentStatus.READY)]
-        chat = _relations_chat(settings) if strategy == "llm" else None
+        chat: Optional[ChatFn] = _relations_chat(settings) if strategy == "llm" else None
 
-        def infer():
+        def infer() -> Tuple[List[NetworkIdentity], List[SuggestedRelation], str]:
             # Loading identities reads each bundle from disk and the LLM strategy is a
             # network call, so both stay off the event loop.
-            identities = identities_from_rows(rows)
+            identities: List[NetworkIdentity] = identities_from_rows(rows)
+            suggested: List[SuggestedRelation]
+            used: str
             suggested, used = suggest_relations(
                 identities, chat=chat,
                 max_per_network=settings.relations_max_per_network)
             return identities, suggested, used
 
+        identities: List[NetworkIdentity]
+        suggested: List[SuggestedRelation]
+        used: str
         identities, suggested, used = await asyncio.to_thread(infer)
         return RelationsView(
             edges=[_suggested_edge(item) for item in suggested],
@@ -842,8 +869,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     # --- read ------------------------------------------------------------
     def _deployment_list(request: Request, org_id: Optional[str] = None) -> DeploymentList:
-        supervisor = supervisor_of(request)
-        rows = supervisor.store.list_deployments(org_id=org_id)
+        supervisor: Supervisor = supervisor_of(request)
+        rows: List[Dict[str, Any]] = supervisor.store.list_deployments(org_id=org_id)
         return DeploymentList(
             deployments=[_row_view(row, settings) for row in rows],
             capacity={
@@ -868,7 +895,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
              dependencies=AUTH, summary="Poll one deployment")
     async def get_deployment(request: Request, deployment_id: str) -> DeploymentView:
         # Read from the store so records survive a restart of this service.
-        row = supervisor_of(request).store.get_deployment(deployment_id)
+        row: Optional[Dict[str, Any]] = supervisor_of(request).store.get_deployment(deployment_id)
         if row is None:
             raise HTTPException(status_code=404, detail=f"no deployment {deployment_id!r}")
         return _row_view(row, settings)
@@ -880,7 +907,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         deployment_id: str,
         timeout: Annotated[int, Query(ge=1, le=1800)] = 600,
     ) -> DeploymentView:
-        dep = supervisor_of(request).get(deployment_id)
+        dep: Optional[Deployment] = supervisor_of(request).get(deployment_id)
         if dep is None:
             # Not in memory: either unknown, or a record from before a restart — in
             # which case reconciliation already settled it, so there is nothing to await.
@@ -908,11 +935,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         )] = None,
     ) -> LogView:
         # The log path is persisted, so a previous run's build output stays readable.
-        row = find_row(request, deployment_id)
+        row: Dict[str, Any] = find_row(request, deployment_id)
         # Omitted is distinct from 0: omitted means "the service default", 0 means
         # "everything". A failed build's log can run to thousands of lines, so the
         # default is deliberately bounded.
-        limit = settings.log_tail_default if tail is None else tail
+        limit: int = settings.log_tail_default if tail is None else tail
+        lines: List[str]
+        truncated: bool
         lines, truncated = read_log(Path(row["log_path"]), limit)
         return LogView(id=row["id"], status=DeploymentStatus(row["status"]),
                        lines=lines, truncated=truncated)
@@ -922,10 +951,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def get_network_graph(request: Request, deployment_id: str) -> AgentGraphView:
         # Read from the generated bundle, same as the build summary — nothing here
         # re-parses the original HOCON, and the topology outlives the build process.
-        row = find_row(request, deployment_id)
-        network = row.get("network") or {}
-        front_man = network.get("front_man", "")
-        out_dir = Path(row["work_dir"]) / "site"
+        row: Dict[str, Any] = find_row(request, deployment_id)
+        network: Dict[str, Any] = row.get("network") or {}
+        front_man: str = network.get("front_man", "")
+        out_dir: Path = Path(row["work_dir"]) / "site"
+        nodes: List[AgentGraphNode]
+        edges: List[AgentGraphEdge]
         nodes, edges = network_topology(out_dir, row["name"], front_man)
         if not nodes:
             raise HTTPException(
@@ -940,11 +971,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
               response_model=DeploymentView, dependencies=AUTH,
               summary="Relaunch a stopped or failed deployment from its stored HOCON")
     async def restart_deployment(request: Request, deployment_id: str) -> DeploymentView:
-        supervisor = supervisor_of(request)
+        supervisor: Supervisor = supervisor_of(request)
         find_row(request, deployment_id)
         # Same record id and, where possible, the same port — so the site's URL
         # survives the relaunch. Options are replayed from the original deploy.
-        dep = supervisor.restart(deployment_id)
+        dep: Deployment = supervisor.restart(deployment_id)
         supervisor.start(dep)
         return _view(dep)
 
@@ -954,29 +985,32 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def update_theme(
         request: Request, deployment_id: str, body: ThemeUpdate,
     ) -> DeploymentView:
-        supervisor = supervisor_of(request)
+        supervisor: Supervisor = supervisor_of(request)
         find_row(request, deployment_id)
         # Unlike plain restart, this one is meant to work on a network that is
         # currently live — "change the theme" implies it already has one — so stop
         # it first rather than making the edit refuse with "already ready", same as
         # DELETE does above.
-        live = supervisor.get(deployment_id)
+        live: Optional[Deployment] = supervisor.get(deployment_id)
         if live is not None:
             await supervisor.stop(live, "restarting with edited theme")
         # Same mechanism as a plain restart — see Supervisor.restart — except the
         # edited fields are folded into the replayed options first and, since a
         # restart persists whatever options it ends up running with, they stick for
         # every restart after this one too.
-        dep = supervisor.restart(deployment_id, overrides=body.model_dump(exclude_none=True))
+        dep: Deployment = supervisor.restart(deployment_id, overrides=body.model_dump(exclude_none=True))
         supervisor.start(dep)
         return _view(dep)
 
     @app.get("/deployments/{deployment_id}/theme-spec", response_model=ThemeSpecView,
              dependencies=AUTH, summary="This deployment's editable theme tokens")
     async def get_theme_spec(request: Request, deployment_id: str) -> ThemeSpecView:
-        row = find_row(request, deployment_id)
-        work_dir = Path(row["work_dir"])
+        row: Dict[str, Any] = find_row(request, deployment_id)
+        work_dir: Path = Path(row["work_dir"])
+        spec: ThemeSpec
+        source: str
         spec, source = themespec.read_spec(work_dir)
+        out_dir: Path
         out_dir, _ = themespec.site_paths(work_dir)
         return ThemeSpecView(
             current=_tokens(spec),
@@ -997,7 +1031,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # built stylesheet and manifest, and a deployed site reads both off disk
         # per request, so the work is already done when this returns. The record
         # is untouched — nothing to poll, nothing to wait for.
-        row = find_row(request, deployment_id)
+        row: Dict[str, Any] = find_row(request, deployment_id)
+        spec: ThemeSpec
+        applied: bool
         spec, applied = themespec.apply_tokens(
             Path(row["work_dir"]), body.model_dump(exclude_none=True),
         )
@@ -1029,8 +1065,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         purge: Annotated[bool, Query(
             description="also remove the record from the directory")] = False,
     ) -> DeploymentView:
-        supervisor = supervisor_of(request)
-        row = find_row(request, deployment_id)
+        supervisor: Supervisor = supervisor_of(request)
+        row: Dict[str, Any] = find_row(request, deployment_id)
         # Checked before stopping, not after: otherwise this method would stop the
         # site as a side effect of a request it is about to reject, and "cannot
         # remove a running deployment" would have already taken it down.
@@ -1039,11 +1075,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             raise DeploymentError(
                 f"{row['name']} is {row['status']}. Stop it before removing it — "
                 f"removal also discards its logs and its uploaded HOCON.")
-        dep = supervisor.get(deployment_id)
+        dep: Optional[Deployment] = supervisor.get(deployment_id)
         if dep is not None:
             await supervisor.stop(dep)
             row = find_row(request, deployment_id)
-        view = _row_view(row, settings)
+        view: DeploymentView = _row_view(row, settings)
         if purge:
             await supervisor.forget(deployment_id)
         return view
@@ -1054,9 +1090,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # and no record. It is built, handed over and forgotten, so everything here is
     # answered on the open connection and nothing reaches the store.
     # pylint: disable-next=invalid-name  # route-level constant
-    BUNDLE_MEDIA_TYPE = "application/gzip"
+    BUNDLE_MEDIA_TYPE: str = "application/gzip"
     # pylint: disable-next=invalid-name  # route-level constant
-    BUNDLE_RESPONSES = {
+    BUNDLE_RESPONSES: Dict[Union[int, str], Dict[str, Any]] = {
         200: {"content": {BUNDLE_MEDIA_TYPE: {"schema": {"type": "string",
                                                          "format": "binary"}}},
               "description": "the bundle, as a gzipped tar with the files at its root"},
@@ -1069,7 +1105,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # The three left out have nothing finished to offer. `queued` and `building`
     # have not produced a site yet, and `failed` tried and could not.
     # pylint: disable-next=invalid-name  # route-level constant
-    BUNDLE_STATUSES = (DeploymentStatus.READY, DeploymentStatus.STOPPED)
+    BUNDLE_STATUSES: Tuple[DeploymentStatus, ...] = (DeploymentStatus.READY, DeploymentStatus.STOPPED)
 
     @app.post("/bundles", dependencies=AUTH, response_class=Response,
               responses=BUNDLE_RESPONSES,
@@ -1091,14 +1127,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     ) -> Response:
         # Same naming rule as POST /deployments: an explicit name is validated
         # verbatim, and only an upload filename is basenamed.
-        candidate = name.strip() if name and name.strip() else PurePosixPath(
+        candidate: str = name.strip() if name and name.strip() else PurePosixPath(
             (file.filename or "network").replace("\\", "/")).name
-        options = BundleOptions(
+        options: BundleOptions = BundleOptions(
             name=candidate, site_url=site_url, upstream=upstream, theme=theme,
             theme_model=theme_model, theme_refresh=theme_refresh,
             theme_prompt=theme_prompt, cruse=cruse,
         )
-        result = await bundler_of(request).build(await file.read(), options)
+        result: BundleResult = await bundler_of(request).build(await file.read(), options)
         return Response(content=result.archive, media_type=BUNDLE_MEDIA_TYPE,
                         headers=_bundle_headers(result))
 
@@ -1118,12 +1154,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         theme_prompt: Annotated[Optional[str], Query(max_length=4000)] = None,
         cruse: Annotated[Optional[bool], Query()] = None,
     ) -> Response:
-        options = BundleOptions(
+        options: BundleOptions = BundleOptions(
             name=name, site_url=site_url, upstream=upstream, theme=theme,
             theme_model=theme_model, theme_refresh=theme_refresh,
             theme_prompt=theme_prompt, cruse=cruse,
         )
-        result = await bundler_of(request).build(await request.body(), options)
+        result: BundleResult = await bundler_of(request).build(await request.body(), options)
         return Response(content=result.archive, media_type=BUNDLE_MEDIA_TYPE,
                         headers=_bundle_headers(result))
 
@@ -1152,14 +1188,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             description="BYOK upstream for this bundle only; defaults to the "
                         "service-wide upstream, which deployed sites also use")] = None,
     ) -> Response:
-        row = find_row(request, deployment_id)
-        status = DeploymentStatus(row.get("status"))
+        row: Dict[str, Any] = find_row(request, deployment_id)
+        status: DeploymentStatus = DeploymentStatus(row.get("status"))
         if status not in BUNDLE_STATUSES:
             raise HTTPException(
                 status_code=409,
                 detail=f"{row.get('name')} is {status.value}; a bundle is built "
                        f"from a ready or a stopped deployment")
-        hocon_path = Path(row.get("hocon_path") or "")
+        hocon_path: Path = Path(row.get("hocon_path") or "")
         if not hocon_path.is_file():
             # The record outlived its files: a WORK_ROOT that moved between runs, or
             # a work dir removed by hand. Gone rather than Not Found, because the
@@ -1168,9 +1204,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 status_code=410,
                 detail=f"the HOCON for {row.get('name')} is no longer on disk at "
                        f"{hocon_path}, so this deployment cannot be rebuilt")
-        options = Bundler.deployment_options(row, site_url, upstream)
-        result = await bundler_of(request).build_from_deployment(row, options)
-        headers = _bundle_headers(result)
+        options: BundleOptions = Bundler.deployment_options(row, site_url, upstream)
+        result: BundleResult = await bundler_of(request).build_from_deployment(row, options)
+        headers: Dict[str, str] = _bundle_headers(result)
         # Built fresh on every call and kept nowhere, so nothing may hold a copy.
         # A GET is cacheable by default, and the deployment's look can change under
         # it at any time through POST /deployments/{id}/theme-spec.
@@ -1181,7 +1217,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # --- ops -------------------------------------------------------------
     @app.get("/health", response_model=HealthView, summary="Service health and capacity")
     async def health(request: Request) -> HealthView:
-        supervisor = supervisor_of(request)
+        supervisor: Supervisor = supervisor_of(request)
         warnings: List[str] = []
         if not settings.api_token and settings.host not in ("127.0.0.1", "localhost", "::1"):
             warnings.append(
@@ -1259,18 +1295,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # rest are the same deploy defaults Settings already reads at startup
     # (config.py) — upstream/theme_model as plain text, theme/theme_refresh as bools.
     # pylint: disable-next=invalid-name  # route-level constant
-    SETTINGS_SECRET_KEYS = {
+    SETTINGS_SECRET_KEYS: Dict[str, str] = {
         "nsdeploy_api_token": "NSDEPLOY_SERVICE_API_TOKEN",
         "openai_api_key": "OPENAI_API_KEY",
     }
     # pylint: disable-next=invalid-name  # route-level constant
-    SETTINGS_TEXT_KEYS = {
+    SETTINGS_TEXT_KEYS: Dict[str, str] = {
         "upstream": "NSDEPLOY_SERVICE_UPSTREAM",
         "theme_model": "NSDEPLOY_SERVICE_THEME_MODEL",
         "theme_prompt": "NSDEPLOY_SERVICE_THEME_PROMPT",
     }
     # pylint: disable-next=invalid-name  # route-level constant
-    SETTINGS_BOOL_KEYS = {
+    SETTINGS_BOOL_KEYS: Dict[str, str] = {
         "theme": "NSDEPLOY_SERVICE_THEME",
         "theme_refresh": "NSDEPLOY_SERVICE_THEME_REFRESH",
     }
@@ -1280,10 +1316,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # optional: a checkout without the folder, or one where the panel has not
     # mounted yet, simply reports neither as managed.
     # pylint: disable-next=invalid-name  # route-level constant
-    SETTINGS_PANEL_KIND = {"nsdeploy_api_token": "app", "openai_api_key": "llm"}
+    SETTINGS_PANEL_KIND: Dict[str, str] = {"nsdeploy_api_token": "app", "openai_api_key": "llm"}
 
     def _panel_managed() -> set:
-        context = getattr(app.state, "admin_panel", None)
+        context: Any = getattr(app.state, "admin_panel", None)
         if context is None:
             return set()
         try:
@@ -1297,9 +1333,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return set()
 
     def _settings_view() -> SettingsView:
-        stored = envfile.read_env_file()
-        managed = _panel_managed()
-        fields = {}
+        stored: Dict[str, str] = envfile.read_env_file()
+        managed: Set[str] = _panel_managed()
+        fields: Dict[str, Any] = {}
+        field_name: str
+        env_key: str
         for field_name, env_key in SETTINGS_SECRET_KEYS.items():
             if field_name == "nsdeploy_api_token":
                 # The enforced value, not the environment's. `require_token` compares
@@ -1309,7 +1347,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 # console shows this field read-only as a way to confirm *which*
                 # token the service is honouring, which is only true if it is read
                 # from the same place the check reads.
-                value = str(settings.api_token or "")
+                value: str = str(settings.api_token or "")
             else:
                 # The LLM key lives in the service's environment. A site build receives it
                 # only when SITE_ENV_ALLOW lists it, which deploy-time theming needs; see
@@ -1337,8 +1375,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.post("/settings", response_model=SettingsView, dependencies=AUTH,
               summary="Save API credentials and deploy defaults to this checkout's .env")
     async def update_settings(body: SettingsUpdate) -> SettingsView:
-        payload = body.model_dump(exclude_none=True)
-        updates = {
+        payload: Dict[str, Any] = body.model_dump(exclude_none=True)
+        updates: Dict[str, str] = {
             SETTINGS_SECRET_KEYS[field]: value.strip()
             for field, value in payload.items() if field in SETTINGS_SECRET_KEYS
         }
@@ -1423,7 +1461,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 # %PRODUCT% is substituted from PRODUCT_NAME when the page is served (see the
 # /console route). A placeholder rather than an f-string because this literal is
 # mostly CSS and JS, and every `{` in it would have to be doubled.
-_CONSOLE_HTML = """<!doctype html>
+_CONSOLE_HTML: str = """<!doctype html>
 <html lang="en"><meta charset="utf-8"><title>%PRODUCT% — fallback console</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
@@ -1561,4 +1599,4 @@ def _console_html() -> str:
     return _CONSOLE_HTML.replace("%PRODUCT%", PRODUCT_NAME)
 
 
-app = create_app()
+app: FastAPI = create_app()

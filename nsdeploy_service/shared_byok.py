@@ -12,9 +12,9 @@ from pathlib import Path
 from nsdeploy_service.config import SERVICE_ROOT
 
 
-START_MARKER = "/* nsdeploy_service shared BYOK cookie: begin */"
-END_MARKER = "/* nsdeploy_service shared BYOK cookie: end */"
-SCRIPT_PATH = SERVICE_ROOT / "site_customization" / "shared-byok.js"
+START_MARKER: str = "/* nsdeploy_service shared BYOK cookie: begin */"
+END_MARKER: str = "/* nsdeploy_service shared BYOK cookie: end */"
+SCRIPT_PATH: Path = SERVICE_ROOT / "site_customization" / "shared-byok.js"
 
 
 def shared_byok_script() -> str:
@@ -27,9 +27,9 @@ def shared_byok_script() -> str:
 
 
 def _without_shared_block(source: str) -> str:
-    start = source.find(START_MARKER)
+    start: int = source.find(START_MARKER)
     while start >= 0:
-        end = source.find(END_MARKER, start + len(START_MARKER))
+        end: int = source.find(END_MARKER, start + len(START_MARKER))
         if end < 0:
             source = source[:start]
             break
@@ -40,16 +40,17 @@ def _without_shared_block(source: str) -> str:
 
 def sync_shared_byok(work_dir: Path, *, enabled: bool = True) -> list[Path]:
     """Add/remove the marked behavior in source and built site JavaScript."""
-    script = shared_byok_script() if enabled else ""
-    work = Path(work_dir)
+    script: str = shared_byok_script() if enabled else ""
+    work: Path = Path(work_dir)
     changed: list[Path] = []
+    path: Path
     for path in (work / "site-source" / "site.js", work / "site" / "site.js"):
         try:
             if not path.is_file():
                 continue
-            current = path.read_text(encoding="utf-8")
-            base = _without_shared_block(current)
-            updated = base + ("\n\n" + script if script else "") + "\n"
+            current: str = path.read_text(encoding="utf-8")
+            base: str = _without_shared_block(current)
+            updated: str = base + ("\n\n" + script if script else "") + "\n"
             if updated != current:
                 path.write_text(updated, encoding="utf-8")
                 changed.append(path)

@@ -4,11 +4,18 @@ import socketserver
 import tempfile
 import threading
 import unittest
+from unittest.case import _AssertRaisesContext
 import urllib.error
 import urllib.request
+from http.client import HTTPResponse
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Type
 
 from nsdeploy.cailville import augment_config
 from nsdeploy.cailville import public_site_directory
@@ -21,11 +28,11 @@ from nsdeploy.gateway import public_origin
 
 
 class _BackendHandler(BaseHTTPRequestHandler):
-    def log_message(self, *args):
+    def log_message(self, *args: Any) -> None:
         pass
 
-    def _reply(self, body=b""):
-        payload = json.dumps({
+    def _reply(self, body: bytes = b"") -> None:
+        payload: bytes = json.dumps({
             "backend": self.server.backend_name,
             "host": self.headers.get("Host"),
             "forwarded_host": self.headers.get("X-Forwarded-Host"),
@@ -37,20 +44,20 @@ class _BackendHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def do_GET(self):  # pylint: disable=invalid-name; BaseHTTPRequestHandler API
+    def do_GET(self) -> None:  # pylint: disable=invalid-name; BaseHTTPRequestHandler API
         """Echo a GET request."""
         self._reply()
 
-    def do_POST(self):  # pylint: disable=invalid-name; BaseHTTPRequestHandler API
+    def do_POST(self) -> None:  # pylint: disable=invalid-name; BaseHTTPRequestHandler API
         """Echo a POST request with its body."""
-        length = int(self.headers.get("Content-Length", 0) or 0)
+        length: int = int(self.headers.get("Content-Length", 0) or 0)
         self._reply(self.rfile.read(length))
 
 
 class _SplittingBackendHandler(socketserver.StreamRequestHandler):
     """Backend that tries to smuggle extra headers and a second response through the gateway."""
 
-    def handle(self):
+    def handle(self) -> None:
         while self.rfile.readline() not in (b"\r\n", b"\n", b""):
             pass
         self.wfile.write(
@@ -67,22 +74,24 @@ class _SplittingBackendHandler(socketserver.StreamRequestHandler):
 class GatewayTests(unittest.TestCase):
     """Tests for host-based routing and header sanitizing in the gateway."""
 
-    def setUp(self):
-        self.servers = []
+    def setUp(self) -> None:
+        self.servers: List[ThreadingHTTPServer] = []
 
-    def tearDown(self):
+    def tearDown(self) -> None:
+        server: ThreadingHTTPServer
         for server in reversed(self.servers):
             server.shutdown()
             server.server_close()
 
-    def _server(self, handler, *, backend_name=None):
-        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    def _server(self, handler: Type[socketserver.BaseRequestHandler], *,
+                backend_name: Optional[str] = None) -> ThreadingHTTPServer:
+        server: ThreadingHTTPServer = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         server.backend_name = backend_name
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.servers.append(server)
         return server
 
-    def test_dns_names_and_public_origins_are_stable(self):
+    def test_dns_names_and_public_origins_are_stable(self) -> None:
         """Check dns names and public origins are stable."""
         self.assertEqual(network_slug("Harbor_Town Hall"), "harbor-town-hall")
         self.assertEqual(
@@ -99,23 +108,24 @@ class GatewayTests(unittest.TestCase):
                 "foo-bar=http://127.0.0.1:9002",
             ])
 
-    def test_gateway_routes_get_and_post_by_host_on_one_port(self):
+    def test_gateway_routes_get_and_post_by_host_on_one_port(self) -> None:
         """Check gateway routes get and post by host on one port."""
-        alpha = self._server(_BackendHandler, backend_name="alpha")
-        beta = self._server(_BackendHandler, backend_name="beta")
-        routes = parse_routes([
+        alpha: ThreadingHTTPServer = self._server(_BackendHandler, backend_name="alpha")
+        beta: ThreadingHTTPServer = self._server(_BackendHandler, backend_name="beta")
+        routes: Dict[str, str] = parse_routes([
             f"alpha_network=http://127.0.0.1:{alpha.server_port}",
             f"beta=http://127.0.0.1:{beta.server_port}",
         ])
-        gateway = self._server(make_gateway_handler("agents.test", routes))
-        base = f"http://127.0.0.1:{gateway.server_port}"
+        gateway: ThreadingHTTPServer = self._server(make_gateway_handler("agents.test", routes))
+        base: str = f"http://127.0.0.1:{gateway.server_port}"
 
-        request = urllib.request.Request(
+        request: urllib.request.Request = urllib.request.Request(
             base + "/anything?value=1",
             headers={"Host": f"alpha-network.agents.test:{gateway.server_port}"},
         )
+        response: HTTPResponse
         with urllib.request.urlopen(request, timeout=5) as response:
-            result = json.load(response)
+            result: Dict[str, Any] = json.load(response)
         self.assertEqual(result["backend"], "alpha")
         self.assertEqual(result["forwarded_host"], f"alpha-network.agents.test:{gateway.server_port}")
 
@@ -131,6 +141,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(result["backend"], "beta")
         self.assertEqual(result["body"], '{"hello":"world"}')
 
+        context: _AssertRaisesContext[urllib.error.HTTPError]
         with self.assertRaises(urllib.error.HTTPError) as context:
             # pylint: disable-next=consider-using-with; raises HTTPError, closed below
             urllib.request.urlopen(urllib.request.Request(
@@ -139,24 +150,28 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(context.exception.code, 404)
         context.exception.close()
 
-    def test_gateway_does_not_relay_cr_lf_from_backend_response(self):
+    def test_gateway_does_not_relay_cr_lf_from_backend_response(self) -> None:
         """Check gateway does not relay cr lf from backend response."""
-        backend = self._server(_SplittingBackendHandler)
-        routes = parse_routes([f"alpha=http://127.0.0.1:{backend.server_port}"])
-        gateway = self._server(make_gateway_handler("agents.test", routes))
+        backend: ThreadingHTTPServer = self._server(_SplittingBackendHandler)
+        routes: Dict[str, str] = parse_routes([f"alpha=http://127.0.0.1:{backend.server_port}"])
+        gateway: ThreadingHTTPServer = self._server(make_gateway_handler("agents.test", routes))
 
+        sock: socket.socket
         with socket.create_connection(("127.0.0.1", gateway.server_port), timeout=5) as sock:
             sock.sendall(
                 b"GET / HTTP/1.1\r\nHost: alpha.agents.test\r\nConnection: close\r\n\r\n"
             )
-            raw = b""
+            raw: bytes = b""
             while chunk := sock.recv(65536):
                 raw += chunk
 
+        head: bytes
+        body: bytes
         head, _, body = raw.partition(b"\r\n\r\n")
-        lines = head.split(b"\r\n")
+        lines: List[bytes] = head.split(b"\r\n")
         self.assertEqual(lines[0], b"HTTP/1.1 200 OK")
         self.assertEqual(body, b"ok")
+        line: bytes
         for line in lines:
             self.assertNotIn(b"\r", line)
             self.assertNotIn(b"\n", line)
@@ -166,16 +181,16 @@ class GatewayTests(unittest.TestCase):
         self.assertIn(b"X-Safe: kept", lines)
         self.assertFalse(any(line.startswith(b"X-Ctl:") for line in lines))
 
-    def test_cailville_links_and_steward_directory_use_subdomains(self):
+    def test_cailville_links_and_steward_directory_use_subdomains(self) -> None:
         """Check cailville links and steward directory use subdomains."""
-        community = {
+        community: Dict[str, Any] = {
             "sites": [
                 {"id": "alpha_network", "port": 8091},
                 {"id": "beta", "port": 8092},
             ],
             "relationships": [["alpha_network", "beta"]],
         }
-        directory = public_site_directory(
+        directory: Dict[str, str] = public_site_directory(
             community, base_domain="agents.example.com", public_scheme="https",
             public_port=443,
         )
@@ -187,10 +202,10 @@ class GatewayTests(unittest.TestCase):
             "alpha_network": "http://127.0.0.1:8091",
             "beta": "http://127.0.0.1:8092",
         })
-        config = {"tools": [{
+        config: Dict[str, Any] = {"tools": [{
             "name": "front", "instructions": "help", "tools": [],
         }]}
-        augmented = augment_config(
+        augmented: Dict[str, Any] = augment_config(
             config, "alpha_network", community, base_domain="agents.example.com",
             public_scheme="https", public_port=443,
         )
@@ -199,13 +214,14 @@ class GatewayTests(unittest.TestCase):
             "https://beta.agents.example.com/beta",
         )
 
-    def test_cailville_subdomain_sidecars_are_generated_separately(self):
+    def test_cailville_subdomain_sidecars_are_generated_separately(self) -> None:
         """Check cailville subdomain sidecars are generated separately."""
+        temp: str
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            cailville = root / "cailville"
+            root: Path = Path(temp)
+            cailville: Path = root / "cailville"
             cailville.mkdir()
-            community = {
+            community: Dict[str, Any] = {
                 "sites": [
                     {"id": "alpha_network", "port": 8091},
                     {"id": "beta", "port": 8092},
@@ -213,7 +229,7 @@ class GatewayTests(unittest.TestCase):
                 "relationships": [["alpha_network", "beta"]],
             }
             (cailville / "community.json").write_text(json.dumps(community))
-            paths = write_runtime_link_files(
+            paths: Dict[str, Path] = write_runtime_link_files(
                 cailville, root, base_domain="localhost", public_port=8080,
             )
             self.assertEqual(load_link_file(paths["alpha_network"], "alpha_network"), {

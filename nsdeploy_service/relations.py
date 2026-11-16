@@ -42,25 +42,26 @@ from typing import List
 from typing import Optional
 from typing import Sequence
 from typing import Tuple
+from typing import TypeAlias
 
 # A relation is only worth showing if the evidence clears these. Tuned so that two
 # networks in the same domain relate, while unrelated ones produce nothing at all.
-DEFAULT_MIN_AFFINITY = 0.08
-DEFAULT_MIN_SLOT_COVERAGE = 0.5
-DEFAULT_MAX_PER_NETWORK = 4
+DEFAULT_MIN_AFFINITY: float = 0.08
+DEFAULT_MIN_SLOT_COVERAGE: float = 0.5
+DEFAULT_MAX_PER_NETWORK: int = 4
 
 # Longest role/description text considered per agent. Long instructions are mostly
 # protocol boilerplate; the opening sentences carry the role.
-ROLE_TEXT_LIMIT = 240
+ROLE_TEXT_LIMIT: int = 240
 
-MIN_WORD_LENGTH = 3
-_WORD_RE = re.compile(r"[a-z0-9]+")
-_WHITESPACE_RE = re.compile(r"\s+")
+MIN_WORD_LENGTH: int = 3
+_WORD_RE: re.Pattern[str] = re.compile(r"[a-z0-9]+")
+_WHITESPACE_RE: re.Pattern[str] = re.compile(r"\s+")
 
 # Generic English plus agent-framework boilerplate. IDF already suppresses terms shared
 # by every network, but with only two or three deployed there is not enough corpus for
 # that to bite, so the obvious noise is removed outright.
-STOP_WORDS = frozenset("""
+STOP_WORDS: frozenset[str] = frozenset("""
 about above across after again against all also and any are because been before being
 below between both but can cannot could did does doing down during each few for from
 further had has have having her here hers him his how into its itself may more most
@@ -102,7 +103,7 @@ class NetworkIdentity:
 
     def profile_text(self) -> str:
         """Everything this network says about itself — the affinity signal."""
-        parts = [_humanize(self.name), self.description, _humanize(self.front_man)]
+        parts: List[str] = [_humanize(self.name), self.description, _humanize(self.front_man)]
         parts.extend(self.sample_queries)
         parts.extend(f"{_humanize(agent.name)} {agent.role}" for agent in self.agents)
         return " ".join(part for part in parts if part)
@@ -113,7 +114,7 @@ class NetworkIdentity:
         Sample queries are excluded on purpose: they describe what a user might ask,
         not what the network provides, and they are long enough to swamp the signal.
         """
-        parts = [_humanize(self.name), self.description, _humanize(self.front_man)]
+        parts: List[str] = [_humanize(self.name), self.description, _humanize(self.front_man)]
         parts.extend(f"{_humanize(agent.name)} {agent.role}" for agent in self.agents)
         return " ".join(part for part in parts if part)
 
@@ -150,7 +151,7 @@ class Vocabulary:
         deployed — plain log(N/df) would zero out every shared term at N == 2 and make
         all scores zero.
         """
-        frequency = self.frequencies.get(term, 0)
+        frequency: int = self.frequencies.get(term, 0)
         return math.log((1 + self.document_count) / (1 + frequency)) + 1.0
 
     def mass(self, terms: Iterable[str]) -> float:
@@ -182,8 +183,10 @@ def tokens(text: str) -> set[str]:
 
 def build_vocabulary(identities: Sequence[NetworkIdentity]) -> Vocabulary:
     """Count, per term, how many networks use it."""
-    vocabulary = Vocabulary(document_count=len(identities))
+    vocabulary: Vocabulary = Vocabulary(document_count=len(identities))
+    identity: NetworkIdentity
     for identity in identities:
+        term: str
         for term in tokens(identity.profile_text()):
             vocabulary.frequencies[term] = vocabulary.frequencies.get(term, 0) + 1
     return vocabulary
@@ -200,17 +203,18 @@ def _agent_roles(out_dir: Path, name: str) -> Tuple[AgentRole, ...]:
     across networks and say nothing about this one.
     """
     try:
-        config = json.loads((out_dir / f"{name}.network.json").read_text(encoding="utf-8"))
+        config: Any = json.loads((out_dir / f"{name}.network.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return ()
     roles: List[AgentRole] = []
+    entry: Any
     for entry in (config.get("tools") or []):
         if not isinstance(entry, dict) or not entry.get("name"):
             continue
         if "instructions" not in entry:
             continue  # a coded/toolbox leaf, not an agent
-        function = entry.get("function") or {}
-        text = function.get("description") or entry.get("instructions") or ""
+        function: Any = entry.get("function") or {}
+        text: Any = function.get("description") or entry.get("instructions") or ""
         roles.append(AgentRole(name=str(entry["name"]),
                                role=_normalize(text)[:ROLE_TEXT_LIMIT]))
     return tuple(roles)
@@ -222,11 +226,11 @@ def load_identity(row: Dict[str, Any], out_dir: Optional[Path] = None) -> Networ
     Degrades rather than fails: a record whose bundle is gone still contributes its
     name, description and open slots, so it can take part in affinity scoring.
     """
-    summary = row.get("network") or {}
+    summary: Dict[str, Any] = row.get("network") or {}
     if out_dir is None:
-        work_dir = row.get("work_dir")
+        work_dir: Optional[str] = row.get("work_dir")
         out_dir = Path(work_dir) / "site" if work_dir else None
-    queries = [
+    queries: List[str] = [
         _normalize(query) for query in (summary.get("sample_queries") or [])
         if isinstance(query, str) and query.strip()
     ]
@@ -262,15 +266,15 @@ class Affinity:
 def affinity(left: NetworkIdentity, right: NetworkIdentity,
              vocabulary: Vocabulary) -> Affinity:
     """Weighted Jaccard overlap of what two networks say about themselves."""
-    left_terms = tokens(left.profile_text())
-    right_terms = tokens(right.profile_text())
+    left_terms: set[str] = tokens(left.profile_text())
+    right_terms: set[str] = tokens(right.profile_text())
     if not left_terms or not right_terms:
         return Affinity(0.0, ())
-    shared = left_terms & right_terms
-    union_mass = vocabulary.mass(left_terms | right_terms)
+    shared: set[str] = left_terms & right_terms
+    union_mass: float = vocabulary.mass(left_terms | right_terms)
     if union_mass <= 0:
         return Affinity(0.0, ())
-    ranked = sorted(shared, key=lambda term: (-vocabulary.weight(term), term))
+    ranked: List[str] = sorted(shared, key=lambda term: (-vocabulary.weight(term), term))
     return Affinity(vocabulary.mass(shared) / union_mass, tuple(ranked))
 
 
@@ -293,34 +297,35 @@ def slot_matches(consumer: NetworkIdentity, provider: NetworkIdentity,
     `fraud_and_payment_risk_manager` is satisfied by a provider that covers fraud,
     payment and risk, regardless of how much else that provider also does.
     """
-    provider_terms = tokens(provider.capability_text())
+    provider_terms: set[str] = tokens(provider.capability_text())
     if not provider_terms:
         return []
     matches: List[SlotMatch] = []
+    reference: str
     for reference in consumer.open_slots:
-        slot_terms = tokens(_humanize(reference))
+        slot_terms: set[str] = tokens(_humanize(reference))
         if not slot_terms:
             continue
-        slot_mass = vocabulary.mass(slot_terms)
+        slot_mass: float = vocabulary.mass(slot_terms)
         if slot_mass <= 0:
             continue
-        covered = slot_terms & provider_terms
-        coverage = vocabulary.mass(covered) / slot_mass
+        covered: set[str] = slot_terms & provider_terms
+        coverage: float = vocabulary.mass(covered) / slot_mass
         if coverage >= min_coverage:
-            ranked = sorted(covered, key=lambda term: (-vocabulary.weight(term), term))
+            ranked: List[str] = sorted(covered, key=lambda term: (-vocabulary.weight(term), term))
             matches.append(SlotMatch(reference, coverage, tuple(ranked)))
     matches.sort(key=lambda match: (-match.coverage, match.reference))
     return matches
 
 
 def _capability_reason(match: SlotMatch, provider: NetworkIdentity) -> str:
-    terms = ", ".join(match.matched[:6])
+    terms: str = ", ".join(match.matched[:6])
     return (f"open slot '{match.reference}' matches what {provider.name} does "
             f"({terms}); {match.coverage:.0%} of the slot's terms covered")
 
 
 def _affinity_reason(result: Affinity, other: NetworkIdentity) -> str:
-    terms = ", ".join(result.shared[:6])
+    terms: str = ", ".join(result.shared[:6])
     return f"shares subject matter with {other.name} ({terms})"
 
 
@@ -338,17 +343,19 @@ def derive_relations(
     """
     if len(identities) < 2:
         return []
-    vocabulary = build_vocabulary(identities)
+    vocabulary: Vocabulary = build_vocabulary(identities)
     by_source: Dict[str, List[SuggestedRelation]] = {}
 
+    consumer: NetworkIdentity
     for consumer in identities:
+        provider: NetworkIdentity
         for provider in identities:
             if consumer.deployment_id == provider.deployment_id:
                 continue
-            best = slot_matches(consumer, provider, vocabulary, min_slot_coverage)
+            best: List[SlotMatch] = slot_matches(consumer, provider, vocabulary, min_slot_coverage)
             if best:
-                match = best[0]
-                relation = SuggestedRelation(
+                match: SlotMatch = best[0]
+                relation: SuggestedRelation = SuggestedRelation(
                     source=consumer.deployment_id, target=provider.deployment_id,
                     kind="capability",
                     # Offset so any capability match sorts above any affinity one.
@@ -357,7 +364,7 @@ def derive_relations(
                     reference=match.reference,
                 )
             else:
-                result = affinity(consumer, provider, vocabulary)
+                result: Affinity = affinity(consumer, provider, vocabulary)
                 if result.score < min_affinity:
                     continue
                 relation = SuggestedRelation(
@@ -368,8 +375,9 @@ def derive_relations(
             by_source.setdefault(relation.source, []).append(relation)
 
     suggestions: List[SuggestedRelation] = []
+    source: str
     for source in sorted(by_source):
-        ranked = sorted(by_source[source], key=lambda item: (-item.score, item.target))
+        ranked: List[SuggestedRelation] = sorted(by_source[source], key=lambda item: (-item.score, item.target))
         suggestions.extend(ranked[:max_per_network])
     return suggestions
 
@@ -378,9 +386,9 @@ def derive_relations(
 
 # (system_prompt, user_payload) -> assistant content. Injected so the refiner is
 # testable without a provider, and so the caller owns transport and credentials.
-ChatFn = Callable[[str, str], str]
+ChatFn: TypeAlias = Callable[[str, str], str]
 
-LLM_SYSTEM_PROMPT = (
+LLM_SYSTEM_PROMPT: str = (
     "You relate independently deployed agent networks to each other. Given each "
     "network's name, description, agents and unfilled references, decide which "
     "networks would usefully call which others. Return only JSON: "
@@ -409,18 +417,23 @@ def _llm_payload(identities: Sequence[NetworkIdentity]) -> str:
 
 def _parse_llm_relations(content: str, known: Dict[str, NetworkIdentity],
                          ) -> List[SuggestedRelation]:
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", str(content or "").strip(), flags=re.I)
+    text: str = re.sub(r"^```(?:json)?\s*|\s*```$", "", str(content or "").strip(), flags=re.I)
+    start: int
+    end: int
     start, end = text.find("{"), text.rfind("}")
     if 0 <= start < end:
         text = text[start:end + 1]
-    payload = json.loads(text)
+    payload: Any = json.loads(text)
     if not isinstance(payload, dict):
         raise ValueError("relation model did not return an object")
     relations: List[SuggestedRelation] = []
     seen: set[Tuple[str, str]] = set()
+    item: Any
     for item in (payload.get("relations") or []):
         if not isinstance(item, dict):
             continue
+        source: str
+        target: str
         source, target = str(item.get("source", "")), str(item.get("target", ""))
         if source not in known or target not in known or source == target:
             continue
@@ -448,14 +461,14 @@ def suggest_relations(
     Mirrors Cailville's contract — ask the model when one is available, fall back to
     the deterministic scorer on any failure, so the feature never depends on a key.
     """
-    heuristic = derive_relations(
+    heuristic: List[SuggestedRelation] = derive_relations(
         identities, max_per_network=max_per_network, min_affinity=min_affinity,
         min_slot_coverage=min_slot_coverage)
     if chat is None or len(identities) < 2:
         return heuristic, "heuristic"
-    known = {identity.deployment_id: identity for identity in identities}
+    known: Dict[str, NetworkIdentity] = {identity.deployment_id: identity for identity in identities}
     try:
-        proposed = _parse_llm_relations(
+        proposed: List[SuggestedRelation] = _parse_llm_relations(
             chat(LLM_SYSTEM_PROMPT, _llm_payload(identities)), known)
     except Exception:  # pylint: disable=broad-exception-caught; any model failure falls back to the heuristic
         # A model that is unavailable, slow or malformed must not take the view down.
@@ -465,9 +478,11 @@ def suggest_relations(
         # deterministic result is the more useful thing to show.
         return heuristic, "heuristic"
     by_source: Dict[str, List[SuggestedRelation]] = {}
+    relation: SuggestedRelation
     for relation in proposed:
         by_source.setdefault(relation.source, []).append(relation)
     capped: List[SuggestedRelation] = []
+    source: str
     for source in sorted(by_source):
         capped.extend(by_source[source][:max_per_network])
     return capped, "llm"
