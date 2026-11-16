@@ -80,6 +80,16 @@ class LocalContent(ToolboxContent):
             # A packed ref, which resolving properly would mean parsing packed-refs.
             return ""
 
+    @staticmethod
+    def _raise_walk_error(error: OSError) -> None:
+        """
+        Propagate a filesystem traversal failure.
+
+        :param error: The error raised while listing the checkout.
+        :raises OSError: Always; an incomplete listing is not usable.
+        """
+        raise error
+
     @override
     def list_paths(self) -> List[str]:
         """
@@ -87,14 +97,18 @@ class LocalContent(ToolboxContent):
 
         :return: The file paths.
         :raises FileNotFoundError: If the checkout is not a directory.
+        :raises OSError: If a directory cannot be listed.
         """
         if self._paths is not None:
             return self._paths
         if not self._checkout.is_dir():
             raise FileNotFoundError(f"studio checkout not found: {self._checkout}")
         found: List[str] = []
+        directory: str
+        dir_names: List[str]
+        file_names: List[str]
         # Walk the checkout, pruning the directories that hold no studio content.
-        for directory, dir_names, file_names in os.walk(self._checkout):
+        for directory, dir_names, file_names in os.walk(self._checkout, onerror=LocalContent._raise_walk_error):
             kept: List[str] = []
             # Keep only the subdirectories a build could resolve a path into.
             for dir_name in dir_names:
