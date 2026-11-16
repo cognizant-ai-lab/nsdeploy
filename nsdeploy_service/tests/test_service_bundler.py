@@ -108,6 +108,16 @@ class BundlerTest(unittest.TestCase):
         runtime: List[str] = [name for name in names if name.startswith("runtime/")]
         self.assertTrue(runtime, "the bundle carries no runtime/ directory")
 
+    def test_use_ts_package_chooses_the_bundles_runtime(self) -> None:
+        """A bundle loads the TS package runtime unless USE_TS_PACKAGE is off."""
+        def index_js(result: BundleResult) -> str:
+            archive: tarfile.TarFile
+            with tarfile.open(fileobj=io.BytesIO(result.archive), mode="r:gz") as archive:
+                return archive.extractfile("runtime/index.js").read().decode("utf-8")
+
+        self.assertEqual(index_js(self._build()), 'export * from "./ts-package/index.js";\n')
+        self.assertNotIn("ts-package", index_js(self._build(bundler=self._bundler(use_ts_package=False))))
+
     def test_the_manifest_is_not_left_inside_the_bundle(self) -> None:
         """nsdeploy writes the private steward manifest beside the bundle, not in it
         (generate.py calls write_private_steward_manifest(out_dir.parent)). Packing

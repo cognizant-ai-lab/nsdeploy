@@ -638,6 +638,14 @@ class SupervisorCreateTest(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--theme-model") + 1], "gpt-5.5")
         self.assertIn("--no-cruse", cmd)
 
+    def test_use_ts_package_off_runs_sites_on_the_original_runtime(self) -> None:
+        """Sites run on the TS package runtime unless USE_TS_PACKAGE is off."""
+        for use_ts_package, value in ((True, "true"), (False, "false")):
+            supervisor: Supervisor = self._supervisor(use_ts_package=use_ts_package)
+            dep: Deployment = supervisor.create(b"x", DeployOptions(name="demo"))
+            cmd: List[str] = supervisor._command(dep)  # pylint: disable=protected-access; the test inspects internals
+            self.assertEqual(cmd[cmd.index("--use-ts-package") + 1], value)
+
     def test_spawn_gives_the_site_no_service_secrets(self) -> None:
         """
         _spawn hands Popen an environment without the service's secrets, honouring SITE_ENV_ALLOW.
@@ -885,6 +893,7 @@ class EngineCliContractTest(unittest.TestCase):
         "--port", "--out", "--site-dir", "--site-url", "--upstream",
         "--facade-upstream", "--studio", "--repo", "--ref",
         "--theme", "--theme-model", "--theme-refresh", "--theme-prompt", "--no-cruse",
+        "--use-ts-package",
     )
     OPTIONAL: Tuple[str, ...] = ("--host",)
 
