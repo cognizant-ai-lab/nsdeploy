@@ -123,6 +123,8 @@ class GithubContent(ToolboxContent):
             # is a different thing from a studio that lacks one file.
             raise FileNotFoundError(f"cannot read the file list for {self.identity()}")
         tree: Dict = json.loads(body.decode("utf-8"))
+        if tree.get("truncated"):
+            raise OSError(f"incomplete file list for {self.identity()}: GitHub truncated the tree")
         found: List[str] = []
         # "tree" and "blob" are GitHub's own names for a directory entry and a file
         # entry; a studio's content is the files.
