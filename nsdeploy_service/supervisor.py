@@ -1214,6 +1214,7 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         cruse: bool = s.cruse if opts.cruse is None else opts.cruse
         if not cruse:
             cmd.append("--no-cruse")
+        cmd += ["--use-ts-package", "true" if s.use_ts_package else "false"]
         return cmd
 
     def _spawn(self, dep: Deployment) -> subprocess.Popen:

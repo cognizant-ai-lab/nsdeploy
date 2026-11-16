@@ -1,3 +1,12 @@
+# The browser runtime on the neuro-san TS package is build output, not checked in, so
+# it is built here. Sites and bundles use it unless NSDEPLOY_SERVICE_USE_TS_PACKAGE=off.
+FROM node:26-slim AS runtime-build
+WORKDIR /build/runtime-build
+COPY runtime-build/package.json runtime-build/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY runtime-build ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -6,6 +15,7 @@ WORKDIR /app
 # only warns and builds a wheel that declares no dependencies, so copy both.
 COPY pyproject.toml requirements.txt ./
 COPY nsdeploy ./nsdeploy
+COPY --from=runtime-build /build/nsdeploy/runtime/ts-package/generated ./nsdeploy/runtime/ts-package/generated
 COPY nsdeploy_service ./nsdeploy_service
 COPY examples ./examples
 

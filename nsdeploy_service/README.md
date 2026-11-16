@@ -330,6 +330,7 @@ everything (see [config.py](nsdeploy_service/config.py)).
 | `UI_DIR` | `nsdeploy_service/ui` | the console's static files; point elsewhere to serve it from a CDN |
 | `UPSTREAM` | `https://api.openai.com/v1` | every site's BYOK proxy target; a deployment cannot choose its own |
 | `STUDIO` | *(empty)* | local neuro-san-studio checkout; avoids per-build GitHub fetches |
+| `USE_TS_PACKAGE` | `on` | sites and bundles run agents on the neuro-san TS package; `off` uses the original runtime (`nsdeploy --use-ts-package`) |
 | `THEME` | `off` | deploy-time LLM theming; needs `OPENAI_API_KEY` listed in `SITE_ENV_ALLOW` (see below) and adds minutes |
 | `AUTOPUBLISH` | `on` | put a new deployment on the map the moment it is created; `off` restores the draft → publish workflow |
 | `TTL_SECONDS` | `0` | auto-stop after N seconds; `0` (the default) keeps deployments up until stopped |

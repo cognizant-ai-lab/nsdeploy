@@ -28,3 +28,6 @@ venv/
 **/.env.*
 .DS_Store
 .idea/
+# Built in the image, never copied from a local build.
+runtime-build/node_modules
+nsdeploy/runtime/ts-package/generated
