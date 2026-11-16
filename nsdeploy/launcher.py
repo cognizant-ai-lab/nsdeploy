@@ -743,7 +743,8 @@ def spawn_mcp_servers(plan: DeploymentPlan, studio_root: Path, python_exe: str) 
     return bindings
 
 
-# pylint: disable-next=too-many-arguments,too-many-locals  # top-level entry point wiring every server
+# A top-level entry point wiring every server.
+# pylint: disable-next=too-many-arguments,too-many-locals,too-many-statements
 def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int = 8080,
           site_base: Optional[str] = None,
           upstream: str = "https://api.openai.com/v1", python_exe: Optional[str] = None,
@@ -792,7 +793,8 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
         _wait_for_listener(facade_proc, facade_port)
         commerce: Optional[CommerceSite] = from_plan(plan, site_dir, site_base or f"http://127.0.0.1:{port}")
         handler: Type[BaseHTTPRequestHandler] = make_handler(site_dir, upstream, runtime_dir, ext_mcps, local_mcps,
-                                                             f"http://127.0.0.1:{facade_port}/mcp", commerce, ts_package)
+                                                             f"http://127.0.0.1:{facade_port}/mcp", commerce,
+                                                             ts_package)
         httpd: ThreadingHTTPServer = ThreadingHTTPServer(("127.0.0.1", port), handler)
         url: str = (site_base or f"http://127.0.0.1:{port}").rstrip("/") + "/"
         print(f"\n🌐  {plan.network_name} is live:  {url}")
