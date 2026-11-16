@@ -22,8 +22,10 @@ class TestLocalContent(unittest.TestCase):
         # Resolved, because LocalContent resolves too: on macOS a temp directory is
         # reached through a symbolic link, and resolving it is what makes the
         # check for a path leaving the checkout sound.
-        self.checkout: Path = Path(tempfile.mkdtemp()).resolve()
-        self.addCleanup(shutil.rmtree, self.checkout)
+        self.base: Path = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.base)
+        self.checkout: Path = self.base / "checkout"
+        self.checkout.mkdir()
         self.write("registries/aaosa.hocon", "{}")
         self.write("neuro_san_studio/toolbox/toolbox_info.hocon", "{}")
         self.write("coded_tools/web_fetch.py", "VALUE = 1\n")
