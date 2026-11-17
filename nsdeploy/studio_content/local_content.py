@@ -60,24 +60,38 @@ class LocalContent(ToolboxContent):
         A working tree also has uncommitted edits, which this cannot see. The value
         therefore identifies what was committed, not exactly what was read.
 
+        Both files are checked for containment first. The name of the second one comes
+        from the contents of the first, so a checkout carrying `ref: ../../secret`
+        would otherwise make the revision of a studio the contents of a file beside it.
+        A symbolic link out of the checkout is refused the same way, because `_inside`
+        resolves before it compares.
+
         :return: The commit id, or an empty string when it cannot be determined.
         """
-        head: Path = self._checkout / ".git" / "HEAD"
-        pointer: str = ""
-        try:
-            pointer = head.read_text(encoding="utf-8").strip()
-        except OSError:
-            return ""
+        pointer: str = self._read_inside(self._checkout / ".git" / "HEAD")
         if not pointer.startswith("ref:"):
-            # Detached HEAD: the file holds the commit id itself.
+            # Detached HEAD holds the commit id itself, and an unreadable or absent
+            # HEAD reads as empty, which is the same answer as a plain directory.
             return pointer
         reference: str = pointer.partition("ref:")[2].strip()
         if not reference:
             return ""
+        # A ref with no file of its own is a packed one, which resolving properly
+        # would mean parsing packed-refs. That reads as empty here.
+        return self._read_inside(self._checkout / ".git" / reference)
+
+    def _read_inside(self, target: Path) -> str:
+        """
+        Read one file of the checkout as stripped text, refusing one outside it.
+
+        :param target: The file to read.
+        :return: The contents, or an empty string when it is unreadable or outside.
+        """
+        if not self._inside(target):
+            return ""
         try:
-            return (self._checkout / ".git" / reference).read_text(encoding="utf-8").strip()
+            return target.read_text(encoding="utf-8").strip()
         except OSError:
-            # A packed ref, which resolving properly would mean parsing packed-refs.
             return ""
 
     @staticmethod
