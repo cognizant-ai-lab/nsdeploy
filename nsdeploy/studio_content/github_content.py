@@ -1,5 +1,6 @@
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Dict
 from typing import List
@@ -104,7 +105,10 @@ class GithubContent(ToolboxContent):
         :return: The file's bytes, or None when the repository has no such file.
         :raises OSError: If the file exists but cannot be fetched.
         """
-        url: str = GithubContent.RAW_URL.format(repo=self._repo, ref=self._ref, path=path)
+        repo: str = GithubContent._quote(self._repo)
+        ref: str = GithubContent._quote(self._ref)
+        wanted: str = GithubContent._quote(path)
+        url: str = GithubContent.RAW_URL.format(repo=repo, ref=ref, path=wanted)
         return self._get(url)
 
     def _load(self) -> None:
@@ -116,7 +120,9 @@ class GithubContent(ToolboxContent):
         """
         if self._paths is not None:
             return
-        url: str = GithubContent.TREE_URL.format(repo=self._repo, ref=self._ref)
+        repo: str = GithubContent._quote(self._repo)
+        ref: str = GithubContent._quote(self._ref)
+        url: str = GithubContent.TREE_URL.format(repo=repo, ref=ref)
         body: Optional[bytes] = self._get(url)
         if body is None:
             # A 404 on the listing is a repository or ref that does not exist, which
@@ -133,6 +139,26 @@ class GithubContent(ToolboxContent):
                 found.append(str(entry.get("path")))
         self._revision = str(tree.get("sha") or "")
         self._paths = found
+
+    @staticmethod
+    def _quote(value: str) -> str:
+        """
+        Percent-encode one part of a URL.
+
+        A repository holds names that a URL gives its own meaning to. `a#b.hocon` is a
+        valid file name, and interpolated as text it ends the path and starts a
+        fragment, so the request asks for `a` and GitHub answers 404; a space is not
+        allowed in a request line at all. The ref has the same problem: `release#1` is
+        a valid tag.
+
+        `/` is deliberately left alone. It separates the directories of a path, and
+        both endpoints resolve a ref that contains one, such as `feature/x`, only when
+        it arrives unencoded.
+
+        :param value: The repository, ref or path to put in a URL.
+        :return: The encoded value.
+        """
+        return urllib.parse.quote(value, safe="/")
 
     def _get(self, url: str) -> Optional[bytes]:
         """
