@@ -23,6 +23,9 @@ node_modules/
 # IDE files
 .idea/
 
+# CodeGraph index: built from the sources it indexes, and rebuilt per machine.
+.codegraph/
+
 # local credentials
 .env
 .env.*
