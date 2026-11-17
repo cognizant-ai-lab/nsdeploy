@@ -43,6 +43,7 @@ class _Response:
         return self._body
 
 
+# pylint: disable-next=too-many-public-methods  # one test per rule this source applies
 class TestGithubContent(unittest.TestCase):
     """A studio read from a GitHub repository.
 
