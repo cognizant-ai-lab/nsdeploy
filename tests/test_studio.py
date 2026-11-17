@@ -3,11 +3,16 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 from typing import List
 from typing import Optional
+from unittest import mock
 
 from nsdeploy.coded_tool_module import CodedToolModule
+from nsdeploy.studio import GithubStudio
 from nsdeploy.studio import LocalStudio
+from nsdeploy.studio_content.cached_content import CachedContent
+from nsdeploy.studio_content.github_content import GithubContent
 
 
 class TestLocalStudio(unittest.TestCase):
@@ -111,7 +116,7 @@ class TestLocalStudio(unittest.TestCase):
         # Every thread gets the mirrored file.
         for result in results:  # type: Optional[Path]
             self.assertEqual(result, self.cache / "toolbox" / "toolbox_info.hocon")
-        self.assertEqual(list(self.cache.glob("toolbox/*.tmp")), [])
+        self.assertEqual(list(self.cache.glob("toolbox/.*")), [])
 
     @staticmethod
     def ensure_toolbox(studio: LocalStudio) -> Optional[Path]:
@@ -122,3 +127,97 @@ class TestLocalStudio(unittest.TestCase):
         :return: The mirrored path
         """
         return studio.ensure("toolbox/toolbox_info.hocon")
+
+
+class TestGithubStudio(unittest.TestCase):
+    """
+    Tests that a repository is mirrored at the logical paths a build asks for, and that
+    a later build answers from the cache without reading the repository again.
+    """
+
+    REPO: str = "cognizant-ai-lab/neuro-san-studio"
+
+    def setUp(self) -> None:
+        """
+        Create an empty cache and a studio that reads the repository through it.
+        """
+        self.cache: Path = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.cache)
+        self.studio: GithubStudio = GithubStudio(self.REPO, "main", cache_dir=self.cache)
+
+    @staticmethod
+    def repository(paths: List[str], raw: bytes = b"{}") -> Any:
+        """
+        Answer every repository call from the test, so no test reaches the network.
+
+        All three calls are replaced together: the cache asks for the revision as well
+        as the file list, and an unpatched one is a real request to GitHub.
+
+        :param paths: What the repository lists.
+        :param raw: What every file read returns.
+        :return: The patch to use as a context manager.
+        """
+        return mock.patch.multiple(GithubContent,
+                                   list_paths=mock.MagicMock(return_value=paths),
+                                   read=mock.MagicMock(return_value=raw),
+                                   revision=mock.MagicMock(return_value="sha"))
+
+    @staticmethod
+    def unreachable_repository() -> Any:
+        """
+        Fail any repository call, so a test can prove that none is made.
+
+        :return: The patch to use as a context manager.
+        """
+        return mock.patch.multiple(GithubContent,
+                                   list_paths=mock.MagicMock(side_effect=AssertionError("listed")),
+                                   read=mock.MagicMock(side_effect=AssertionError("read")),
+                                   revision=mock.MagicMock(side_effect=AssertionError("revision")))
+
+    def test_ensure_mirrors_a_repository_file_at_its_logical_path(self) -> None:
+        """
+        Tests that a file under the repository's package directory is mirrored at the
+        path the including file names.
+        """
+        with self.repository(["neuro_san_studio/registries/aaosa.hocon"]):
+            path: Optional[Path] = self.studio.ensure("registries/aaosa.hocon")
+        self.assertEqual(path, self.cache / "registries" / "aaosa.hocon")
+        self.assertEqual(path.read_text(encoding="utf-8"), "{}")
+
+    def test_a_later_build_reads_nothing_from_the_repository(self) -> None:
+        """
+        Tests that a warm cache costs no request, in this process or the next one. This
+        is what keeps a repeat build off the network, and the file list, which is the
+        rate-limited call, unasked for.
+        """
+        with self.repository(["neuro_san_studio/registries/aaosa.hocon"]):
+            self.studio.ensure("registries/aaosa.hocon")
+        # A studio with no memory, as the next build process has.
+        later: GithubStudio = GithubStudio(self.REPO, "main", cache_dir=self.cache)
+        with self.unreachable_repository():
+            path: Optional[Path] = later.ensure("registries/aaosa.hocon")
+        self.assertEqual(path, self.cache / "registries" / "aaosa.hocon")
+        self.assertEqual(path.read_text(encoding="utf-8"), "{}")
+
+    def test_the_repository_cache_is_kept_out_of_the_include_base(self) -> None:
+        """
+        Tests that the cache's own bookkeeping does not appear in the mirror. pyhocon
+        parses a network against the mirror, so anything written there is a file a
+        network could include.
+        """
+        with self.repository(["registries/aaosa.hocon"]):
+            self.studio.ensure("registries/aaosa.hocon")
+        kept: Path = self.cache / GithubStudio.UPSTREAM_DIR / CachedContent.LISTING_NAME
+        self.assertTrue(kept.is_file())
+        self.assertFalse((self.cache / CachedContent.LISTING_NAME).exists())
+
+    def test_ensure_rejects_a_path_outside_the_cache(self) -> None:
+        """
+        Tests that a `..` in a network's include cannot answer with a file outside the
+        cache, cached or not.
+        """
+        outside: Path = self.cache.parent / "escape.hocon"
+        outside.write_text("{}", encoding="utf-8")
+        self.addCleanup(outside.unlink)
+        with self.repository(["escape.hocon"]):
+            self.assertIsNone(self.studio.ensure("../escape.hocon"))
