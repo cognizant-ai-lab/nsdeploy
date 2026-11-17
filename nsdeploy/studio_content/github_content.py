@@ -169,9 +169,9 @@ class GithubContent(ToolboxContent):
         :raises OSError: If the request fails for any other reason.
         """
         headers: Dict[str, str] = {"User-Agent": "nsdeploy", "Accept": "*/*"}
+        request: urllib.request.Request = urllib.request.Request(url, headers=headers)
         if self._token and url.startswith(GithubContent.AUTHENTICATED_HOSTS):
-            headers["Authorization"] = f"Bearer {self._token}"
-        request = urllib.request.Request(url, headers=headers)
+            request.add_unredirected_header("Authorization", f"Bearer {self._token}")
         try:
             with urllib.request.urlopen(request, timeout=GithubContent.TIMEOUT_SECONDS) as response:
                 return response.read()
