@@ -97,6 +97,17 @@ class GithubContent(ToolboxContent):
         return self._paths if self._paths is not None else []
 
     @override
+    def refresh(self) -> None:
+        """
+        Forget the memoized file list and the revision it was taken at.
+
+        The next listing costs one request to the rate-limited tree endpoint, which is
+        why nothing but an explicit refresh causes it.
+        """
+        self._paths = None
+        self._revision = ""
+
+    @override
     def read(self, path: str) -> Optional[bytes]:
         """
         Download one file of the repository.
