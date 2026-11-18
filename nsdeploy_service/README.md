@@ -25,7 +25,7 @@ is an ImportError at start-up rather than a failure during a request.
 <nsdeploy checkout>/
   nsdeploy/              <- upstream, untouched
   pyproject.toml         <- upstream, untouched
-  nsdeploy_service/      <- this folder: app, console, tests, docs,
+  nsdeploy_service/      <- this folder: app, console, docs
                          |  and its own pyproject.toml
 ```
 
@@ -36,21 +36,21 @@ python nsdeploy_service/bootstrap.py
 ```
 
 It checks the placement, installs both packages, verifies the contract against the
-nsdeploy it found, runs the test suite, and starts the service to confirm it answers
-— then stops it. Exit 0 means ready.
+nsdeploy it found, and starts the service to confirm it answers — then stops it.
+Exit 0 means ready.
 
 **Expect the first run to take minutes, almost all of it in step 2.** nsdeploy's
 dependency closure is ~99 packages — `neuro-san` brings langchain, openai and
-tiktoken with it — so a cold install downloads a few hundred MB. The other five steps
-total ~30s. Measured on an already-installed tree: install 74s, tests 17s,
-connection 5s, everything else ~1s.
+tiktoken with it — so a cold install downloads a few hundred MB. The other four steps
+total ~7s. Measured on an already-installed tree: install 74s, connection 5s,
+everything else ~1s.
 
 Two things make it quicker:
 
 - **Install [uv](https://docs.astral.sh/uv/).** Bootstrap uses it automatically when
   it is on PATH, and it resolves the same tree several times faster.
 - **On a re-run, skip what you have already proved:**
-  `python nsdeploy_service/bootstrap.py --skip-install --skip-tests` — about 7s.
+  `python nsdeploy_service/bootstrap.py --skip-install` — about 7s.
   Bootstrap says so itself when a run passes 90s, and warns when both packages
   already point at this checkout (pip still spends ~35s each re-resolving nothing).
 
@@ -377,8 +377,8 @@ directory was cleaned and the HOCON is gone.
 ## Tests
 
 ```bash
-python -m unittest discover -s nsdeploy_service/tests -t .   # the service, no network
-python -m unittest discover -s tests                          # nsdeploy's own tests
+python -m unittest discover -s tests/nsdeploy_service -t .   # the service, no network
+python -m unittest discover -s tests -t .                      # nsdeploy and the service
 ```
 
 ## Deploying on Azure
