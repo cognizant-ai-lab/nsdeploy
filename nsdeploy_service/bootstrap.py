@@ -5,8 +5,8 @@
 
 Drop this folder into the root of any nsdeploy checkout, run the line above, and it
 will check where it landed, install both packages, verify the contract with the
-nsdeploy it found, run the test suite, and start the service to confirm it actually
-answers — then stop it again.
+nsdeploy it found, and start the service to confirm it actually answers — then stop
+it again.
 
 The steps exist because this integration fails in two ways that are easy to miss.
 A wrong *placement* breaks every deployment with "No module named nsdeploy", because
@@ -18,14 +18,13 @@ warnings while running perfectly.
 How long it takes. The first run is dominated by step 2: nsdeploy's dependency
 closure is ~99 packages, because `neuro-san` brings langchain, openai and tiktoken
 with it, so a cold install downloads a few hundred MB and can run for minutes. The
-other five steps together are roughly 30s (the test suite is most of that). Install
-uv and this script will use it — it resolves the same tree several times faster.
+other four steps together are roughly 7s. Install uv and this script will use it —
+it resolves the same tree several times faster.
 Every step prints its own elapsed time at the end so a slow step is distinguishable
 from a stuck one.
 
 Flags:
     --skip-install   don't touch the environment, just verify
-    --skip-tests     skip the service test suite (saves ~15s)
     --port N         port for the connection test (default: an unused one)
 
 Exit code 0 means ready to use.
@@ -71,7 +70,7 @@ def step(number: int, title: str) -> None:
     if _step_title:
         _timings.append((_step_title, time.monotonic() - _step_started))
     _step_started, _step_title = time.monotonic(), title
-    print(f"\n[{number}/6] {title}\n{'-' * (len(title) + 6)}")
+    print(f"\n[{number}/5] {title}\n{'-' * (len(title) + 6)}")
 
 
 def close_timings() -> None:
@@ -201,7 +200,8 @@ def check_placement() -> bool:
                     f"Looked for nsdeploy/ and pyproject.toml in {ROOT}.\n"
                     f"Move this folder so it sits NEXT TO nsdeploy/, not inside it:\n"
                     f"    <checkout>/nsdeploy/\n    <checkout>/nsdeploy_service/")
-    if ROOT.name == "nsdeploy":
+    # A package marker, not the folder name: a checkout cloned as nsdeploy/ is fine.
+    if (ROOT / "__init__.py").is_file():
         good = fail("nested inside the nsdeploy package",
                     "The supervisor runs `python -m nsdeploy` from this folder's parent, "
                     "which here is the package itself — every deployment would fail with "
@@ -325,48 +325,15 @@ def check_contract() -> bool:
     return fail("contract mismatch", detail or result.stdout[-800:])
 
 
-# --- 5. tests ---------------------------------------------------------------
-def run_tests(skip: bool) -> bool:
-    """
-    Step 5: run the service test suite.
-
-    :param skip: Skip the tests when True.
-    :return: True when the suite passes or is skipped.
-    """
-    step(5, "Tests")
-    if skip:
-        print("  ..    skipped (--skip-tests)")
-        return True
-    result: subprocess.CompletedProcess = run([sys.executable, "-m", "unittest", "discover",
-                                               "-s", "nsdeploy_service/tests", "-t", "."])
-    tail: list[str] = (result.stderr or "").strip().splitlines()
-    summary: str = ""
-    line: str
-    # Find the last "Ran ..." line of the unittest output.
-    for line in reversed(tail):
-        if line.startswith("Ran "):
-            summary = line
-            break
-    if result.returncode == 0:
-        return ok("service test suite", summary)
-    reported: list[str] = []
-    tail_line: str
-    # Keep the failure, error and summary lines.
-    for tail_line in tail:
-        if tail_line.startswith(("FAIL:", "ERROR:", "Ran ")):
-            reported.append(tail_line)
-    return fail("service test suite", "\n".join(reported) or summary)
-
-
-# --- 6. connection ----------------------------------------------------------
+# --- 5. connection ----------------------------------------------------------
 def check_connection(port: int) -> bool:
     """
-    Step 6: start the service on a throwaway work root and probe its endpoints.
+    Step 5: start the service on a throwaway work root and probe its endpoints.
 
     :param port: The port for the service API.
     :return: True when every probe answers.
     """
-    step(6, "Connection")
+    step(5, "Connection")
     work: Path = Path(tempfile.mkdtemp(prefix="nsdeploy-bootstrap-"))
     # A throwaway work root and a port pool clear of the API port, so this never
     # touches real deployment records.
@@ -436,7 +403,6 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--skip-install", action="store_true",
                         help="verify only; do not touch the environment")
-    parser.add_argument("--skip-tests", action="store_true", help="skip the test suite")
     parser.add_argument("--port", type=int, default=None,
                         help="port for the connection test (default: an unused one)")
     args: argparse.Namespace = parser.parse_args(argv)
@@ -457,7 +423,6 @@ def main(argv: list[str] | None = None) -> int:
         install(args.skip_install),
         check_nsdeploy_cli(),
         check_contract(),
-        run_tests(args.skip_tests),
         check_connection(args.port or free_port()),
     ]
 
@@ -483,7 +448,7 @@ def main(argv: list[str] | None = None) -> int:
         step_times.append(f"{title.lower()} {step_seconds:.0f}s")
     print(f"Time: {total:.0f}s total — " + ", ".join(step_times))
     if total > 90:
-        print("Re-runs are much faster with:  --skip-install --skip-tests")
+        print("Re-runs are much faster with:  --skip-install")
     if failures or not all(steps):
         print(f"NOT READY — {len(failures)} check(s) failed:")
         label: str

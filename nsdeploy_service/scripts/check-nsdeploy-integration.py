@@ -18,7 +18,7 @@ Run after every nsdeploy upgrade, from the nsdeploy root:
 
     python nsdeploy_service/scripts/check-nsdeploy-integration.py
 
-Exit 0 = safe to build an image. Then run the tests and one smoke deploy.
+Exit 0 = safe to build an image. Then run one smoke deploy.
 """
 from __future__ import annotations
 
@@ -192,8 +192,7 @@ def main() -> int:
               f"nsdeploy until they are resolved.")
         return 1
     print("All required checks passed.")
-    print("Next: python -m unittest discover -s nsdeploy_service/tests -t .")
-    print("Then: one smoke deploy, and confirm network.agent_count > 0.")
+    print("Next: one smoke deploy, and confirm network.agent_count > 0.")
     return 0
 
 

@@ -13,7 +13,6 @@
 cailville
 docs
 tests
-nsdeploy_service/tests
 nsdeploy_service/nsdeploy_service.egg-info
 *.egg-info
 build/
