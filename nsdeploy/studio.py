@@ -139,6 +139,14 @@ class GithubStudio(StudioSource):
         # What came from the repository is kept apart from the mirror, under a name no
         # logical path uses, so the two never answer for each other. The cache is what
         # keeps a repeat build -- in this process or the next one -- off the network.
+        #
+        # A downloaded file therefore exists twice: here at the repository's own path,
+        # and in the mirror at the logical path a network asks for. That is accepted.
+        # Studio files are small, the two are keyed differently and neither can serve
+        # the other's purpose, and collapsing them would mean teaching the mirror which
+        # sources are safe to answer from disk -- a decision that belongs to a content
+        # source, not to the workspace.
+        #
         # No token: a studio is read in processes that run uploaded code, and this
         # source has always read the public repository anonymously.
         upstream: ToolboxContent = CachedContent(GithubContent(repo, ref), root / GithubStudio.UPSTREAM_DIR)
