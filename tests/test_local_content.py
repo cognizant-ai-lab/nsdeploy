@@ -22,8 +22,10 @@ class TestLocalContent(unittest.TestCase):
         # Resolved, because LocalContent resolves too: on macOS a temp directory is
         # reached through a symbolic link, and resolving it is what makes the
         # check for a path leaving the checkout sound.
-        self.checkout: Path = Path(tempfile.mkdtemp()).resolve()
-        self.addCleanup(shutil.rmtree, self.checkout)
+        self.base: Path = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.base)
+        self.checkout: Path = self.base / "checkout"
+        self.checkout.mkdir()
         self.write("registries/aaosa.hocon", "{}")
         self.write("neuro_san_studio/toolbox/toolbox_info.hocon", "{}")
         self.write("coded_tools/web_fetch.py", "VALUE = 1\n")
@@ -65,6 +67,24 @@ class TestLocalContent(unittest.TestCase):
         """A packed ref: resolving it properly would mean parsing packed-refs, and an
         unknown revision is a better answer than a wrong one."""
         self.write(".git/HEAD", "ref: refs/heads/packed\n")
+        self.assertEqual(LocalContent(self.checkout).revision(), "")
+
+    def test_a_head_reference_cannot_name_a_file_outside_the_checkout(self):
+        """The name of the ref file comes from the contents of HEAD, so
+        `ref: ../../secret.txt` would otherwise make the revision of a studio the
+        contents of a file beside it."""
+        secret: Path = self.base / "secret.txt"
+        secret.write_text("fake-secret", encoding="utf-8")
+        self.write(".git/HEAD", "ref: ../../secret.txt\n")
+        self.assertEqual(LocalContent(self.checkout).revision(), "")
+
+    def test_a_head_that_is_a_link_out_of_the_checkout_reports_no_revision(self):
+        """The same rule by the other route a crafted checkout can take: the file the
+        revision is read from has to be inside it too."""
+        secret: Path = self.base / "linked-head.txt"
+        secret.write_text("b" * 40, encoding="utf-8")
+        (self.checkout / ".git").mkdir(parents=True, exist_ok=True)
+        (self.checkout / ".git" / "HEAD").symlink_to(secret)
         self.assertEqual(LocalContent(self.checkout).revision(), "")
 
     # --- listing -----------------------------------------------------------

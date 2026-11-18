@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -9,6 +10,8 @@ from typing_extensions import override
 from nsdeploy.interfaces.toolbox_content import ToolboxContent
 from nsdeploy.interfaces.toolbox_layout import ToolboxLayout
 from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class MirrorWorkspace(ToolboxWorkspace):
@@ -86,19 +89,27 @@ class MirrorWorkspace(ToolboxWorkspace):
 
         Whether this reaches a network is the content source's business. A source
         that memoizes answers from its memo; one wrapped in a cache answers from the
-        cache. `force` discards what *this* object learned, so the next question goes
-        back to the source — it cannot make a source forget.
+        cache. `force` discards the listing held here *and* asks the source to forget
+        its own, which is the only way a file added to the toolbox after it was first
+        listed becomes resolvable.
 
-        :param force: Discard the listing held here and ask the source again.
+        :param force: Discard what was prepared here and at the source, and ask again.
         :return: True when the workspace is ready to resolve paths.
         """
         if force:
             self._paths = None
+            # Clearing this object's copy is not enough: the source memoizes its own
+            # listing for its lifetime, and would answer the next question from it.
+            self._content.refresh()
         try:
             self._load()
-        except OSError:
+        except OSError as exception:
             # Best effort by contract: a caller carries on, and the next build that
-            # needs a path asks again.
+            # needs a path asks again. Reported rather than swallowed, because a failed
+            # warm-up is otherwise a bare False that names neither the toolbox nor the
+            # reason, and an operator would have to repeat it to find out.
+            logger.warning("cannot prepare the toolbox %s: %s",
+                           self._content.identity(), exception, exc_info=True)
             return False
         return True
 
@@ -186,6 +197,8 @@ class MirrorWorkspace(ToolboxWorkspace):
         :raises OSError: If the module cannot be written.
         """
         marker: Path = self._mirror / ToolboxLayout.CODED_TOOLS / "__init__.py"
+        if not self._inside(marker):
+            return False
         if not marker.exists():
             marker.parent.mkdir(parents=True, exist_ok=True)
             self._write(marker, b"")

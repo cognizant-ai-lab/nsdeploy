@@ -43,6 +43,7 @@ class _Response:
         return self._body
 
 
+# pylint: disable-next=too-many-public-methods  # one test per rule this source applies
 class TestGithubContent(unittest.TestCase):
     """A studio read from a GitHub repository.
 
@@ -246,6 +247,46 @@ class TestGithubContent(unittest.TestCase):
         self.status[url] = 500
         with self.assertRaises(urllib.error.HTTPError):
             self.content.read("registries/aaosa.hocon")
+
+    # --- URL encoding ------------------------------------------------------
+    def test_a_name_a_url_gives_meaning_to_is_encoded_in_the_path(self):
+        """`a#b.hocon` is a valid file name. Interpolated as text it ends the path and
+        starts a fragment, so the request asks for `a` and GitHub answers 404."""
+        self.content.read("registries/a#b.hocon")
+        self.assertEqual(self.requested,
+                         [f"https://raw.githubusercontent.com/{REPO}/main/registries/a%23b.hocon"])
+
+    def test_a_space_in_a_path_is_encoded(self):
+        """A space is not allowed in a request line at all."""
+        self.content.read("registries/my network.hocon")
+        self.assertEqual(self.requested,
+                         [f"https://raw.githubusercontent.com/{REPO}/main/registries/my%20network.hocon"])
+
+    def test_directory_separators_survive_encoding(self):
+        """Encoding them would ask for one file whose name contains slashes."""
+        self.content.read("neuro_san_studio/registries/aaosa.hocon")
+        self.assertIn("/neuro_san_studio/registries/aaosa.hocon", self.requested[0])
+
+    def test_a_ref_a_url_gives_meaning_to_is_encoded_on_both_endpoints(self):
+        """`release#1` is a valid tag, and the file list is as unreachable without
+        this as the files are."""
+        named: GithubContent = GithubContent(REPO, "release#1")
+        tree: str = f"https://api.github.com/repos/{REPO}/git/trees/release%231?recursive=1"
+        self.answers[tree] = self._tree(["registries/aaosa.hocon"])
+        named.list_paths()
+        named.read("registries/aaosa.hocon")
+        self.assertEqual(self.requested,
+                         [tree,
+                          f"https://raw.githubusercontent.com/{REPO}/release%231/registries/aaosa.hocon"])
+
+    def test_a_ref_that_contains_a_separator_is_left_alone(self):
+        """Both endpoints resolve a branch such as `feature/x` only when the separator
+        arrives unencoded."""
+        named: GithubContent = GithubContent(REPO, "feature/x")
+        tree: str = f"https://api.github.com/repos/{REPO}/git/trees/feature/x?recursive=1"
+        self.answers[tree] = self._tree(["registries/aaosa.hocon"])
+        named.list_paths()
+        self.assertEqual(self.requested, [tree])
 
     # --- credentials -------------------------------------------------------
     def test_no_token_is_sent_when_none_was_given(self):

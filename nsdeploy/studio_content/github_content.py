@@ -1,5 +1,6 @@
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Dict
 from typing import List
@@ -96,6 +97,17 @@ class GithubContent(ToolboxContent):
         return self._paths if self._paths is not None else []
 
     @override
+    def refresh(self) -> None:
+        """
+        Forget the memoized file list and the revision it was taken at.
+
+        The next listing costs one request to the rate-limited tree endpoint, which is
+        why nothing but an explicit refresh causes it.
+        """
+        self._paths = None
+        self._revision = ""
+
+    @override
     def read(self, path: str) -> Optional[bytes]:
         """
         Download one file of the repository.
@@ -104,7 +116,10 @@ class GithubContent(ToolboxContent):
         :return: The file's bytes, or None when the repository has no such file.
         :raises OSError: If the file exists but cannot be fetched.
         """
-        url: str = GithubContent.RAW_URL.format(repo=self._repo, ref=self._ref, path=path)
+        repo: str = GithubContent._quote(self._repo)
+        ref: str = GithubContent._quote(self._ref)
+        wanted: str = GithubContent._quote(path)
+        url: str = GithubContent.RAW_URL.format(repo=repo, ref=ref, path=wanted)
         return self._get(url)
 
     def _load(self) -> None:
@@ -116,13 +131,17 @@ class GithubContent(ToolboxContent):
         """
         if self._paths is not None:
             return
-        url: str = GithubContent.TREE_URL.format(repo=self._repo, ref=self._ref)
+        repo: str = GithubContent._quote(self._repo)
+        ref: str = GithubContent._quote(self._ref)
+        url: str = GithubContent.TREE_URL.format(repo=repo, ref=ref)
         body: Optional[bytes] = self._get(url)
         if body is None:
             # A 404 on the listing is a repository or ref that does not exist, which
             # is a different thing from a studio that lacks one file.
             raise FileNotFoundError(f"cannot read the file list for {self.identity()}")
         tree: Dict = json.loads(body.decode("utf-8"))
+        if tree.get("truncated"):
+            raise OSError(f"incomplete file list for {self.identity()}: GitHub truncated the tree")
         found: List[str] = []
         # "tree" and "blob" are GitHub's own names for a directory entry and a file
         # entry; a studio's content is the files.
@@ -131,6 +150,26 @@ class GithubContent(ToolboxContent):
                 found.append(str(entry.get("path")))
         self._revision = str(tree.get("sha") or "")
         self._paths = found
+
+    @staticmethod
+    def _quote(value: str) -> str:
+        """
+        Percent-encode one part of a URL.
+
+        A repository holds names that a URL gives its own meaning to. `a#b.hocon` is a
+        valid file name, and interpolated as text it ends the path and starts a
+        fragment, so the request asks for `a` and GitHub answers 404; a space is not
+        allowed in a request line at all. The ref has the same problem: `release#1` is
+        a valid tag.
+
+        `/` is deliberately left alone. It separates the directories of a path, and
+        both endpoints resolve a ref that contains one, such as `feature/x`, only when
+        it arrives unencoded.
+
+        :param value: The repository, ref or path to put in a URL.
+        :return: The encoded value.
+        """
+        return urllib.parse.quote(value, safe="/")
 
     def _get(self, url: str) -> Optional[bytes]:
         """
@@ -141,9 +180,9 @@ class GithubContent(ToolboxContent):
         :raises OSError: If the request fails for any other reason.
         """
         headers: Dict[str, str] = {"User-Agent": "nsdeploy", "Accept": "*/*"}
+        request: urllib.request.Request = urllib.request.Request(url, headers=headers)
         if self._token and url.startswith(GithubContent.AUTHENTICATED_HOSTS):
-            headers["Authorization"] = f"Bearer {self._token}"
-        request = urllib.request.Request(url, headers=headers)
+            request.add_unredirected_header("Authorization", f"Bearer {self._token}")
         try:
             with urllib.request.urlopen(request, timeout=GithubContent.TIMEOUT_SECONDS) as response:
                 return response.read()

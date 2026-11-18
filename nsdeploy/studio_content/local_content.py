@@ -60,25 +60,49 @@ class LocalContent(ToolboxContent):
         A working tree also has uncommitted edits, which this cannot see. The value
         therefore identifies what was committed, not exactly what was read.
 
+        Both files are checked for containment first. The name of the second one comes
+        from the contents of the first, so a checkout carrying `ref: ../../secret`
+        would otherwise make the revision of a studio the contents of a file beside it.
+        A symbolic link out of the checkout is refused the same way, because `_inside`
+        resolves before it compares.
+
         :return: The commit id, or an empty string when it cannot be determined.
         """
-        head: Path = self._checkout / ".git" / "HEAD"
-        pointer: str = ""
-        try:
-            pointer = head.read_text(encoding="utf-8").strip()
-        except OSError:
-            return ""
+        pointer: str = self._read_inside(self._checkout / ".git" / "HEAD")
         if not pointer.startswith("ref:"):
-            # Detached HEAD: the file holds the commit id itself.
+            # Detached HEAD holds the commit id itself, and an unreadable or absent
+            # HEAD reads as empty, which is the same answer as a plain directory.
             return pointer
         reference: str = pointer.partition("ref:")[2].strip()
         if not reference:
             return ""
-        try:
-            return (self._checkout / ".git" / reference).read_text(encoding="utf-8").strip()
-        except OSError:
-            # A packed ref, which resolving properly would mean parsing packed-refs.
+        # A ref with no file of its own is a packed one, which resolving properly
+        # would mean parsing packed-refs. That reads as empty here.
+        return self._read_inside(self._checkout / ".git" / reference)
+
+    def _read_inside(self, target: Path) -> str:
+        """
+        Read one file of the checkout as stripped text, refusing one outside it.
+
+        :param target: The file to read.
+        :return: The contents, or an empty string when it is unreadable or outside.
+        """
+        if not self._inside(target):
             return ""
+        try:
+            return target.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+
+    @staticmethod
+    def _raise_walk_error(error: OSError) -> None:
+        """
+        Propagate a filesystem traversal failure.
+
+        :param error: The error raised while listing the checkout.
+        :raises OSError: Always; an incomplete listing is not usable.
+        """
+        raise error
 
     @override
     def list_paths(self) -> List[str]:
@@ -87,14 +111,18 @@ class LocalContent(ToolboxContent):
 
         :return: The file paths.
         :raises FileNotFoundError: If the checkout is not a directory.
+        :raises OSError: If a directory cannot be listed.
         """
         if self._paths is not None:
             return self._paths
         if not self._checkout.is_dir():
             raise FileNotFoundError(f"studio checkout not found: {self._checkout}")
         found: List[str] = []
+        directory: str
+        dir_names: List[str]
+        file_names: List[str]
         # Walk the checkout, pruning the directories that hold no studio content.
-        for directory, dir_names, file_names in os.walk(self._checkout):
+        for directory, dir_names, file_names in os.walk(self._checkout, onerror=LocalContent._raise_walk_error):
             kept: List[str] = []
             # Keep only the subdirectories a build could resolve a path into.
             for dir_name in dir_names:
@@ -108,6 +136,17 @@ class LocalContent(ToolboxContent):
                 found.append((relative / file_name).as_posix())
         self._paths = found
         return self._paths
+
+    @override
+    def refresh(self) -> None:
+        """
+        Forget the memoized file list, so the next listing walks the checkout again.
+
+        What makes a file added to the checkout visible to a build that has already
+        listed it. An edit to a file already listed needs none of this: `read` goes to
+        the checkout every time.
+        """
+        self._paths = None
 
     @override
     def read(self, path: str) -> Optional[bytes]:

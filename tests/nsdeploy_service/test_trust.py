@@ -208,7 +208,7 @@ class BootstrapTest(unittest.TestCase):
     def test_it_swallows_failures(self) -> None:
         """A trust store that cannot be configured must not stop the interpreter
         starting; the build fails later with a clear TLS error instead."""
-        path: Path = Path(__file__).resolve().parents[1] / "_bootstrap" / "sitecustomize.py"
+        path: Path = Path(__file__).resolve().parents[2] / "nsdeploy_service" / "_bootstrap" / "sitecustomize.py"
         source: str = path.read_text(encoding="utf-8")
         self.assertIn("except Exception", source)
 
