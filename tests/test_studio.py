@@ -140,9 +140,13 @@ class TestGithubStudio(unittest.TestCase):
     def setUp(self) -> None:
         """
         Create an empty cache and a studio that reads the repository through it.
+
+        The cache sits in a test-owned parent, because the repository cache is written
+        beside it and a test writes files next to it.
         """
-        self.cache: Path = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.cache)
+        parent: Path = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, parent)
+        self.cache: Path = parent / "studio"
         self.studio: GithubStudio = GithubStudio(self.REPO, "main", cache_dir=self.cache)
 
     @staticmethod
@@ -173,6 +177,18 @@ class TestGithubStudio(unittest.TestCase):
                                    list_paths=mock.MagicMock(side_effect=AssertionError("listed")),
                                    read=mock.MagicMock(side_effect=AssertionError("read")),
                                    revision=mock.MagicMock(side_effect=AssertionError("revision")))
+
+    @staticmethod
+    def offline_repository() -> Any:
+        """
+        Fail every repository call the way an unreachable network does.
+
+        :return: The patch to use as a context manager.
+        """
+        return mock.patch.multiple(GithubContent,
+                                   list_paths=mock.MagicMock(side_effect=OSError("offline")),
+                                   read=mock.MagicMock(side_effect=OSError("offline")),
+                                   revision=mock.MagicMock(side_effect=OSError("offline")))
 
     def test_ensure_mirrors_a_repository_file_at_its_logical_path(self) -> None:
         """
@@ -207,9 +223,66 @@ class TestGithubStudio(unittest.TestCase):
         """
         with self.repository(["registries/aaosa.hocon"]):
             self.studio.ensure("registries/aaosa.hocon")
-        kept: Path = self.cache / GithubStudio.UPSTREAM_DIR / CachedContent.LISTING_NAME
-        self.assertTrue(kept.is_file())
-        self.assertFalse((self.cache / CachedContent.LISTING_NAME).exists())
+        upstream: Path = self.cache.parent / (self.cache.name + GithubStudio.UPSTREAM_SUFFIX)
+        self.assertTrue((upstream / CachedContent.LISTING_NAME).is_file())
+        written: List[Path] = []
+        # Every file the build left in the mirror.
+        for path in self.cache.rglob("*"):
+            if path.is_file():
+                written.append(path.relative_to(self.cache))
+        self.assertEqual(written, [Path("registries/aaosa.hocon")])
+
+    def test_an_include_cannot_reach_the_repository_cache(self) -> None:
+        """
+        Tests that a network naming the cache's own files cannot overwrite a cached
+        file or remove the file list. Both are inputs to every later build.
+        """
+        repository: List[str] = ["a/common.hocon", "b/common.hocon"]
+        with self.repository(repository):
+            self.studio.ensure("a/common.hocon")
+            self.studio.ensure("b/common.hocon")
+        upstream: Path = self.cache.parent / (self.cache.name + GithubStudio.UPSTREAM_SUFFIX)
+        listing: Path = upstream / CachedContent.LISTING_NAME
+        cached: List[Path] = sorted((upstream / CachedContent.FILES_DIR).iterdir())
+        reach: str = f"../{upstream.name}"
+        with self.repository(repository, raw=b"overwritten"):
+            self.assertIsNone(self.studio.ensure(f"{reach}/{CachedContent.FILES_DIR}/{cached[-1].name}"))
+            self.assertIsNone(self.studio.ensure(f"{reach}/{CachedContent.LISTING_NAME}"))
+            self.assertIsNone(self.studio.ensure(f"{GithubStudio.UPSTREAM_SUFFIX}/{CachedContent.LISTING_NAME}"))
+        self.assertEqual(len(cached), 2)
+        # Each cached file still holds what the repository returned.
+        for path in cached:  # type: Path
+            self.assertEqual(path.read_bytes(), b"{}")
+        self.assertTrue(listing.is_file())
+
+    def test_an_offline_build_uses_a_mirror_with_no_repository_cache(self) -> None:
+        """
+        Tests that a mirror filled before the repository cache existed still serves a
+        build that cannot reach the repository, and that a file it lacks still fails.
+        """
+        mirrored: Path = self.cache / "registries" / "aaosa.hocon"
+        mirrored.parent.mkdir(parents=True)
+        mirrored.write_text("{}", encoding="utf-8")
+        with self.offline_repository():
+            self.assertEqual(self.studio.ensure("registries/aaosa.hocon"), mirrored)
+            self.assertEqual(self.studio.read("registries/aaosa.hocon"), "{}")
+            with self.assertRaises(OSError):
+                self.studio.ensure("registries/absent.hocon")
+            self.assertIsNone(self.studio.ensure("../escape.hocon"))
+
+    def test_an_offline_build_uses_a_mirrored_coded_tool(self) -> None:
+        """
+        Tests that a coded tool left in the mirror by an earlier build is importable
+        when the repository cannot be reached.
+        """
+        tools: Path = self.cache / "coded_tools"
+        tools.mkdir(parents=True)
+        (tools / "__init__.py").write_text("", encoding="utf-8")
+        (tools / "web_fetch.py").write_text("VALUE = 1\n", encoding="utf-8")
+        with self.offline_repository():
+            self.assertTrue(self.studio.ensure_coded_tool("web_fetch.py"))
+            with self.assertRaises(OSError):
+                self.studio.ensure_coded_tool("absent.py")
 
     def test_ensure_rejects_a_path_outside_the_cache(self) -> None:
         """

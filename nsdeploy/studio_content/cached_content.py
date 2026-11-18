@@ -1,4 +1,6 @@
+import hashlib
 import json
+import logging
 import os
 import tempfile
 import time
@@ -7,10 +9,20 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import TextIO
 
 from typing_extensions import override
 
 from nsdeploy.interfaces.toolbox_content import ToolboxContent
+
+# fcntl exists only on POSIX. Without it the listing refresh is not serialized across
+# processes, which costs duplicate listing requests rather than correctness.
+try:
+    import fcntl  # POSIX-only module
+except ImportError:  # pragma: no cover - Windows has no fcntl.
+    fcntl = None
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class CachedContent(ToolboxContent):
@@ -37,8 +49,10 @@ class CachedContent(ToolboxContent):
     """
 
     # The file list, and the files, kept apart so that an upstream path can never
-    # collide with the cache's own bookkeeping.
+    # collide with the cache's own bookkeeping. The lock serializes listing refreshes
+    # across processes.
     LISTING_NAME: str = "listing.json"
+    LOCK_NAME: str = "listing.lock"
     FILES_DIR: str = "files"
 
     # How long a file list is used before it is asked for again. A branch moves, and a
@@ -130,32 +144,66 @@ class CachedContent(ToolboxContent):
         mean a file added upstream stayed missing for a build that has the cache, and
         the cost of asking again is one request for a path nothing resolves to.
 
+        A file that cannot be written to the cache is still returned. The cache is an
+        optimization, and the source has already answered.
+
         :param path: A path exactly as `list_paths` returned it.
         :return: The file's bytes, or None when the source has no such file.
         :raises OSError: If the file cannot be read.
         """
-        target: Optional[Path] = self._file_path(path)
-        if target is not None and target.is_file():
+        target: Path = self._file_path(path)
+        if target.is_file():
             return target.read_bytes()
         raw: Optional[bytes] = self._content.read(path)
         if raw is None:
             return None
-        if target is not None:
+        try:
             self._write(target, raw)
+        except OSError as exception:
+            logger.warning("cannot cache %s from %s in %s: %s",
+                           path, self._content.identity(), self._cache, exception)
         return raw
 
     def _load(self) -> None:
         """
         Make the file list available, from memory, then the cache, then the source.
 
+        Going to the source holds a lock shared with every other reader of this cache,
+        and checks the cache again once it has the lock. A burst of builds then makes
+        one listing request, not one each.
+
         :raises OSError: If the source has no list and the cache has none to fall back on.
         """
         if self._paths is not None:
             return
         cached: Optional[Dict[str, Any]] = self._read_listing()
-        if cached is not None and not self._forced and not self._is_stale():
+        if self._usable(cached):
             self._accept(cached)
             return
+        handle: Optional[TextIO] = self._lock()
+        try:
+            # Another reader may have refreshed the listing while this one waited.
+            cached = self._read_listing()
+            if self._usable(cached):
+                self._accept(cached)
+                return
+            self._load_upstream_or_fall_back(cached)
+        finally:
+            CachedContent._unlock(handle)
+            # Asked for once. A later question in this process reads what was just loaded.
+            self._forced = False
+
+    def _load_upstream_or_fall_back(self, cached: Optional[Dict[str, Any]]) -> None:
+        """
+        Ask the source for the file list, falling back to an older cached one.
+
+        :param cached: The cached listing that is past its age or being refreshed, if any.
+        :raises OSError: If the source cannot be listed and there is no cached list.
+        """
+        if cached is not None and not self._forced:
+            # An expired listing has to reach past the source's own memo too, which
+            # may be as old as the listing. A forced refresh has already done this.
+            self._content.refresh()
         try:
             self._load_upstream()
         except OSError:
@@ -164,9 +212,49 @@ class CachedContent(ToolboxContent):
             # The cached list is past its age, or a refresh was asked for, and the
             # source cannot be reached. A build from a stale list is better than no
             # build, and every file it names is likely cached too.
+            logger.warning("cannot list %s; using the cached file list", self._content.identity(), exc_info=True)
             self._accept(cached)
-        # Asked for once. A later question in this process reads what was just loaded.
-        self._forced = False
+
+    def _usable(self, cached: Optional[Dict[str, Any]]) -> bool:
+        """
+        Report whether a cached listing answers without asking the source.
+
+        :param cached: The cached listing, if any.
+        :return: True when it exists, is within its age, and no refresh was asked for.
+        """
+        return cached is not None and not self._forced and not self._is_stale()
+
+    def _lock(self) -> Optional[TextIO]:
+        """
+        Take the lock that serializes listing refreshes across processes.
+
+        :return: The open lock file, or None when the lock is not available.
+        """
+        if fcntl is None:
+            return None
+        handle: Optional[TextIO] = None
+        try:
+            self._cache.mkdir(parents=True, exist_ok=True)
+            handle = (self._cache / CachedContent.LOCK_NAME).open("a+", encoding="utf-8")
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        except OSError as exception:
+            # A read-only cache cannot be locked. Refreshing unlocked costs at most a
+            # duplicate request.
+            logger.warning("cannot lock the cache %s: %s", self._cache, exception)
+            if handle is not None:
+                handle.close()
+            return None
+        return handle
+
+    @staticmethod
+    def _unlock(handle: Optional[TextIO]) -> None:
+        """
+        Release the listing lock. Closing the file releases it.
+
+        :param handle: The open lock file, or None when no lock was taken.
+        """
+        if handle is not None:
+            handle.close()
 
     def _load_upstream(self) -> None:
         """
@@ -222,9 +310,10 @@ class CachedContent(ToolboxContent):
         raw: bytes = json.dumps(body).encode("utf-8")
         try:
             self._write(self._cache / CachedContent.LISTING_NAME, raw)
-        except OSError:
+        except OSError as exception:
             # A cache that cannot be written is a slow source, not a broken one.
-            pass
+            logger.warning("cannot cache the file list of %s in %s: %s",
+                           self._content.identity(), self._cache, exception)
 
     def _is_stale(self) -> bool:
         """
@@ -239,21 +328,20 @@ class CachedContent(ToolboxContent):
             return True
         return (time.time() - written) > self._ttl
 
-    def _file_path(self, path: str) -> Optional[Path]:
+    def _file_path(self, path: str) -> Path:
         """
         Where one file of the source is kept in the cache.
 
+        Keyed by a digest of the path rather than by the path itself. A repository can
+        replace a file `assets` with a directory `assets/` between revisions, and files
+        are kept indefinitely; a flat key cannot collide that way, and cannot leave
+        the cache directory whatever the path holds.
+
         :param path: A path exactly as `list_paths` returned it.
-        :return: The cache path, or None when it would leave the cache directory.
+        :return: The cache path.
         """
-        root: Path = self._cache / CachedContent.FILES_DIR
-        target: Path = root / path
-        try:
-            if not target.resolve().is_relative_to(root.resolve()):
-                return None
-        except OSError:
-            return None
-        return target
+        digest: str = hashlib.sha256(path.encode("utf-8")).hexdigest()
+        return self._cache / CachedContent.FILES_DIR / digest
 
     @staticmethod
     def _write(target: Path, raw: bytes) -> None:

@@ -1,4 +1,6 @@
+import functools
 import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -6,10 +8,12 @@ from pathlib import Path
 from typing import Dict
 from typing import List
 from typing import Optional
+from unittest import mock
 
 from typing_extensions import override
 
 from nsdeploy.interfaces.toolbox_content import ToolboxContent
+from nsdeploy.studio_content import cached_content as cached_content_module
 from nsdeploy.studio_content.cached_content import CachedContent
 
 
@@ -73,6 +77,7 @@ class _Source(ToolboxContent):
         return self.files.get(path)
 
 
+# pylint: disable-next=too-many-public-methods  # one test per behaviour of the cache
 class TestCachedContent(unittest.TestCase):
     """A source answered from disk where it can be.
 
@@ -105,6 +110,18 @@ class TestCachedContent(unittest.TestCase):
         :return: The second reader.
         """
         return CachedContent(self.source, self.cache, ttl_seconds=ttl_seconds)
+
+    @staticmethod
+    def refreshed_meanwhile(listing: Path, fileno: int, operation: int) -> None:
+        """
+        Stand in for taking the lock, during which another reader refreshes the listing.
+
+        :param listing: The cached listing file.
+        :param fileno: The lock file's descriptor, unused.
+        :param operation: The lock operation, unused.
+        """
+        del fileno, operation
+        os.utime(listing)
 
     # --- identity ----------------------------------------------------------
     def test_the_identity_is_the_wrapped_sources(self):
@@ -151,6 +168,24 @@ class TestCachedContent(unittest.TestCase):
         self.cached.list_paths()
         self.source.broken = True
         self.assertIn("registries/aaosa.hocon", self.second_reader(ttl_seconds=0).list_paths())
+
+    def test_an_expired_listing_asks_the_wrapped_source_to_forget_its_own(self):
+        """The source's memo may be as old as the listing; rewriting it with a fresh
+        time would hide an upstream addition for another time to live."""
+        self.cached.list_paths()
+        self.second_reader(ttl_seconds=0).list_paths()
+        self.assertEqual(self.source.refreshes, 1)
+
+    @unittest.skipIf(cached_content_module.fcntl is None, "no fcntl on this platform")
+    def test_a_listing_refreshed_while_waiting_for_the_lock_is_used(self):
+        """Concurrent builds would otherwise each make the rate-limited listing call."""
+        self.cached.list_paths()
+        listing: Path = self.cache / CachedContent.LISTING_NAME
+        os.utime(listing, (0, 0))
+        meanwhile: functools.partial = functools.partial(TestCachedContent.refreshed_meanwhile, listing)
+        with mock.patch.object(cached_content_module.fcntl, "flock", side_effect=meanwhile):
+            self.assertIn("registries/aaosa.hocon", self.second_reader().list_paths())
+        self.assertEqual(self.source.listings, 1)
 
     def test_a_source_that_cannot_be_listed_with_no_cache_still_fails(self):
         """Reporting no files would make a build report every include as missing and
@@ -212,10 +247,24 @@ class TestCachedContent(unittest.TestCase):
         self.source.files["registries/absent.hocon"] = b"{}"
         self.assertEqual(self.second_reader().read("registries/absent.hocon"), b"{}")
 
+    def test_a_file_that_cannot_be_cached_is_still_returned(self):
+        """The cache is an optimization; a source that answered must not fail a build."""
+        (self.cache / CachedContent.FILES_DIR).write_text("not a directory", encoding="utf-8")
+        self.assertEqual(self.cached.read("registries/aaosa.hocon"), b"{}")
+
+    def test_a_file_replaced_by_a_directory_upstream_is_still_cached(self):
+        """Files are kept indefinitely, so a path that changes shape between revisions
+        must not break every later build."""
+        self.source.files["assets"] = b"file"
+        self.cached.read("assets")
+        self.source.files = {"assets/logo.png": b"png"}
+        self.assertEqual(self.second_reader().read("assets/logo.png"), b"png")
+        self.assertEqual(self.second_reader().read("assets/logo.png"), b"png")
+        self.assertEqual(self.source.reads, ["assets", "assets/logo.png"])
+
     def test_a_path_leaving_the_cache_is_answered_but_not_written(self):
         """A path reaches this source from a network's own include lines, so it is
         input: it must not be able to write outside the directory it was given."""
-        # Two levels, because the cached files sit one directory below the cache root.
         outside: Path = self.base / "escaped.bin"
         self.source.files["../../escaped.bin"] = b"{}"
         self.assertEqual(self.cached.read("../../escaped.bin"), b"{}")

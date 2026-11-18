@@ -168,6 +168,9 @@ class MirrorWorkspace(ToolboxWorkspace):
         left behind, so a copy from an earlier build cannot satisfy an include the
         toolbox has dropped.
 
+        A mirror file that already holds the same bytes is not written again, so a
+        pre-seeded mirror on a read-only filesystem still serves a build.
+
         :param logical_path: The path an agent network asks for.
         :return: The local path, or None when the toolbox holds no such file.
         :raises OSError: If the file cannot be written.
@@ -177,8 +180,12 @@ class MirrorWorkspace(ToolboxWorkspace):
             return None
         raw: Optional[bytes] = self._read_bytes(logical_path)
         if raw is None:
-            target.unlink(missing_ok=True)
+            # Only a stale file goes. A directory at this path holds other files' copies.
+            if target.is_symlink() or target.is_file():
+                target.unlink(missing_ok=True)
             return None
+        if MirrorWorkspace._holds(target, raw):
+            return target
         target.parent.mkdir(parents=True, exist_ok=True)
         self._write(target, raw)
         return target
@@ -241,6 +248,25 @@ class MirrorWorkspace(ToolboxWorkspace):
         try:
             return target.resolve().is_relative_to(self._mirror.resolve())
         except OSError:
+            return False
+
+    @staticmethod
+    def _holds(target: Path, raw: bytes) -> bool:
+        """
+        Report whether a mirror file already holds exactly these bytes.
+
+        A link is never taken as holding them, so it is replaced by a regular file.
+
+        :param target: The mirror path.
+        :param raw: The bytes the file should hold.
+        :return: True when the file can be served as it is.
+        """
+        if target.is_symlink() or not target.is_file():
+            return False
+        try:
+            return target.read_bytes() == raw
+        except OSError:
+            # An unreadable copy is replaced, which is what a missing one gets.
             return False
 
     @staticmethod

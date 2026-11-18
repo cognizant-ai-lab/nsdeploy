@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict
 from typing import List
 from typing import Optional
+from unittest import mock
 
 from typing_extensions import override
 
@@ -215,6 +216,27 @@ class TestMirrorWorkspace(unittest.TestCase):
         self.workspace.fetch(force=True)
         self.assertIsNone(self.workspace.materialize("registries/aaosa.hocon"))
         self.assertFalse(mirrored.exists())
+
+    def test_a_missing_include_naming_a_mirror_directory_leaves_it(self):
+        """A directory at a missing file's path holds other files' copies, and an
+        include is not an error worth aborting a build for."""
+        self.workspace.materialize("registries/aaosa.hocon")
+        self.assertIsNone(self.workspace.materialize("registries"))
+        self.assertTrue((self.mirror / "registries/aaosa.hocon").is_file())
+
+    def test_an_unchanged_mirror_file_is_not_written_again(self):
+        """A pre-seeded mirror on a read-only filesystem still has to serve a build."""
+        self.workspace.materialize("registries/aaosa.hocon")
+        with mock.patch.object(MirrorWorkspace, "_write", side_effect=AssertionError("written")):
+            local: Optional[Path] = self.workspace.materialize("registries/aaosa.hocon")
+        self.assertEqual(local, self.mirror / "registries/aaosa.hocon")
+
+    def test_a_changed_mirror_file_is_written_again(self):
+        """Skipping the write must not keep an old copy."""
+        self.workspace.materialize("registries/aaosa.hocon")
+        self.content.files["registries/aaosa.hocon"] = b"{ changed }"
+        local: Optional[Path] = self.workspace.materialize("registries/aaosa.hocon")
+        self.assertEqual(local.read_bytes(), b"{ changed }")
 
     def test_a_path_leaving_the_mirror_is_refused(self):
         """A logical path comes from a network's own include lines, so it is input."""

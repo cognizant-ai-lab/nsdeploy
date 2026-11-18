@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 from typing import Optional
 
+from typing_extensions import override
+
 from nsdeploy.interfaces.toolbox_content import ToolboxContent
+from nsdeploy.interfaces.toolbox_layout import ToolboxLayout
 from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
 from nsdeploy.studio_content.cached_content import CachedContent
 from nsdeploy.studio_content.github_content import GithubContent
@@ -13,6 +17,8 @@ from nsdeploy.studio_content.mirror_workspace import MirrorWorkspace
 
 DEFAULT_REPO: str = "cognizant-ai-lab/neuro-san-studio"
 DEFAULT_REF: str = "main"
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class StudioSource:
@@ -119,9 +125,9 @@ class GithubStudio(StudioSource):
     Studio source that downloads files on demand from a GitHub repository into a local cache.
     """
 
-    # Where the repository's own files and file list are kept, inside the cache
-    # directory and beside the mirror.
-    UPSTREAM_DIR: str = ".upstream"
+    # Appended to the mirror directory's name to name the directory, beside it, where
+    # the repository's own files and file list are kept.
+    UPSTREAM_SUFFIX: str = ".upstream"
 
     def __init__(self, repo: str = DEFAULT_REPO, ref: str = DEFAULT_REF, cache_dir: Optional[Path] = None) -> None:
         """
@@ -136,12 +142,16 @@ class GithubStudio(StudioSource):
         safe: str = repo.replace("/", "_")
         default_cache: Path = Path.home() / ".cache" / "nsdeploy" / f"{safe}@{ref}"
         root: Path = Path(cache_dir) if cache_dir else default_cache
-        # What came from the repository is kept apart from the mirror, under a name no
-        # logical path uses, so the two never answer for each other. The cache is what
-        # keeps a repeat build -- in this process or the next one -- off the network.
+        # What came from the repository is kept beside the mirror, never inside it. The
+        # mirror is the include base, and an include is a network's input: anything
+        # under the mirror can be named by one, and a name that resolves by suffix to a
+        # cached file would overwrite it, or delete the file list, for every later
+        # build. Beside it, reaching the cache takes a `..`, which the workspace
+        # refuses. The cache is what keeps a repeat build -- in this process or the
+        # next one -- off the network.
         #
-        # A downloaded file therefore exists twice: here at the repository's own path,
-        # and in the mirror at the logical path a network asks for. That is accepted.
+        # A downloaded file therefore exists twice: in the cache, keyed by the
+        # repository's own path, and in the mirror at the logical path a network asks for. That is accepted.
         # Studio files are small, the two are keyed differently and neither can serve
         # the other's purpose, and collapsing them would mean teaching the mirror which
         # sources are safe to answer from disk -- a decision that belongs to a content
@@ -149,5 +159,65 @@ class GithubStudio(StudioSource):
         #
         # No token: a studio is read in processes that run uploaded code, and this
         # source has always read the public repository anonymously.
-        upstream: ToolboxContent = CachedContent(GithubContent(repo, ref), root / GithubStudio.UPSTREAM_DIR)
+        mirror: Path = root.resolve()
+        kept: Path = mirror.with_name(mirror.name + GithubStudio.UPSTREAM_SUFFIX)
+        upstream: ToolboxContent = CachedContent(GithubContent(repo, ref), kept)
         super().__init__(upstream, root)
+
+    @override
+    def ensure(self, rel_path: str) -> Optional[Path]:
+        """
+        Make `rel_path` available under root, or serve the mirrored copy when the
+        repository cannot be reached.
+
+        A mirror filled before the repository cache existed holds files but no file
+        list, and a list can only come from the repository. Without this fallback such
+        a mirror stops serving offline and rate-limited builds.
+
+        :param rel_path: The logical path relative to root.
+        :return: The local path, or None when the studio has no such file.
+        :raises OSError: If the repository cannot be read and the mirror has no copy.
+        """
+        try:
+            return super().ensure(rel_path)
+        except OSError as exception:
+            kept: Optional[Path] = self._mirrored(rel_path)
+            if kept is None:
+                raise
+            logger.warning("cannot read %s@%s (%s); using the mirrored %s", self.repo, self.ref, exception, rel_path)
+            return kept
+
+    @override
+    def ensure_coded_tool(self, module_file: str) -> bool:
+        """
+        Make `coded_tools/<module_file>` importable under root, or accept the mirrored
+        module when the repository cannot be reached.
+
+        :param module_file: The file name of the coded-tool module, such as `web_fetch.py`.
+        :return: True when the module is available under root.
+        :raises OSError: If the repository cannot be read and the mirror has no copy.
+        """
+        try:
+            return super().ensure_coded_tool(module_file)
+        except OSError as exception:
+            module: Optional[Path] = self._mirrored(ToolboxLayout.coded_tool_path(module_file))
+            marker: Optional[Path] = self._mirrored(ToolboxLayout.coded_tool_path("__init__.py"))
+            if module is None or marker is None:
+                raise
+            logger.warning("cannot read %s@%s (%s); using the mirrored %s", self.repo, self.ref, exception, module_file)
+            return True
+
+    def _mirrored(self, rel_path: str) -> Optional[Path]:
+        """
+        Find a file a previous build left in the mirror.
+
+        :param rel_path: The logical path relative to root.
+        :return: The mirrored file, or None when there is none or the path leaves root.
+        """
+        target: Path = self.root / rel_path
+        try:
+            if not target.resolve().is_relative_to(self.root.resolve()):
+                return None
+        except OSError:
+            return None
+        return target if target.is_file() else None
