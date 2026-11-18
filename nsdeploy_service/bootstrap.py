@@ -315,8 +315,13 @@ def check_contract() -> bool:
     if result.returncode == 0:
         ok("stdout markers, bundle keys and CLI flags all match")
         return True
-    detail: str = "\n".join(line for line in result.stdout.splitlines()
-                            if line.strip().startswith(("FAIL", "in ", "->")))
+    marked: list[str] = []
+    line: str
+    # Keep the output lines that describe a contract mismatch.
+    for line in result.stdout.splitlines():
+        if line.strip().startswith(("FAIL", "in ", "->")):
+            marked.append(line)
+    detail: str = "\n".join(marked)
     return fail("contract mismatch", detail or result.stdout[-800:])
 
 
@@ -422,11 +427,26 @@ def main(argv: list[str] | None = None) -> int:
     ]
 
     close_timings()
-    failures: list[str] = [label for label, passed, _ in _results if not passed]
+    failures: list[str] = []
+    result_label: str
+    passed: bool
+    # Collect the labels of the checks that did not pass.
+    for result_label, passed, _ in _results:
+        if not passed:
+            failures.append(result_label)
     print("\n" + "=" * 60)
-    total: float = sum(seconds for _, seconds in _timings)
-    print(f"Time: {total:.0f}s total — " + ", ".join(
-        f"{title.lower()} {seconds:.0f}s" for title, seconds in _timings))
+    total: float = 0
+    seconds: float
+    # Add up the wall-clock time of every step.
+    for _, seconds in _timings:
+        total += seconds
+    step_times: list[str] = []
+    title: str
+    step_seconds: float
+    # Format the duration of each step.
+    for title, step_seconds in _timings:
+        step_times.append(f"{title.lower()} {step_seconds:.0f}s")
+    print(f"Time: {total:.0f}s total — " + ", ".join(step_times))
     if total > 90:
         print("Re-runs are much faster with:  --skip-install")
     if failures or not all(steps):

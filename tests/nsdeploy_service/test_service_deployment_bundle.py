@@ -252,9 +252,19 @@ class DeploymentBundleTest(unittest.TestCase):
         client: TestClient = self._open()
         row: Dict[str, Any] = self._deploy(client)
         work: Path = Path(row["work_dir"])
-        before: List[str] = sorted(path.name for path in work.iterdir())
+        before_names: List[str] = []
+        before_path: Path
+        # Record the work dir's entries before the bundle request.
+        for before_path in work.iterdir():
+            before_names.append(before_path.name)
+        before: List[str] = sorted(before_names)
         client.get(f"/deployments/{row['id']}/bundle")
-        after: List[str] = sorted(path.name for path in work.iterdir())
+        after_names: List[str] = []
+        after_path: Path
+        # Record the work dir's entries after the bundle request.
+        for after_path in work.iterdir():
+            after_names.append(after_path.name)
+        after: List[str] = sorted(after_names)
         self.assertEqual(before, after)
         self.assertEqual(client.get(f"/deployments/{row['id']}").json()["status"],
                          "ready")
@@ -282,8 +292,14 @@ class DeploymentBundleTest(unittest.TestCase):
         row: Dict[str, Any] = self._deploy(client)
         response: httpx.Response = client.get(f"/deployments/{row['id']}/bundle")
         reported: List[str] = json.loads(response.headers["x-bundle-warnings"])
-        self.assertTrue(any("default look" in line for line in reported),
-                        f"no default-look warning in {reported}")
+        found: bool = False
+        line: str
+        # Look for the default-look warning.
+        for line in reported:
+            if "default look" in line:
+                found = True
+                break
+        self.assertTrue(found, f"no default-look warning in {reported}")
 
     def test_the_warnings_name_what_the_deployment_has_and_the_bundle_cannot(self) -> None:
         """The warnings name what the deployment has and the bundle cannot carry."""
@@ -291,8 +307,14 @@ class DeploymentBundleTest(unittest.TestCase):
         row: Dict[str, Any] = self._deploy(client)
         response: httpx.Response = client.get(f"/deployments/{row['id']}/bundle")
         reported: List[str] = json.loads(response.headers["x-bundle-warnings"])
-        self.assertTrue(any("rebuilt from the deployment" in line for line in reported),
-                        f"no rebuild warning in {reported}")
+        found: bool = False
+        line: str
+        # Look for the rebuild warning.
+        for line in reported:
+            if "rebuilt from the deployment" in line:
+                found = True
+                break
+        self.assertTrue(found, f"no rebuild warning in {reported}")
 
     def test_a_stored_upstream_is_not_baked_in(self) -> None:
         """Without a query, the bundle uses the service upstream, not the record's."""

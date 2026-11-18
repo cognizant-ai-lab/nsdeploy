@@ -68,12 +68,16 @@ _SCRUB_EXACT: Set[str] = {"GOOGLE_APPLICATION_CREDENTIALS", "NSDEPLOY_FACADE_API
 
 def scrubbed_env(base: Mapping[str, str]) -> Dict[str, str]:
     """Copy of `base` without LLM-provider credentials or provider endpoints."""
-    return {
-        name: value for name, value in base.items()
+    env: Dict[str, str] = {}
+    name: str
+    value: str
+    # Copy every variable that is not a provider credential or endpoint.
+    for name, value in base.items():
         if not (name in _SCRUB_EXACT
                 or name.startswith(_SCRUB_PREFIXES)
-                or name.endswith(_SCRUB_SUFFIXES))
-    }
+                or name.endswith(_SCRUB_SUFFIXES)):
+            env[name] = value
+    return env
 
 
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments  # each value shapes the facade argv
@@ -103,7 +107,13 @@ def _last_user_text(messages: List[Dict[str, Any]]) -> str:
 
 
 def _called_tool_names(messages: List[Dict[str, Any]]) -> set:
-    return {m.get("name") for m in messages if m.get("role") == "tool" and m.get("name")}
+    names: Set[Any] = set()
+    message: Dict[str, Any]
+    # Collect the names of the tool-result messages.
+    for message in messages:
+        if message.get("role") == "tool" and message.get("name"):
+            names.add(message.get("name"))
+    return names
 
 
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-statements  # closure-based handler
@@ -244,9 +254,19 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 body = {}
             messages: List[Dict[str, Any]] = body.get("messages", []) or []
             tools: List[Dict[str, Any]] = body.get("tools", []) or []
-            available: List[Optional[str]] = [t.get("function", {}).get("name") for t in tools if t.get("function")]
+            available: List[Optional[str]] = []
+            tool_entry: Dict[str, Any]
+            # Collect the function names of the offered tools.
+            for tool_entry in tools:
+                if tool_entry.get("function"):
+                    available.append(tool_entry.get("function", {}).get("name"))
             called: Set[Any] = _called_tool_names(messages)
-            uncalled: List[Optional[str]] = [n for n in available if n not in called]
+            uncalled: List[Optional[str]] = []
+            tool_name: Optional[str]
+            # Keep the offered tools that have not been called yet.
+            for tool_name in available:
+                if tool_name not in called:
+                    uncalled.append(tool_name)
             text: str = _last_user_text(messages)
 
             self.send_response(200)
@@ -261,8 +281,13 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             self.end_headers()
             if uncalled:
                 name: Optional[str] = uncalled[0]
-                schema: Dict[str, Any] = next((t["function"].get("parameters", {}) for t in tools
-                                               if t.get("function", {}).get("name") == name), {})
+                schema: Dict[str, Any] = {}
+                matching_tool: Dict[str, Any]
+                # Take the parameter schema of the first offered tool with the chosen name.
+                for matching_tool in tools:
+                    if matching_tool.get("function", {}).get("name") == name:
+                        schema = matching_tool["function"].get("parameters", {})
+                        break
                 args: Dict[str, Any] = {}
                 p: str
                 for p in (schema.get("required") or []):
@@ -284,10 +309,20 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
             self.wfile.write(b"data: [DONE]\n\n")
 
         def _summarize(self, messages: List[Dict[str, Any]]) -> str:
-            results: List[Any] = [m.get("content", "") for m in messages if m.get("role") == "tool"]
+            results: List[Any] = []
+            message: Dict[str, Any]
+            # Collect the content of the tool-result messages.
+            for message in messages:
+                if message.get("role") == "tool":
+                    results.append(message.get("content", ""))
             if not results:
                 return "(mock) I have no grounded tool output to summarize for this request."
-            joined: str = " ".join(str(r) for r in results)[:1200]
+            texts: List[str] = []
+            result: Any
+            # Convert each tool result to text.
+            for result in results:
+                texts.append(str(result))
+            joined: str = " ".join(texts)[:1200]
             return "(mock summary) Based on the tools I consulted: " + joined
 
         # --- BYOK CORS pass-through proxy to a real OpenAI-compatible upstream ----
@@ -603,7 +638,12 @@ def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int 
     bindings: List[Tuple[subprocess.Popen, int]] = spawn_mcp_servers(plan, studio_root, python_exe)
     facade_proc: Optional[subprocess.Popen] = None
     try:
-        local_mcps: List[str] = [f"http://127.0.0.1:{private_port}/mcp" for _, private_port in bindings]
+        local_mcps: List[str] = []
+        _mcp_proc: subprocess.Popen
+        mcp_port: int
+        # Build the loopback MCP URL of each spawned tool server.
+        for _mcp_proc, mcp_port in bindings:
+            local_mcps.append(f"http://127.0.0.1:{mcp_port}/mcp")
         facade_port: int = _free_tcp_port()
         facade_upstream = facade_upstream or os.environ.get("NSDEPLOY_FACADE_UPSTREAM") or upstream
         repo_root: str = str(Path(__file__).resolve().parents[1])

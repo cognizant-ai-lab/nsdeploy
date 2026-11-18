@@ -45,7 +45,12 @@ class NestedIncludeTests(unittest.TestCase):
         missing: List[str]
         config, missing = _parse_hocon_content(text, self.source)
         self.assertEqual(config["llm_config"]["fallbacks"][0]["model_name"], "gpt-test")
-        ours: List[str] = [m for m in missing if m.startswith("Cannot include file nowhere.hocon")]
+        ours: List[str] = []
+        message: str
+        # Keep the missing-include messages for nowhere.hocon.
+        for message in missing:
+            if message.startswith("Cannot include file nowhere.hocon"):
+                ours.append(message)
         self.assertEqual(len(ours), 1, missing)
 
 

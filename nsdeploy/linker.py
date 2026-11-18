@@ -67,6 +67,60 @@ def _configured_links(config: Dict[str, Any]) -> Dict[str, str]:
     return result
 
 
+def _named_tools(tools: List[Any]) -> Set[Any]:
+    """
+    Collect the names of the named tool entries.
+
+    :param tools: The tool entries of a network configuration.
+    :return: The set of tool names.
+    """
+    names: Set[Any] = set()
+    tool: Any
+    # Collect the name of every dict entry that has one.
+    for tool in tools:
+        if isinstance(tool, dict) and tool.get("name"):
+            names.add(tool.get("name"))
+    return names
+
+
+def _llm_agents(tools: List[Any]) -> List[Dict[str, Any]]:
+    """
+    Collect the LLM agents: entries with instructions that are neither coded tools nor toolbox entries.
+
+    :param tools: The tool entries of a network configuration.
+    :return: The LLM agent entries, in configuration order.
+    """
+    agents: List[Dict[str, Any]] = []
+    tool: Any
+    # Keep the dict entries that have instructions and no class or toolbox.
+    for tool in tools:
+        if isinstance(tool, dict) and "instructions" in tool and "class" not in tool and "toolbox" not in tool:
+            agents.append(tool)
+    return agents
+
+
+def _sorted_imports(imports: Dict[str, Set[str]]) -> Dict[str, List[str]]:
+    """
+    Sort the imports by reference and each caller list, dropping empty caller names.
+
+    :param imports: The caller names by imported reference.
+    :return: The sorted caller lists by reference, in reference order.
+    """
+    sorted_imports: Dict[str, List[str]] = {}
+    import_ref: str
+    import_callers: Set[str]
+    # Build a sorted caller list for each reference, in reference order.
+    for import_ref, import_callers in sorted(imports.items()):
+        named_callers: List[str] = []
+        caller: str
+        # Keep only non-empty caller names.
+        for caller in import_callers:
+            if caller:
+                named_callers.append(caller)
+        sorted_imports[import_ref] = sorted(named_callers)
+    return sorted_imports
+
+
 # pylint: disable-next=too-many-locals
 def describe_config(config: Dict[str, Any], network: str, path: Optional[Path] = None) -> NetworkDescription:
     """
@@ -78,19 +132,18 @@ def describe_config(config: Dict[str, Any], network: str, path: Optional[Path] =
     :return: The network description.
     """
     tools: List[Any] = config.get("tools", []) or []
-    names: Set[Any] = {item.get("name") for item in tools if isinstance(item, dict) and item.get("name")}
-    agents: List[Dict[str, Any]] = [
-        item for item in tools
-        if isinstance(item, dict) and "instructions" in item and "class" not in item and "toolbox" not in item
-    ]
+    names: Set[Any] = _named_tools(tools)
+    agents: List[Dict[str, Any]] = _llm_agents(tools)
     front_man: str = agents[0].get("name", "") if agents else ""
     linked: Dict[str, str] = _configured_links(config)
-    demo_leaves: Set[Any] = {
-        item.get("name") for item in agents
-        if item.get("name")
-        and DEMO_MODE_MARKER in (item.get("instructions") or "")
-        and not (item.get("tools") or [])
-    }
+    demo_leaves: Set[Any] = set()
+    demo_agent: Dict[str, Any]
+    # Collect the named demo-mode agents that call no tools.
+    for demo_agent in agents:
+        if (demo_agent.get("name")
+                and DEMO_MODE_MARKER in (demo_agent.get("instructions") or "")
+                and not (demo_agent.get("tools") or [])):
+            demo_leaves.add(demo_agent.get("name"))
     imports: Dict[str, set[str]] = {}
     agent: Dict[str, Any]
     ref: Any
@@ -113,11 +166,17 @@ def describe_config(config: Dict[str, Any], network: str, path: Optional[Path] =
         alias: Any = item if isinstance(item, str) else (item or {}).get("alias") or (item or {}).get("name")
         if alias:
             aliases.append(alias)
+    unique_aliases: Dict[str, None] = {}
+    alias_name: str
+    # Drop empty aliases and duplicates while keeping first-seen order.
+    for alias_name in aliases:
+        if alias_name:
+            unique_aliases.setdefault(alias_name, None)
     return NetworkDescription(
         network=network,
         front_man=front_man,
-        aliases=list(dict.fromkeys(a for a in aliases if a)),
-        imports={ref: sorted(c for c in callers if c) for ref, callers in sorted(imports.items())},
+        aliases=list(unique_aliases),
+        imports=_sorted_imports(imports),
         path=path,
     )
 
@@ -242,10 +301,14 @@ def load_link_file(path: Path, network: str) -> Dict[str, str]:
         raise ValueError(f"invalid link file {path}: {exc}") from exc
     values: Dict[str, Any]
     values = ((doc.get("networks") or {}).get(network) or {}) if "networks" in doc else (doc.get("links") or doc)
-    return {
-        ref: url.rstrip("/") for ref, url in values.items()
-        if isinstance(ref, str) and _is_url(url)
-    }
+    links: Dict[str, str] = {}
+    ref: Any
+    url: Any
+    # Keep string references bound to HTTP(S) URLs, without trailing slashes.
+    for ref, url in values.items():
+        if isinstance(ref, str) and _is_url(url):
+            links[ref] = url.rstrip("/")
+    return links
 
 
 def write_link_file(path: Path, network: str, links: Dict[str, str]) -> None:
@@ -310,7 +373,12 @@ def _norm(value: str) -> str:
 
 def _matches(reference: str, export: NetworkDescription) -> bool:
     wanted: str = _norm(reference)
-    return any(_norm(alias) == wanted for alias in export.aliases)
+    alias: str
+    # Report whether any alias normalizes to the wanted reference.
+    for alias in export.aliases:
+        if _norm(alias) == wanted:
+            return True
+    return False
 
 
 # pylint: disable-next=too-many-locals,too-many-branches,too-many-statements  # single CLI flow
@@ -337,8 +405,17 @@ def run_link_command(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="show matches without writing sidecars")
     args: argparse.Namespace = parser.parse_args(argv)
 
-    paths: List[Path] = [Path(value).resolve() for value in args.hocons]
-    missing: List[str] = [str(path) for path in paths if not path.is_file()]
+    paths: List[Path] = []
+    hocon: str
+    # Resolve each HOCON argument to an absolute path.
+    for hocon in args.hocons:
+        paths.append(Path(hocon).resolve())
+    missing: List[str] = []
+    hocon_path: Path
+    # Collect the HOCON paths that are not files.
+    for hocon_path in paths:
+        if not hocon_path.is_file():
+            missing.append(str(hocon_path))
     if missing:
         parser.error("HOCON not found: " + ", ".join(missing))
     source: StudioSource = LocalStudio(args.studio) if args.studio else GithubStudio(args.repo, args.ref)
@@ -381,7 +458,11 @@ def run_link_command(argv: Optional[List[str]] = None) -> int:
             print(f"error: cannot inspect peer {peer}: {exc}")
             return 2
 
-    explicit: Dict[str, Dict[str, str]] = {desc.network: {} for desc in local}
+    explicit: Dict[str, Dict[str, str]] = {}
+    local_desc: NetworkDescription
+    # Start an empty explicit-binding map for each local network.
+    for local_desc in local:
+        explicit[local_desc.network] = {}
     key: str
     network: str
     ref: str
@@ -410,14 +491,23 @@ def run_link_command(argv: Optional[List[str]] = None) -> int:
             if ref in links:
                 print(f"  linked  {ref} -> {links[ref]}")
                 continue
-            candidates: List[NetworkDescription]
-            candidates = [item for item in exports if item.network != desc.network and item.url and _matches(ref, item)]
+            candidates: List[NetworkDescription] = []
+            local_export: NetworkDescription
+            # Collect the other served networks whose aliases match the reference.
+            for local_export in exports:
+                if local_export.network != desc.network and local_export.url and _matches(ref, local_export):
+                    candidates.append(local_export)
             if len(candidates) == 1:
                 links[ref] = candidates[0].url
                 changed += 1
                 print(f"  linked  {ref} -> {candidates[0].url}")
             elif len(candidates) > 1:
-                print(f"  pending {ref} (ambiguous: {', '.join(c.url for c in candidates)})")
+                candidate_urls: List[str] = []
+                candidate: NetworkDescription
+                # Collect the URLs of the ambiguous candidates.
+                for candidate in candidates:
+                    candidate_urls.append(candidate.url)
+                print(f"  pending {ref} (ambiguous: {', '.join(candidate_urls)})")
             else:
                 owners: str = f"; called by {', '.join(callers)}" if callers else ""
                 print(f"  pending {ref}{owners}")
@@ -437,10 +527,13 @@ def run_link_command(argv: Optional[List[str]] = None) -> int:
             continue
         print(f"\n{desc.network} at {desc.site}: {len(desc.imports)} remote pending reference(s)")
         for ref in desc.imports:
-            candidates = [
-                item for item in exports
-                if item is not desc and item.url and item.site != desc.site and _matches(ref, item)
-            ]
+            candidates = []
+            peer_export: NetworkDescription
+            # Collect the served networks on other sites whose aliases match the reference.
+            for peer_export in exports:
+                if (peer_export is not desc and peer_export.url and peer_export.site != desc.site
+                        and _matches(ref, peer_export)):
+                    candidates.append(peer_export)
             if len(candidates) == 1:
                 if args.dry_run:
                     print(f"  would link {ref} -> {candidates[0].url}")
@@ -454,7 +547,12 @@ def run_link_command(argv: Optional[List[str]] = None) -> int:
                     print(f"  linked  {ref} -> {candidates[0].url}")
                 changed += 1
             elif len(candidates) > 1:
-                print(f"  pending {ref} (ambiguous: {', '.join(c.url for c in candidates)})")
+                peer_candidate_urls: List[str] = []
+                peer_candidate: NetworkDescription
+                # Collect the URLs of the ambiguous candidates.
+                for peer_candidate in candidates:
+                    peer_candidate_urls.append(peer_candidate.url)
+                print(f"  pending {ref} (ambiguous: {', '.join(peer_candidate_urls)})")
             else:
                 print(f"  pending {ref}")
 

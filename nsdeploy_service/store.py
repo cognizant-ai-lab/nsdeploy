@@ -174,10 +174,11 @@ class Store:
         column: str
         decl: str
         for table, column, decl in ADDED_COLUMNS:
-            existing: Set[str] = {
-                row["name"]
-                for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
-            }
+            existing: Set[str] = set()
+            info_row: sqlite3.Row
+            # Collect the names of the table's current columns.
+            for info_row in self._conn.execute(f"PRAGMA table_info({table})").fetchall():
+                existing.add(info_row["name"])
             if column not in existing:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
                 added.add(column)
@@ -297,7 +298,12 @@ class Store:
                   FROM organizations o
                  ORDER BY o.created_at DESC, o.name ASC
                 """, LIVE_STATUSES).fetchall()
-        return [dict(row) for row in rows]
+        orgs: List[Dict[str, Any]] = []
+        org_row: sqlite3.Row
+        # Convert each row to a plain dict.
+        for org_row in rows:
+            orgs.append(dict(org_row))
+        return orgs
 
     def update_org(self, org_id: str, **fields: str) -> Optional[Dict[str, Any]]:
         """
@@ -308,8 +314,13 @@ class Store:
         :return: The updated organization row, or None if it does not exist.
         :raises StoreError: If the new name is blank or already taken.
         """
-        allowed: Dict[str, str] = {k: v for k, v in fields.items()
-                                   if k in ("name", "address", "contact") and v is not None}
+        allowed: Dict[str, str] = {}
+        field_name: str
+        field_value: str
+        # Keep only known fields that carry a value.
+        for field_name, field_value in fields.items():
+            if field_name in ("name", "address", "contact") and field_value is not None:
+                allowed[field_name] = field_value
         if not allowed:
             return self.get_org(org_id)
         if "name" in allowed:
@@ -318,7 +329,12 @@ class Store:
                 raise StoreError("organization name cannot be blank")
             allowed["name"] = clean
             allowed["name_key"] = org_name_key(clean)
-        assignments: str = ", ".join(f"{key} = :{key}" for key in allowed)
+        assignment_parts: List[str] = []
+        key: str
+        # Build one named-parameter assignment per changed column.
+        for key in allowed:
+            assignment_parts.append(f"{key} = :{key}")
+        assignments: str = ", ".join(assignment_parts)
         with self._lock:
             try:
                 cursor: sqlite3.Cursor = self._conn.execute(
@@ -351,7 +367,12 @@ class Store:
 
     def save_deployment(self, row: Dict[str, Any]) -> None:
         """Insert or replace one deployment record (write-through from the supervisor)."""
-        row = {**{column: None for column in self.OPTIONAL_COLUMNS}, **row}
+        defaults: Dict[str, Any] = {}
+        column: str
+        # Default every optional column to None.
+        for column in self.OPTIONAL_COLUMNS:
+            defaults[column] = None
+        row = {**defaults, **row}
         with self._lock:
             self._conn.execute(
                 """
@@ -418,7 +439,12 @@ class Store:
                 f"""SELECT d.*, o.name AS org_name FROM deployments d
                       JOIN organizations o ON o.id = d.org_id
                     {where} ORDER BY d.created_at DESC""", params).fetchall()
-        return [self._decode(row) for row in rows]
+        deployments: List[Dict[str, Any]] = []
+        deployment_row: sqlite3.Row
+        # Decode each deployment row.
+        for deployment_row in rows:
+            deployments.append(self._decode(deployment_row))
+        return deployments
 
     def set_position(self, deployment_id: str, position: Dict[str, Any]) -> None:
         """Write a map position unconditionally.
@@ -474,7 +500,12 @@ class Store:
             rows: List[sqlite3.Row] = self._conn.execute(
                 "SELECT id FROM deployments WHERE position_json IS NULL"
                 " ORDER BY created_at ASC").fetchall()
-        return [row["id"] for row in rows]
+        ids: List[str] = []
+        id_row: sqlite3.Row
+        # Collect the id of each deployment.
+        for id_row in rows:
+            ids.append(id_row["id"])
+        return ids
 
     def delete_deployment(self, deployment_id: str) -> bool:
         """Forget a terminal record. Callers must stop the process first."""
@@ -492,7 +523,12 @@ class Store:
         with self._lock:
             rows: List[sqlite3.Row] = self._conn.execute(
                 "SELECT status, COUNT(*) AS n FROM deployments GROUP BY status").fetchall()
-        return {row["status"]: row["n"] for row in rows}
+        counts: Dict[str, int] = {}
+        count_row: sqlite3.Row
+        # Map each status to its deployment count.
+        for count_row in rows:
+            counts[count_row["status"]] = count_row["n"]
+        return counts
 
     def reconcile_orphans(self) -> List[str]:
         """Settle records left mid-flight by a previous run.
@@ -507,7 +543,11 @@ class Store:
             rows: List[sqlite3.Row] = self._conn.execute(
                 f"SELECT id FROM deployments WHERE status IN ({placeholders})",
                 LIVE_STATUSES).fetchall()
-            orphans: List[str] = [row["id"] for row in rows]
+            orphans: List[str] = []
+            orphan_row: sqlite3.Row
+            # Collect the id of each stale deployment.
+            for orphan_row in rows:
+                orphans.append(orphan_row["id"])
             if orphans:
                 self._conn.execute(
                     f"""UPDATE deployments

@@ -348,8 +348,13 @@ class SummarizeBuildTest(unittest.TestCase):
                 "agent_mcp": {"front_man": "travel_concierge_orchestrator"},
                 "networks": [{"description": "concierge", "sample_queries": ["q1"]}],
             }), encoding="utf-8")
+            tools: List[Dict[str, Any]] = []
+            index: int
+            # Describe ten agents.
+            for index in range(10):
+                tools.append({"name": f"a{index}"})
             (out / "travel_agent_system.network.json").write_text(json.dumps({
-                "tools": [{"name": f"a{i}"} for i in range(10)],
+                "tools": tools,
                 "link_slots": {"flight_search_agent": {"callers": ["x"]}},
             }), encoding="utf-8")
 
@@ -581,8 +586,13 @@ class SupervisorCreateTest(unittest.TestCase):
         # Different case and spacing: the same team typing their name again.
         second: Deployment = supervisor.create(b"x", DeployOptions(name="b", org_name="  acme   logistics "))
         self.assertEqual(first.org_id, second.org_id)
-        self.assertEqual(
-            len([o for o in supervisor.store.list_orgs() if "ogistics" in o["name"]]), 1)
+        logistics_orgs: List[Dict[str, Any]] = []
+        org: Dict[str, Any]
+        # Collect the organizations whose name matches.
+        for org in supervisor.store.list_orgs():
+            if "ogistics" in org["name"]:
+                logistics_orgs.append(org)
+        self.assertEqual(len(logistics_orgs), 1)
 
     def test_org_id_wins_over_org_name(self) -> None:
         """An explicit org_id takes precedence over org_name."""
@@ -740,7 +750,14 @@ class OrgNameLimitTest(unittest.TestCase):
         self.assertEqual(max_length(body["properties"]["org_name"]), ORG_NAME_MAX)
 
         raw: List[Dict[str, Any]] = schema["paths"]["/deployments/raw"]["post"]["parameters"]
-        org: Dict[str, Any] = next(p for p in raw if p["name"] == "org_name")
+        org: Optional[Dict[str, Any]] = None
+        param: Dict[str, Any]
+        # Find the org_name parameter.
+        for param in raw:
+            if param["name"] == "org_name":
+                org = param
+                break
+        self.assertIsNotNone(org)
         self.assertEqual(max_length(org["schema"]), ORG_NAME_MAX)
 
     def test_a_name_past_the_limit_is_rejected(self) -> None:
@@ -896,7 +913,12 @@ class EngineCliContractTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr[:400])
         help_text: str = result.stdout + result.stderr
 
-        missing: List[str] = [flag for flag in self.REQUIRED if flag not in help_text]
+        missing: List[str] = []
+        flag: str
+        # Collect the required flags that the help output does not mention.
+        for flag in self.REQUIRED:
+            if flag not in help_text:
+                missing.append(flag)
         self.assertEqual(
             missing, [],
             f"nsdeploy no longer accepts {missing}. The supervisor passes these; a "

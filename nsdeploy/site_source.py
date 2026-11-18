@@ -19,10 +19,14 @@ export function customize({ root, runtime }) {
 
 def site_source_exists(site_dir: Path) -> bool:
     """Return whether a directory contains any authored site source."""
-    return site_dir.is_dir() and any(
-        (site_dir / name).is_file()
-        for name in ("layout.html", "theme.css", "theme.json", "site.js")
-    )
+    if not site_dir.is_dir():
+        return False
+    name: str
+    # Stop at the first authored source file that exists.
+    for name in ("layout.html", "theme.css", "theme.json", "site.js"):
+        if (site_dir / name).is_file():
+            return True
+    return False
 
 
 def _theme_metadata(theme: ThemeSpec) -> dict:

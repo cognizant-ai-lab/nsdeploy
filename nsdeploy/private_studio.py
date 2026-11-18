@@ -54,12 +54,18 @@ def main() -> int:
     sys.path.insert(0, str(studio_root))
     os.chdir(studio_root)
 
-    run_file: Optional[Path] = next((candidate for candidate in (
+    run_file: Optional[Path] = None
+    candidate: Path
+    # Select the first studio runner location that exists.
+    for candidate in (
         studio_root / "run.py",
         studio_root / "neuro_san_studio" / "run.py",
         studio_root / "neuro-san-studio" / "run.py",
         studio_root.parent / "run.py",
-    ) if candidate.is_file()), None)
+    ):
+        if candidate.is_file():
+            run_file = candidate
+            break
     # Recent neuro-san-studio releases are installed as a package and expose
     # a Typer CLI instead of the old top-level run.py module.
     if run_file is None:
@@ -86,9 +92,13 @@ def main() -> int:
         original_set_environment(self)
         project_root: str = str(Path(__file__).resolve().parents[1])
         current: str = os.environ.get("PYTHONPATH", "")
-        os.environ["PYTHONPATH"] = os.pathsep.join(
-            item for item in (project_root, current) if item
-        )
+        path_items: list[str] = []
+        item: str
+        # Keep only the non-empty path entries, in order.
+        for item in (project_root, current):
+            if item:
+                path_items.append(item)
+        os.environ["PYTHONPATH"] = os.pathsep.join(path_items)
 
     studio_run.NeuroSanRunner.set_environment_variables = set_environment_with_nsdeploy
     studio_run.NeuroSanRunner().run()

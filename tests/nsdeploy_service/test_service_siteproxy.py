@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 from typing import ClassVar
 from typing import Dict
+from typing import List
 from typing import Tuple
 
 import httpx
@@ -358,7 +359,12 @@ class SiteProxyTest(unittest.TestCase):
             with client.stream("GET", "/stream", headers={"host": host}) as response:
                 self.assertEqual(response.headers["content-type"], "text/event-stream")
                 self.assertEqual(response.headers["mcp-session-id"], "sess-42")
-                text: str = "".join(part for part in response.iter_text())
+                parts: List[str] = []
+                part: str
+                # Read the streamed body piece by piece.
+                for part in response.iter_text():
+                    parts.append(part)
+                text: str = "".join(parts)
             i: int
             for i in range(3):
                 self.assertIn(f"data: chunk{i}", text)

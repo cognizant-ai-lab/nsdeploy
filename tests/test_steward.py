@@ -178,7 +178,14 @@ class PublishedNetworkRunnerTests(unittest.IsolatedAsyncioTestCase):
             "https://child.example/agent-manifest.json",
             "https://child.example/child.network.json",
         ])
-        self.assertFalse(any(url.endswith("/mcp") for url in _StaticSiteClient.requests))
+        mcp_requested: bool = False
+        request_url: str
+        # Look for a request to an MCP endpoint, stopping at the first one.
+        for request_url in _StaticSiteClient.requests:
+            if request_url.endswith("/mcp"):
+                mcp_requested = True
+                break
+        self.assertFalse(mcp_requested)
 
     async def test_recursive_fetch_stops_a_public_network_cycle(self) -> None:
         """Check recursive fetch stops a public network cycle."""
@@ -219,7 +226,14 @@ class PublishedNetworkRunnerTests(unittest.IsolatedAsyncioTestCase):
                 "request": "help me",
             }, {})
         self.assertIn("facade mock", result)
-        self.assertFalse(any(url.endswith("/mcp") for url in _StaticSiteClient.requests))
+        mcp_requested: bool = False
+        request_url: str
+        # Look for a request to an MCP endpoint, stopping at the first one.
+        for request_url in _StaticSiteClient.requests:
+            if request_url.endswith("/mcp"):
+                mcp_requested = True
+                break
+        self.assertFalse(mcp_requested)
         self.assertIsInstance(PublicAgentMcpGateway(), PublicAgentNetworkGateway)
 
     async def test_private_steward_uses_its_llm_credentials_not_the_public_site(self) -> None:

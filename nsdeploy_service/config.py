@@ -76,7 +76,13 @@ def _env_list(name: str, default: List[str]) -> List[str]:
     raw: str = _env(name)
     if not raw:
         return list(default)
-    return [item.strip() for item in raw.split(",") if item.strip()]
+    items: List[str] = []
+    item: str
+    # Keep each stripped entry that is not blank.
+    for item in raw.split(","):
+        if item.strip():
+            items.append(item.strip())
+    return items
 
 
 @dataclass

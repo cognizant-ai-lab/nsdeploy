@@ -56,7 +56,15 @@ VERTICAL_WEIGHT: float = 1.35
 
 
 def _candidates() -> List[Tuple[int, int]]:
-    return [(x, y) for y in ROWS for x in COLUMNS]
+    slots: List[Tuple[int, int]] = []
+    row: int
+    # Walk the grid row by row.
+    for row in ROWS:
+        column: int
+        # Add every column slot of the current row.
+        for column in COLUMNS:
+            slots.append((column, row))
+    return slots
 
 
 def choose_position(occupied: Iterable[Dict[str, Any]]) -> Dict[str, int]:
@@ -66,19 +74,23 @@ def choose_position(occupied: Iterable[Dict[str, Any]]) -> Dict[str, int]:
     top-left so the first few deployments land somewhere predictable rather than in a
     corner.
     """
-    points: List[Tuple[float, float]] = [
-        (float(pos["x"]), float(pos["y"]))
-        for pos in occupied
-        if isinstance(pos, dict) and pos.get("x") is not None and pos.get("y") is not None
-    ]
+    points: List[Tuple[float, float]] = []
+    pos: Any
+    # Collect the coordinates of every entry that carries a usable position.
+    for pos in occupied:
+        if isinstance(pos, dict) and pos.get("x") is not None and pos.get("y") is not None:
+            points.append((float(pos["x"]), float(pos["y"])))
 
     def clearance(candidate: Tuple[int, int]) -> float:
         if not points:
             return math.inf
-        return min(
-            math.hypot(candidate[0] - x, (candidate[1] - y) * VERTICAL_WEIGHT)
-            for x, y in points
-        )
+        distances: List[float] = []
+        x: float
+        y: float
+        # Measure the weighted distance from the candidate to each placed point.
+        for x, y in points:
+            distances.append(math.hypot(candidate[0] - x, (candidate[1] - y) * VERTICAL_WEIGHT))
+        return min(distances)
 
     best: Tuple[int, int] = max(_candidates(), key=lambda point: (clearance(point), -point[1], -point[0]))
     return {"x": best[0], "y": best[1]}
@@ -86,7 +98,13 @@ def choose_position(occupied: Iterable[Dict[str, Any]]) -> Dict[str, int]:
 
 def next_position(existing: Iterable[Optional[Dict[str, Any]]]) -> Dict[str, int]:
     """choose_position over records that may not have a position yet."""
-    return choose_position([pos for pos in existing if pos])
+    positioned: List[Optional[Dict[str, Any]]] = []
+    pos: Optional[Dict[str, Any]]
+    # Keep only records that already have a position.
+    for pos in existing:
+        if pos:
+            positioned.append(pos)
+    return choose_position(positioned)
 
 
 def is_on_grid(position: Optional[Dict[str, Any]]) -> bool:

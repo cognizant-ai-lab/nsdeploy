@@ -454,11 +454,22 @@ _EXT_MCP_RE: re.Pattern[str] = re.compile(r"External MCP \(proxied\):\s*\S+\s*â†
 
 
 def _parse_report(log_text: str) -> Dict[str, List[str]]:
-    found: Dict[str, List[str]] = {key: [] for key in _SECTIONS}
+    found: Dict[str, List[str]] = {}
+    section: str
+    # Start every report section with an empty list.
+    for section in _SECTIONS:
+        found[section] = []
     current: Optional[str] = None
     line: str
+    key: str
+    marker: str
     for line in log_text.splitlines():
-        matched_header: Optional[str] = next((key for key, marker in _SECTIONS.items() if marker in line), None)
+        matched_header: Optional[str] = None
+        # Find the first section whose header marker appears on this line.
+        for key, marker in _SECTIONS.items():
+            if marker in line:
+                matched_header = key
+                break
         if matched_header:
             current = matched_header
             continue
@@ -508,12 +519,15 @@ def _inline_peers(network: Dict[str, Any]) -> List[NetworkLink]:
             callers_by_url.setdefault(ref.rstrip("/"), [])
             if caller and caller not in callers_by_url[ref.rstrip("/")]:
                 callers_by_url[ref.rstrip("/")].append(caller)
-    return [
+    peers: List[NetworkLink] = []
+    url: str
+    callers: List[str]
+    # Emit one link per peer URL, in URL order.
+    for url, callers in sorted(callers_by_url.items()):
         # `reference` is the URL itself: an inline peer has no slot name, and
         # inventing one would read as a binding that does not exist.
-        NetworkLink(reference=url, target=url, callers=sorted(callers))
-        for url, callers in sorted(callers_by_url.items())
-    ]
+        peers.append(NetworkLink(reference=url, target=url, callers=sorted(callers)))
+    return peers
 
 
 def summarize_build(out_dir: Path, name: str, log_text: str) -> NetworkSummary:
@@ -541,15 +555,24 @@ def summarize_build(out_dir: Path, name: str, log_text: str) -> NetworkSummary:
     summary.link_slots = sorted((network.get("link_slots") or {}).keys())
     # Resolved outbound links are the map's edges. `pending` imports are dangling
     # references and are already reported as link_slots, so only `linked` counts.
-    summary.links = [
-        NetworkLink(
+    links: List[NetworkLink] = []
+    item: Dict[str, Any]
+    # Convert every linked import into a network link.
+    for item in ((manifest.get("linking") or {}).get("imports") or []):
+        if not (item.get("status") == "linked" and item.get("target")):
+            continue
+        link_callers: List[str] = []
+        caller: str
+        # Keep only the non-empty caller names.
+        for caller in (item.get("callers") or []):
+            if caller:
+                link_callers.append(caller)
+        links.append(NetworkLink(
             reference=item.get("reference", ""),
             target=item.get("target", ""),
-            callers=[caller for caller in (item.get("callers") or []) if caller],
-        )
-        for item in ((manifest.get("linking") or {}).get("imports") or [])
-        if item.get("status") == "linked" and item.get("target")
-    ]
+            callers=link_callers,
+        ))
+    summary.links = links
     summary.peer_urls = _inline_peers(network)
     summary.brand = manifest.get("brand", "")
     networks: List[Dict[str, Any]] = manifest.get("networks") or [{}]
@@ -559,14 +582,13 @@ def summarize_build(out_dir: Path, name: str, log_text: str) -> NetworkSummary:
     # resolved config rather than the manifest: `networks[0].description` is the field
     # the theme pass rewrites, so on a themed build that is a tagline while this is
     # still the paragraph the author wrote. Both are kept â€” see NetworkSummary.
-    summary.front_man_description = next(
-        (
-            _agent_description(agent)
-            for agent in (network.get("tools") or [])
-            if isinstance(agent, dict) and agent.get("name") == summary.front_man
-        ),
-        "",
-    )
+    summary.front_man_description = ""
+    agent: Any
+    # Take the description of the first agent that is the front man.
+    for agent in (network.get("tools") or []):
+        if isinstance(agent, dict) and agent.get("name") == summary.front_man:
+            summary.front_man_description = _agent_description(agent)
+            break
 
     parsed: Dict[str, List[str]] = _parse_report(log_text)
     summary.hostable_tools = parsed["hostable_tools"]
@@ -574,6 +596,49 @@ def summarize_build(out_dir: Path, name: str, log_text: str) -> NetworkSummary:
     summary.missing_tools = parsed["missing_tools"]
     summary.external_mcps = parsed["external_mcps"]
     return summary
+
+
+def _named_tools(network: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Select the tool entries of a generated network config that have a name.
+
+    :param network: The generated network config.
+    :return: The named tool entries, in config order.
+    """
+    tools: List[Dict[str, Any]] = []
+    entry: Dict[str, Any]
+    # Keep only the tool entries that have a name.
+    for entry in (network.get("tools") or []):
+        if entry.get("name"):
+            tools.append(entry)
+    return tools
+
+
+def _agent_node(agent: Dict[str, Any], front_man: str, by_name: Set[str]) -> AgentGraphNode:
+    """
+    Build the graph node for one agent of a deployed network.
+
+    :param agent: The agent's tool entry from the generated network config.
+    :param front_man: The name of the network's front-man agent.
+    :param by_name: The names of every agent in the network.
+    :return: The agent's graph node.
+    """
+    # Only the callees that are agents in this network. A URL callee is an
+    # endpoint, reported as its own external node, and listing it here as a
+    # sibling of named agents would read as one.
+    calls: List[str] = []
+    callee: str
+    # Keep the callees that are agents of this network.
+    for callee in (agent.get("tools") or []):
+        if callee in by_name:
+            calls.append(callee)
+    return AgentGraphNode(
+        id=agent["name"], name=agent["name"],
+        kind="root" if agent["name"] == front_man
+             else ("orchestrator" if agent.get("tools") else "agent"),
+        description=_agent_description(agent),
+        calls=calls,
+    )
 
 
 def _agent_description(item: dict) -> str:
@@ -606,22 +671,18 @@ def network_topology(
     except (OSError, ValueError):
         return [], []
 
-    tools: List[Dict[str, Any]] = [item for item in (network.get("tools") or []) if item.get("name")]
-    by_name: Set[str] = {item["name"] for item in tools}
+    tools: List[Dict[str, Any]] = _named_tools(network)
+    by_name: Set[str] = set()
+    named: Dict[str, Any]
+    # Index the agent names in this network.
+    for named in tools:
+        by_name.add(named["name"])
 
-    nodes: List[AgentGraphNode] = [
-        AgentGraphNode(
-            id=item["name"], name=item["name"],
-            kind="root" if item["name"] == front_man
-                 else ("orchestrator" if item.get("tools") else "agent"),
-            description=_agent_description(item),
-            # Only the callees that are agents in this network. A URL callee is an
-            # endpoint, reported as its own external node below, and listing it
-            # here as a sibling of named agents would read as one.
-            calls=[callee for callee in (item.get("tools") or []) if callee in by_name],
-        )
-        for item in tools
-    ]
+    nodes: List[AgentGraphNode] = []
+    agent: Dict[str, Any]
+    # Build one graph node per named agent.
+    for agent in tools:
+        nodes.append(_agent_node(agent, front_man, by_name))
 
     edges: List[AgentGraphEdge] = []
     external_ids: Dict[str, str] = {}
@@ -768,10 +829,19 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
           coastline moved and their pin would now sit in the water.
         """
         rows: List[Dict[str, Any]] = self.store.list_deployments()
-        stale: List[str] = [row["id"] for row in rows if not is_on_grid(row.get("position"))]
+        stale: List[str] = []
+        row: Dict[str, Any]
+        # Collect the records whose position is missing or off the grid.
+        for row in rows:
+            if not is_on_grid(row.get("position")):
+                stale.append(row["id"])
         if not stale:
             return []
-        placed: List[Dict[str, Any]] = [row["position"] for row in rows if is_on_grid(row.get("position"))]
+        placed: List[Dict[str, Any]] = []
+        # Collect the positions that are still valid on the grid.
+        for row in rows:
+            if is_on_grid(row.get("position")):
+                placed.append(row["position"])
         deployment_id: str
         for deployment_id in stale:
             position: Dict[str, int] = next_position(placed)
@@ -781,6 +851,19 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
 
     def _persist(self, dep: Deployment) -> None:
         self.store.save_deployment(dep.as_row())
+
+    def _stored_positions(self) -> List[Optional[Dict[str, Any]]]:
+        """
+        Read the map position of every stored deployment.
+
+        :return: The stored positions, one per record; None where a record has no position.
+        """
+        positions: List[Optional[Dict[str, Any]]] = []
+        record: Dict[str, Any]
+        # Read the position of each stored deployment.
+        for record in self.store.list_deployments():
+            positions.append(record.get("position"))
+        return positions
 
     # --- registry ---------------------------------------------------------
     def get(self, deployment_id: str) -> Optional[Deployment]:
@@ -808,7 +891,11 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
 
         :return: A mapping from status value to count.
         """
-        counts: Dict[str, int] = {status.value: 0 for status in DeploymentStatus}
+        counts: Dict[str, int] = {}
+        status: DeploymentStatus
+        # Start every status at zero.
+        for status in DeploymentStatus:
+            counts[status.value] = 0
         with self._lock:
             dep: Deployment
             for dep in self._deployments.values():
@@ -852,11 +939,20 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
         live copy of the same network keeps serving would be the surprising
         outcome), then the most recently created.
         """
-        rows: List[Dict[str, Any]] = [row for row in self.store.list_deployments(org_id=org_id)
-                                      if row.get("name") == name]
+        rows: List[Dict[str, Any]] = []
+        record: Dict[str, Any]
+        # Keep the organization's records that carry this name.
+        for record in self.store.list_deployments(org_id=org_id):
+            if record.get("name") == name:
+                rows.append(record)
         if not rows:
             return None
-        live_ids: Set[str] = {dep.id for dep in self.list() if dep.is_live}
+        live_ids: Set[str] = set()
+        dep: Deployment
+        # Collect the ids of the live deployments.
+        for dep in self.list():
+            if dep.is_live:
+                live_ids.add(dep.id)
         rows.sort(key=lambda row: (row["id"] in live_ids, row.get("created_at") or ""),
                   reverse=True)
         return rows[0]
@@ -901,8 +997,7 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             name=row["name"],
             org_id=org["id"],
             org_name=org["name"],
-            position=row.get("position") or next_position(
-                item.get("position") for item in self.store.list_deployments()),
+            position=row.get("position") or next_position(self._stored_positions()),
             work_dir=work_dir,
             log_path=Path(row["log_path"]) if row.get("log_path") else work_dir / "nsdeploy.log",
             hocon_path=hocon_path,
@@ -959,7 +1054,12 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             return self._replace(replacing, text, options, org)
 
         with self._lock:
-            live: int = sum(1 for dep in self._deployments.values() if dep.is_live)
+            live: int = 0
+            live_dep: Deployment
+            # Count the deployments that are currently live.
+            for live_dep in self._deployments.values():
+                if live_dep.is_live:
+                    live += 1
         if live >= self.settings.max_deployments:
             # Phrased for whoever is standing in front of the upload form. They are
             # not the person who can raise MAX_DEPLOYMENTS or stop someone else's
@@ -985,8 +1085,7 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
             hocon_path.write_text(text, encoding="utf-8")
             ttl: int = self.settings.ttl_seconds if options.ttl_seconds is None else options.ttl_seconds
             # Placed once, against every pin already on the map.
-            position: Dict[str, int] = next_position(
-                row.get("position") for row in self.store.list_deployments())
+            position: Dict[str, int] = next_position(self._stored_positions())
             dep: Deployment = Deployment(
                 id=deployment_id,
                 name=name,
@@ -1060,7 +1159,12 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
                 f"({hocon_path}); upload it again to deploy")
 
         with self._lock:
-            live: int = sum(1 for dep in self._deployments.values() if dep.is_live)
+            live: int = 0
+            live_dep: Deployment
+            # Count the deployments that are currently live.
+            for live_dep in self._deployments.values():
+                if live_dep.is_live:
+                    live += 1
         if live >= self.settings.max_deployments:
             raise DeploymentError(
                 f"This service is already running its maximum of "
@@ -1087,8 +1191,7 @@ class Supervisor:  # pylint: disable=too-many-instance-attributes; owns registry
                 org_id=row["org_id"],
                 org_name=row.get("org_name", ""),
                 # Keep the pin where it was; the store also guards this.
-                position=row.get("position") or next_position(
-                    item.get("position") for item in self.store.list_deployments()),
+                position=row.get("position") or next_position(self._stored_positions()),
                 work_dir=work_dir,
                 log_path=Path(row["log_path"]),
                 hocon_path=hocon_path,

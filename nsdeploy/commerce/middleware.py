@@ -109,8 +109,13 @@ class ButterpinkCommerceBoundary(AgentMiddleware):
         """
         if self.turn is None:
             messages: List[Any] = request.messages
-            human: Optional[HumanMessage] = next((message for message in reversed(messages)
-                                                  if isinstance(message, HumanMessage)), None)
+            human: Optional[HumanMessage] = None
+            message: Any
+            # Find the most recent human message, searching from the end.
+            for message in reversed(messages):
+                if isinstance(message, HumanMessage):
+                    human = message
+                    break
             text: str = str(human.content) if human else ""
             binding: Optional[Dict[str, Any]]
             try:

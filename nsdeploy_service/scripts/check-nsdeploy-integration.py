@@ -159,7 +159,12 @@ def cli_contract() -> int:
     passed: set[str] = set(re.findall(r'"(--[a-z-]+)"', block))
     # --host is emitted conditionally; it is covered under optional extras.
     required: list[str] = sorted(passed - {"--host"})
-    missing: list[str] = [f for f in required if f not in accepted]
+    missing: list[str] = []
+    required_flag: str
+    # Collect the required flags that nsdeploy does not accept.
+    for required_flag in required:
+        if required_flag not in accepted:
+            missing.append(required_flag)
     flag: str
     for flag in required:
         print(f"  {'OK  ' if flag in accepted else 'FAIL'}  {flag}")

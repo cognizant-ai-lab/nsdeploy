@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import socket
 import threading
+from typing import List
 from typing import Optional
 from typing import Sequence
 from typing import Set
@@ -81,7 +82,13 @@ class PortPool:
         with self._lock:
             candidates: Sequence[int] = range(self._start, self._end + 1)
             if preferred is not None and self._start <= preferred <= self._end:
-                candidates = [preferred, *(p for p in candidates if p != preferred)]
+                ordered: List[int] = [preferred]
+                other: int
+                # Append every remaining port in range after the preferred one.
+                for other in candidates:
+                    if other != preferred:
+                        ordered.append(other)
+                candidates = ordered
             port: int
             for port in candidates:
                 if port in self._reserved:

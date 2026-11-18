@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 from typing import Dict
+from typing import List
 
 from nsdeploy.generate import build_manifest
 from nsdeploy.generate import build_private_steward_hocon
@@ -167,7 +168,12 @@ class LinkerTests(unittest.TestCase):
 
         self.assertEqual(plan.demo_link_fallbacks, ["link_demo_airline"])
         self.assertEqual(plan.replaced_agents, [])
-        self.assertEqual([item["name"] for item in deployed["tools"]],
+        deployed_names: List[str] = []
+        item: Dict[str, Any]
+        # Collect the names of the deployed tool entries.
+        for item in deployed["tools"]:
+            deployed_names.append(item["name"])
+        self.assertEqual(deployed_names,
                          ["travel_concierge", "link_demo_airline"])
         self.assertEqual(deployed["tools"][0]["tools"], ["link_demo_airline"])
 
@@ -192,7 +198,12 @@ class LinkerTests(unittest.TestCase):
         deployed: Dict[str, Any] = rewrite_config(plan, "http://127.0.0.1:8091", cruse=False)
 
         self.assertEqual(plan.replaced_agents, ["link_demo_airline"])
-        self.assertEqual([item["name"] for item in deployed["tools"]], ["travel_concierge"])
+        deployed_names: List[str] = []
+        item: Dict[str, Any]
+        # Collect the names of the deployed tool entries.
+        for item in deployed["tools"]:
+            deployed_names.append(item["name"])
+        self.assertEqual(deployed_names, ["travel_concierge"])
         self.assertEqual(
             deployed["tools"][0]["tools"],
             ["http://127.0.0.1:8092/link_demo_airline"],

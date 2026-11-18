@@ -50,9 +50,15 @@ def identity(deployment_id: str, name: str, description: str = "", agents: Seque
     :param queries: The network's sample queries.
     :return: The NetworkIdentity.
     """
+    roles: List[AgentRole] = []
+    agent_name: str
+    agent_role: str
+    # Build an AgentRole for each (name, role) pair.
+    for agent_name, agent_role in agents:
+        roles.append(AgentRole(agent_name, agent_role))
     return NetworkIdentity(
         deployment_id=deployment_id, name=name, description=description,
-        agents=tuple(AgentRole(n, r) for n, r in agents),
+        agents=tuple(roles),
         open_slots=tuple(slots), sample_queries=tuple(queries),
     )
 
@@ -172,8 +178,12 @@ class SlotMatchTest(unittest.TestCase):
     def test_matches_an_open_slot_to_a_provider_that_covers_it(self) -> None:
         """Matches an open slot to a provider that covers it."""
         matches: List[SlotMatch] = slot_matches(ORDERS, SHIPPING, self.vocab)
-        self.assertEqual([match.reference for match in matches],
-                         ["carrier_shipping_manager"])
+        references: List[str] = []
+        match: SlotMatch
+        # Collect the slot each match fills.
+        for match in matches:
+            references.append(match.reference)
+        self.assertEqual(references, ["carrier_shipping_manager"])
 
     def test_reports_which_terms_were_covered(self) -> None:
         """Reports which terms were covered."""
@@ -195,7 +205,12 @@ class DeriveRelationsTest(unittest.TestCase):
     def test_capability_relation_wins_and_names_the_slot(self) -> None:
         """Capability relation wins and names the slot."""
         relations: List[SuggestedRelation] = derive_relations([ORDERS, SHIPPING, RECIPES])
-        found: List[SuggestedRelation] = [r for r in relations if r.source == "d_orders" and r.target == "d_ship"]
+        found: List[SuggestedRelation] = []
+        relation: SuggestedRelation
+        # Collect the orders -> shipping relations.
+        for relation in relations:
+            if relation.source == "d_orders" and relation.target == "d_ship":
+                found.append(relation)
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].kind, "capability")
         self.assertEqual(found[0].reference, "carrier_shipping_manager")
@@ -204,15 +219,29 @@ class DeriveRelationsTest(unittest.TestCase):
     def test_capability_always_outranks_affinity(self) -> None:
         """Capability always outranks affinity."""
         relations: List[SuggestedRelation] = derive_relations([ORDERS, SHIPPING, RECIPES])
-        capability: List[float] = [r.score for r in relations if r.kind == "capability"]
-        affinities: List[float] = [r.score for r in relations if r.kind == "affinity"]
+        capability: List[float] = []
+        relation: SuggestedRelation
+        # Collect the capability scores.
+        for relation in relations:
+            if relation.kind == "capability":
+                capability.append(relation.score)
+        affinities: List[float] = []
+        affinity_relation: SuggestedRelation
+        # Collect the affinity scores.
+        for affinity_relation in relations:
+            if affinity_relation.kind == "affinity":
+                affinities.append(affinity_relation.score)
         if affinities:
             self.assertGreater(min(capability), max(affinities))
 
     def test_unrelated_networks_are_not_related(self) -> None:
         """Unrelated networks are not related."""
         relations: List[SuggestedRelation] = derive_relations([ORDERS, SHIPPING, RECIPES])
-        pairs: Set[Tuple[str, str]] = {(r.source, r.target) for r in relations}
+        pairs: Set[Tuple[str, str]] = set()
+        relation: SuggestedRelation
+        # Collect the (source, target) pair of each relation.
+        for relation in relations:
+            pairs.add((relation.source, relation.target))
         self.assertNotIn(("d_orders", "d_food"), pairs)
         self.assertNotIn(("d_food", "d_orders"), pairs)
 
@@ -232,29 +261,49 @@ class DeriveRelationsTest(unittest.TestCase):
 
     def test_respects_the_per_network_cap(self) -> None:
         """Respects the per network cap."""
-        many: List[NetworkIdentity] = [ORDERS, SHIPPING] + [
-            identity(f"d{i}", f"order_helper_{i}",
-                     description="handles retail order fulfillment and delivery")
-            for i in range(6)
-        ]
+        helpers: List[NetworkIdentity] = []
+        index: int
+        # Build six similar order-helper networks.
+        for index in range(6):
+            helpers.append(identity(f"d{index}", f"order_helper_{index}",
+                                    description="handles retail order fulfillment and delivery"))
+        many: List[NetworkIdentity] = [ORDERS, SHIPPING] + helpers
         relations: List[SuggestedRelation] = derive_relations(many, max_per_network=2)
+        sources: Set[str] = set()
+        relation: SuggestedRelation
+        # Collect the distinct relation sources.
+        for relation in relations:
+            sources.add(relation.source)
         source: str
-        for source in {r.source for r in relations}:
+        for source in sources:
             with self.subTest(source=source):
-                self.assertLessEqual(
-                    sum(1 for r in relations if r.source == source), 2)
+                count: int = 0
+                counted: SuggestedRelation
+                # Count the relations from this source.
+                for counted in relations:
+                    if counted.source == source:
+                        count += 1
+                self.assertLessEqual(count, 2)
 
     def test_relations_are_directed(self) -> None:
         """Orders declares the slot, so orders -> shipping is a capability edge and
         the reverse can never be one: direction comes from who states the need."""
         relations: List[SuggestedRelation] = derive_relations([ORDERS, SHIPPING])
-        forward: SuggestedRelation = next(r for r in relations
-                                          if r.source == "d_orders" and r.target == "d_ship")
+        forward: Optional[SuggestedRelation] = None
+        relation: SuggestedRelation
+        # Find the orders -> shipping relation.
+        for relation in relations:
+            if relation.source == "d_orders" and relation.target == "d_ship":
+                forward = relation
+                break
+        self.assertIsNotNone(forward)
         self.assertEqual(forward.kind, "capability")
-        reverse_capabilities: List[SuggestedRelation] = [
-            r for r in relations
-            if r.source == "d_ship" and r.target == "d_orders" and r.kind == "capability"
-        ]
+        reverse_capabilities: List[SuggestedRelation] = []
+        reverse: SuggestedRelation
+        # Collect any shipping -> orders capability relation.
+        for reverse in relations:
+            if reverse.source == "d_ship" and reverse.target == "d_orders" and reverse.kind == "capability":
+                reverse_capabilities.append(reverse)
         self.assertEqual(reverse_capabilities, [])
 
 
@@ -298,7 +347,12 @@ class IdentityLoadingTest(unittest.TestCase):
     def test_reads_agent_roles_from_the_bundle(self) -> None:
         """Reads agent roles from the bundle."""
         loaded: NetworkIdentity = load_identity(self._row())
-        self.assertEqual([a.name for a in loaded.agents], ["front"])
+        agent_names: List[str] = []
+        agent: AgentRole
+        # Collect the name of each loaded agent.
+        for agent in loaded.agents:
+            agent_names.append(agent.name)
+        self.assertEqual(agent_names, ["front"])
         self.assertEqual(loaded.agents[0].role, "coordinates carrier shipping")
 
     def test_prefers_function_description_over_instructions(self) -> None:
@@ -342,7 +396,12 @@ class LlmStrategyTest(unittest.TestCase):
         strategy: str
         edges, strategy = suggest_relations([ORDERS, SHIPPING, RECIPES], chat=chat)
         self.assertEqual(strategy, "llm")
-        self.assertEqual([(e.source, e.target) for e in edges], [("d_orders", "d_ship")])
+        edge_pairs: List[Tuple[str, str]] = []
+        edge: SuggestedRelation
+        # Collect the (source, target) pair of each edge.
+        for edge in edges:
+            edge_pairs.append((edge.source, edge.target))
+        self.assertEqual(edge_pairs, [("d_orders", "d_ship")])
         self.assertEqual(edges[0].reason, "needs carriers")
         self.assertEqual(edges[0].origin, "llm")
 
@@ -367,7 +426,12 @@ class LlmStrategyTest(unittest.TestCase):
 
         edges: List[SuggestedRelation]
         edges, _ = suggest_relations([ORDERS, SHIPPING], chat=chat)
-        self.assertEqual([e.target for e in edges], ["d_ship"])
+        targets: List[str] = []
+        edge: SuggestedRelation
+        # Collect the target of each edge.
+        for edge in edges:
+            targets.append(edge.target)
+        self.assertEqual(targets, ["d_ship"])
 
     def test_discards_a_self_relation(self) -> None:
         """Discards a self relation."""
@@ -379,7 +443,14 @@ class LlmStrategyTest(unittest.TestCase):
         strategy: str
         edges, strategy = suggest_relations([ORDERS, SHIPPING], chat=chat)
         self.assertEqual(strategy, "heuristic")  # nothing usable survived
-        self.assertTrue(all(e.source != e.target for e in edges))
+        no_self_edge: bool = True
+        edge: SuggestedRelation
+        # Check that no edge relates a network to itself.
+        for edge in edges:
+            if edge.source == edge.target:
+                no_self_edge = False
+                break
+        self.assertTrue(no_self_edge)
 
     def test_falls_back_to_the_scorer_when_the_model_raises(self) -> None:
         """Falls back to the scorer when the model raises."""
@@ -423,10 +494,14 @@ class RelationsEndpointTest(unittest.TestCase):
         for deployment_id, spec in (("d_orders", ORDERS), ("d_ship", SHIPPING)):
             out_dir: Path = self.root / deployment_id / "site"
             out_dir.mkdir(parents=True, exist_ok=True)
+            tools: List[Dict[str, Any]] = []
+            agent: AgentRole
+            # Describe each agent of the network.
+            for agent in spec.agents:
+                tools.append({"name": agent.name, "instructions": "x",
+                              "function": {"description": agent.role}})
             (out_dir / f"{spec.name}.network.json").write_text(json.dumps({
-                "tools": [{"name": agent.name, "instructions": "x",
-                           "function": {"description": agent.role}}
-                          for agent in spec.agents],
+                "tools": tools,
             }), encoding="utf-8")
             (self.root / deployment_id / "nsdeploy.log").write_text("", encoding="utf-8")
 
@@ -481,8 +556,14 @@ class RelationsEndpointTest(unittest.TestCase):
         body: Dict[str, Any] = self._get("/relations")
         self.assertEqual(body["strategy"], "heuristic")
         self.assertEqual(body["networks"], 2)
-        edge: Dict[str, Any] = next(e for e in body["edges"]
-                                    if e["source"] == "d_orders" and e["target"] == "d_ship")
+        edge: Optional[Dict[str, Any]] = None
+        candidate: Dict[str, Any]
+        # Find the orders -> shipping edge.
+        for candidate in body["edges"]:
+            if candidate["source"] == "d_orders" and candidate["target"] == "d_ship":
+                edge = candidate
+                break
+        self.assertIsNotNone(edge)
         self.assertEqual(edge["kind"], "capability")
         self.assertEqual(edge["reference"], "carrier_shipping_manager")
         self.assertTrue(edge["reason"])
@@ -515,7 +596,11 @@ class RelationsEndpointTest(unittest.TestCase):
         # Asks for suggestions explicitly: against the default they are empty and the
         # loop below would pass without examining anything.
         body: Dict[str, Any] = self._get("/graph?suggest=true")
-        ids: Set[str] = {node["id"] for node in body["nodes"]}
+        ids: Set[str] = set()
+        node: Dict[str, Any]
+        # Collect the id of each visible node.
+        for node in body["nodes"]:
+            ids.add(node["id"])
         self.assertTrue(body["suggested_edges"], "nothing was inferred to check")
         edge: Dict[str, Any]
         for edge in body["suggested_edges"]:

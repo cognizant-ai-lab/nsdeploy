@@ -51,7 +51,15 @@ def normalize_base_domain(base_domain: str) -> str:
     if "://" in domain or "/" in domain or ":" in domain:
         raise ValueError("base domain must be a hostname without a scheme, path, or port")
     labels: List[str] = domain.split(".")
-    if not domain or any(not _DNS_LABEL_RE.fullmatch(label) for label in labels):
+    has_invalid_label: bool = False
+    label: str
+    if domain:
+        # Look for a label that is not a valid DNS label, stopping at the first one.
+        for label in labels:
+            if not _DNS_LABEL_RE.fullmatch(label):
+                has_invalid_label = True
+                break
+    if not domain or has_invalid_label:
         raise ValueError(f"invalid base domain: {base_domain!r}")
     return domain
 
@@ -231,10 +239,13 @@ def make_gateway_handler(base_domain: str, routes: Mapping[str, str]) -> Type[Ba
                                                                     timeout=GATEWAY_TIMEOUT_SECONDS)
             length: int = int(self.headers.get("Content-Length", 0) or 0)
             body: Optional[bytes] = self.rfile.read(length) if length else None
-            headers: Dict[str, str] = {
-                name: value for name, value in self.headers.items()
-                if name.lower() not in _HOP_BY_HOP_HEADERS
-            }
+            headers: Dict[str, str] = {}
+            header_name: str
+            header_value: str
+            # Forward every request header except the hop-by-hop ones.
+            for header_name, header_value in self.headers.items():
+                if header_name.lower() not in _HOP_BY_HOP_HEADERS:
+                    headers[header_name] = header_value
             original_host: str = self.headers.get("Host", "")
             headers["Host"] = original_host
             headers["X-Forwarded-Host"] = original_host

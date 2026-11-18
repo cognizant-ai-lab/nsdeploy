@@ -26,6 +26,7 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Set
 
 from nsdeploy.action_discovery import prepare_actions
 from nsdeploy.form_actions import action_discovery_config
@@ -35,6 +36,7 @@ from nsdeploy.linker import load_deploy_links
 from nsdeploy.linker import run_link_command
 from nsdeploy.launcher import serve
 from nsdeploy.resolve import DeploymentPlan
+from nsdeploy.resolve import HostableTool
 from nsdeploy.resolve import build_plan
 from nsdeploy.resolve import format_report
 from nsdeploy.resolve import load_toolbox_info
@@ -268,10 +270,16 @@ def main() -> int:
     if args.steward_sites:
         try:
             steward_data: Any = json.loads(Path(args.steward_sites).read_text(encoding="utf-8"))
-            if not isinstance(steward_data, dict) or not all(
-                isinstance(name, str) and isinstance(url, str)
-                for name, url in steward_data.items()
-            ):
+            valid_sites: bool = isinstance(steward_data, dict)
+            if valid_sites:
+                site_name: Any
+                site_url: Any
+                # Require every entry to map a string name to a string URL; stop at the first invalid entry.
+                for site_name, site_url in steward_data.items():
+                    if not (isinstance(site_name, str) and isinstance(site_url, str)):
+                        valid_sites = False
+                        break
+            if not valid_sites:
                 raise ValueError("expected a JSON object containing name-to-URL strings")
             private_steward_sites.update(steward_data)
         except (OSError, ValueError) as exc:
@@ -378,7 +386,12 @@ def main() -> int:
     bundle_label: str = "static bundle" if args.static_bundle else "site"
     print(f"✅ Generated {bundle_label} → {out_dir}" + ("" if args.no_cruse else "  (+CRUSE generative UI)"))
     if args.static_bundle:
-        omitted_tools: List[str] = sorted({tool.name for tool in plan.hostable_tools} | set(plan.omitted_tools))
+        hostable_names: Set[str] = set()
+        hostable_tool: HostableTool
+        # Collect the names of the Python tools a static bundle cannot host.
+        for hostable_tool in plan.hostable_tools:
+            hostable_names.add(hostable_tool.name)
+        omitted_tools: List[str] = sorted(hostable_names | set(plan.omitted_tools))
         if omitted_tools:
             omitted: str = ", ".join(omitted_tools)
             print(f"   static bundle: omitted Python tools: {omitted}")

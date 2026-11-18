@@ -117,8 +117,12 @@ class SiteProxy:
         return row
 
     def _requested_host(self, scope: Scope) -> str:
-        headers: Dict[str, str] = {k.decode("latin-1").lower(): v.decode("latin-1")
-                                   for k, v in scope.get("headers", [])}
+        headers: Dict[str, str] = {}
+        raw_name: bytes
+        raw_value: bytes
+        # Decode each header, keyed by its lowercased name; a later duplicate wins.
+        for raw_name, raw_value in scope.get("headers", []):
+            headers[raw_name.decode("latin-1").lower()] = raw_value.decode("latin-1")
         # First entry only: X-Forwarded-Host is a comma-separated list when proxies
         # chain, and the client-facing name is the one that matters.
         forwarded: str = headers.get("x-forwarded-host", "").split(",")[0].strip()
@@ -164,6 +168,40 @@ class SiteProxy:
                                 (b"cache-control", b"no-store")]})
         await send({"type": "http.response.body", "body": body})
 
+    @staticmethod
+    def _forwarded_request_headers(scope: Scope) -> List[Tuple[str, str]]:
+        """
+        Decode the request headers that are forwarded to the deployed site.
+
+        :param scope: The ASGI connection scope of the incoming request.
+        :return: The decoded (name, value) pairs, in order, without the dropped headers.
+        """
+        headers: List[Tuple[str, str]] = []
+        raw_name: bytes
+        raw_value: bytes
+        # Decode each request header that is forwarded to the site.
+        for raw_name, raw_value in scope.get("headers", []):
+            if raw_name.decode("latin-1").lower() not in _DROP_REQUEST:
+                headers.append((raw_name.decode("latin-1"), raw_value.decode("latin-1")))
+        return headers
+
+    @staticmethod
+    def _returned_response_headers(upstream: httpx.Response) -> List[Tuple[bytes, bytes]]:
+        """
+        Encode the upstream response headers that are passed back to the client.
+
+        :param upstream: The response from the deployed site.
+        :return: The encoded (name, value) pairs, in order, without the dropped headers.
+        """
+        out: List[Tuple[bytes, bytes]] = []
+        upstream_name: str
+        upstream_value: str
+        # Encode each upstream response header that is passed back to the client.
+        for upstream_name, upstream_value in upstream.headers.multi_items():
+            if upstream_name.lower() not in _DROP_RESPONSE:
+                out.append((upstream_name.encode("latin-1"), upstream_value.encode("latin-1")))
+        return out
+
     async def _proxy(self, scope: Scope, receive: Receive, send: Send, port: int) -> None:
         if self._client is None:
             self._client = httpx.AsyncClient(timeout=PROXY_TIMEOUT, follow_redirects=False)
@@ -173,9 +211,7 @@ class SiteProxy:
         if query:
             url = f"{url}?{query.decode('latin-1')}"
 
-        headers: List[Tuple[str, str]] = [(k.decode("latin-1"), v.decode("latin-1"))
-                                          for k, v in scope.get("headers", [])
-                                          if k.decode("latin-1").lower() not in _DROP_REQUEST]
+        headers: List[Tuple[str, str]] = self._forwarded_request_headers(scope)
 
         # The request body is buffered, not streamed. A deployed site is served by
         # http.server's BaseHTTPRequestHandler (launcher.make_handler), which reads
@@ -193,9 +229,7 @@ class SiteProxy:
             await self._plain(send, 502, f"the deployed site did not answer: {exc}")
             return
         try:
-            out: List[Tuple[bytes, bytes]] = [(k.encode("latin-1"), v.encode("latin-1"))
-                                              for k, v in upstream.headers.multi_items()
-                                              if k.lower() not in _DROP_RESPONSE]
+            out: List[Tuple[bytes, bytes]] = self._returned_response_headers(upstream)
             await send({"type": "http.response.start",
                         "status": upstream.status_code, "headers": out})
             # Streamed rather than buffered: /v1 and /byok/v1 are SSE, and holding

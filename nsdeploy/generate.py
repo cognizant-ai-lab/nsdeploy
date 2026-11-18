@@ -20,6 +20,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 from typing import Dict
+from typing import Iterable
 from typing import List
 from typing import Optional
 from typing import Set
@@ -33,6 +34,7 @@ from nsdeploy.byok import BYOK_MODEL_HEADER
 from nsdeploy.commerce.steward import add_to_private_network
 from nsdeploy.form_actions import action_discovery_config
 from nsdeploy.resolve import DeploymentPlan
+from nsdeploy.resolve import HostableTool
 from nsdeploy.site_source import DEFAULT_SITE_JS
 from nsdeploy.theme import ThemeSpec
 
@@ -138,19 +140,13 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
     """Produce the deployed network config: agents only, with tool references mapped
     to local MCP URLs (hostable tools) or same-origin MCP-proxy URLs (external MCP
     servers), with public agent-network URLs preserved and missing refs dropped."""
-    hostable_url: Dict[str, str] = {} if static_bundle else {
-        t.name: f"{site_base.rstrip('/')}/_mcp/{i}/mcp"
-        for i, t in enumerate(plan.hostable_tools)
-    }
+    hostable_url: Dict[str, str] = {} if static_bundle else _hostable_urls(plan, site_base)
     # External MCP servers are reached through a same-origin proxy (avoids CORS) and
     # given a clean /mcp URL so the runtime classifies them as MCP.
-    ext_url: Dict[str, str] = {
-        url: (url if static_bundle else f"{site_base}/ext-mcp/{i}/mcp")
-        for i, url in enumerate(plan.external_mcps)
-    }
+    ext_url: Dict[str, str] = _external_mcp_urls(plan, site_base, static_bundle)
     drop: Set[str] = set(plan.missing_tools) | set(plan.omitted_tools)
     if static_bundle:
-        drop.update(tool.name for tool in plan.hostable_tools)
+        drop.update(_hostable_tool_names(plan))
 
     config: Dict[str, Any] = copy.deepcopy(plan.config)
     _seed_default_model(config)
@@ -185,20 +181,13 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
             agent["instructions"] = (agent.get("instructions", "") or "").rstrip() + "\n\n" + CRUSE_DIRECTIVE
         new_tools.append(agent)
     config["tools"] = new_tools
-    config["link_slots"] = {
-        ref: {"callers": callers}
-        for ref, callers in plan.link_slots.items()
-        if ref not in plan.links
-    }
+    config["link_slots"] = _pending_link_slots(plan)
     # Preserve the developer-facing reference for pre-consent UI. The peer
     # manifest cannot be fetched until after consent, so the URL alone is not
     # enough to name a linked network at prompt time.
-    config["link_labels"] = {
-        plan.links[ref]: _brandize(ref)
-        for ref in plan.links
-    }
+    config["link_labels"] = _link_labels(plan)
     if static_bundle:
-        omitted_tools: List[str] = sorted({tool.name for tool in plan.hostable_tools} | set(plan.omitted_tools))
+        omitted_tools: List[str] = sorted(_hostable_tool_names(plan) | set(plan.omitted_tools))
         config["deployment"] = {
             "mode": "static",
             "omitted_python_tools": omitted_tools,
@@ -206,6 +195,88 @@ def rewrite_config(plan: DeploymentPlan, site_base: str, mcp_host: str = "127.0.
             "link_persistence": "browser-local",
         }
     return config
+
+
+def _hostable_urls(plan: DeploymentPlan, site_base: str) -> Dict[str, str]:
+    """
+    Map each hostable tool name to the URL of its local MCP server.
+
+    :param plan: The resolved deployment plan.
+    :param site_base: Public base URL of the site.
+    :return: A mapping from hostable tool name to MCP URL.
+    """
+    hostable_url: Dict[str, str] = {}
+    index: int
+    tool: HostableTool
+    # Map each hostable tool name to its local MCP URL.
+    for index, tool in enumerate(plan.hostable_tools):
+        hostable_url[tool.name] = f"{site_base.rstrip('/')}/_mcp/{index}/mcp"
+    return hostable_url
+
+
+def _external_mcp_urls(plan: DeploymentPlan, site_base: str, static_bundle: bool) -> Dict[str, str]:
+    """
+    Map each external MCP server URL to the URL the runtime calls.
+
+    :param plan: The resolved deployment plan.
+    :param site_base: Public base URL of the site.
+    :param static_bundle: Whether the output is a static bundle that calls servers directly.
+    :return: A mapping from external MCP URL to its direct or same-origin proxy URL.
+    """
+    ext_url: Dict[str, str] = {}
+    index: int
+    url: str
+    # Map each external MCP server URL to its direct or proxied URL.
+    for index, url in enumerate(plan.external_mcps):
+        ext_url[url] = url if static_bundle else f"{site_base}/ext-mcp/{index}/mcp"
+    return ext_url
+
+
+def _hostable_tool_names(plan: DeploymentPlan) -> Set[str]:
+    """
+    Collect the names of the hostable Python tools in a deployment plan.
+
+    :param plan: The resolved deployment plan.
+    :return: The set of hostable tool names.
+    """
+    names: Set[str] = set()
+    tool: HostableTool
+    # Add the name of each hostable tool.
+    for tool in plan.hostable_tools:
+        names.add(tool.name)
+    return names
+
+
+def _pending_link_slots(plan: DeploymentPlan) -> Dict[str, Dict[str, List[str]]]:
+    """
+    Describe the link slots of a deployment plan that have no link yet.
+
+    :param plan: The resolved deployment plan.
+    :return: A mapping from each unlinked reference to its callers.
+    """
+    link_slots: Dict[str, Dict[str, List[str]]] = {}
+    slot_ref: str
+    slot_callers: List[str]
+    # Keep each link slot whose reference is not linked.
+    for slot_ref, slot_callers in plan.link_slots.items():
+        if slot_ref not in plan.links:
+            link_slots[slot_ref] = {"callers": slot_callers}
+    return link_slots
+
+
+def _link_labels(plan: DeploymentPlan) -> Dict[str, str]:
+    """
+    Label each linked network URL with the display name of its reference.
+
+    :param plan: The resolved deployment plan.
+    :return: A mapping from each linked URL to its brandized reference name.
+    """
+    labels: Dict[str, str] = {}
+    ref: str
+    # Map each linked URL to the brandized reference that names it.
+    for ref in plan.links:
+        labels[plan.links[ref]] = _brandize(ref)
+    return labels
 
 
 def _brand_display(plan: DeploymentPlan, theme: ThemeSpec) -> str:
@@ -216,6 +287,24 @@ def _brand_display(plan: DeploymentPlan, theme: ThemeSpec) -> str:
 def _origin(url: str) -> str:
     parsed: ParseResult = urlparse(url)
     return f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
+
+
+def _url_origins(urls: Iterable[str]) -> List[str]:
+    """
+    Collect the origins of URLs, skipping the ones that have no origin.
+
+    :param urls: The URLs to inspect.
+    :return: The non-empty origins, in URL order.
+    """
+    origins: List[str] = []
+    url: str
+    origin: str
+    # Add the origin of each URL that has one.
+    for url in urls:
+        origin = _origin(url)
+        if origin:
+            origins.append(origin)
+    return origins
 
 
 def build_linking_metadata(plan: DeploymentPlan, site_base: str,
@@ -231,8 +320,26 @@ def build_linking_metadata(plan: DeploymentPlan, site_base: str,
         alias: Any = item if isinstance(item, str) else (item or {}).get("alias") or (item or {}).get("name")
         if alias:
             aliases.append(alias)
-    aliases = list(dict.fromkeys(a for a in aliases if a))
+    present_aliases: List[str] = []
+    alias_name: Any
+    # Keep the non-empty aliases, in order.
+    for alias_name in aliases:
+        if alias_name:
+            present_aliases.append(alias_name)
+    aliases = list(dict.fromkeys(present_aliases))
     base: str = site_base.rstrip("/")
+    imports: List[Dict[str, Any]] = []
+    slot_ref: str
+    slot_callers: List[str]
+    # Describe the link status of each dangling reference.
+    for slot_ref, slot_callers in plan.link_slots.items():
+        imports.append({
+            "network": plan.network_name,
+            "reference": slot_ref,
+            "callers": slot_callers,
+            "status": "linked" if slot_ref in plan.links else "pending",
+            **({"target": plan.links[slot_ref]} if slot_ref in plan.links else {}),
+        })
     result: Dict[str, Any] = {
         "protocol": "nsdeploy-link/v1",
         "exports": [{
@@ -241,13 +348,7 @@ def build_linking_metadata(plan: DeploymentPlan, site_base: str,
             "aliases": aliases,
             "url": f"{base}/{plan.network_name}" if base else plan.network_name,
         }],
-        "imports": [{
-            "network": plan.network_name,
-            "reference": ref,
-            "callers": callers,
-            "status": "linked" if ref in plan.links else "pending",
-            **({"target": plan.links[ref]} if ref in plan.links else {}),
-        } for ref, callers in plan.link_slots.items()],
+        "imports": imports,
     }
     if base:
         result["site"] = base
@@ -302,15 +403,21 @@ def build_private_steward_hocon(
     destinations, while the operator's environment owns the deny policy.
     """
     description: str = (plan.config.get("metadata", {}) or {}).get("description") or plan.network_name
-    public_sites: Dict[str, str] = {
-        name: str(url).rstrip("/")
-        for name, url in sorted((known_public_sites or {}).items())
-        if name and str(url).strip()
-    }
+    public_sites: Dict[str, str] = {}
+    known_name: str
+    known_url: str
+    # Keep the named known sites with a non-blank URL, in name order, without trailing slashes.
+    for known_name, known_url in sorted((known_public_sites or {}).items()):
+        if known_name and str(known_url).strip():
+            public_sites[known_name] = str(known_url).rstrip("/")
     if site_base:
         public_sites[plan.network_name] = f"{site_base.rstrip('/')}/{plan.network_name}"
-    public_sites.update({name: url.rstrip("/") for name, url in sorted(plan.links.items())})
-    public_site_lines: str = "\n".join(f"- {name}: {url}" for name, url in public_sites.items())
+    link_name: str
+    link_url: str
+    # Add each linked network URL in name order, without its trailing slash.
+    for link_name, link_url in sorted(plan.links.items()):
+        public_sites[link_name] = link_url.rstrip("/")
+    public_site_lines: str = _public_site_lines(public_sites)
     gateway_parameters: Dict[str, Any] = {
         "type": "object",
         "properties": {
@@ -392,6 +499,39 @@ The site URL is checked against the local deny policy; MCP is a legacy fallback.
     return result
 
 
+def _public_site_lines(public_sites: Dict[str, str]) -> str:
+    """
+    Format a public site directory as one bullet line per site.
+
+    :param public_sites: A mapping from site name to public URL.
+    :return: The newline-separated bullet lines.
+    """
+    site_lines: List[str] = []
+    site_name: str
+    site_url: str
+    # Format each known public site as a bullet line.
+    for site_name, site_url in public_sites.items():
+        site_lines.append(f"- {site_name}: {site_url}")
+    return "\n".join(site_lines)
+
+
+def _front_man_function(plan: DeploymentPlan) -> Dict[str, Any]:
+    """
+    Find the function description of the plan's front-man agent.
+
+    :param plan: The resolved deployment plan.
+    :return: The front man's "function" entry, or an empty dict if no agent is the front man.
+    """
+    front_fn: Dict[str, Any] = {}
+    plan_agent: Dict[str, Any]
+    # Select the function description of the first agent named as the front man.
+    for plan_agent in plan.agents:
+        if plan_agent.get("name") == plan.front_man:
+            front_fn = plan_agent.get("function", {})
+            break
+    return front_fn
+
+
 def write_private_steward_manifest(
     manifest_dir: Path,
     active_networks: Optional[List[str]] = None,
@@ -411,18 +551,23 @@ def write_private_steward_manifest(
         if fcntl:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
-            steward_files: List[Path] = sorted(
-                path.resolve()
-                for bundle_dir in manifest_dir.iterdir()
-                if bundle_dir.is_dir() and (active is None or bundle_dir.name in active)
-                for path in bundle_dir.glob("*_private_steward.hocon")
-                if path.is_file()
-            )
+            steward_paths: List[Path] = []
+            bundle_dir: Path
+            steward_path: Path
+            # Collect the private steward files of every active bundle directory.
+            for bundle_dir in manifest_dir.iterdir():
+                if not (bundle_dir.is_dir() and (active is None or bundle_dir.name in active)):
+                    continue
+                # Collect each steward HOCON file in the bundle directory.
+                for steward_path in bundle_dir.glob("*_private_steward.hocon"):
+                    if steward_path.is_file():
+                        steward_paths.append(steward_path.resolve())
+            steward_files: List[Path] = sorted(steward_paths)
             lines: List[str] = ["{"]
-            lines.extend(
-                f"  {json.dumps(path.relative_to(manifest_dir).as_posix())}: true,"
-                for path in steward_files
-            )
+            steward_file: Path
+            # Add one manifest entry per steward file.
+            for steward_file in steward_files:
+                lines.append(f"  {json.dumps(steward_file.relative_to(manifest_dir).as_posix())}: true,")
             lines.append("}")
             content: str = "\n".join(lines) + "\n"
             handle.seek(0)
@@ -456,16 +601,16 @@ def build_manifest(plan: DeploymentPlan, network_config: Dict[str, Any],
     :return: The manifest document.
     """
     meta: Dict[str, Any] = plan.config.get("metadata", {}) or {}
-    front_fn: Dict[str, Any] = next((a.get("function", {}) for a in plan.agents if a.get("name") == plan.front_man), {})
+    front_fn: Dict[str, Any] = _front_man_function(plan)
     description: str
     description = theme.tagline or (front_fn.get("description") or meta.get("description") or plan.network_name).strip()
     allowed_peers: List[str] = []
     if site_base and (plan.hostable_tools or plan.external_mcps):  # legacy compatibility for older runtimes
         allowed_peers.append(site_base)
-    allowed_peers.extend(origin for origin in (_origin(url) for url in plan.links.values()) if origin)
+    allowed_peers.extend(_url_origins(plan.links.values()))
     # Modern runtimes use peer_policy.mode=open, but publish direct URL-tool origins
     # for compatibility with older allow-list runtimes.
-    allowed_peers.extend(origin for origin in (_origin(url) for url in plan.external_networks) if origin)
+    allowed_peers.extend(_url_origins(plan.external_networks))
     allowed_peers = list(dict.fromkeys(allowed_peers))
     manifest: Dict[str, Any] = {
         "brand": _brand_display(plan, theme),
@@ -723,7 +868,13 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
         except (OSError, ValueError):
             existing = {}
     old: Dict[str, Any] = ((existing.get("networks") or {}).get(plan.network_name) or {})
-    bindings: Dict[str, str] = {ref: url for ref, url in old.items() if ref in plan.link_slots and isinstance(url, str)}
+    bindings: Dict[str, str] = {}
+    old_ref: str
+    old_url: Any
+    # Keep the existing bindings whose slot still exists and whose target is a URL string.
+    for old_ref, old_url in old.items():
+        if old_ref in plan.link_slots and isinstance(old_url, str):
+            bindings[old_ref] = old_url
     bindings.update(plan.links)
     links_doc: Dict[str, Any] = {"version": 1, "networks": {plan.network_name: bindings}}
     links_path.write_text(json.dumps(links_doc, indent=2), encoding="utf-8")
@@ -762,15 +913,25 @@ def _write_static_hosting_files(out_dir: Path, network_name: str, site_base: str
     prefix: str = urlsplit(site_base).path.rstrip("/")
     public_files: List[str] = ["agent-manifest.json", f"{network_name}.network.json", "links.json",
                                "agent-mcp.json", ".well-known/nsdeploy.json", ".well-known/nsdeploy-agent.json"]
-    cors_headers: str = "".join(f"{prefix}/{path}\n  Access-Control-Allow-Origin: *\n" for path in public_files)
+    cors_lines: List[str] = []
+    cors_path: str
+    # Emit a CORS header block for each public data file.
+    for cors_path in public_files:
+        cors_lines.append(f"{prefix}/{cors_path}\n  Access-Control-Allow-Origin: *\n")
+    cors_headers: str = "".join(cors_lines)
     (out_dir / "_headers").write_text(
         cors_headers + f"{prefix}/runtime/sandbox-worker.js\n"
         f"  Content-Security-Policy: {WORKER_CSP}\n",
         encoding="utf-8",
     )
+    escaped_names: List[str] = []
+    match_path: str
+    # Escape each public file name for the FilesMatch pattern.
+    for match_path in public_files:
+        escaped_names.append(re.escape(Path(match_path).name))
     (out_dir / ".htaccess").write_text(
         "<IfModule mod_headers.c>\n"
-        '  <FilesMatch "^(' + '|'.join(re.escape(Path(path).name) for path in public_files) + ')$">\n'
+        '  <FilesMatch "^(' + '|'.join(escaped_names) + ')$">\n'
         '    Header always set Access-Control-Allow-Origin "*"\n'
         "  </FilesMatch>\n"
         "  <Files \"sandbox-worker.js\">\n"
@@ -779,12 +940,17 @@ def _write_static_hosting_files(out_dir: Path, network_name: str, site_base: str
         "</IfModule>\n",
         encoding="utf-8",
     )
+    file_bullets: List[str] = []
+    bullet_path: str
+    # List each public data file as a Markdown bullet.
+    for bullet_path in public_files:
+        file_bullets.append(f"- `{prefix}/{bullet_path}`\n")
     (out_dir / "STATIC_HOSTING.md").write_text(
         "# Static nsDeploy bundle\n\n"
         f"Publish this directory at `{prefix or '/'}` on the application's origin. The site, browser runtime, and "
         "browser-local links require no application server.\n\n"
         "For cross-domain agent loading, configure only these public data files with "
-        "`Access-Control-Allow-Origin: *`:\n\n" + "".join(f"- `{prefix}/{path}`\n" for path in public_files) + "\n"
+        "`Access-Control-Allow-Origin: *`:\n\n" + "".join(file_bullets) + "\n"
         "Action JavaScript and bridge pages do not need CORS: they load on their owning "
         "origin and exchange validated messages with callers. Do not apply these CORS "
         "headers to business endpoints. The included `_headers` file is used by "

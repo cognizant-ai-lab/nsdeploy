@@ -105,7 +105,12 @@ class BundlerTest(unittest.TestCase):
     def test_carries_the_shared_runtime(self) -> None:
         """The runtime is most of a bundle and is what makes it standalone."""
         names: List[str] = self._names(self._build())
-        runtime: List[str] = [name for name in names if name.startswith("runtime/")]
+        runtime: List[str] = []
+        name: str
+        # Collect the entries under runtime/.
+        for name in names:
+            if name.startswith("runtime/"):
+                runtime.append(name)
         self.assertTrue(runtime, "the bundle carries no runtime/ directory")
 
     def test_the_manifest_is_not_left_inside_the_bundle(self) -> None:
@@ -131,8 +136,14 @@ class BundlerTest(unittest.TestCase):
     def test_reports_what_a_static_bundle_cannot_carry(self) -> None:
         """The warnings name what a static bundle cannot carry."""
         warnings: List[str] = self._build().warnings
-        self.assertTrue(any("MCP facade is unavailable" in line for line in warnings),
-                        f"no facade warning in {warnings}")
+        found: bool = False
+        line: str
+        # Look for the facade warning.
+        for line in warnings:
+            if "MCP facade is unavailable" in line:
+                found = True
+                break
+        self.assertTrue(found, f"no facade warning in {warnings}")
 
     def test_refuses_an_empty_hocon(self) -> None:
         """An empty HOCON is refused."""
@@ -229,7 +240,13 @@ class BundlerThemeTest(unittest.TestCase):
                 result: BundleResult = self._build(bundler, theme=True, theme_model="gpt-5.6")
         proposer.assert_called_once()
         self.assertEqual(proposer.call_args.kwargs["model"], "gpt-5.6")
-        self.assertFalse([line for line in result.warnings if "theme" in line])
+        theme_warnings: List[str] = []
+        line: str
+        # Collect the warnings that mention the theme.
+        for line in result.warnings:
+            if "theme" in line:
+                theme_warnings.append(line)
+        self.assertFalse(theme_warnings)
 
     def test_a_theme_without_a_key_warns_and_keeps_the_default_look(self) -> None:
         """A theme request without a key warns and keeps the default look."""
@@ -239,8 +256,14 @@ class BundlerThemeTest(unittest.TestCase):
             with mock.patch.dict("os.environ", {"OPENAI_API_KEY": ""}):
                 result: BundleResult = self._build(bundler, theme=True)
         proposer.assert_not_called()
-        self.assertTrue(any("OPENAI_API_KEY" in line for line in result.warnings),
-                        f"no missing-key warning in {result.warnings}")
+        found: bool = False
+        line: str
+        # Look for the missing-key warning.
+        for line in result.warnings:
+            if "OPENAI_API_KEY" in line:
+                found = True
+                break
+        self.assertTrue(found, f"no missing-key warning in {result.warnings}")
 
     def test_an_unusable_layout_warns_and_keeps_the_default_look(self) -> None:
         """propose_theme catches every failure and answers with an empty spec, so an
@@ -250,8 +273,14 @@ class BundlerThemeTest(unittest.TestCase):
                         return_value=ThemeSpec()):
             with mock.patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}):
                 result: BundleResult = self._build(bundler, theme=True, theme_model="gpt-5.6")
-        self.assertTrue(any("no usable layout" in line for line in result.warnings),
-                        f"no unusable-layout warning in {result.warnings}")
+        found: bool = False
+        line: str
+        # Look for the unusable-layout warning.
+        for line in result.warnings:
+            if "no usable layout" in line:
+                found = True
+                break
+        self.assertTrue(found, f"no unusable-layout warning in {result.warnings}")
 
 
 class BundleEndpointTest(unittest.TestCase):

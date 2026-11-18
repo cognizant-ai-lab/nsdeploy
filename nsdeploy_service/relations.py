@@ -105,8 +105,17 @@ class NetworkIdentity:
         """Everything this network says about itself — the affinity signal."""
         parts: List[str] = [_humanize(self.name), self.description, _humanize(self.front_man)]
         parts.extend(self.sample_queries)
-        parts.extend(f"{_humanize(agent.name)} {agent.role}" for agent in self.agents)
-        return " ".join(part for part in parts if part)
+        agent: AgentRole
+        # Add each agent's humanized name and role.
+        for agent in self.agents:
+            parts.append(f"{_humanize(agent.name)} {agent.role}")
+        non_empty: List[str] = []
+        part: str
+        # Keep only the non-empty parts.
+        for part in parts:
+            if part:
+                non_empty.append(part)
+        return " ".join(non_empty)
 
     def capability_text(self) -> str:
         """What this network can *do* — matched against a consumer's open slots.
@@ -115,8 +124,17 @@ class NetworkIdentity:
         not what the network provides, and they are long enough to swamp the signal.
         """
         parts: List[str] = [_humanize(self.name), self.description, _humanize(self.front_man)]
-        parts.extend(f"{_humanize(agent.name)} {agent.role}" for agent in self.agents)
-        return " ".join(part for part in parts if part)
+        agent: AgentRole
+        # Add each agent's humanized name and role.
+        for agent in self.agents:
+            parts.append(f"{_humanize(agent.name)} {agent.role}")
+        non_empty: List[str] = []
+        part: str
+        # Keep only the non-empty parts.
+        for part in parts:
+            if part:
+                non_empty.append(part)
+        return " ".join(non_empty)
 
 
 @dataclass(frozen=True)
@@ -161,7 +179,12 @@ class Vocabulary:
         :param terms: The terms to weigh.
         :return: The total weight.
         """
-        return sum(self.weight(term) for term in terms)
+        total: float = 0
+        term: str
+        # Add the weight of each term.
+        for term in terms:
+            total += self.weight(term)
+        return total
 
 
 def _humanize(value: str) -> str:
@@ -175,10 +198,13 @@ def _normalize(text: str) -> str:
 
 def tokens(text: str) -> set[str]:
     """Content words in `text`, lowercased, stopped and length-filtered."""
-    return {
-        word for word in _WORD_RE.findall(str(text or "").lower())
-        if len(word) >= MIN_WORD_LENGTH and word not in STOP_WORDS
-    }
+    words: set[str] = set()
+    word: str
+    # Keep words that are long enough and are not stop words.
+    for word in _WORD_RE.findall(str(text or "").lower()):
+        if len(word) >= MIN_WORD_LENGTH and word not in STOP_WORDS:
+            words.add(word)
+    return words
 
 
 def build_vocabulary(identities: Sequence[NetworkIdentity]) -> Vocabulary:
@@ -230,10 +256,18 @@ def load_identity(row: Dict[str, Any], out_dir: Optional[Path] = None) -> Networ
     if out_dir is None:
         work_dir: Optional[str] = row.get("work_dir")
         out_dir = Path(work_dir) / "site" if work_dir else None
-    queries: List[str] = [
-        _normalize(query) for query in (summary.get("sample_queries") or [])
-        if isinstance(query, str) and query.strip()
-    ]
+    queries: List[str] = []
+    query: Any
+    # Normalize each non-blank string sample query.
+    for query in (summary.get("sample_queries") or []):
+        if isinstance(query, str) and query.strip():
+            queries.append(_normalize(query))
+    open_slots: List[str] = []
+    slot: Any
+    # Keep only the string link slots.
+    for slot in (summary.get("link_slots") or []):
+        if isinstance(slot, str):
+            open_slots.append(slot)
     return NetworkIdentity(
         deployment_id=str(row.get("id", "")),
         name=str(row.get("name", "")),
@@ -241,15 +275,19 @@ def load_identity(row: Dict[str, Any], out_dir: Optional[Path] = None) -> Networ
         front_man=str(summary.get("front_man") or ""),
         sample_queries=tuple(queries),
         agents=_agent_roles(out_dir, str(row.get("name", ""))) if out_dir else (),
-        open_slots=tuple(
-            slot for slot in (summary.get("link_slots") or []) if isinstance(slot, str)
-        ),
+        open_slots=tuple(open_slots),
     )
 
 
 def identities_from_rows(rows: Iterable[Dict[str, Any]]) -> List[NetworkIdentity]:
     """Load every row that names a network, skipping unusable records."""
-    return [load_identity(row) for row in rows if row.get("name")]
+    identities: List[NetworkIdentity] = []
+    row: Dict[str, Any]
+    # Load each row that names a network.
+    for row in rows:
+        if row.get("name"):
+            identities.append(load_identity(row))
+    return identities
 
 
 # --- scoring -----------------------------------------------------------------
@@ -401,18 +439,23 @@ LLM_SYSTEM_PROMPT: str = (
 
 
 def _llm_payload(identities: Sequence[NetworkIdentity]) -> str:
-    return json.dumps({
-        "networks": [
-            {
-                "id": identity.deployment_id,
-                "name": identity.name,
-                "description": identity.description,
-                "agents": [agent.name for agent in identity.agents][:12],
-                "unfilled_references": list(identity.open_slots)[:12],
-            }
-            for identity in identities
-        ]
-    })
+    networks: List[Dict[str, Any]] = []
+    identity: NetworkIdentity
+    # Describe each network for the model.
+    for identity in identities:
+        agent_names: List[str] = []
+        agent: AgentRole
+        # Collect the names of the network's agents.
+        for agent in identity.agents:
+            agent_names.append(agent.name)
+        networks.append({
+            "id": identity.deployment_id,
+            "name": identity.name,
+            "description": identity.description,
+            "agents": agent_names[:12],
+            "unfilled_references": list(identity.open_slots)[:12],
+        })
+    return json.dumps({"networks": networks})
 
 
 def _parse_llm_relations(content: str, known: Dict[str, NetworkIdentity],
@@ -466,7 +509,11 @@ def suggest_relations(
         min_slot_coverage=min_slot_coverage)
     if chat is None or len(identities) < 2:
         return heuristic, "heuristic"
-    known: Dict[str, NetworkIdentity] = {identity.deployment_id: identity for identity in identities}
+    known: Dict[str, NetworkIdentity] = {}
+    identity: NetworkIdentity
+    # Index the networks by deployment id.
+    for identity in identities:
+        known[identity.deployment_id] = identity
     try:
         proposed: List[SuggestedRelation] = _parse_llm_relations(
             chat(LLM_SYSTEM_PROMPT, _llm_payload(identities)), known)

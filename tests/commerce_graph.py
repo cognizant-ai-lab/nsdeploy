@@ -50,6 +50,42 @@ class ScriptedStewardModel(BaseChatModel):  # pylint: disable=abstract-method
         """
         return self
 
+    @staticmethod
+    def _latest_human_index(messages: List[BaseMessage]) -> int:
+        """
+        Return the index of the latest human message.
+
+        :param messages: The conversation so far.
+        :return: The largest index that holds a HumanMessage.
+        :raises ValueError: If the conversation holds no human message, as max() does on an empty sequence.
+        """
+        human_index: int = -1
+        index: int
+        message: BaseMessage
+        # Track the largest index of a human message.
+        for index, message in enumerate(messages):
+            if isinstance(message, HumanMessage):
+                human_index = index
+        if human_index < 0:
+            raise ValueError("the conversation holds no human message")
+        return human_index
+
+    @staticmethod
+    def _tool_results(messages: List[BaseMessage]) -> List[BaseMessage]:
+        """
+        Return the tool result messages in order.
+
+        :param messages: The messages to filter.
+        :return: The ToolMessage entries.
+        """
+        tool_results: List[BaseMessage] = []
+        message: BaseMessage
+        # Keep only the tool result messages.
+        for message in messages:
+            if isinstance(message, ToolMessage):
+                tool_results.append(message)
+        return tool_results
+
     def _generate(self, messages: List[BaseMessage],  # pylint: disable=unused-argument
                   stop: Optional[List[str]] = None, run_manager: Optional[CallbackManagerForLLMRun] = None,
                   **kwargs: Any) -> ChatResult:
@@ -62,10 +98,9 @@ class ScriptedStewardModel(BaseChatModel):  # pylint: disable=abstract-method
         :param kwargs: Unused extra options.
         :return: The chat result.
         """
-        human_index: int = max(i for i, message in enumerate(messages) if isinstance(message, HumanMessage))
+        human_index: int = self._latest_human_index(messages)
         text: str = str(messages[human_index].content)
-        tool_results: List[BaseMessage] = [message for message in messages[human_index + 1:]
-                                           if isinstance(message, ToolMessage)]
+        tool_results: List[BaseMessage] = self._tool_results(messages[human_index + 1:])
         if tool_results:
             try:
                 result: Dict[str, Any] = ast.literal_eval(str(tool_results[-1].content))

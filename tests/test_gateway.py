@@ -179,7 +179,14 @@ class GatewayTests(unittest.TestCase):
         self.assertNotIn(b"Set-Cookie: reason=injected", head)
         self.assertIn(b"X-Folded: first second", lines)
         self.assertIn(b"X-Safe: kept", lines)
-        self.assertFalse(any(line.startswith(b"X-Ctl:") for line in lines))
+        has_ctl_line: bool = False
+        ctl_line: bytes
+        # Look for a forwarded X-Ctl header line, stopping at the first one.
+        for ctl_line in lines:
+            if ctl_line.startswith(b"X-Ctl:"):
+                has_ctl_line = True
+                break
+        self.assertFalse(has_ctl_line)
 
     def test_cailville_links_and_steward_directory_use_subdomains(self) -> None:
         """Check cailville links and steward directory use subdomains."""

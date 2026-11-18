@@ -172,15 +172,27 @@ class CorsResponseTest(unittest.TestCase):
         client: TestClient
         with self._client(cors_origins=["*"]) as client:
             warnings: List[str] = client.get("/health").json()["warnings"]
-        self.assertTrue(any("CORS_ORIGINS is '*'" in line for line in warnings),
-                        f"no wildcard warning in {warnings}")
+        found: bool = False
+        line: str
+        # Look for the wildcard warning.
+        for line in warnings:
+            if "CORS_ORIGINS is '*'" in line:
+                found = True
+                break
+        self.assertTrue(found, f"no wildcard warning in {warnings}")
 
     def test_health_does_not_warn_when_a_token_gates_the_wildcard(self) -> None:
         """/health does not warn when an API token gates the wildcard."""
         client: TestClient
         with self._client(cors_origins=["*"], api_token="s3cret") as client:
             warnings: List[str] = client.get("/health").json()["warnings"]
-        self.assertFalse([line for line in warnings if "CORS_ORIGINS" in line])
+        cors_warnings: List[str] = []
+        line: str
+        # Collect the warnings that mention CORS_ORIGINS.
+        for line in warnings:
+            if "CORS_ORIGINS" in line:
+                cors_warnings.append(line)
+        self.assertFalse(cors_warnings)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # explicit loops replace comprehensions throughout the Cailville workflow
 """Cailville community integration and one-command demo workflow."""
 from __future__ import annotations
 
@@ -99,17 +100,23 @@ def public_site_directory(community: Dict[str, Any], *, base_domain: Optional[st
                           public_scheme: str = "http",
                           public_port: Optional[int] = None) -> Dict[str, str]:
     """Return every active Cailville public-site origin for private stewards."""
-    return {
-        site["id"]: site_origin(site, base_domain=base_domain,
-                                public_scheme=public_scheme, public_port=public_port)
-        for site in community.get("sites", [])
-    }
+    directory: Dict[str, str] = {}
+    site: Dict[str, Any]
+    # Map each site ID to its public origin.
+    for site in community.get("sites", []):
+        directory[site["id"]] = site_origin(site, base_domain=base_domain,
+                                            public_scheme=public_scheme, public_port=public_port)
+    return directory
 
 
 def cailville_ports(cailville_dir: Path, project_dir: Optional[Path] = None) -> List[int]:
     """Return active ports plus ports from prior generated Cailville bundles."""
     community: Dict[str, Any] = load_community(CailvilleMap.active_path(cailville_dir))
-    ports: List[int] = [int(site["port"]) for site in community["sites"]]
+    ports: List[int] = []
+    site: Dict[str, Any]
+    # Collect the port of every active site.
+    for site in community["sites"]:
+        ports.append(int(site["port"]))
     if project_dir is not None:
         bundle_root: Path = project_dir / ".nsdeploy" / "cailville"
         manifest_path: Path
@@ -134,7 +141,12 @@ def latest_download_hocon(downloads: Optional[Path] = None) -> Path:
     :raises ValueError: If the directory holds no .hocon files.
     """
     root: Path = (downloads or (Path.home() / "Downloads")).expanduser()
-    candidates: List[Path] = [path for path in root.glob("*.hocon") if path.is_file()]
+    candidates: List[Path] = []
+    candidate: Path
+    # Keep only regular .hocon files.
+    for candidate in root.glob("*.hocon"):
+        if candidate.is_file():
+            candidates.append(candidate)
     if not candidates:
         raise ValueError(f"no .hocon files found in {root}")
     return max(candidates, key=lambda path: (path.stat().st_mtime_ns, path.name)).resolve()
@@ -149,7 +161,12 @@ def allocate_port(community: Dict[str, Any], preferred: Optional[int] = None) ->
     :return: The selected port.
     :raises ValueError: If the preferred port is taken or no port in 8088-8999 is free.
     """
-    used: Set[int] = {int(site["port"]) for site in community.get("sites", []) if site.get("port")}
+    used: Set[int] = set()
+    site: Dict[str, Any]
+    # Collect every port that a site already uses.
+    for site in community.get("sites", []):
+        if site.get("port"):
+            used.add(int(site["port"]))
     if preferred is not None:
         if preferred in used:
             raise ValueError(f"port {preferred} is already assigned in Cailville")
@@ -173,27 +190,120 @@ def _brandize(value: str) -> str:
     return re.sub(r"[_-]+", " ", value).strip().title()
 
 
+def _llm_agents(tools: Iterable[Any]) -> List[Dict[str, Any]]:
+    """
+    Return the LLM agent entries of a network's tools list.
+
+    :param tools: The network's tool entries.
+    :return: Entries with instructions and neither a class nor a toolbox, in order.
+    """
+    agents: List[Dict[str, Any]] = []
+    tool: Any
+    # Keep only LLM agent entries; coded tools and toolbox entries are skipped.
+    for tool in tools:
+        if isinstance(tool, dict) and "instructions" in tool and "class" not in tool and "toolbox" not in tool:
+            agents.append(tool)
+    return agents
+
+
+def _sites_by_id(sites: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    Index community sites by ID; a later duplicate ID replaces an earlier one.
+
+    :param sites: The community site entries.
+    :return: Map of site ID to site entry.
+    :raises KeyError: If a site has no "id".
+    """
+    by_id: Dict[str, Dict[str, Any]] = {}
+    site: Dict[str, Any]
+    # Index each site by its ID.
+    for site in sites:
+        by_id[site["id"]] = site
+    return by_id
+
+
+def _find_site(sites: Iterable[Dict[str, Any]], site_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Return the first site with the given ID, stopping at the first match.
+
+    :param sites: The community site entries.
+    :param site_id: The site ID to look for.
+    :return: The matching site, or None when no site has the ID.
+    """
+    site: Dict[str, Any]
+    # Stop at the first site with the requested ID.
+    for site in sites:
+        if site["id"] == site_id:
+            return site
+    return None
+
+
+def _relationship_targets(community: Dict[str, Any], sites: Dict[str, Dict[str, Any]]) -> Dict[str, List[str]]:
+    """
+    Group the community relationships between known sites by their source site.
+
+    :param community: The community document.
+    :param sites: Map of site ID to site entry.
+    :return: Map of every site ID to the IDs of the sites it calls.
+    """
+    targets: Dict[str, List[str]] = {}
+    site_id: str
+    # Start an empty target list for every site.
+    for site_id in sites:
+        targets[site_id] = []
+    source: str
+    target: str
+    # Record each relationship whose endpoints are both known sites.
+    for source, target in community.get("relationships", []):
+        if source in sites and target in sites:
+            targets[source].append(target)
+    return targets
+
+
+def _outbound_targets(community: Dict[str, Any], network: str, sites: Dict[str, Dict[str, Any]]) -> List[str]:
+    """
+    Return the known targets of a network's outbound community relationships.
+
+    :param community: The community document.
+    :param network: The network ID.
+    :param sites: Map of site ID to site entry.
+    :return: Target site IDs in relationship order.
+    """
+    targets: List[str] = []
+    source: str
+    target: str
+    # Keep known targets of this network's outbound relationships.
+    for source, target in community.get("relationships", []):
+        if source == network and target in sites:
+            targets.append(target)
+    return targets
+
+
 def _identity(config: Dict[str, Any], network: str) -> Dict[str, Any]:
-    agents: List[Dict[str, Any]] = [
-        item for item in (config.get("tools", []) or [])
-        if isinstance(item, dict) and "instructions" in item
-        and "class" not in item and "toolbox" not in item
-    ]
+    agents: List[Dict[str, Any]] = _llm_agents(config.get("tools", []) or [])
     front: Dict[str, Any] = agents[0] if agents else {}
     meta: Dict[str, Any] = config.get("metadata", {}) or {}
     description: Any = ((front.get("function") or {}).get("description")
                         or meta.get("description") or front.get("instructions") or network)
+    cleaned_description: str = _clean(description, 900)
+    sample_queries: List[str] = []
+    query: Any
+    # Clean the first four sample queries.
+    for query in (meta.get("sample_queries") or [])[:4]:
+        sample_queries.append(_clean(query, 240))
+    agent_roles: List[Dict[str, Any]] = []
+    agent: Dict[str, Any]
+    # Summarize the name and role of the first twelve agents.
+    for agent in agents[:12]:
+        agent_roles.append({
+            "name": agent.get("name", ""),
+            "role": _clean((agent.get("function") or {}).get("description") or agent.get("instructions"), 180),
+        })
     return {
         "network": network,
-        "description": _clean(description, 900),
-        "sample_queries": [_clean(item, 240) for item in (meta.get("sample_queries") or [])[:4]],
-        "agents": [
-            {
-                "name": item.get("name", ""),
-                "role": _clean((item.get("function") or {}).get("description") or item.get("instructions"), 180),
-            }
-            for item in agents[:12]
-        ],
+        "description": cleaned_description,
+        "sample_queries": sample_queries,
+        "agents": agent_roles,
     }
 
 
@@ -202,7 +312,82 @@ def _tokens(value: str) -> set[str]:
         "about", "agent", "and", "assistant", "cailville", "for", "from", "into",
         "local", "network", "of", "or", "site", "the", "their", "this", "to", "with",
     }
-    return {word for word in re.findall(r"[a-z0-9]+", value.lower()) if len(word) > 2 and word not in stop}
+    tokens: Set[str] = set()
+    word: str
+    # Keep words longer than two characters that are not stop words.
+    for word in re.findall(r"[a-z0-9]+", value.lower()):
+        if len(word) > 2 and word not in stop:
+            tokens.add(word)
+    return tokens
+
+
+def _mentions(text: str, terms: Tuple[str, ...]) -> bool:
+    """
+    Return whether any of the terms occurs in the text, stopping at the first match.
+
+    :param text: Lower-case text to search.
+    :param terms: Candidate substrings.
+    :return: True if at least one term occurs in the text.
+    """
+    term: str
+    # Stop at the first term found in the text.
+    for term in terms:
+        if term in text:
+            return True
+    return False
+
+
+def _profile_text(identity: Dict[str, Any]) -> str:
+    """
+    Join the identity's network, description, agents and sample queries into lower-case text.
+
+    :param identity: Network identity from _identity().
+    :return: The combined lower-case text.
+    """
+    parts: List[str] = [identity["network"], identity["description"]]
+    agent_parts: List[str] = []
+    item: Dict[str, Any]
+    # Combine each agent's name and role.
+    for item in identity["agents"]:
+        agent_parts.append(item.get("name", "") + " " + item.get("role", ""))
+    parts.append(" ".join(agent_parts))
+    parts.append(" ".join(identity["sample_queries"]))
+    return " ".join(parts).lower()
+
+
+def _rank_connections(scored: List[tuple[int, str, Dict[str, Any]]]) -> Tuple[List[str], List[str]]:
+    """
+    Pick outbound and inbound connections from peers sorted by descending score.
+
+    :param scored: Sorted (score, peer ID, peer) entries.
+    :return: The outbound peer IDs and the inbound peer IDs.
+    """
+    useful: List[str] = []
+    entry_score: int
+    entry_id: str
+    entry_peer: Dict[str, Any]
+    # Keep peers with a positive score.
+    for entry_score, entry_id, entry_peer in scored:
+        if entry_score > 0:
+            useful.append(entry_id)
+    useful = useful[:4]
+    if len(useful) < 2:
+        # Pad with the remaining peers in ranked order; membership sees peers appended so far.
+        for entry_score, entry_id, entry_peer in scored:
+            if entry_id not in useful:
+                useful.append(entry_id)
+        useful = useful[:3]
+    peer_by_id: Dict[str, Dict[str, Any]] = {}
+    # Index the peers by ID.
+    for entry_score, entry_id, entry_peer in scored:
+        peer_by_id[entry_peer["id"]] = entry_peer
+    inbound: List[str] = []
+    useful_id: str
+    # Keep outbound peers that are brokers or civic sites.
+    for useful_id in useful:
+        if peer_by_id[useful_id].get("type") in {"broker", "civic"}:
+            inbound.append(useful_id)
+    return useful, inbound[:3]
 
 
 # pylint: disable-next=too-many-branches  # flat keyword rule table
@@ -214,29 +399,25 @@ def heuristic_profile(identity: Dict[str, Any], peers: Iterable[Dict[str, Any]])
     :param peers: Existing community sites.
     :return: Profile with name, description, kind, type, icon, connect_to and connect_from.
     """
-    text: str = " ".join([
-        identity["network"], identity["description"],
-        " ".join(item.get("name", "") + " " + item.get("role", "") for item in identity["agents"]),
-        " ".join(identity["sample_queries"]),
-    ]).lower()
+    text: str = _profile_text(identity)
     words: Set[str] = _tokens(text)
 
     site_type: str
     icon: str
     kind: str
-    if any(term in text for term in ("family", "household", "personal presence", "individual")):
+    if _mentions(text, ("family", "household", "personal presence", "individual")):
         site_type, icon, kind = "citizen", "house", "Citizen site"
-    elif any(term in text for term in ("government", "municipal", "public agency", "permit", "civic")):
+    elif _mentions(text, ("government", "municipal", "public agency", "permit", "civic")):
         site_type, icon, kind = "civic", "landmark", "Civic service"
-    elif any(term in text for term in ("marketplace", "exchange", "broker", "directory", "concierge")):
+    elif _mentions(text, ("marketplace", "exchange", "broker", "directory", "concierge")):
         site_type, icon, kind = "broker", "handshake", "Community broker"
-    elif any(term in text for term in ("bank", "banking", "credit union", "finance", "loan")):
+    elif _mentions(text, ("bank", "banking", "credit union", "finance", "loan")):
         site_type, icon, kind = "business", "landmark", "Community banking"
-    elif any(term in text for term in ("restaurant", "catering", "food", "dining")):
+    elif _mentions(text, ("restaurant", "catering", "food", "dining")):
         site_type, icon, kind = "business", "utensils", "Food & dining"
-    elif any(term in text for term in ("hotel", "lodging", "inn", "hospitality")):
+    elif _mentions(text, ("hotel", "lodging", "inn", "hospitality")):
         site_type, icon, kind = "business", "hotel", "Hospitality"
-    elif any(term in text for term in ("transport", "delivery", "shuttle", "vehicle")):
+    elif _mentions(text, ("transport", "delivery", "shuttle", "vehicle")):
         site_type, icon, kind = "business", "bus", "Transportation"
     else:
         site_type, icon, kind = "business", "building-2", "Local organization"
@@ -250,31 +431,25 @@ def heuristic_profile(identity: Dict[str, Any], peers: Iterable[Dict[str, Any]])
         peer_id: str = peer["id"]
         if peer_id == "main_street_exchange" and site_type in {"business", "broker"}:
             score += 10
-        if peer_id == "neighbor_exchange" and any(
-                term in text for term in ("community", "family", "household", "bank", "resident", "citizen")):
+        if peer_id == "neighbor_exchange" and _mentions(
+                text, ("community", "family", "household", "bank", "resident", "citizen")):
             score += 9
         if peer_id == "harbor_town_hall":
             score += 5
-        if peer_id == "harbor_guide" and any(
-                term in text for term in ("visitor", "travel", "event", "hotel", "restaurant", "tour")):
+        if peer_id == "harbor_guide" and _mentions(
+                text, ("visitor", "travel", "event", "hotel", "restaurant", "tour")):
             score += 9
-        if peer_id == "fix_and_found" and any(
-                term in text for term in ("repair", "reuse", "equipment", "maintenance")):
+        if peer_id == "fix_and_found" and _mentions(
+                text, ("repair", "reuse", "equipment", "maintenance")):
             score += 8
-        if peer_id == "harbor_wheels_cooperative" and any(
-                term in text for term in ("transport", "delivery", "event", "travel")):
+        if peer_id == "harbor_wheels_cooperative" and _mentions(
+                text, ("transport", "delivery", "event", "travel")):
             score += 7
         scored.append((score, peer_id, peer))
     scored.sort(key=lambda item: (-item[0], item[1]))
-    useful: List[str] = [peer_id for score, peer_id, _ in scored if score > 0][:4]
-    if len(useful) < 2:
-        useful.extend(peer_id for _, peer_id, _ in scored if peer_id not in useful)
-        useful = useful[:3]
-    peer_by_id: Dict[str, Dict[str, Any]] = {peer["id"]: peer for _, _, peer in scored}
-    inbound: List[str] = [
-        peer_id for peer_id in useful
-        if peer_by_id[peer_id].get("type") in {"broker", "civic"}
-    ][:3]
+    useful: List[str]
+    inbound: List[str]
+    useful, inbound = _rank_connections(scored)
     return {
         "name": _brandize(identity["network"]),
         "description": _clean(identity["description"], 160),
@@ -301,10 +476,16 @@ def _extract_json(text: str) -> Dict[str, Any]:
 
 def _model_profile(identity: Dict[str, Any], peers: List[Dict[str, Any]], *,
                    model: str, api_key: str, upstream: str) -> Dict[str, Any]:
-    peer_facts: List[Dict[str, Any]] = [
-        {key: peer.get(key) for key in ("id", "name", "description", "kind", "type")}
-        for peer in peers
-    ]
+    peer_facts: List[Dict[str, Any]] = []
+    peer: Dict[str, Any]
+    # Summarize each peer with only the fields the model needs.
+    for peer in peers:
+        facts: Dict[str, Any] = {}
+        key: str
+        # Copy each selected field from the peer.
+        for key in ("id", "name", "description", "kind", "type"):
+            facts[key] = peer.get(key)
+        peer_facts.append(facts)
     system: str = (
         "You place a newly deployed public agent-network site into the fictional coastal town Cailville. "
         "Return only JSON. Choose real collaboration edges that are useful for the new organization; do not connect "
@@ -364,14 +545,29 @@ def infer_profile(identity: Dict[str, Any], peers: List[Dict[str, Any]], *, mode
     else:
         print("   Cailville connections: using local inference" + (" (no API key)" if use_model else ""))
 
-    peer_ids: Set[str] = {peer["id"] for peer in peers}
+    peer_ids: Set[str] = set()
+    peer: Dict[str, Any]
+    # Collect the ID of every existing peer.
+    for peer in peers:
+        peer_ids.add(peer["id"])
     site_type: Any = proposed.get("type") if proposed.get("type") in SITE_TYPES else fallback["type"]
     icon: Any = proposed.get("icon") if proposed.get("icon") in ICONS else fallback["icon"]
     proposed_to: Any = proposed.get("connect_to", [])
     proposed_from: Any = proposed.get("connect_from", [])
-    connect_to: List[str] = [item for item in proposed_to if item in peer_ids] if isinstance(proposed_to, list) else []
-    connect_from: List[str]
-    connect_from = [item for item in proposed_from if item in peer_ids] if isinstance(proposed_from, list) else []
+    connect_to: List[str] = []
+    if isinstance(proposed_to, list):
+        to_id: Any
+        # Keep proposed outbound IDs that name an existing peer.
+        for to_id in proposed_to:
+            if to_id in peer_ids:
+                connect_to.append(to_id)
+    connect_from: List[str] = []
+    if isinstance(proposed_from, list):
+        from_id: Any
+        # Keep proposed inbound IDs that name an existing peer.
+        for from_id in proposed_from:
+            if from_id in peer_ids:
+                connect_from.append(from_id)
     if not connect_to:
         connect_to = fallback["connect_to"]
     if not model_succeeded or "connect_from" not in proposed:
@@ -394,30 +590,57 @@ def choose_position(sites: List[Dict[str, Any]]) -> Dict[str, Any]:
     :param sites: Existing community sites.
     :return: Position with x, y, mx and my_px keys.
     """
-    occupied: List[Dict[str, Any]] = [site.get("position", {}) for site in sites]
-    candidates: List[Tuple[int, int]] = [
-        (x, y) for y in (13, 24, 35, 46, 57, 68, 79, 88)
-        for x in (13, 22, 31, 40, 49, 58, 67, 76, 85, 91)
-        if not (y < 22 and 35 < x < 69)
-    ]
+    occupied: List[Dict[str, Any]] = []
+    site: Dict[str, Any]
+    # Collect the position of every existing site.
+    for site in sites:
+        occupied.append(site.get("position", {}))
+    candidates: List[Tuple[int, int]] = []
+    grid_y: int
+    # Walk the grid rows, then the columns, skipping the title area.
+    for grid_y in (13, 24, 35, 46, 57, 68, 79, 88):
+        grid_x: int
+        # Add each column in this row that is outside the title area.
+        for grid_x in (13, 22, 31, 40, 49, 58, 67, 76, 85, 91):
+            if not (grid_y < 22 and 35 < grid_x < 69):
+                candidates.append((grid_x, grid_y))
 
     def clearance(point: tuple[int, int]) -> float:
         if not occupied:
             return 999.0
-        return min(math.hypot(point[0] - float(pos.get("x", 50)),
-                              (point[1] - float(pos.get("y", 50))) * 1.35)
-                   for pos in occupied)
+        nearest: Optional[float] = None
+        pos: Dict[str, Any]
+        # Track the smallest weighted distance; replace only on strictly smaller, as min() does.
+        for pos in occupied:
+            distance: float = math.hypot(point[0] - float(pos.get("x", 50)),
+                                         (point[1] - float(pos.get("y", 50))) * 1.35)
+            if nearest is None or distance < nearest:
+                nearest = distance
+        return nearest
 
     x: int
     y: int
     x, y = max(candidates, key=lambda point: (clearance(point), -point[1], -point[0]))
-    addition_index: int = sum(1 for site in sites if not site.get("base", False))
+    addition_index: int = 0
+    counted_site: Dict[str, Any]
+    # Count the sites that are additions to the base map.
+    for counted_site in sites:
+        if not counted_site.get("base", False):
+            addition_index += 1
+    highest_my_px: Any = 0
+    found_my_px: bool = False
+    occupied_pos: Dict[str, Any]
+    # Track the largest my_px; replace only on strictly larger, as max() does.
+    for occupied_pos in occupied:
+        my_px: Any = occupied_pos.get("my_px", 0)
+        if not found_my_px or my_px > highest_my_px:
+            highest_my_px = my_px
+            found_my_px = True
     return {
         "x": x,
         "y": y,
         "mx": 25 if addition_index % 2 == 0 else 73,
-        "my_px": max(1390 + addition_index * 110,
-                     max((pos.get("my_px", 0) for pos in occupied), default=0) + 110),
+        "my_px": max(1390 + addition_index * 110, highest_my_px + 110),
     }
 
 
@@ -438,14 +661,9 @@ def augment_config(config: Dict[str, Any], network: str,
     :return: A copy of the config with the links added.
     """
     result: Dict[str, Any] = copy.deepcopy(config)
-    sites: Dict[str, Dict[str, Any]] = {site["id"]: site for site in community.get("sites", [])}
-    targets: List[str] = [target for source, target in community.get("relationships", [])
-                          if source == network and target in sites]
-    agents: List[Dict[str, Any]] = [
-        item for item in (result.get("tools", []) or [])
-        if isinstance(item, dict) and "instructions" in item
-        and "class" not in item and "toolbox" not in item
-    ]
+    sites: Dict[str, Dict[str, Any]] = _sites_by_id(community.get("sites", []))
+    targets: List[str] = _outbound_targets(community, network, sites)
+    agents: List[Dict[str, Any]] = _llm_agents(result.get("tools", []) or [])
     if not agents or not targets:
         return result
     front: Dict[str, Any] = agents[0]
@@ -461,6 +679,45 @@ def augment_config(config: Dict[str, Any], network: str,
     front["tools"] = tools
     result["links"] = links
     return result
+
+
+def _merged_relationships(community: Dict[str, Any], network: str,
+                          profile: Dict[str, Any]) -> List[List[str]]:
+    """
+    Replace a network's community relationships with its profile's connections, sorted by site order.
+
+    :param community: The community document, with the network's site already in place.
+    :param network: The network ID.
+    :param profile: Profile with connect_to and connect_from lists.
+    :return: The relationship pairs sorted by the positions of their endpoints.
+    """
+    edges: Set[Tuple[str, str]] = set()
+    source: str
+    target: str
+    # Keep the relationships that do not involve this network.
+    for source, target in community.get("relationships", []):
+        if network not in (source, target):
+            edges.add((source, target))
+    to_id: str
+    # Add the network's outbound connections.
+    for to_id in profile["connect_to"]:
+        edges.add((network, to_id))
+    from_id: str
+    # Add the network's inbound connections.
+    for from_id in profile["connect_from"]:
+        edges.add((from_id, network))
+    order: Dict[str, int] = {}
+    index: int
+    item: Dict[str, Any]
+    # Record the position of each site.
+    for index, item in enumerate(community["sites"]):
+        order[item["id"]] = index
+    relationships: List[List[str]] = []
+    sorted_edge: Tuple[str, str]
+    # Convert each edge, in site order, to a list pair.
+    for sorted_edge in sorted(edges, key=lambda edge: (order.get(edge[0], 999), order.get(edge[1], 999))):
+        relationships.append(list(sorted_edge))
+    return relationships
 
 
 # pylint: disable-next=too-many-arguments,too-many-locals  # keyword-only CLI settings
@@ -493,8 +750,13 @@ def plan_addition(config: Dict[str, Any], hocon_path: Path, *, port: Optional[in
     source_path: Path = cailville_dir / "community.base.json" if base_map else CailvilleMap.active_path(cailville_dir)
     community: Dict[str, Any] = copy.deepcopy(load_community(source_path))
     network: str = hocon_path.stem
-    existing: Optional[Dict[str, Any]] = next((site for site in community["sites"] if site["id"] == network), None)
-    peers: List[Dict[str, Any]] = [site for site in community["sites"] if site["id"] != network]
+    existing: Optional[Dict[str, Any]] = _find_site(community["sites"], network)
+    peers: List[Dict[str, Any]] = []
+    peer_site: Dict[str, Any]
+    # Keep every other site as a peer.
+    for peer_site in community["sites"]:
+        if peer_site["id"] != network:
+            peers.append(peer_site)
     identity: Dict[str, Any] = _identity(config, network)
     profile: Dict[str, Any] = infer_profile(identity, peers, model=model, api_key=api_key,
                                             upstream=upstream, use_model=use_model)
@@ -523,16 +785,7 @@ def plan_addition(config: Dict[str, Any], hocon_path: Path, *, port: Optional[in
         site.update({"repo": repo, "ref": ref})
 
     community["sites"] = peers + [site]
-    edges: Set[Tuple[str, str]] = {
-        (source, target) for source, target in community.get("relationships", [])
-        if network not in (source, target)
-    }
-    edges.update((network, target) for target in profile["connect_to"])
-    edges.update((source, network) for source in profile["connect_from"])
-    order: Dict[str, int] = {item["id"]: index for index, item in enumerate(community["sites"])}
-    community["relationships"] = [
-        list(edge) for edge in sorted(edges, key=lambda edge: (order.get(edge[0], 999), order.get(edge[1], 999)))
-    ]
+    community["relationships"] = _merged_relationships(community, network, profile)
     augmented: Dict[str, Any] = augment_config(config, network, community)
     return CommunityDraft(community, augmented, site, profile["connect_to"],
                           profile["connect_from"], cailville_dir)
@@ -544,9 +797,11 @@ def _map_payload(community: Dict[str, Any], *, base_domain: Optional[str] = None
     sites: List[Dict[str, Any]] = []
     item: Dict[str, Any]
     for item in community.get("sites", []):
-        site: Dict[str, Any] = {key: item[key] for key in (
-            "id", "name", "description", "kind", "type", "icon", "port", "position", "base"
-        )}
+        site: Dict[str, Any] = {}
+        key: str
+        # Copy each map field; a missing field raises KeyError.
+        for key in ("id", "name", "description", "kind", "type", "icon", "port", "position", "base"):
+            site[key] = item[key]
         site["url"] = site_origin(item, base_domain=base_domain,
                                   public_scheme=public_scheme, public_port=public_port)
         sites.append(site)
@@ -622,6 +877,31 @@ def _member_path(cailville_dir: Path, value: str) -> Path:
     return path.resolve() if path.is_absolute() else (cailville_dir / path).resolve()
 
 
+def _derived_sites(community: Dict[str, Any], sites: Dict[str, Dict[str, Any]]) -> Set[str]:
+    """
+    Return the added sites plus every site that calls an added site.
+
+    :param community: The community document.
+    :param sites: Map of site ID to site entry.
+    :return: IDs of the sites whose configs need link augmentation.
+    """
+    added: Set[str] = set()
+    site_id: str
+    site: Dict[str, Any]
+    # Collect the sites that are not part of the base map.
+    for site_id, site in sites.items():
+        if not site.get("base", False):
+            added.add(site_id)
+    derived: Set[str] = set(added)
+    source: str
+    target: str
+    # Add every site that calls an added site.
+    for source, target in community.get("relationships", []):
+        if target in added:
+            derived.add(source)
+    return derived
+
+
 # pylint: disable-next=too-many-locals
 def prepare_runtime_sources(cailville_dir: Path, project_dir: Path, *,
                             base_domain: Optional[str] = None,
@@ -638,10 +918,8 @@ def prepare_runtime_sources(cailville_dir: Path, project_dir: Path, *,
     :return: Map of site ID to its written config path.
     """
     community: Dict[str, Any] = load_community(CailvilleMap.active_path(cailville_dir))
-    sites: Dict[str, Dict[str, Any]] = {site["id"]: site for site in community["sites"]}
-    added: Set[str] = {site_id for site_id, site in sites.items() if not site.get("base", False)}
-    derived: Set[str] = set(added)
-    derived.update(source for source, target in community.get("relationships", []) if target in added)
+    sites: Dict[str, Dict[str, Any]] = _sites_by_id(community["sites"])
+    derived: Set[str] = _derived_sites(community, sites)
     output_dir: Path = project_dir / ".nsdeploy" / "cailville" / "community-sources"
     output_dir.mkdir(parents=True, exist_ok=True)
     result: Dict[str, Path] = {}
@@ -701,7 +979,11 @@ def write_active_private_manifest(cailville_dir: Path, project_dir: Path) -> Pat
     :raises ValueError: If the community map is malformed.
     """
     community: Dict[str, Any] = load_community(CailvilleMap.active_path(cailville_dir))
-    active: List[str] = [site["id"] for site in community["sites"]]
+    active: List[str] = []
+    site: Dict[str, Any]
+    # Collect the ID of every active site.
+    for site in community["sites"]:
+        active.append(site["id"])
     return write_private_steward_manifest(
         project_dir / ".nsdeploy" / "cailville", active_networks=active
     )
@@ -712,25 +994,22 @@ def write_runtime_link_files(cailville_dir: Path, project_dir: Path, *,
                              public_port: Optional[int] = None) -> Dict[str, Path]:
     """Write subdomain-aware sidecars without changing checked-in port sidecars."""
     community: Dict[str, Any] = load_community(CailvilleMap.active_path(cailville_dir))
-    sites: Dict[str, Dict[str, Any]] = {site["id"]: site for site in community["sites"]}
-    targets: Dict[str, List[str]] = {site_id: [] for site_id in sites}
+    sites: Dict[str, Dict[str, Any]] = _sites_by_id(community["sites"])
+    targets: Dict[str, List[str]] = _relationship_targets(community, sites)
     source: str
-    target: str
-    for source, target in community.get("relationships", []):
-        if source in sites and target in sites:
-            targets[source].append(target)
     output_dir: Path = project_dir / ".nsdeploy" / "cailville" / "community-links"
     result: Dict[str, Path] = {}
     linked: List[str]
     for source, linked in targets.items():
-        links: Dict[str, str] = {
-            target: (
-                site_origin(sites[target], base_domain=base_domain,
+        links: Dict[str, str] = {}
+        linked_id: str
+        # Map each linked site ID to its public URL.
+        for linked_id in linked:
+            links[linked_id] = (
+                site_origin(sites[linked_id], base_domain=base_domain,
                             public_scheme=public_scheme, public_port=public_port)
-                + f"/{target}"
+                + f"/{linked_id}"
             )
-            for target in linked
-        }
         path: Path = output_dir / f"{source}.links.json"
         write_link_file(path, source, links)
         result[source] = path
@@ -769,7 +1048,11 @@ def emit_launch_rows(cailville_dir: Path, project_dir: Path, *,
         if base_domain else {}
     )
     if base_domain:
-        slugs: List[str] = [network_slug(site["id"]) for site in community["sites"]]
+        slugs: List[str] = []
+        slug_site: Dict[str, Any]
+        # Derive the subdomain slug of every site.
+        for slug_site in community["sites"]:
+            slugs.append(network_slug(slug_site["id"]))
         if len(slugs) != len(set(slugs)):
             raise ValueError("Cailville network names produce duplicate subdomains")
     # Regenerate for both modes so returning to the default port launcher restores
@@ -838,7 +1121,7 @@ def run_cailville_command(argv: Optional[List[str]] = None) -> int:
                               else CailvilleMap.active_path(cailville_dir))
         community: Dict[str, Any] = load_community(current_path)
         existing: Optional[Dict[str, Any]]
-        existing = next((site for site in community["sites"] if site["id"] == hocon.stem), None)
+        existing = _find_site(community["sites"], hocon.stem)
         port: int
         port = args.port if args.port is not None else (int(existing["port"]) if existing else allocate_port(community))
     except ValueError as exc:
