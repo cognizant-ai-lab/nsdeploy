@@ -1,5 +1,5 @@
 // generated-bridge.js: the only path to the neuro-san code bundled from
-// @cognizant-ai-lab/neuro-san-ts-package (the real neuro-san sources transpiled to
+// @cognizant-ai-lab/neuro-san (the real neuro-san sources transpiled to
 // TypeScript) by runtime-build/ (vite build), entered at generated/browser/neuro-san.mjs:
 //   network  config filter chain, AgentNetwork, validators,
 //            external/MCP reference parsing

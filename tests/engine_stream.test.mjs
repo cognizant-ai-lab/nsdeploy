@@ -560,7 +560,7 @@ test("past the query's deadline, a call to another agent is skipped, as on main"
     engine = new Engine({ originUrl: SITE });
     const events = await collect(engine.streamTurn("Hi"));
     assert.deepEqual(routed, ["front", "front"]);
-    assert.match(events.at(-1).result.text, /Skipped helper: the 90-second query deadline was reached/);
+    assert.match(events.at(-1).result.text, /Skipped helper: the 180-second query deadline was reached/);
   });
 });
 

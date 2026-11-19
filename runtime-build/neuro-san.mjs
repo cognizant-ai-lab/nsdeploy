@@ -1,4 +1,4 @@
-// neuro-san.mjs: the entry of the browser build of @cognizant-ai-lab/neuro-san-ts-package
+// neuro-san.mjs: the entry of the browser build of @cognizant-ai-lab/neuro-san
 // (vite.config.mjs), output as nsdeploy/runtime/ts-package/generated/browser/neuro-san.mjs.
 //   network  neuro-san-network.mjs: config filter chain, AgentNetwork, validators,
 //            external/MCP reference parsing

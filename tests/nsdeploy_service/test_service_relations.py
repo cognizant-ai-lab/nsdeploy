@@ -465,7 +465,7 @@ class RelationsEndpointTest(unittest.TestCase):
                 "work_dir": str(work_dir),
             })
             # This case is about relations, not the publish gate (which
-            # tests/test_service_publish.py covers).
+            # tests/nsdeploy_service/test_service_publish.py covers).
             supervisor.store.set_published(deployment_id, "2026-09-23T18:00:00+00:00")
 
     def _get(self, path: str) -> Dict[str, Any]:

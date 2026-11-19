@@ -1,4 +1,4 @@
-// neuro-san-network.mjs: neuro-san's agent network code for the browser, taken from @cognizant-ai-lab/neuro-san-ts-package.
+// neuro-san-network.mjs: neuro-san's agent network code for the browser, taken from @cognizant-ai-lab/neuro-san.
 //
 // The npm package is the real neuro-san Python sources transpiled to TypeScript, so
 // the neuro-san logic the runtime needs comes from there rather than being written
@@ -21,7 +21,7 @@ import {
   UnreachableNodesNetworkValidator,
   UrlNetworkValidator,
   ChatMessageType as PackageChatMessageType,
-} from "@cognizant-ai-lab/neuro-san-ts-package";
+} from "@cognizant-ai-lab/neuro-san";
 import { ExternalAgentParsing } from "./external-agent-parsing.mjs";
 
 // --- config filter chain -----------------------------------------------------

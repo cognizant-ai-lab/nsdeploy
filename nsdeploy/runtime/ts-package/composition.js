@@ -79,7 +79,7 @@ export function consumeRemoteBudget(composition, targetKey, now = Date.now()) {
 
 export function consumeAgentBudget(composition, now = Date.now()) {
   if (!composition) return null;
-  if (now >= composition.deadline) return "the 90-second query deadline was reached";
+  if (now >= composition.deadline) return `the ${composition.deadlineSeconds || 90}-second query deadline was reached`;
   if (composition.agentCalls >= composition.maxAgentCalls) {
     return `the per-query limit of ${composition.maxAgentCalls} agent invocations was reached`;
   }
