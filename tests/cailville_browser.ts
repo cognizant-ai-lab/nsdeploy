@@ -122,7 +122,7 @@ interface Result {
 
 const ROOT: string = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUNTIME_BUILD: string = path.join(ROOT, "runtime-build");
-const PACKAGE = "@cognizant-ai-lab/neuro-san-ts-package";
+const PACKAGE = "@cognizant-ai-lab/neuro-san";
 const OUT_DIR: string = path.join(ROOT, ".nsdeploy", "cailville-browser-test");
 const MAP_FILE: string = path.join(ROOT, "cailville", "cailville.html");
 const REAL_LLM = Boolean(process.env.TEST_REAL_LLM);
@@ -158,7 +158,7 @@ function buildRuntime(): string {
     }
   };
   if (!installed().ok) {
-    console.log(`Installing ${PACKAGE} with npm ci. GitHub Packages needs NODE_AUTH_TOKEN.`);
+    console.log(`Installing ${PACKAGE} with npm ci.`);
     execFileSync("npm", ["ci"], { cwd: RUNTIME_BUILD, stdio: "inherit" });
   }
   execFileSync("npm", ["run", "build"], { cwd: RUNTIME_BUILD, stdio: "ignore" });

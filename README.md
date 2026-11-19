@@ -324,7 +324,7 @@ before every agent has run.
 It first builds the runtime from the TS package version `runtime-build/package.json`
 pins, and runs `npm ci` there if `npm ls` says what's installed doesn't match. To test
 a new package release, run
-`npm install @cognizant-ai-lab/neuro-san-ts-package@<version>` in `runtime-build/`,
+`npm install @cognizant-ai-lab/neuro-san@<version>` in `runtime-build/`,
 which updates `package.json` and the lock, then run the test.
 
 ```bash
