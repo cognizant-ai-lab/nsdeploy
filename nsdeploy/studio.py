@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -31,7 +32,8 @@ class Studio:
 
     # The directory, beside the mirrors, that holds one repository cache per mirror
     # under the mirror's own name. No default mirror name can equal it: those carry an
-    # `@` or a `local_` prefix.
+    # `@` or a `local_` prefix, and each is one path component, so the namespace is
+    # never inside a mirror.
     UPSTREAM_DIR: str = ".upstream"
 
     @staticmethod
@@ -59,8 +61,7 @@ class Studio:
         :param cache_dir: The mirror directory; defaults to one per repository and ref under `~/.cache/nsdeploy`.
         :return: The workspace over the repository.
         """
-        safe: str = repo.replace("/", "_")
-        default_cache: Path = Path.home() / ".cache" / "nsdeploy" / f"{safe}@{ref}"
+        default_cache: Path = Path.home() / ".cache" / "nsdeploy" / Studio._mirror_name(repo, ref)
         mirror: Path = (Path(cache_dir) if cache_dir else default_cache).resolve()
         # The repository cache sits beside the mirror, never inside it. The mirror is
         # the include base, so anything under it can be named by a network's include,
@@ -79,6 +80,25 @@ class Studio:
         # source has always read the public repository anonymously.
         kept: Path = mirror.parent / Studio.UPSTREAM_DIR / mirror.name
         return Studio._workspace(CachedContent(GithubContent(repo, ref), kept), mirror)
+
+    @staticmethod
+    def _mirror_name(repo: str, ref: str) -> str:
+        """
+        Name the default mirror of a repository at a ref, as one path component.
+
+        A ref may contain `/`, and a name built from it as-is would put the mirror of
+        `release/feature` inside the mirror of `release`, where that ref's includes
+        could reach it. Every character outside a safe set becomes `_`, and a digest
+        of the exact repository and ref keeps refs that now read alike apart.
+
+        :param repo: The GitHub repository, as `owner/name`.
+        :param ref: The branch, tag or commit.
+        :return: The directory name.
+        """
+        exact: str = f"{repo}@{ref}"
+        readable: str = re.sub(r"[^A-Za-z0-9._@-]", "_", exact)
+        digest: str = hashlib.sha256(exact.encode("utf-8")).hexdigest()[:12]
+        return f"{readable}_{digest}"
 
     @staticmethod
     def _workspace(content: ToolboxContent, mirror: Path) -> ToolboxWorkspace:

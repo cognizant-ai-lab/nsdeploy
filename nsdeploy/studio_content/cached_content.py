@@ -149,16 +149,22 @@ class CachedContent(ToolboxContent):
         mean a file added upstream stayed missing for a build that has the cache, and
         the cost of asking again is one request for a path nothing resolves to.
 
-        A file that cannot be written to the cache is still returned. The cache is an
-        optimization, and the source has already answered.
+        A file that cannot be written to the cache is still returned, and a cached file
+        that cannot be read is a miss. The cache is an optimization, never the reason a
+        read fails.
 
         :param path: A path exactly as `list_paths` returned it.
         :return: The file's bytes, or None when the source has no such file.
         :raises OSError: If the file cannot be read.
         """
         target: Path = self._file_path(path)
-        if target.is_file():
+        try:
             return target.read_bytes()
+        except FileNotFoundError:
+            pass
+        except OSError as exception:
+            logger.warning("cannot read the cached %s from %s; asking the source: %s",
+                           path, self._cache, exception)
         raw: Optional[bytes] = self._content.read(path)
         if raw is None:
             return None

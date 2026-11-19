@@ -269,13 +269,31 @@ class TestStudioGithub(unittest.TestCase):
         with self.repository(["registries/aaosa.hocon", CachedContent.LISTING_NAME]):
             main.materialize("registries/aaosa.hocon")
             caches: Path = home / ".cache" / "nsdeploy" / Studio.UPSTREAM_DIR
-            listing: Path = caches / "cognizant-ai-lab_neuro-san-studio@main"
+            listing: Path = caches / main.include_base().name
             before: bytes = (listing / CachedContent.LISTING_NAME).read_bytes()
             other.materialize(CachedContent.LISTING_NAME)
             other.materialize("absent.hocon")
         self.assertEqual((listing / CachedContent.LISTING_NAME).read_bytes(), before)
         self.assertNotEqual(main.include_base(), listing)
         self.assertNotEqual(other.include_base(), listing)
+
+    def test_refs_with_slashes_get_separate_flat_mirrors(self) -> None:
+        """
+        Tests that a ref containing `/` does not put its mirror or cache inside the
+        mirror of a shorter ref, where that ref's includes could reach them, and that
+        refs which read alike once sanitized still get separate mirrors.
+        """
+        home: Path = self.cache.parent / "home"
+        root: Path = (home / ".cache" / "nsdeploy").resolve()
+        bases: List[Path] = []
+        with mock.patch.object(Path, "home", return_value=home):
+            # One workspace per ref, recording where each mirror is.
+            for ref in ["release", "release/feature", "release_feature"]:  # type: str
+                bases.append(Studio.github(self.REPO, ref).include_base())
+        self.assertEqual(len(set(bases)), 3)
+        # Every mirror is directly under the nsdeploy cache root, so none holds another.
+        for base in bases:  # type: Path
+            self.assertEqual(base.parent, root)
 
     def test_an_offline_build_uses_a_mirror_with_no_repository_cache(self) -> None:
         """

@@ -292,6 +292,13 @@ class TestCachedContent(unittest.TestCase):
         (self.cache / CachedContent.FILES_DIR).write_text("not a directory", encoding="utf-8")
         self.assertEqual(self.cached.read("registries/aaosa.hocon"), b"{}")
 
+    def test_a_cached_file_that_cannot_be_read_is_a_miss(self):
+        """An unreadable cache entry must not fail a read the source can answer."""
+        self.cached.read("registries/aaosa.hocon")
+        with mock.patch.object(Path, "read_bytes", side_effect=PermissionError("unreadable")):
+            self.assertEqual(self.second_reader().read("registries/aaosa.hocon"), b"{}")
+        self.assertEqual(self.source.reads, ["registries/aaosa.hocon", "registries/aaosa.hocon"])
+
     def test_a_file_replaced_by_a_directory_upstream_is_still_cached(self):
         """Files are kept indefinitely, so a path that changes shape between revisions
         must not break every later build."""
