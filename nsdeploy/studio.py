@@ -98,7 +98,8 @@ class Studio:
         exact: str = f"{repo}@{ref}"
         readable: str = re.sub(r"[^A-Za-z0-9._@-]", "_", exact)
         digest: str = hashlib.sha256(exact.encode("utf-8")).hexdigest()[:12]
-        return f"{readable}_{digest}"
+        # Keep the ASCII directory component within the common 255-byte filesystem limit.
+        return f"{readable[:255 - len(digest) - 1]}_{digest}"
 
     @staticmethod
     def _workspace(content: ToolboxContent, mirror: Path) -> ToolboxWorkspace:
