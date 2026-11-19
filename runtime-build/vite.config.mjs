@@ -1,4 +1,4 @@
-// vite.config.mjs: builds nsdeploy's adapters over @cognizant-ai-lab/neuro-san-ts-package
+// vite.config.mjs: builds nsdeploy's adapters over @cognizant-ai-lab/neuro-san
 // into nsdeploy/runtime/ts-package/generated/, which is build output and not checked in:
 //   browser/     our code from runtime-build/, unminified: browser/neuro-san.mjs (the
 //                entry the runtime imports) and the network and session adapters
@@ -41,7 +41,7 @@ const minifyPackage = {
 const exposeBaseToolFactory = {
   name: "expose-base-tool-factory",
   transform(code, id) {
-    if (!/neuro-san-ts-package[\\/]dist[\\/]neuro-san\.mjs$/.test(id)) return null;
+    if (!/@cognizant-ai-lab[\\/]neuro-san[\\/]dist[\\/]neuro-san\.mjs$/.test(id)) return null;
     const found = /^class BaseToolFactory \{/m.test(code);
     return `${code}\nexport ${found ? "{ BaseToolFactory as NsdeployBaseToolFactory }" : "const NsdeployBaseToolFactory = null"};\n`;
   },

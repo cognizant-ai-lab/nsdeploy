@@ -56,9 +56,9 @@ export async function boot(rootSelector = "#app", opts = {}) {
     byokKey: opts.byokKey || tabSetup.key,
     routerOverride: opts.router || tabSetup.router,
     modelOverride: opts.model || tabSetup.model,
-    // 24, as on main. The browser test raises it to check every agent a network can
+    // 48, as on main. The browser test raises it to check every agent a network can
     // reach, since nsdeploy's mock LLM calls every tool.
-    maxAgentCalls: opts.maxAgentCalls ?? globalThis.__nsdeployMaxAgentCalls ?? 24,
+    maxAgentCalls: opts.maxAgentCalls ?? globalThis.__nsdeployMaxAgentCalls ?? 48,
   });
   const { manifest } = await engine.loadTop();
   mountApp(root, { engine, trace, manifest });

@@ -3,7 +3,7 @@
 import {
   ExternalAgentParsing,
   AgentSessionConstants,
-} from "@cognizant-ai-lab/neuro-san-ts-package";
+} from "@cognizant-ai-lab/neuro-san";
 
 // WORKAROUND: the package's ExternalAgentParsing.parse_external_agent parses
 // the URLs nsdeploy uses the same as Python, but pythonlib's urlparse, which it

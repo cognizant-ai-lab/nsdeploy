@@ -1,7 +1,7 @@
 # The runtime on the neuro-san TS package
 
 This folder is the page runtime that runs agents on neuro-san's own loop, from
-[`@cognizant-ai-lab/neuro-san-ts-package`](https://github.com/cognizant-ai-lab/neuro-san-ts-package).
+[`@cognizant-ai-lab/neuro-san`](https://github.com/cognizant-ai-lab/neuro-san-ts-package).
 The folder above is the original runtime, unchanged from main. Files here import the
 parts both runtimes share (`../ui.js`, `../trace.js` and so on) from there.
 
@@ -28,7 +28,7 @@ Once the original runtime is no longer needed:
    hides it.
 4. Remove the feature switch (`--use-ts-package` and `USE_TS_PACKAGE`) and point
    `ts-package/generated` back at `generated`. This lists every place, apart from the hits
-   for the package's own name, `neuro-san-ts-package`:
+   for links to the package's repo, `neuro-san-ts-package`:
 
    ```bash
    git grep -n 'ts-package\|ts_package\|TS_PACKAGE' -- ':!*lock*'

@@ -1,7 +1,7 @@
 // engine.js: load a published network from an origin, compile it, and run it on
 // neuro-san's own agent loop.
 //
-// The loop is neuro-san's DirectAgentSession, from @cognizant-ai-lab/neuro-san-ts-package
+// The loop is neuro-san's DirectAgentSession, from @cognizant-ai-lab/neuro-san
 // (the real neuro-san sources transpiled to TypeScript), built into generated/
 // (entered at generated/browser/neuro-san.mjs). This module owns what is nsdeploy's
 // rather than neuro-san's:
@@ -138,7 +138,7 @@ export function assertNetworkModels(network, { mock, modelOverride, routerHost }
 }
 
 export class Engine {
-  constructor({ originUrl, trace, byokKey, routerOverride, maxAgentCalls = 24 } = {}) {
+  constructor({ originUrl, trace, byokKey, routerOverride, maxAgentCalls = 48 } = {}) {
     this.originUrl = (originUrl || (typeof location !== "undefined" ? location.origin : "")).replace(/\/$/, "");
     this.trace = trace || new TraceBus();
     this.byokKey = byokKey || "";
@@ -1159,11 +1159,12 @@ export class Engine {
     this.composition = {
       remoteCalls: 0,
       peerCalls: new Map(),
-      maxRemoteCalls: 4,
-      maxCallsPerPeer: 1,
+      maxRemoteCalls: 12,
+      maxCallsPerPeer: 3,
       agentCalls: 0,
       maxAgentCalls: this.maxAgentCalls,
-      deadline: Date.now() + 90_000,
+      deadlineSeconds: 180,
+      deadline: Date.now() + 180_000,
     };
     // The top front man is the query's first agent run, as on main.
     consumeAgentBudget(this.composition);
