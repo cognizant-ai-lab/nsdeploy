@@ -503,11 +503,12 @@ export class Engine {
         composition: {
           remoteCalls: 0,
           peerCalls: new Map(),
-          maxRemoteCalls: 4,
-          maxCallsPerPeer: 1,
+          maxRemoteCalls: 12,
+          maxCallsPerPeer: 3,
           agentCalls: 0,
-          maxAgentCalls: 24,
-          deadline: Date.now() + 90_000,
+          maxAgentCalls: 48,
+          deadlineSeconds: 180,
+          deadline: Date.now() + 180_000,
         },
       });
       const message = interactionMessage(userText, interaction);
