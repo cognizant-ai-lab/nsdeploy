@@ -26,7 +26,8 @@ class MirrorWorkspace(ToolboxWorkspace):
     Written once over any content source: a checkout, a repository, an archive, a
     dictionary. The source is the only place content comes from, and this class never
     reads a file by any other route — which is what makes "where the toolbox lives" a
-    constructor argument rather than a branch in the build.
+    constructor argument rather than a branch in the build. The one exception is a
+    source that cannot be read at all, when `materialize` serves the mirror's own copy.
 
     The mirror holds a file at the *logical* path a network asked for, not at the
     source's own. That is deliberate: an included file names its siblings the way the
@@ -49,6 +50,7 @@ class MirrorWorkspace(ToolboxWorkspace):
         self._content: ToolboxContent = content
         self._mirror: Path = Path(mirror)
         self._paths: Optional[List[str]] = None
+        self._failure: Optional[OSError] = None
 
     @override
     def identity(self) -> str:
@@ -98,6 +100,7 @@ class MirrorWorkspace(ToolboxWorkspace):
         """
         if force:
             self._paths = None
+            self._failure = None
             # Clearing this object's copy is not enough: the source memoizes its own
             # listing for its lifetime, and would answer the next question from it.
             self._content.refresh()
@@ -171,14 +174,28 @@ class MirrorWorkspace(ToolboxWorkspace):
         A mirror file that already holds the same bytes is not written again, so a
         pre-seeded mirror on a read-only filesystem still serves a build.
 
+        When the source cannot be read at all, a file an earlier build left in the
+        mirror is served as it is. This is the one answer that does not come from the
+        source. An unreachable source cannot say a file was dropped, and failing the
+        build instead would make every offline or rate-limited build fail.
+
         :param logical_path: The path an agent network asks for.
         :return: The local path, or None when the toolbox holds no such file.
-        :raises OSError: If the file cannot be written.
+        :raises OSError: If the source cannot be read and the mirror has no copy, or
+                         if the file cannot be written.
         """
         target: Path = self._mirror / logical_path
         if not self._inside(target):
             return None
-        raw: Optional[bytes] = self._read_bytes(logical_path)
+        raw: Optional[bytes] = None
+        try:
+            raw = self._read_bytes(logical_path)
+        except OSError as exception:
+            if target.is_symlink() or not target.is_file():
+                raise
+            logger.warning("cannot read %s from %s (%s); using the mirrored copy",
+                           logical_path, self._content.identity(), exception)
+            return target
         if raw is None:
             # Only a stale file goes. A directory at this path holds other files' copies.
             if target.is_symlink() or target.is_file():
@@ -215,11 +232,21 @@ class MirrorWorkspace(ToolboxWorkspace):
         """
         The file listing, asked of the source once per workspace.
 
+        A failure is asked once too. A build resolves many paths, and against a source
+        that cannot be reached each further attempt only waits out another timeout
+        before failing the same way. `fetch(force=True)` asks again.
+
         :return: The paths the source holds.
         :raises OSError: If the listing cannot be read.
         """
+        if self._failure is not None:
+            raise OSError(f"cannot list {self._content.identity()}: {self._failure}") from self._failure
         if self._paths is None:
-            self._paths = self._content.list_paths()
+            try:
+                self._paths = self._content.list_paths()
+            except OSError as exception:
+                self._failure = exception
+                raise
         return self._paths
 
     def _read_bytes(self, logical_path: str) -> Optional[bytes]:

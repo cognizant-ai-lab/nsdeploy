@@ -1,8 +1,8 @@
 import functools
 import json
-import os
 import shutil
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Dict
@@ -121,7 +121,19 @@ class TestCachedContent(unittest.TestCase):
         :param operation: The lock operation, unused.
         """
         del fileno, operation
-        os.utime(listing)
+        TestCachedContent.date_listing(listing, time.time())
+
+    @staticmethod
+    def date_listing(listing: Path, written: float) -> None:
+        """
+        Set when a cached listing records it was written, leaving the file's own time.
+
+        :param listing: The cached listing file.
+        :param written: The time to record.
+        """
+        body: Dict = json.loads(listing.read_text(encoding="utf-8"))
+        body["written"] = written
+        listing.write_text(json.dumps(body), encoding="utf-8")
 
     # --- identity ----------------------------------------------------------
     def test_the_identity_is_the_wrapped_sources(self):
@@ -181,11 +193,39 @@ class TestCachedContent(unittest.TestCase):
         """Concurrent builds would otherwise each make the rate-limited listing call."""
         self.cached.list_paths()
         listing: Path = self.cache / CachedContent.LISTING_NAME
-        os.utime(listing, (0, 0))
+        TestCachedContent.date_listing(listing, 0.0)
         meanwhile: functools.partial = functools.partial(TestCachedContent.refreshed_meanwhile, listing)
         with mock.patch.object(cached_content_module.fcntl, "flock", side_effect=meanwhile):
             self.assertIn("registries/aaosa.hocon", self.second_reader().list_paths())
         self.assertEqual(self.source.listings, 1)
+
+    def test_the_age_is_read_from_the_listing_not_the_file(self):
+        """Another process can replace the file between two reads; the age has to
+        belong to the paths it is judged with."""
+        self.cached.list_paths()
+        TestCachedContent.date_listing(self.cache / CachedContent.LISTING_NAME, 0.0)
+        self.second_reader().list_paths()
+        self.assertEqual(self.source.listings, 2)
+
+    def test_a_failed_refresh_lets_later_readers_wait_before_asking_again(self):
+        """Otherwise every build waiting on the lock repeats the failed request, each
+        one waiting out the source's timeout."""
+        self.cached.list_paths()
+        self.source.broken = True
+        self.assertIn("registries/aaosa.hocon", self.second_reader(ttl_seconds=0).list_paths())
+        self.assertIn("registries/aaosa.hocon", self.second_reader(ttl_seconds=0).list_paths())
+        self.assertEqual(self.source.listings, 2)
+
+    def test_a_forced_refresh_does_not_wait_for_a_retry(self):
+        """A refresh is asked for explicitly, so the retry delay does not apply to it."""
+        self.cached.list_paths()
+        self.source.broken = True
+        self.second_reader(ttl_seconds=0).list_paths()
+        self.source.broken = False
+        forced: CachedContent = self.second_reader(ttl_seconds=0)
+        forced.refresh()
+        forced.list_paths()
+        self.assertEqual(self.source.listings, 3)
 
     def test_a_source_that_cannot_be_listed_with_no_cache_still_fails(self):
         """Reporting no files would make a build report every include as missing and

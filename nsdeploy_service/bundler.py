@@ -16,15 +16,14 @@ from typing import Set
 from typing import Tuple
 
 from nsdeploy.generate import generate_site
+from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
 from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.resolve import HostableTool
 from nsdeploy.resolve import build_plan
 from nsdeploy.resolve import resolve_hocon
 from nsdeploy.studio import DEFAULT_REF
 from nsdeploy.studio import DEFAULT_REPO
-from nsdeploy.studio import GithubStudio
-from nsdeploy.studio import LocalStudio
-from nsdeploy.studio import StudioSource
+from nsdeploy.studio import Studio
 from nsdeploy.theme import DEFAULT_THEME_MODEL
 from nsdeploy.theme import ThemeSpec
 from nsdeploy.theme import propose_theme
@@ -247,17 +246,17 @@ class Bundler:
         # name has to reach it as a filename and cannot be passed as an argument.
         hocon_path: Path = work / f"{name}.hocon"
         hocon_path.write_text(text, encoding="utf-8")
-        source: StudioSource = self.studio_source()
+        workspace: ToolboxWorkspace = self.studio_workspace()
         config: Dict[str, Any] = {}
         missing: List[str] = []
         try:
-            config, missing = resolve_hocon(hocon_path, source)
+            config, missing = resolve_hocon(hocon_path, workspace)
         except Exception as exception:
             # pyhocon reports a syntax error with its own grammar exceptions, which
             # are not a type this service can name. A HOCON the caller can fix must
             # answer 400, so the whole class is turned into one here.
             raise BundleError(f"the HOCON could not be resolved: {exception}") from exception
-        plan: DeploymentPlan = build_plan(config, {}, name, missing, source,
+        plan: DeploymentPlan = build_plan(config, {}, name, missing, workspace,
                                           include_python_tools=False)
         if not plan.front_man:
             raise BundleError(
@@ -365,7 +364,7 @@ class Bundler:
             return None
         return spec
 
-    def studio_source(self) -> StudioSource:
+    def studio_workspace(self) -> ToolboxWorkspace:
         """
         Where `include` lines are resolved from.
 
@@ -373,10 +372,10 @@ class Bundler:
         """
         settings: Settings = self.settings
         if settings.studio:
-            return LocalStudio(settings.studio)
+            return Studio.local(settings.studio)
         repo: str = settings.repo or DEFAULT_REPO
         ref: str = settings.ref or DEFAULT_REF
-        return GithubStudio(repo, ref)
+        return Studio.github(repo, ref)
 
     @staticmethod
     def safe_name(raw: Optional[str]) -> str:

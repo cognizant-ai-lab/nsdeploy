@@ -10,6 +10,7 @@ from nsdeploy.generate import build_private_steward_hocon
 from nsdeploy.generate import generate_site
 from nsdeploy.generate import rewrite_config
 from nsdeploy.generate import write_private_steward_manifest
+from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
 from nsdeploy.linker import NetworkDescription
 from nsdeploy.linker import describe_config
 from nsdeploy.linker import load_link_file
@@ -18,7 +19,7 @@ from nsdeploy.resolve import DEMO_MODE_MARKER
 from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.resolve import HostableTool
 from nsdeploy.resolve import build_plan
-from nsdeploy.studio import LocalStudio
+from nsdeploy.studio import Studio
 from nsdeploy.theme import ThemeSpec
 
 
@@ -29,7 +30,7 @@ class LinkerTests(unittest.TestCase):
         self.temp: tempfile.TemporaryDirectory[str] = (
             tempfile.TemporaryDirectory())  # pylint: disable=consider-using-with; closed in tearDown
         self.root: Path = Path(self.temp.name)
-        self.source: LocalStudio = LocalStudio(self.root)
+        self.source: ToolboxWorkspace = Studio.local(self.root)
 
     def tearDown(self) -> None:
         self.temp.cleanup()

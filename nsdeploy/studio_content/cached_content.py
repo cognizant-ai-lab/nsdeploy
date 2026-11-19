@@ -60,6 +60,11 @@ class CachedContent(ToolboxContent):
     # working session without making the listing call — the expensive one — routine.
     DEFAULT_TTL_SECONDS: float = 3600.0
 
+    # How long readers use an expired file list without asking again after the source
+    # could not be reached. Without it, every build waiting on the lock repeats the
+    # failed request, and each one can take the source's full timeout.
+    RETRY_DELAY_SECONDS: float = 300.0
+
     def __init__(self, content: ToolboxContent, cache_dir: Path,
                  ttl_seconds: float = DEFAULT_TTL_SECONDS) -> None:
         """
@@ -214,15 +219,26 @@ class CachedContent(ToolboxContent):
             # build, and every file it names is likely cached too.
             logger.warning("cannot list %s; using the cached file list", self._content.identity(), exc_info=True)
             self._accept(cached)
+            self._write_listing(float(cached.get("written") or 0.0), time.time() + CachedContent.RETRY_DELAY_SECONDS)
 
     def _usable(self, cached: Optional[Dict[str, Any]]) -> bool:
         """
         Report whether a cached listing answers without asking the source.
 
+        An expired listing still answers while a recent failure to reach the source
+        asks readers to wait before trying again.
+
         :param cached: The cached listing, if any.
-        :return: True when it exists, is within its age, and no refresh was asked for.
+        :return: True when it exists, no refresh was asked for, and it is within its
+                 age or a retry is not yet due.
         """
-        return cached is not None and not self._forced and not self._is_stale()
+        if cached is None or self._forced:
+            return False
+        now: float = time.time()
+        # The age is read from the listing itself, so it always belongs to these paths.
+        written: float = float(cached.get("written") or 0.0)
+        retry_after: float = float(cached.get("retry_after") or 0.0)
+        return (now - written) < self._ttl or now < retry_after
 
     def _lock(self) -> Optional[TextIO]:
         """
@@ -265,7 +281,7 @@ class CachedContent(ToolboxContent):
         paths: List[str] = self._content.list_paths()
         self._revision = self._content.revision()
         self._paths = paths
-        self._write_listing()
+        self._write_listing(time.time(), 0.0)
 
     def _accept(self, listing: Dict[str, Any]) -> None:
         """
@@ -300,12 +316,17 @@ class CachedContent(ToolboxContent):
             return None
         return parsed
 
-    def _write_listing(self) -> None:
+    def _write_listing(self, written: float, retry_after: float) -> None:
         """
         Keep the file list for the next reader, including the next process.
+
+        :param written: When the source gave this list.
+        :param retry_after: Until when readers use this list even past its age; 0 for none.
         """
         body: Dict[str, Any] = {"identity": self._content.identity(),
                                 "revision": self._revision,
+                                "written": written,
+                                "retry_after": retry_after,
                                 "paths": self._paths if self._paths is not None else []}
         raw: bytes = json.dumps(body).encode("utf-8")
         try:
@@ -314,19 +335,6 @@ class CachedContent(ToolboxContent):
             # A cache that cannot be written is a slow source, not a broken one.
             logger.warning("cannot cache the file list of %s in %s: %s",
                            self._content.identity(), self._cache, exception)
-
-    def _is_stale(self) -> bool:
-        """
-        Report whether the cached file list is older than the time to live.
-
-        :return: True when the list should be asked for again.
-        """
-        listing: Path = self._cache / CachedContent.LISTING_NAME
-        try:
-            written: float = listing.stat().st_mtime
-        except OSError:
-            return True
-        return (time.time() - written) > self._ttl
 
     def _file_path(self, path: str) -> Path:
         """
