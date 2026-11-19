@@ -81,7 +81,7 @@ interface Answers {
   consent: "always" | "decline";
   // Guidance to send while the front man's first model call is still running.
   steer?: string;
-  // The most agents one query may run. The site's limit is 24, as on main, but the mock
+  // The most agents one query may run. The site's limit is 48, as on main, but the mock
   // calls every tool, so on the mock the test lifts it to check every agent runs.
   agentLimit?: number;
   // Set a real router with no key for this tab, as a visitor who hasn't entered one.
@@ -564,14 +564,14 @@ async function checkScenarios(browser: Browser): Promise<Result[]> {
   }
   add("decline a contact", run, problems);
 
-  // At the site's own limit of 24 agents, a Cailville query stops calling agents and
+  // At the site's own limit of 48 agents, a Cailville query stops calling agents and
   // still finishes, as on main.
-  run = await runPage(browser, "8091", { consent: "always", agentLimit: 24 }, "agent-limit");
+  run = await runPage(browser, "8091", { consent: "always", agentLimit: 48 }, "agent-limit");
   problems = basicProblems(run);
   const agents = run.events.filter((event) => event.kind === "agent" && event.phase === "start").length;
-  if (agents > 24) problems.push(`ran ${agents} agents, over the limit of 24`);
-  if (!run.events.some((event) => event.kind === "composition_limit" && (event.reason || "").includes("limit of 24 agent"))) {
-    problems.push("never reached the limit of 24 agents");
+  if (agents > 48) problems.push(`ran ${agents} agents, over the limit of 48`);
+  if (!run.events.some((event) => event.kind === "composition_limit" && (event.reason || "").includes("limit of 48 agent"))) {
+    problems.push("never reached the limit of 48 agents");
   }
   add("stop at the agent limit", run, problems);
 

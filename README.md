@@ -318,7 +318,7 @@ NSDEPLOY_MOCK_LLM=1 ./cailville/launch_all.sh
 It tests the runtime on the neuro-san TS package, which Cailville runs by default, and
 every check passes there. With the original runtime
 (`USE_TS_PACKAGE=0 ./cailville/launch_all.sh`), 12 of the Cailville sites fail,
-because they stop at the original runtime's per-query limit of 24 agent invocations
+because they stop at the original runtime's per-query limit of 48 agent invocations
 before every agent has run.
 
 It first builds the runtime from the TS package version `runtime-build/package.json`
