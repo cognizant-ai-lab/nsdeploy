@@ -284,7 +284,7 @@ class Bundler:
         cruse: bool = self.settings.cruse if options.cruse is None else options.cruse
         generate_site(plan, out_dir, self.MOCK_ROUTER, byok_router, site_base,
                       cruse=cruse, theme=theme, site_source_dir=site_source,
-                      static_bundle=True)
+                      static_bundle=True, ts_package=self.settings.use_ts_package)
         warnings.extend(self.describe_limits(plan))
         if deployment_work is not None:
             warnings.append(

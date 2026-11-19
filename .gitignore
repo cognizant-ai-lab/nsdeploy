@@ -3,6 +3,9 @@
 # local Cailville map state; created from community.base.json on the first addition
 cailville/community.json
 
+# the TS package runtime's build output (cd runtime-build && npm install && npm run build)
+nsdeploy/runtime/ts-package/generated/
+
 # python
 __pycache__/
 *.pyc

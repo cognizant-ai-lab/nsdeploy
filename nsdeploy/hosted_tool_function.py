@@ -4,6 +4,10 @@ from typing import Any
 from typing import Dict
 from typing import List
 
+from mcp.server.fastmcp import Context
+
+from nsdeploy.mcp_progress_reporter import McpProgressReporter
+
 # Optional so the host still runs tools when neuro_san is absent.
 try:
     from neuro_san.interfaces.coded_tool import CodedTool
@@ -17,8 +21,11 @@ class HostedToolFunction:
     the tool's JSON-Schema parameters, so FastMCP advertises a correct inputSchema,
     and a call forwards the supplied arguments to the coded tool. The signature is
     built with `inspect` rather than generated source, so parameter names must be
-    identifiers.
+    identifiers. An async tool also gets neuro-san's "progress_reporter" in its args,
+    which sends each report to the caller as an MCP log notification.
     """
+
+    CONTEXT_PARAMETER: str = "mcp_context"
 
     JSON_TO_PY: Dict[str, type] = {"string": str, "integer": int, "number": float,
                                    "boolean": bool, "array": list, "object": dict}
@@ -38,6 +45,8 @@ class HostedToolFunction:
         self.coded: Any = coded
         self.use_async: bool = HostedToolFunction.uses_async(coded)
         self.__signature__: inspect.Signature = HostedToolFunction.build_signature(parameters)
+        # FastMCP finds the Context parameter from the type hints and leaves it out of the inputSchema.
+        self.__annotations__: Dict[str, Any] = {HostedToolFunction.CONTEXT_PARAMETER: Context}
 
     @staticmethod
     def uses_async(coded: Any) -> bool:
@@ -79,9 +88,10 @@ class HostedToolFunction:
         """
         Call the coded tool with the arguments the MCP client supplied.
 
-        :param kwargs: Tool arguments; unset optional arguments arrive as None
+        :param kwargs: Tool arguments, plus the FastMCP Context; unset optional arguments arrive as None
         :return: The tool result, JSON-encoded unless it is already a string
         """
+        context: Any = kwargs.pop(HostedToolFunction.CONTEXT_PARAMETER, None)
         args: Dict[str, Any] = {}
         name: str = None
         value: Any = None
@@ -90,6 +100,8 @@ class HostedToolFunction:
             if value is not None:
                 args[name] = value
         if self.use_async:
+            if context is not None:
+                args["progress_reporter"] = McpProgressReporter(context, self.__name__)
             result: Any = await self.coded.async_invoke(args, {})
         else:
             result = self.coded.invoke(args, {})
