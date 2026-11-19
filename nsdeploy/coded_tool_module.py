@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Optional
 
+from nsdeploy.interfaces.toolbox_layout import ToolboxLayout
+
 
 class CodedToolModule:
     """
@@ -10,7 +12,8 @@ class CodedToolModule:
     arbitrary module.
     """
 
-    PACKAGE: str = "coded_tools"
+    # The layout owns this name; kept here so callers keep one place to read it.
+    PACKAGE: str = ToolboxLayout.CODED_TOOLS
 
     @staticmethod
     def find(studio_root: Path, module_leaf: str) -> Optional[str]:

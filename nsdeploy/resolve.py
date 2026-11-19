@@ -43,6 +43,7 @@ from pyhocon import ConfigFactory
 from pyhocon import ConfigTree
 
 from nsdeploy.coded_tool_module import CodedToolModule
+from nsdeploy.interfaces.toolbox_layout import ToolboxLayout
 from nsdeploy.studio import StudioSource
 
 # Substring that marks an agent as running in non-grounded "demo mode" (it is told
@@ -180,8 +181,8 @@ def _network_ref_to_rel_path(ref: Any) -> Optional[str]:
         return None
     if not logical.endswith(".hocon"):
         logical += ".hocon"
-    if not logical.startswith("registries/"):
-        logical = f"registries/{logical}"
+    if not logical.startswith(f"{ToolboxLayout.REGISTRIES}/"):
+        logical = f"{ToolboxLayout.REGISTRIES}/{logical}"
     return logical
 
 
@@ -281,7 +282,7 @@ def expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
 
 def load_toolbox_info(source: StudioSource) -> Dict[str, Any]:
     """Load toolbox_info.hocon from the source (name -> {class, description, parameters})."""
-    path: Optional[Path] = source.ensure("toolbox/toolbox_info.hocon")
+    path: Optional[Path] = source.ensure(ToolboxLayout.TOOLBOX_INFO)
     if not path:
         return {}
     cfg: ConfigTree = ConfigFactory.parse_file(str(path))
@@ -333,7 +334,8 @@ def _import_with_autoinstall(module: str) -> Optional[ModuleType]:
             # Only install the tool's deps, and only once each; never the tool itself.
             if (not AUTO_INSTALL_TOOL_DEPS or not missing
                     # pylint: disable-next=no-member  # false positive: ModuleNotFoundError.name is a str here
-                    or missing.startswith(("coded_tools", "neuro_san_studio")) or missing in tried):
+                    or missing.startswith((ToolboxLayout.CODED_TOOLS,
+                                           ToolboxLayout.STUDIO_PACKAGE)) or missing in tried):
                 return None
             tried.add(missing)
             print(f"   …installing dependency '{missing}' for a coded tool", flush=True)
