@@ -228,6 +228,8 @@ class NsBundle:
         discovered: Optional[Dict[str, Any]] = None
         try:
             discovered = NsBundle.discover_actions(args, hocon_path, network_name)
+            action_discovery_config(args.action_page or [], args.action_module,
+                                    args.action_caller_origin, args.action_host_page, discovered=bool(discovered))
         except (ValueError, OSError) as exception:
             print(f"error: {exception}", file=sys.stderr)
             return 2
