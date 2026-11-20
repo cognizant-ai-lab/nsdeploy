@@ -16,9 +16,12 @@ claims must be preserved. Redundant questions should be merged by meaning, and
 questions answered in the conversation should be omitted. Exact duplicate
 components are removed mechanically; semantic choices remain the model's job.
 
-The shared `runAgent` boundary scopes prompt context per invocation, parses both
-runners' replies, and returns the structured result. Remote `Session.invoke`
-preserves that contract. `Engine.runTurn` returns the final result with a `turnId`;
+Agents run on neuro-san's loop. The engine adds each agent's presentation context
+to its instructions when it prepares a network for a session, and parses the front
+man's final answer. Within a network, a child's reply reaches its parent as neuro-san
+returns it, with its `cruse-ui` block. A partner network's reply is parsed and returned
+to the agent that called it as the structured result. `Engine.runTurn` returns the
+final result with a `turnId`;
 `Engine.run` continues to return answer text for older callers. Only `runTurn`'s
 final composition is rendered. `presentation_proposal` trace entries show child
 proposals and validation issues without adding them to the chat.
@@ -76,25 +79,23 @@ Form controls support strings, dates, numbers, integers, booleans, enums, radio
 groups, textareas and arrays with enum items. Numeric submissions retain numeric
 types, booleans retain boolean types, and choices send `value`, not just their label.
 Submissions include `{turnId, componentId, kind, values? / value? / action?}`.
-History stores the final presentation and its turn ID. Plain chat can supplement or
+neuro-san's chat context keeps each final answer, its presentation included, so a
+submission's component ID refers back to it. Plain chat can supplement or
 correct a submitted form. Unsubmitted drafts remain local. The welcome widget is
 kept available when a user starts by typing.
 
 ## Development checks
 
-The core runtime is dependency-free in the browser. The optional LangChain bundle
-is vendored; its development dependencies are pinned in `package.json` and
-`pnpm-lock.yaml` (Node 22+).
+The runtime's neuro-san bundle is built from `runtime-build/` (see the README).
 
 ```sh
-pnpm install --frozen-lockfile --ignore-scripts
-pnpm run build:runner
-pnpm test
+(cd runtime-build && npm install && npm run build)
+npm test
 venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-The JavaScript integration checks exercise both actual runners, including fetched
-peer sessions, with deterministic model responses. For DOM behavior and visual QA,
+`npm test` runs the runtime regression checks and the CRUSE parsing and
+normalization tests. For DOM behavior and visual QA,
 serve the repository with `python -m http.server 8119 --bind 127.0.0.1` and open
 `http://127.0.0.1:8119/tests/cruse-browser.html`. It reports browser checks and leaves
 a clearly labeled illustrative report/table/chart/form response to inspect. No

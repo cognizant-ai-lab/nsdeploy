@@ -13,6 +13,10 @@ where spec.json is:
 DdgsSearch). Its `invoke(args, sly_data)` (or `async_invoke`) is exposed as one MCP
 tool whose input schema is built from the tool's JSON-Schema `parameters`. sly_data
 is intentionally empty here — these public tools get no host secrets.
+
+An async tool also gets neuro-san's "progress_reporter" in its args. Each report goes
+to the caller as an MCP log notification in the call's response stream, where the
+browser runtime shows it while the tool runs.
 """
 from __future__ import annotations
 

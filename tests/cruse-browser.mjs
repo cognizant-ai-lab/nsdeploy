@@ -2,8 +2,8 @@
 // without a provider key or network requests; leaves a rich example for visual QA.
 import { API_KEY_PROVIDERS, mountApp, renderPresentation } from "../nsdeploy/runtime/ui.js";
 import { renderMarkdown, renderSafeHtml } from "../nsdeploy/runtime/cruse-render.js";
-import { Engine } from "../nsdeploy/runtime/engine.js";
-import { AgentNetwork } from "../nsdeploy/runtime/kernel.js";
+import { Engine } from "../nsdeploy/runtime/ts-package/engine.js";
+import { AgentNetwork, initNetwork, loadNeuroSan } from "../nsdeploy/runtime/ts-package/agent-network.js";
 
 const status = document.querySelector("#status");
 const passed = [];
@@ -40,6 +40,9 @@ try {
   await tick();
   check(chosen.value === "vehicle-123" && chosen.componentId === "vehicle" && chosen.turnId === "choice-turn", "Choices retain stable values and originating IDs");
 
+  // AgentNetwork is neuro-san's, from the runtime's bundle (runtime-build/).
+  await loadNeuroSan();
+  initNetwork();
   const engine = new Engine({ originUrl: location.origin });
   const network = new AgentNetwork({ tools: [{ name: "root", instructions: "Fixture" }] }, "fixture");
   engine.top = { network, base: location.origin };

@@ -1,33 +1,23 @@
 import assert from "node:assert/strict";
 
-import { Engine, isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopRouter } from "../nsdeploy/runtime/engine.js";
-import { AgentNetwork } from "../nsdeploy/runtime/kernel.js";
+import { Engine, assertNetworkModels, assertRouterKey, isPublishedMockRouter, manifestAllowsPeer, selectPeerRouter, selectTopRouter } from "../nsdeploy/runtime/ts-package/engine.js";
 import { RemoteRegistry } from "../nsdeploy/runtime/remote.js";
-import { LlmClient, browserMockCompletion, isMockResponse } from "../nsdeploy/runtime/llm.js";
-import { ProviderError } from "../nsdeploy/runtime/provider-error.js";
-import { McpClient, parseMaybeSse, readJsonRpcResponse } from "../nsdeploy/runtime/mcp.js";
-import { effectiveModel, fallbackModel, isPlaceholderModel, normalizeModelName } from "../nsdeploy/runtime/model.js";
+import { browserMockCompletion, isMockResponse, normalizeModelName } from "../nsdeploy/runtime/ts-package/model.js";
+import {
+  consumeAgentBudget, consumeRemoteBudget, remoteIsInChain, requiresThirdPartyApproval,
+} from "../nsdeploy/runtime/ts-package/composition.js";
+import { AgentNetwork, loadNeuroSan, initNetwork } from "../nsdeploy/runtime/ts-package/agent-network.js";
 import { createTurnEventStream } from "../nsdeploy/runtime/execution-stream.js";
 import { TraceBus } from "../nsdeploy/runtime/trace.js";
 import { createTurnStatusController, statusTextForEvent } from "../nsdeploy/runtime/turn-status.js";
 import { AI_MODEL_SETTINGS_LABEL, API_KEY_HELP_URL, API_KEY_PROVIDERS, providerForApiKey } from "../nsdeploy/runtime/ui.js";
-import {
-  buildToolTable,
-  consumeAgentBudget,
-  consumeRemoteBudget,
-  dispatchToolCall,
-  executeToolCalls,
-  remoteIsInChain,
-  requiresThirdPartyApproval,
-} from "../nsdeploy/runtime/runner.js";
 
-const manifest = {
-  llm_router: {
-    base_url: "http://127.0.0.1:8091/v1",
-    byok_router: "http://127.0.0.1:8091/byok/v1",
-    mock: true,
-  },
-};
+// remoteIsInChain parses references with neuro-san's ExternalAgentParsing, from the
+// bundled package.
+await loadNeuroSan();
+initNetwork();
+
+// The settings panel is shared by both runtimes.
 assert.equal(AI_MODEL_SETTINGS_LABEL, "AI model settings");
 assert.equal(API_KEY_HELP_URL, "https://ai.google.dev/gemini-api/docs/api-key");
 assert.deepEqual(API_KEY_PROVIDERS.map((provider) => provider.name), ["Google AI Studio", "Groq", "OpenAI", "Anthropic"]);
@@ -39,6 +29,14 @@ assert.equal(providerForApiKey("sk-proj-example").name, "OpenAI");
 assert.equal(providerForApiKey("sk-proj-example").model, "gpt-5.5");
 assert.equal(providerForApiKey("sk-ant-example").name, "Anthropic");
 assert.equal(providerForApiKey("sk-or-v1-example"), null);
+
+const manifest = {
+  llm_router: {
+    base_url: "http://127.0.0.1:8091/v1",
+    byok_router: "http://127.0.0.1:8091/byok/v1",
+    mock: true,
+  },
+};
 assert.deepEqual(
   selectTopRouter(manifest, "http://127.0.0.1:8091/v1", "real-key"),
   { baseUrl: "http://127.0.0.1:8091/byok/v1", mock: false, upgradedToByok: true },
@@ -68,62 +66,6 @@ assert.equal(normalizeModelName("'gpt-4o'"), "gpt-4o");
 assert.equal(normalizeModelName('  \"qwen/model:id\"  '), "qwen/model:id");
 assert.equal(normalizeModelName("plain-model"), "plain-model");
 {
-  const browserError = new TypeError("Failed to fetch");
-  const localError = ProviderError.friendly(
-    browserError,
-    "http://localhost:11434/v1",
-    "https://worldwideagenticweb.org/",
-  );
-  assert.equal(localError.name, "ProviderError");
-  assert.equal(localError.code, "LLM_NETWORK_ERROR");
-  assert.equal(localError.cause, browserError);
-  assert.match(localError.message, /OLLAMA_ORIGINS/);
-  assert.match(localError.message, /HTTPS page/);
-  assert.match(localError.message, /http:\/\/localhost:11434\/v1/);
-
-  const remoteError = ProviderError.friendly(
-    new TypeError("NetworkError when attempting to fetch resource."),
-    "https://router.example/v1",
-    "https://site.example/",
-  );
-  assert.match(remoteError.message, /router\.example/);
-  assert.match(remoteError.message, /https:\/\/site\.example/);
-  const sdkError = new Error("Connection error.");
-  sdkError.name = "APIConnectionError";
-  const friendlySdkError = ProviderError.friendly(
-    sdkError,
-    "http://127.0.0.1:11434/v1",
-    "https://site.example/",
-  );
-  assert.match(friendlySdkError.message, /OLLAMA_ORIGINS/);
-  const providerResponseError = new Error("model unavailable");
-  assert.equal(ProviderError.friendly(providerResponseError, "http://localhost:11434/v1"), providerResponseError);
-
-  // A local router on another port, such as LiteLLM, gets general advice, not Ollama's.
-  const liteLlmError = ProviderError.friendly(browserError, "http://localhost:4000/v1", "https://site.example/");
-  assert.match(liteLlmError.message, /local AI router at localhost:4000/);
-  assert.match(liteLlmError.message, /CORS/);
-  assert.doesNotMatch(liteLlmError.message, /Ollama/);
-  // URL.hostname keeps the IPv6 brackets, and [::1] is still this machine.
-  assert.equal(ProviderError.isLocalAddress(new URL("http://[::1]:11434/v1").hostname), true);
-  const ipv6Error = ProviderError.friendly(browserError, "http://[::1]:11434/v1", "https://site.example/");
-  assert.match(ipv6Error.message, /local AI router/);
-  assert.match(ipv6Error.message, /OLLAMA_ORIGINS/);
-}
-{
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
-  try {
-    const ollama = new LlmClient({ baseUrl: "http://localhost:11434/v1", apiKey: "ollama", mock: false });
-    await assert.rejects(
-      ollama.chat({ model: "gpt-oss:20b", messages: [{ role: "user", content: "hello" }] }),
-      /OLLAMA_ORIGINS/,
-    );
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-}
-{
   const tools = [{type: "function", function: {
     name: "lookup", parameters: {type: "object", properties: {request: {type: "string"}}, required: ["request"]},
   }}];
@@ -138,38 +80,6 @@ assert.equal(normalizeModelName("plain-model"), "plain-model");
   assert.equal(second.finishReason, "stop");
   assert.match(second.content, /found/);
 
-  let fetched = false;
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => { fetched = true; throw new Error("browser mock must not fetch"); };
-  try {
-    const client = new LlmClient({baseUrl: "browser://mock", apiKey: "demo", mock: true});
-    const result = await client.chat({model: "mock-1", messages: [{role: "user", content: "hello"}], tools: []});
-    assert.equal(result.model, "neuro-san-mock-browser");
-    assert.equal(fetched, false);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-}
-
-// Anthropic requires an explicit opt-in header for direct browser access. Static
-// bundles add it only for Anthropic's own OpenAI-compatible endpoint.
-{
-  const realFetch = globalThis.fetch;
-  let sentHeaders;
-  globalThis.fetch = async (_url, init) => {
-    sentHeaders = init.headers;
-    return new Response("invalid key", { status: 401 });
-  };
-  try {
-    const anthropic = new LlmClient({ baseUrl: "https://api.anthropic.com/v1", apiKey: "sk-ant-test", mock: false });
-    await assert.rejects(anthropic.chat({ model: "claude-sonnet-4-6", messages: [] }), /LLM HTTP 401/);
-    assert.equal(sentHeaders["anthropic-dangerous-direct-browser-access"], "true");
-    const openai = new LlmClient({ baseUrl: "https://api.openai.com/v1", apiKey: "sk-proj-test", mock: false });
-    await assert.rejects(openai.chat({ model: "gpt-5.6", messages: [] }), /LLM HTTP 401/);
-    assert.equal(sentHeaders["anthropic-dangerous-direct-browser-access"], undefined);
-  } finally {
-    globalThis.fetch = realFetch;
-  }
 }
 {
   const originalFetch = globalThis.fetch;
@@ -283,6 +193,18 @@ const urlToolNetwork = new AgentNetwork({tools: [{
 assert.equal(urlToolNetwork.classifyTool("http://127.0.0.1:8093/seabreeze_inn").kind, "remote");
 assert.equal(urlToolNetwork.classifyTool("https://tools.example/mcp").kind, "mcp");
 
+// A demo-mode agent the network defines stays local until it is linked. Only a slot
+// with no local agent asks the developer for a link.
+const linkSlotNetwork = new AgentNetwork({
+  tools: [
+    {name: "farm_front", instructions: "Front.", tools: ["crop_planning_specialist", "outside_partner"]},
+    {name: "crop_planning_specialist", instructions: "Demo crop planner."},
+  ],
+  link_slots: {crop_planning_specialist: {callers: ["farm_front"]}, outside_partner: {callers: ["farm_front"]}},
+}, "greenbank_farm");
+assert.equal(linkSlotNetwork.classifyTool("crop_planning_specialist").kind, "agent");
+assert.equal(linkSlotNetwork.classifyTool("outside_partner").kind, "link");
+
 // Consent follows the actual site boundary. A page's own MCP/service network is
 // local, while /ext-mcp remains gated because it proxies an external MCP server.
 assert.equal(requiresThirdPartyApproval("https://site.example/_mcp/0/mcp", "https://site.example"), false);
@@ -291,66 +213,6 @@ assert.equal(requiresThirdPartyApproval("https://site.example/ext-mcp/0/mcp", "h
 assert.equal(requiresThirdPartyApproval("https://tools.example/mcp", "https://site.example"), true);
 assert.equal(requiresThirdPartyApproval("https://site.example/other_network", "https://site.example"), false);
 assert.equal(requiresThirdPartyApproval("https://agents.example/other_network", "https://site.example"), true);
-
-{
-  const localMcp = "https://site.example/_mcp/0/mcp";
-  const proxyMcp = "https://site.example/ext-mcp/0/mcp";
-  const remoteMcp = "https://tools.example/mcp";
-  const serviceNetwork = new AgentNetwork({tools: [{
-    name: "root", instructions: "Use services.", tools: [localMcp, proxyMcp, remoteMcp],
-  }]}, "services");
-  const approvals = [];
-  const calls = [];
-  const clients = new Map([
-    [localMcp, {url: localMcp, listTools: async () => [{name: "local_tool"}], callTool: async (name) => { calls.push(name); return "local"; }}],
-    [proxyMcp, {url: proxyMcp, listTools: async () => [{name: "proxy_tool"}], callTool: async (name) => { calls.push(name); return "proxy"; }}],
-    [remoteMcp, {url: remoteMcp, listTools: async () => [{name: "remote_tool"}], callTool: async (name) => { calls.push(name); return "remote"; }}],
-  ]);
-  const ctx = {
-    network: serviceNetwork,
-    baseOrigin: "https://site.example",
-    displayOrigin: "site.example",
-    mock: true,
-    trace: {note() {}},
-    requestConsent: async (info) => { approvals.push(info); return "allow"; },
-    resolveMcp: async (ref) => clients.get(ref),
-  };
-  const table = await buildToolTable(ctx, serviceNetwork.getAgentSpec("root"), [], "parent");
-  assert.deepEqual(approvals.map(({kind, phase, peerOrigin}) => [kind, phase, peerOrigin]), [
-    ["mcp", "discover", "site.example"],
-    ["mcp", "discover", "tools.example"],
-  ]);
-  assert.equal(table.toolByName.get("mcp_local_tool").requiresApproval, false);
-  assert.equal(table.toolByName.get("mcp_proxy_tool").requiresApproval, true);
-
-  await dispatchToolCall(ctx, table.toolByName.get("mcp_local_tool"), {request: "local query"}, "parent", []);
-  assert.equal(approvals.length, 2);
-  await dispatchToolCall(ctx, table.toolByName.get("mcp_proxy_tool"), {request: "proxy query"}, "parent", []);
-  await dispatchToolCall(ctx, table.toolByName.get("mcp_remote_tool"), {request: "remote query"}, "parent", []);
-  assert.deepEqual(approvals.slice(2).map(({kind, phase}) => [kind, phase]), [["mcp", "call"], ["mcp", "call"]]);
-  assert.deepEqual(calls, ["local_tool", "proxy_tool", "remote_tool"]);
-
-  const sameSiteResult = await dispatchToolCall({
-    ...ctx,
-    composition: null,
-    slyData: {},
-    frontMan: "root",
-    resolveRemote: async () => ({invoke: async () => "same-site network"}),
-  }, {kind: "remote", url: "https://site.example/other_network", label: "Other"}, {request: "same site"}, "parent", []);
-  assert.equal(sameSiteResult, "same-site network");
-  assert.equal(approvals.length, 4);
-
-  const thirdPartyResult = await dispatchToolCall({
-    ...ctx,
-    composition: null,
-    slyData: {},
-    frontMan: "root",
-    resolveRemote: async () => ({invoke: async () => "third-party network"}),
-  }, {kind: "remote", url: "https://agents.example/other_network", label: "Other"}, {request: "third party"}, "parent", []);
-  assert.equal(thirdPartyResult, "third-party network");
-  assert.equal(approvals.at(-1).kind, "network");
-  assert.equal(approvals.length, 5);
-}
 
 const chain = [
   "http://127.0.0.1:8095::deneman_place",
@@ -365,49 +227,6 @@ assert.throws(
   (error) => error.code === "COMPOSITION_CYCLE",
 );
 
-// Sibling calls overlap, complete independently, and still return in the order
-// the model requested. A failure is isolated; explicit unsafe calls serialize.
-{
-  let seq = 0;
-  let active = 0;
-  let maxActive = 0;
-  const completed = [];
-  const trace = {
-    start: () => `tool-${++seq}`,
-    end: (id, fields) => completed.push([id, fields.status || "ok"]),
-  };
-  const client = {
-    url: "https://site.example/mcp",
-    callTool: async (name) => {
-      active += 1;
-      maxActive = Math.max(maxActive, active);
-      await new Promise((resolve) => setTimeout(resolve, name === "slow" ? 30 : 5));
-      active -= 1;
-      if (name === "broken") throw new Error("boom");
-      return `${name}-result`;
-    },
-  };
-  const ctx = { trace, displayOrigin: "site.example", baseOrigin: "https://site.example", slyData: {} };
-  const calls = ["slow", "fast", "broken"].map((name) => ({
-    id: `call-${name}`, name, args: {},
-    entry: { kind: "mcp", client, mcpName: name, requiresApproval: false },
-  }));
-  const results = await executeToolCalls(ctx, calls, "agent", []);
-  assert.equal(maxActive, 3);
-  assert.deepEqual(results.map((result) => result.name), ["slow", "fast", "broken"]);
-  assert.deepEqual(results.slice(0, 2).map((result) => result.content), ["slow-result", "fast-result"]);
-  assert.match(results[2].content, /boom/);
-  assert.ok(completed.some(([, status]) => status === "error"));
-
-  active = 0;
-  maxActive = 0;
-  await executeToolCalls(ctx, calls.slice(0, 2).map((call, index) => ({
-    ...call,
-    entry: { ...call.entry, parallelSafe: index !== 0 },
-  })), "agent", []);
-  assert.equal(maxActive, 1);
-}
-
 const budget = {
   remoteCalls: 0, peerCalls: new Map(), maxRemoteCalls: 2,
   maxCallsPerPeer: 1, deadline: 200,
@@ -421,234 +240,28 @@ const agentBudget = {agentCalls: 0, maxAgentCalls: 1, deadline: 200};
 assert.equal(consumeAgentBudget(agentBudget, 100), null);
 assert.match(consumeAgentBudget(agentBudget, 100), /agent invocations/);
 
-// MCP SSE parsing: a server may stream notifications ahead of the JSON-RPC response
-// (You.com emits a notifications/message log line before every tools/call result).
-// The client must return the response event, not the first event.
-const youSse = [
-  "event: message",
-  'data: {"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info","data":"Search successful"}}',
-  "",
-  "event: message",
-  'data: {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"hit"}]}}',
-  "",
-].join("\n");
-assert.equal(parseMaybeSse(youSse, 3).result.content[0].text, "hit");
-assert.equal(parseMaybeSse(youSse).result.content[0].text, "hit");
-assert.equal(parseMaybeSse('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}', 1).result.ok, true);
-assert.equal(parseMaybeSse('event: message\ndata: {"jsonrpc":"2.0","id":2,"error":{"code":-1,"message":"x"}}', 2).error.code, -1);
-assert.throws(
-  () => parseMaybeSse('event: message\ndata: {"jsonrpc":"2.0","method":"notifications/message","params":{}}', 1),
-  /unparseable/,
-);
-{
-  let notify;
-  const notificationSeen = new Promise((resolve) => { notify = resolve; });
-  const stream = new ReadableStream({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode('data: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":0.5,"message":"Halfway"}}\n\n'));
-      setTimeout(() => {
-        controller.enqueue(new TextEncoder().encode('data: {"jsonrpc":"2.0","id":7,"result":{"ok":true}}\n\n'));
-        controller.close();
-      }, 20);
-    },
-  });
-  const response = new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
-  let completedResponse = false;
-  const pending = readJsonRpcResponse(response, 7, (notice) => notify(notice)).then((value) => {
-    completedResponse = true;
-    return value;
-  });
-  const notice = await notificationSeen;
-  assert.equal(notice.params.message, "Halfway");
-  assert.equal(completedResponse, false);
-  assert.equal((await pending).result.ok, true);
-}
-{
-  const realFetch = globalThis.fetch;
-  const methods = [];
-  globalThis.fetch = async (_url, init) => {
-    const req = JSON.parse(init.body);
-    methods.push(req.method);
-    const text = req.method === "tools/call"
-      ? youSse.replace('"id":3', `"id":${req.id}`)
-      : `event: message\ndata: {"jsonrpc":"2.0","id":${req.id ?? null},"result":{}}\n`;
-    return new Response(text, { status: 200, headers: { "Content-Type": "text/event-stream", "Mcp-Session-Id": "s1" } });
-  };
-  try {
-    const client = new McpClient({ url: "http://127.0.0.1:8091/ext-mcp/0/mcp" });
-    assert.equal(await client.callTool("you-search", { query: "q" }), "hit");
-    assert.deepEqual(methods, ["initialize", "notifications/initialized", "tools/call"]);
-    assert.equal(client.sessionId, "s1");
-  } finally {
-    globalThis.fetch = realFetch;
-  }
-}
-
 // BYOK guard: a real (non-mock) router is never contacted without a visitor-entered
-// key. The "demo" sentinel and an empty key are both rejected before any fetch.
-{
-  const realFetch = globalThis.fetch;
-  let fetched = 0;
-  globalThis.fetch = async () => { fetched += 1; throw new Error("fetch reached"); };
-  try {
-    const real = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "demo", mock: false });
-    await assert.rejects(real.chat({ model: "m", messages: [] }), /provider key is required/);
-    const empty = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "", mock: false });
-    await assert.rejects(empty.chat({ model: "m", messages: [] }), /provider key is required/);
-    assert.equal(fetched, 0);
-    const mock = new LlmClient({ baseUrl: "http://127.0.0.1:8091/v1", apiKey: "demo", mock: true });
-    await assert.rejects(mock.chat({ model: "m", messages: [] }), /fetch reached/);
-    assert.equal(fetched, 1);
-  } finally {
-    globalThis.fetch = realFetch;
-  }
-}
+// key. The "demo" sentinel and an empty key are both rejected; the mock needs none.
+assert.throws(() => assertRouterKey({ baseUrl: "http://router.example/v1", mock: false }, "demo"), /provider key is required/);
+assert.throws(() => assertRouterKey({ baseUrl: "http://router.example/v1", mock: false }, ""), /provider key is required/);
+assert.doesNotThrow(() => assertRouterKey({ baseUrl: "http://router.example/v1", mock: false }, "sk-real"));
+assert.doesNotThrow(() => assertRouterKey({ baseUrl: "http://127.0.0.1:8091/v1", mock: true }, "demo"));
 
-// Model guard: a real (non-mock) router never receives the mock placeholder model.
-// A missing key is still reported first, a real model is still sent, and the mock
-// router still accepts the placeholder.
+// Model guard: a real (non-mock) router never gets the mock placeholder or no model.
+// A blank or quoted-empty name counts as not set, so the network's model is used.
 {
-  const realFetch = globalThis.fetch;
-  const sent = [];
-  globalThis.fetch = async (_url, init) => { sent.push(JSON.parse(init.body).model); throw new Error("fetch reached"); };
-  try {
-    const real = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "fixture-key", mock: false });
-    await assert.rejects(real.chat({ model: "mock-1", messages: [] }), /model is required for router\.example/);
-    await assert.rejects(real.chat({ model: '"mock-1"', messages: [] }), /model is required/);
-    // A blank or quoted-empty name normalizes to "", which a real provider cannot use either.
-    await assert.rejects(real.chat({ model: "   ", messages: [] }), /model is required/);
-    await assert.rejects(real.chat({ model: '""', messages: [] }), /model is required/);
-    const keyless = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "", mock: false });
-    await assert.rejects(keyless.chat({ model: "mock-1", messages: [] }), /AI provider key is required/);
-    assert.deepEqual(sent, []);
-    await assert.rejects(real.chat({ model: "gpt-test", messages: [] }), /fetch reached/);
-    const mock = new LlmClient({ baseUrl: "http://127.0.0.1:8091/v1", apiKey: "demo", mock: true });
-    await assert.rejects(mock.chat({ model: "mock-1", messages: [] }), /fetch reached/);
-    assert.deepEqual(sent, ["gpt-test", "mock-1"]);
-  } finally {
-    globalThis.fetch = realFetch;
-  }
-}
-
-// The shared helpers the runners and the settings panel use: an empty name and the
-// placeholder are both unusable, and a blank agent model falls back to the network's.
-assert.equal(isPlaceholderModel(""), true);
-assert.equal(isPlaceholderModel('  "mock-1" '), true);
-assert.equal(isPlaceholderModel("gpt-test"), false);
-assert.equal(effectiveModel("", "", "gpt-network"), "gpt-network");
-assert.equal(effectiveModel("", null, ""), "mock-1");
-assert.equal(effectiveModel("gpt-chosen", "gpt-agent", "gpt-network"), "gpt-chosen");
-// With no model anywhere, the fallback is the mock placeholder, which isPlaceholderModel rejects.
-assert.equal(fallbackModel("gpt-network"), "gpt-network");
-assert.equal(isPlaceholderModel(fallbackModel("")), true);
-assert.equal(isPlaceholderModel(fallbackModel(undefined)), true);
-
-// The same guard for a whole turn, with both runners. A real key and no model stop
-// the turn before any model request; with no key, the key error still comes first.
-{
-  const realFetch = globalThis.fetch;
-  const sent = [];
-  const routers = {
-    "mock.example": { base_url: "https://mock.example/v1", byok_router: "https://byok.example/v1", mock: true },
-    "real.example": { base_url: "https://byok.example/v1", byok_router: "https://byok.example/v1", mock: false },
-    "netmodel.example": { base_url: "https://byok.example/v1", byok_router: "https://byok.example/v1", mock: false },
-    "spacemodel.example": { base_url: "https://byok.example/v1", byok_router: "https://byok.example/v1", mock: false },
-    "quotedmodel.example": { base_url: "https://byok.example/v1", byok_router: "https://byok.example/v1", mock: false },
-  };
-  // On these sites the network names a model and the agent's own is blank (empty,
-  // spaces, or quoted-empty), so the agent falls back to the network's model.
-  const blankAgentNetwork = (modelName) => ({
-    llm_config: { model_name: "gpt-network" },
-    tools: [{ name: "front", instructions: "Help.", llm_config: { model_name: modelName } }],
+  const network = (agentModel, networkModel) => ({
+    config: { llm_config: { model_name: networkModel }, tools: [{ name: "front", llm_config: { model_name: agentModel } }] },
+    findFrontMan: () => "front",
+    classifyTool: () => ({ kind: "agent" }),
   });
-  const networks = {
-    "netmodel.example": blankAgentNetwork(""),
-    "spacemodel.example": blankAgentNetwork("  "),
-    "quotedmodel.example": blankAgentNetwork('""'),
-  };
-  const jsonResponse = (body, ok = true) => ({ ok, json: async () => body, text: async () => JSON.stringify(body) });
-  const mockAnswer = `data: ${JSON.stringify({ model: "neuro-san-mock", choices: [{ index: 0, delta: { content: "(mock) ok" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`;
-  globalThis.fetch = async (url, init) => {
-    const href = String(url);
-    if (href.endsWith("/chat/completions")) {
-      sent.push(JSON.parse(init.body).model);
-      // The mock router answers any model. A real provider rejects the placeholder
-      // with a 404, which fails fast because the LangChain client does not retry it.
-      if (href.startsWith("https://mock.example/")) {
-        return new Response(mockAnswer, { headers: { "Content-Type": "text/event-stream" } });
-      }
-      return new Response(JSON.stringify({ error: { code: "model_not_found" } }), { status: 404 });
-    }
-    if (href.endsWith("/agent-manifest.json")) {
-      return jsonResponse({ networks: [{ name: "plain", hocon: "plain.json" }], llm_router: routers[new URL(href).host] });
-    }
-    if (href.endsWith("/plain.json")) {
-      const network = networks[new URL(href).host] || { tools: [{ name: "front", instructions: "Help." }] };
-      return { ok: true, text: async () => JSON.stringify(network) };
-    }
-    if (href.endsWith("/links.json")) return jsonResponse({}, false);
-    throw new Error(`unexpected fetch: ${href}`);
-  };
-  try {
-    // Run each case with the manual loop, then with the prebuilt LangChain runner.
-    for (const runner of ["manual", "langchain"]) {
-      // A real key switches the mock site to its BYOK router. No model is set anywhere.
-      const keyed = new Engine({ originUrl: "https://mock.example", byokKey: "fixture-key" });
-      const keyless = new Engine({ originUrl: "https://real.example" });
-      if (runner === "langchain") {
-        await keyed.enableLangChain();
-        await keyless.enableLangChain();
-      }
-      await assert.rejects(keyed.run("hello"), /model is required for byok\.example/);
-      assert.equal(keyed.top.llm.mock, false);
-      await assert.rejects(keyless.run("hello"), /AI provider key is required for byok\.example/);
-    }
-    assert.deepEqual(sent, []);
-    // Without a key, the mock site keeps its mock router, which gets the placeholder.
-    const mock = new Engine({ originUrl: "https://mock.example" });
-    assert.match(await mock.run("hello"), /\(mock\) ok/);
-    assert.deepEqual(sent, ["mock-1"]);
-    // A blank agent model is not a missing model when the network names one: the turn
-    // is not blocked, and the network's model is what gets sent.
-    const netModel = new Engine({ originUrl: "https://netmodel.example", byokKey: "fixture-key" });
-    await assert.rejects(netModel.run("hello"), (error) => !/model is required/.test(String(error?.message)));
-    assert.equal(sent[1], "gpt-network");
-    assert.ok(!sent.slice(1).includes("mock-1"));
-    // A model_name of spaces or a quoted-empty string falls back the same way, with
-    // both runners, because the config is normalized when the network is loaded.
-    for (const host of ["spacemodel.example", "quotedmodel.example"]) {
-      for (const runner of ["manual", "langchain"]) {
-        const engine = new Engine({ originUrl: `https://${host}`, byokKey: "fixture-key" });
-        if (runner === "langchain") await engine.enableLangChain();
-        const before = sent.length;
-        await assert.rejects(engine.run("hello"), (error) => !/model is required/.test(String(error?.message)));
-        assert.equal(sent[before], "gpt-network", `${host} with the ${runner} runner`);
-      }
-    }
-  } finally {
-    globalThis.fetch = realFetch;
-  }
-}
-
-// Steering aborts an SSE response that has already started, so a provider stream
-// cannot linger in the background while the replacement model call begins.
-{
-  const realFetch = globalThis.fetch;
-  let cancelled = false;
-  globalThis.fetch = async () => new Response(new ReadableStream({
-    cancel() { cancelled = true; },
-  }), { headers: { "Content-Type": "text/event-stream" } });
-  try {
-    const abort = new AbortController();
-    const client = new LlmClient({ baseUrl: "http://router.example/v1", apiKey: "key", mock: false });
-    const pending = client.chat({ model: "m", messages: [], signal: abort.signal });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    abort.abort(new DOMException("Steered", "AbortError"));
-    await assert.rejects(pending, (error) => error.name === "AbortError");
-    assert.equal(cancelled, true);
-  } finally {
-    globalThis.fetch = realFetch;
-  }
+  const real = { mock: false, routerHost: "router.example" };
+  assert.throws(() => assertNetworkModels(network(undefined, undefined), real), /model is required for router\.example/);
+  assert.throws(() => assertNetworkModels(network("mock-1", undefined), real), /model is required/);
+  assert.throws(() => assertNetworkModels(network('""', "   "), real), /model is required/);
+  assert.doesNotThrow(() => assertNetworkModels(network("   ", "gpt-5.5"), real));
+  assert.doesNotThrow(() => assertNetworkModels(network("mock-1", undefined), { ...real, modelOverride: "gpt-5.5" }));
+  assert.doesNotThrow(() => assertNetworkModels(network(undefined, undefined), { ...real, mock: true }));
 }
 
 console.log("runtime regression tests passed");

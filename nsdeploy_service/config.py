@@ -150,6 +150,9 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
     # --theme-prompt — meaningless unless theme is also on.
     theme_prompt: str = ""
     cruse: bool = True
+    # Which browser runtime deployed sites and static bundles use: the neuro-san TS
+    # package (nsdeploy's --use-ts-package, on by default) or, when off, main's vibed one.
+    use_ts_package: bool = True
 
     # --- map visibility ---
     # Whether a new deployment reaches the map immediately. The console's flow is
@@ -305,6 +308,7 @@ class Settings:  # pylint: disable=too-many-instance-attributes; one field per s
             theme_refresh=_env_bool("THEME_REFRESH", default.theme_refresh),
             theme_prompt=_env("THEME_PROMPT", default.theme_prompt),
             cruse=_env_bool("CRUSE", default.cruse),
+            use_ts_package=_env_bool("USE_TS_PACKAGE", default.use_ts_package),
             autopublish=_env_bool("AUTOPUBLISH", default.autopublish),
             max_deployments=_env_int("MAX_DEPLOYMENTS", default.max_deployments),
             max_concurrent_builds=_env_int("MAX_CONCURRENT_BUILDS", default.max_concurrent_builds),

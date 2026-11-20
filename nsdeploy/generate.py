@@ -621,7 +621,7 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
                   action_pages: Optional[List[str]] = None, action_modules: Optional[List[str]] = None,
                   action_caller_origins: Optional[List[str]] = None, action_host_page: bool = False,
                   discovered_actions: Optional[Dict[str, Any]] = None,
-                  mock_llm: bool = False) -> Dict[str, Any]:
+                  mock_llm: bool = False, ts_package: bool = True) -> Dict[str, Any]:
     """Build the disposable static output from network data and editable site source."""
     theme = theme or ThemeSpec()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -746,6 +746,11 @@ def generate_site(plan: DeploymentPlan, out_dir: Path, mock_router: str, byok_ro
     if static_bundle:
         source_runtime: Path = (runtime_dir or DEFAULT_RUNTIME_DIR).resolve()
         shutil.copytree(source_runtime, out_dir / "runtime", dirs_exist_ok=True)
+        if ts_package:
+            # A static host has no launcher to redirect /runtime/index.js, so the
+            # bundle's copy of it loads the runtime on the neuro-san TS package instead.
+            (out_dir / "runtime" / "index.js").write_text(
+                'export * from "./ts-package/index.js";\n', encoding="utf-8")
         _write_static_hosting_files(out_dir, plan.network_name, site_base)
     return manifest
 # pylint: enable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches

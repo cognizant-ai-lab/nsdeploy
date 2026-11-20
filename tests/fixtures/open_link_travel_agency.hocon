@@ -1,0 +1,20 @@
+{
+  metadata = {
+    description = "Travel agency for the browser test. It doesn't define link_demo_airline, so the browser asks for a link the first time it's called."
+    sample_queries = ["Find me a flight from San Francisco to New York next Friday."]
+  }
+
+  tools = [
+    {
+      name = "travel_concierge"
+      instructions = """
+You are a travel concierge. Use link_demo_airline whenever the traveler needs
+flight availability, pricing, or a reservation. Summarize its answer clearly.
+"""
+      function = {
+        description = "Plans travel and delegates flight work to an airline network."
+      }
+      tools = ["link_demo_airline"]
+    }
+  ]
+}
