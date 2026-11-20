@@ -151,6 +151,36 @@ try {
   typeNamedKey("sk-or-fixture");
   check(namedModel.value === "visitor-model" && namedRouter.value === namedEngine.byokRouter, "A model the visitor chose stays when the key changes");
   named.remove();
+  // A Google AI Studio key: Google's /models list names each model "models/<id>", and the
+  // panel still accepts the default model it filled in (ticket #59).
+  const gemini = document.createElement("div");
+  document.body.append(gemini);
+  const geminiEngine = new Engine({ originUrl: location.origin, byokKey: "AIza-fixture", routerOverride: google.router, modelOverride: google.model });
+  geminiEngine.top = { network, base: location.origin };
+  geminiEngine.mockLLM = false;
+  const geminiTurns = [];
+  geminiEngine.runTurn = async (text) => { geminiTurns.push(text); return { text: "Gemini fixture answer.", presentation: null, turnId: "gemini-turn" }; };
+  const realFetch = window.fetch;
+  window.fetch = async (url, init) => {
+    if (String(url) === `${google.router}/models`) {
+      return new Response(JSON.stringify({ object: "list", data: [{ id: `models/${google.model}` }, { id: "models/gemini-2.5-flash" }] }), { headers: { "Content-Type": "application/json" } });
+    }
+    return realFetch(url, init);
+  };
+  try {
+    mountApp(gemini, { engine: geminiEngine, trace: geminiEngine.trace, manifest: { brand: "Gemini fixture", llm_router: { base_url: google.router } } });
+    gemini.querySelector("#ns-key").value = "AIza-fixture";
+    gemini.querySelector("#ns-router").value = google.router;
+    gemini.querySelector("#ns-model").value = google.model;
+    gemini.querySelector("#ns-input").value = "Hello";
+    gemini.querySelector("#ns-send").click();
+    for (let i = 0; i < 5; i += 1) await tick();
+    const geminiHint = gemini.querySelector("#ns-profile-hint").textContent;
+    check(geminiTurns.length === 1 && !/is not published/.test(geminiHint), `A Google key's default model is accepted against Google's models/... list (hint: ${geminiHint})`);
+  } finally {
+    window.fetch = realFetch;
+    gemini.remove();
+  }
   // Restore the form, so the chat checks below send nothing to a real provider.
   typeKey("");
   check(getComputedStyle(keyHelp).display !== "none", "Clearing the key shows the key help, even on a page that started with no need for one");

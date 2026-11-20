@@ -1,0 +1,145 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { Engine } from '../nsdeploy/runtime/engine.js';
+import { providerForApiKey } from '../nsdeploy/runtime/ui.js';
+
+// Google AI Studio (Gemini) key bugs from ticket #59. The bug tests are marked todo: they run and
+// report each bug without failing npm test. The fix removes { todo: TODO } so they must pass.
+// The "with index" and "split across chunks" tests pass today and guard the fix.
+const MODEL = 'gemini-3.8-flash';
+const ROUTER = 'https://google.example/v1beta/openai';
+const TODO = 'ticket #59: fails until the fix lands';
+
+const network = {
+  llm_config: { model_name: MODEL },
+  tools: [
+    { name: 'front', instructions: 'Help.', tools: ['agent_a', 'agent_b'] },
+    { name: 'agent_a', function: { description: 'A.' }, instructions: 'Answer A.' },
+    { name: 'agent_b', function: { description: 'B.' }, instructions: 'Answer B.' },
+  ],
+};
+
+function sse(chunks) {
+  const body = chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n';
+  return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
+}
+
+function answer(text) {
+  return sse([{ model: MODEL, choices: [{ index: 0, delta: { content: text }, finish_reason: 'stop' }] }]);
+}
+
+function signature(name) {
+  return { google: { thought_signature: `sig-${name}` } };
+}
+
+// A Gemini tool call. Google sends extra_content.google.thought_signature with it.
+function toolCall(name, index) {
+  return {
+    ...(index === undefined ? {} : { index }),
+    id: `call-${name}`,
+    type: 'function',
+    function: { name, arguments: JSON.stringify({ request: `ask ${name}` }) },
+    extra_content: signature(name),
+  };
+}
+
+// Runs one turn against a fake Google router. Each front agent model call streams the
+// next step's tool calls, one per chunk as Gemini does, then answers; sub-agents just answer.
+async function runTurn(...steps) {
+  const realFetch = globalThis.fetch;
+  const frontRequests = [];
+  const subAgentRequests = [];
+  globalThis.fetch = async (url, init) => {
+    const href = String(url);
+    if (href.endsWith('/chat/completions')) {
+      const body = JSON.parse(init.body);
+      if (!body.tools?.length) {
+        subAgentRequests.push(body);
+        return answer('sub-agent answer');
+      }
+      frontRequests.push(body);
+      const calls = steps[frontRequests.length - 1];
+      if (!calls) return answer('front answer');
+      return sse(calls.map((call, i) => ({
+        model: MODEL,
+        choices: [{ index: 0, delta: { tool_calls: [call] }, finish_reason: i === calls.length - 1 ? 'tool_calls' : null }],
+      })));
+    }
+    if (href.endsWith('/agent-manifest.json')) {
+      const manifest = { networks: [{ name: 'gemini', hocon: 'gemini.json' }], llm_router: { base_url: ROUTER, byok_router: ROUTER, mock: false } };
+      return { ok: true, json: async () => manifest };
+    }
+    if (href.endsWith('/gemini.json')) return { ok: true, text: async () => JSON.stringify(network) };
+    if (href.endsWith('/links.json')) return { ok: false, json: async () => ({}), text: async () => '{}' };
+    throw new Error(`unexpected fetch: ${href}`);
+  };
+  try {
+    const engine = new Engine({ originUrl: 'https://gemini.example', byokKey: 'AIza-fixture' });
+    const text = await engine.run('Ask both agents.');
+    return { text, frontRequests, subAgentRequests };
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+test('the Google default model is accepted against a models/... list', { todo: TODO }, async () => {
+  // ui.js validateConfiguredModel checks availableModels.includes(model) inside the panel
+  // code, which a test cannot reach. The fix exposes the check as model.js isPublishedModel.
+  const { isPublishedModel } = await import('../nsdeploy/runtime/model.js');
+  assert.equal(typeof isPublishedModel, 'function', 'model.js has no isPublishedModel check');
+  const googleModels = ['models/gemini-3.8-flash', 'models/gemini-2.5-flash'];
+  assert.equal(providerForApiKey('AIza-example').model, MODEL);
+  assert.equal(isPublishedModel(MODEL, googleModels), true);
+  assert.equal(isPublishedModel('models/gemini-3.8-flash', googleModels), true);
+  assert.equal(isPublishedModel('gemini-9-unknown', googleModels), false);
+});
+
+test('the next request sends the Gemini thought_signature back', { todo: TODO }, async () => {
+  const { frontRequests } = await runTurn([toolCall('agent_a', 0)]);
+  const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
+  assert.deepEqual(assistant.tool_calls[0].extra_content, signature('agent_a'));
+});
+
+test('a later step sends the thought_signature of every earlier step back', { todo: TODO }, async () => {
+  const { frontRequests } = await runTurn([toolCall('agent_a', 0)], [toolCall('agent_b', 0)]);
+  const assistants = frontRequests[2].messages.filter((message) => message.role === 'assistant' && message.tool_calls);
+  assert.deepEqual(assistants.map((message) => message.tool_calls[0].extra_content), [signature('agent_a'), signature('agent_b')]);
+});
+
+// Checks that both agents ran and each got its own tool result.
+async function assertBothRun(calls) {
+  const { text, subAgentRequests, frontRequests } = await runTurn(calls);
+  assert.match(text, /front answer/);
+  assert.equal(subAgentRequests.length, 2);
+  const results = frontRequests[1].messages.filter((message) => message.role === 'tool');
+  assert.deepEqual(results.map((message) => message.tool_call_id), ['call-agent_a', 'call-agent_b']);
+}
+
+test('2 tool calls in one step with index both run', async () => {
+  await assertBothRun([toolCall('agent_a', 0), toolCall('agent_b', 1)]);
+});
+
+test('2 tool calls in one step without index both run', { todo: TODO }, async () => {
+  await assertBothRun([toolCall('agent_a'), toolCall('agent_b')]);
+});
+
+test('2 tool calls in one step with index null both run', { todo: TODO }, async () => {
+  await assertBothRun([toolCall('agent_a', null), toolCall('agent_b', null)]);
+});
+
+test('2 tool calls in one step with index 0 on both run', { todo: TODO }, async () => {
+  await assertBothRun([toolCall('agent_a', 0), toolCall('agent_b', 0)]);
+});
+
+test('1 tool call split across chunks runs once with all its arguments', async () => {
+  const args = JSON.stringify({ request: 'ask agent_a' });
+  const { subAgentRequests, frontRequests } = await runTurn([
+    { index: 0, id: 'call-agent_a', type: 'function', function: { name: 'agent_a', arguments: '' } },
+    { index: 0, function: { arguments: args.slice(0, 10) } },
+    { index: 0, function: { arguments: args.slice(10) } },
+  ]);
+  assert.equal(subAgentRequests.length, 1);
+  const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
+  assert.deepEqual(assistant.tool_calls.map((call) => [call.id, call.function.name, call.function.arguments]), [['call-agent_a', 'agent_a', args]]);
+});
