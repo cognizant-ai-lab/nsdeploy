@@ -232,8 +232,13 @@ class NsBundle:
             print(f"error: {exception}", file=sys.stderr)
             return 2
 
-        plan: DeploymentPlan = build_plan(config, {}, network_name, missing_includes, workspace,
-                                          include_python_tools=False)
+        try:
+            plan: DeploymentPlan = build_plan(config, {}, network_name, missing_includes, workspace,
+                                              include_python_tools=False)
+        except Exception as exception:  # pylint: disable=broad-exception-caught
+            # Embedded HOCON parsing raises the same parser-specific errors as top-level resolution.
+            print(f"error: the HOCON could not be resolved: {exception}", file=sys.stderr)
+            return 2
         if not plan.front_man:
             print("error: no front-man agent (an agent with `instructions` and no class/toolbox), "
                   "so the generated page would have nothing to talk to.", file=sys.stderr)
