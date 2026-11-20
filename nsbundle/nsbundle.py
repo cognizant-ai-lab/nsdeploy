@@ -5,13 +5,14 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Set
 
 from nsdeploy.action_discovery import prepare_actions
 from nsdeploy.form_actions import action_discovery_config
 from nsdeploy.generate import generate_site
 from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
 from nsdeploy.linker import load_deploy_links
-from nsdeploy.resolve import DeploymentPlan
+from nsdeploy.resolve import DeploymentPlan, HostableTool
 from nsdeploy.resolve import build_plan
 from nsdeploy.resolve import format_report
 from nsdeploy.resolve import resolve_hocon
@@ -340,7 +341,12 @@ class NsBundle:
         :param no_cruse: True when the generative-UI directive was left out.
         """
         print(f"✅ Generated static bundle → {out_dir}" + ("" if no_cruse else "  (+CRUSE generative UI)"))
-        omitted: List[str] = sorted({tool.name for tool in plan.hostable_tools} | set(plan.omitted_tools))
+        names: Set[str] = set()
+        tool: HostableTool
+        for tool in plan.hostable_tools:
+            names.add(tool.name)
+        names.update(plan.omitted_tools)
+        omitted: List[str] = sorted(names)
         if omitted:
             print("   static bundle: omitted Python tools: " + ", ".join(omitted))
         if plan.external_mcps:
