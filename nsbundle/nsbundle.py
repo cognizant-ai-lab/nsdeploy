@@ -193,7 +193,7 @@ class NsBundle:
             parser.error(str(exception))
 
     @staticmethod
-    # pylint: disable-next=too-many-locals  # one per stage of a linear build
+    # pylint: disable-next=too-many-locals,too-many-return-statements  # one per stage of a linear build
     def build(args: argparse.Namespace) -> int:
         """
         Resolve the network, plan it, and write the bundle.
@@ -228,18 +228,21 @@ class NsBundle:
         discovered: Optional[Dict[str, Any]] = None
         try:
             discovered = NsBundle.discover_actions(args, hocon_path, network_name)
+            # The parser accepted these options in case a discovery lock supplies the
+            # capability they need. Whether one did is only known now.
             action_discovery_config(args.action_page or [], args.action_module,
-                                    args.action_caller_origin, args.action_host_page, discovered=bool(discovered))
+                                    args.action_caller_origin, args.action_host_page, bool(discovered))
         except (ValueError, OSError) as exception:
             print(f"error: {exception}", file=sys.stderr)
             return 2
 
+        plan: Optional[DeploymentPlan] = None
         try:
-            plan: DeploymentPlan = build_plan(config, {}, network_name, missing_includes, workspace,
-                                              include_python_tools=False)
+            plan = build_plan(config, {}, network_name, missing_includes, workspace, include_python_tools=False)
         except Exception as exception:  # pylint: disable=broad-exception-caught
-            # Embedded HOCON parsing raises the same parser-specific errors as top-level resolution.
-            print(f"error: the HOCON could not be resolved: {exception}", file=sys.stderr)
+            # Planning parses every slash-referenced child network, which fails through
+            # the same pyhocon exceptions as the top-level file.
+            print(f"error: a network this HOCON references could not be resolved: {exception}", file=sys.stderr)
             return 2
         if not plan.front_man:
             print("error: no front-man agent (an agent with `instructions` and no class/toolbox), "

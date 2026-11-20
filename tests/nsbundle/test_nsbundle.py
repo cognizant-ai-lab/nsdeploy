@@ -44,6 +44,7 @@ include "registries/shop_common.hocon"
 """
 
 
+# pylint: disable-next=too-many-public-methods  # one test per behaviour of the command
 class TestNsBundle(unittest.TestCase):
     """The nsbundle command line and the build behind it.
 
@@ -176,6 +177,29 @@ class TestNsBundle(unittest.TestCase):
         code, printed = TestNsBundle.quietly([str(self.base / "absent.hocon"), "--no-studio"])
         self.assertEqual(code, 2)
         self.assertIn("HOCON not found", printed)
+
+    def test_a_caller_origin_with_nothing_to_call_is_an_error(self) -> None:
+        """The parser accepts it in case a discovery lock supplies forms; when none
+        does, the build reports it rather than failing inside generation."""
+        code, printed = TestNsBundle.quietly([str(self.hocon), "--no-studio", "--out", str(self.out),
+                                              "--action-caller-origin", "https://caller.example"])
+        self.assertEqual(code, 2)
+        self.assertIn("error:", printed)
+        self.assertFalse((self.out / "index.html").exists())
+
+    def test_a_child_network_that_cannot_be_resolved_is_an_error(self) -> None:
+        """A slash reference is parsed while planning, after the top-level file has
+        resolved, and a broken child is reported rather than raised."""
+        checkout: Path = self.make_checkout()
+        child: Path = checkout / "registries" / "broken_child.hocon"
+        child.write_text('{"tools": [{"name": "c", "instructions": ${missing}}]}', encoding="utf-8")
+        parent: Path = self.base / "parent.hocon"
+        parent.write_text('{"tools": [{"name": "front", "function": {"description": "d"}, '
+                          '"instructions": "Answer.", "tools": ["/broken_child"]}]}', encoding="utf-8")
+        code, printed = TestNsBundle.quietly([str(parent), "--studio", str(checkout),
+                                              "--no-action-discovery", "--out", str(self.out)])
+        self.assertEqual(code, 2, printed)
+        self.assertIn("a network this HOCON references could not be resolved", printed)
 
     def test_includes_are_resolved_from_a_local_checkout(self) -> None:
         """The toolbox comes through nsdeploy's own workspace, mirrored under the
