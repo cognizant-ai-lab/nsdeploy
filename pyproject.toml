@@ -21,9 +21,10 @@ dynamic = ["dependencies"]
 
 [project.scripts]
 nsdeploy = "nsdeploy.__main__:main"
+nsbundle = "nsbundle.nsbundle:NsBundle.main"
 
 [tool.setuptools]
-packages = ["nsdeploy", "nsdeploy.commerce", "nsdeploy.interfaces", "nsdeploy.studio_content"]
+packages = ["nsbundle", "nsdeploy", "nsdeploy.commerce", "nsdeploy.interfaces", "nsdeploy.studio_content"]
 
 [tool.setuptools.dynamic]
 # setuptools reads each non-comment line of requirements.txt as a PEP 508 requirement,
