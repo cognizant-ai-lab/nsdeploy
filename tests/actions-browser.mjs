@@ -5,6 +5,15 @@ const { chromium } = await import(process.env.NSDEPLOY_PLAYWRIGHT_MODULE || "pla
 const browser = await chromium.launch({ headless: true, ...(process.env.NSDEPLOY_CHROME ? { executablePath: process.env.NSDEPLOY_CHROME } : {}) });
 try {
   const context = await browser.newContext();
+  // A page with a real router asks for a key and a model before it runs a turn. The test
+  // answers every model call itself, so a made-up key is enough, and the model list the
+  // page asks the router for is answered here, so nothing leaves the machine.
+  await context.addInitScript(() => {
+    sessionStorage.setItem("nsweb-byok-tab-key", "sk-test-not-a-real-key");
+    sessionStorage.setItem("nsweb-byok-router", "");
+    sessionStorage.setItem("nsweb-byok-model", "gpt-4o");
+  });
+  await context.route("https://api.openai.com/**", route => route.fulfill({ json: { object: "list", data: [{ id: "gpt-4o", object: "model" }] } }));
   const page = await context.newPage();
   const errors = []; page.on("pageerror", e => errors.push(e.message));
   const requests = [];
