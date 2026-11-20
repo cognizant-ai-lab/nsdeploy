@@ -22,6 +22,7 @@
 //   npm run test:cailville -- scenarios # just the cancel, link, decline and no-key checks
 //   HEADED=1 npm run test:cailville -- 8091  # watch it in a visible browser
 //   TEST_REAL_LLM=1 npm run test:cailville -- 8191  # use $OPENAI_API_KEY and gpt-4o, not the mock
+//   TEST_REAL_MCP=1 npm run test:cailville  # use You.com's real MCP search, not a stand-in
 //
 // Node runs this TypeScript directly, by stripping the types, so there's no build
 // step. Screenshots go to .nsdeploy/cailville-browser-test/. Exits 1 if anything fails.
@@ -30,7 +31,7 @@ import { execFileSync, spawn, type ChildProcess } from "child_process";
 import { existsSync, readFileSync, mkdirSync, rmSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { chromium, type Browser, type Page } from "playwright";
+import { chromium, type Browser, type Page, type Route } from "playwright";
 
 interface Community {
   sites: { port: number }[];
@@ -130,6 +131,9 @@ const SITE_TIMEOUT_MS = REAL_LLM ? 600000 : 180000;
 // A real LLM run is on OpenAI for now, with gpt-4o to keep the cost down unless
 // TEST_MODEL picks another. Other providers can get their own default here.
 const MODEL = REAL_LLM ? process.env.TEST_MODEL || "gpt-4o" : process.env.TEST_MODEL;
+// Outside MCP servers (You.com's search, in Cailville) get a stand-in unless
+// TEST_REAL_MCP is set, so the test doesn't depend on You.com's free quota.
+const REAL_MCP = Boolean(process.env.TEST_REAL_MCP);
 const AIRLINE = "http://127.0.0.1:8192";
 
 // The airline, the travel agency linked to it with --link the way the README does it,
@@ -163,6 +167,54 @@ function buildRuntime(): string {
   }
   execFileSync("npm", ["run", "build"], { cwd: RUNTIME_BUILD, stdio: "ignore" });
   return installed().version;
+}
+
+// Answers what the page sends to the site's /ext-mcp proxy, in place of the outside MCP
+// server behind it. It has one search tool and, like You.com, sends a log notification
+// before each result. The page still goes through consent and the proxy's URL.
+async function standInMcp(route: Route): Promise<void> {
+  const request = route.request();
+  if (request.method() === "GET") return route.fulfill({ status: 405 });
+  if (request.method() !== "POST") return route.fulfill({ status: 200 });
+  const body = JSON.parse(request.postData() || "{}");
+  const messages: { id?: number | string; method?: string; params?: any }[] = Array.isArray(body) ? body : [body];
+  const calls = messages.filter((message) => message.id !== undefined);
+  if (!calls.length) return route.fulfill({ status: 202 });
+  const answer = (message: (typeof messages)[number]): object => {
+    const reply = (result: object) => ({ jsonrpc: "2.0", id: message.id, result });
+    if (message.method === "initialize") {
+      return reply({
+        protocolVersion: message.params?.protocolVersion || "2025-03-26",
+        capabilities: { tools: {}, logging: {} },
+        serverInfo: { name: "outside-mcp-stand-in", version: "1.0.0" },
+      });
+    }
+    if (message.method === "tools/list") {
+      return reply({ tools: [{
+        name: "you-search",
+        description: "Search the web and return the top results for the query.",
+        inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+      }] });
+    }
+    if (message.method === "tools/call") {
+      const query = String(message.params?.arguments?.query || "");
+      return reply({ content: [{ type: "text", text: `Stand-in search results for '${query}': 1. Cailville harbor guide. 2. Local events this week.` }] });
+    }
+    return reply({});
+  };
+  const events = calls.flatMap((message) => {
+    const replies: object[] = [];
+    if (message.method === "tools/call") {
+      const query = String(message.params?.arguments?.query || "");
+      replies.push({ jsonrpc: "2.0", method: "notifications/message", params: { level: "info", data: `Searching for: ${query}` } });
+    }
+    return [...replies, answer(message)];
+  });
+  return route.fulfill({
+    status: 200,
+    headers: { "content-type": "text/event-stream", "mcp-session-id": "stand-in" },
+    body: events.map((event) => `event: message\ndata: ${JSON.stringify(event)}\n\n`).join(""),
+  });
 }
 
 // The MCP client's optional stream GET, which the facade doesn't offer.
@@ -286,6 +338,8 @@ async function runPage(browser: Browser, port: string, answers: Answers, label =
   const query = (network.sample_queries || [])[0] || "What can you help me with?";
 
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  // Partner sites run in this page too, each through its own /ext-mcp proxy.
+  if (!REAL_MCP) await page.route((url) => url.hostname === "127.0.0.1" && url.pathname.startsWith("/ext-mcp/"), standInMcp);
   // The page reads key, router and model from the setup applied in this tab, never the URL.
   if (REAL_LLM || MODEL || answers.noKey) {
     const setup = {
@@ -353,6 +407,10 @@ async function runPage(browser: Browser, port: string, answers: Answers, label =
   page.on("response", (response) => {
     if (response.status() >= 400) {
       run.errors.push(`${response.status()} ${response.request().method()} ${response.url()}`);
+    }
+    if (response.status() === 402 && new URL(response.url()).pathname.startsWith("/ext-mcp/")) {
+      run.errors.push("An outside MCP server answered 402 Payment Required. You.com sends that when its free quota " +
+                      "is used up. Run without TEST_REAL_MCP to use the stand-in.");
     }
   });
 
@@ -592,6 +650,7 @@ if (REAL_LLM && !process.env.OPENAI_API_KEY) {
 }
 mkdirSync(OUT_DIR, { recursive: true });
 console.log(`Testing ${PACKAGE} ${buildRuntime()}, as runtime-build pins it.`);
+console.log(REAL_MCP ? "Outside MCP servers are the real ones." : "Outside MCP servers get a stand-in. TEST_REAL_MCP=1 uses the real ones.");
 const ports = sitePorts();
 const scenarios = (!ARGS.length || ARGS.includes("scenarios")) && !REAL_LLM;
 const mcp = (!ARGS.length || ARGS.includes("mcp")) && !REAL_LLM;
