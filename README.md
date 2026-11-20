@@ -364,7 +364,6 @@ The test answers what the page sends to `/ext-mcp` with a stand-in for You.com, 
 doesn't depend on You.com's free quota. `TEST_REAL_MCP=1` uses You.com itself, and a
 `402 Payment Required` from it means that quota is used up.
 
-
 - call an MCP tool: a call goes out and comes back with something, and the server's notifications show as the
   tool's progress
 - decline an MCP call: nothing reaches an outside MCP server, discovery included, while the site's own MCP
