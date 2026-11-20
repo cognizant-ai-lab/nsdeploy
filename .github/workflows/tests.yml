@@ -33,3 +33,24 @@ jobs:
       pytest-extra-args: '-n auto'
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  runtime-tests:
+    if: >
+      (github.event_name == 'push' && github.ref != 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      # v7.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: ${{ vars.NODEJS_VERSION || '26' }}
+
+      # The runtime tests use only Node built-ins, so no package install is needed.
+      - name: Run JavaScript runtime tests
+        run: npm test
