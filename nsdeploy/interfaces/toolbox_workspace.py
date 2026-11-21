@@ -126,21 +126,3 @@ class ToolboxWorkspace:
         :raises NotImplementedError: Always; an implementation owns its mirror.
         """
         raise NotImplementedError
-
-    def fetch(self, force: bool = False) -> bool:
-        """
-        Do now whatever this workspace would otherwise do on first use.
-
-        A source that answers `list_paths` over a network wants that call made once,
-        by a trusted process, rather than by each build that happens to be first — and
-        wants it refreshed before anything cached for it expires. A workspace with
-        nothing to prepare returns True without doing anything.
-
-        Best effort by contract: a workspace that cannot pre-fetch content is not broken, and a
-        caller is expected to carry on.
-
-        :param force: Refresh even when what was prepared earlier is still usable.
-        :return: True when the workspace is ready to resolve paths.
-        :raises NotImplementedError: Always; an implementation knows what it prepares.
-        """
-        raise NotImplementedError

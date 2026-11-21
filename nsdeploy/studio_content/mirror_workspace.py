@@ -84,39 +84,6 @@ class MirrorWorkspace(ToolboxWorkspace):
         return self._mirror
 
     @override
-    def fetch(self, force: bool = False) -> bool:
-        """
-        Load the file listing, which is what resolution needs and the only thing a
-        workspace prepares ahead of time.
-
-        Whether this reaches a network is the content source's business. A source
-        that memoizes answers from its memo; one wrapped in a cache answers from the
-        cache. `force` discards the listing held here *and* asks the source to forget
-        its own, which is the only way a file added to the toolbox after it was first
-        listed becomes resolvable.
-
-        :param force: Discard what was prepared here and at the source, and ask again.
-        :return: True when the workspace is ready to resolve paths.
-        """
-        if force:
-            self._paths = None
-            self._failure = None
-            # Clearing this object's copy is not enough: the source memoizes its own
-            # listing for its lifetime, and would answer the next question from it.
-            self._content.refresh()
-        try:
-            self._load()
-        except OSError as exception:
-            # Best effort by contract: a caller carries on, and the next build that
-            # needs a path asks again. Reported rather than swallowed, because a failed
-            # warm-up is otherwise a bare False that names neither the toolbox nor the
-            # reason, and an operator would have to repeat it to find out.
-            logger.warning("cannot prepare the toolbox %s: %s",
-                           self._content.identity(), exception, exc_info=True)
-            return False
-        return True
-
-    @override
     def resolve(self, logical_path: str) -> Optional[str]:
         """
         Find where this toolbox actually keeps a logical path.
@@ -234,7 +201,7 @@ class MirrorWorkspace(ToolboxWorkspace):
 
         A failure is asked once too. A build resolves many paths, and against a source
         that cannot be reached each further attempt only waits out another timeout
-        before failing the same way. `fetch(force=True)` asks again.
+        before failing the same way. The next build makes a new workspace, which asks again.
 
         :return: The paths the source holds.
         :raises OSError: If the listing cannot be read.
