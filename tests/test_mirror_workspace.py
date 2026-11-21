@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict
 from typing import List
 from typing import Optional
+from unittest import mock
 
 from typing_extensions import override
 
@@ -105,30 +106,12 @@ class TestMirrorWorkspace(unittest.TestCase):
         """It is what goes on sys.path, and a coded tool sits in a package under it."""
         self.assertEqual(self.workspace.import_root(), self.mirror)
 
-    # --- fetch -------------------------------------------------------------
-    def test_fetching_prepares_the_listing(self):
-        """The call a trusted process makes once, so no build pays for it first."""
-        self.assertTrue(self.workspace.fetch())
-        self.assertEqual(self.content.listings, 1)
-
+    # --- the listing -------------------------------------------------------
     def test_the_listing_is_asked_for_once_per_workspace(self):
         """Over a network source it is the expensive question."""
-        self.workspace.fetch()
         self.workspace.resolve("registries/aaosa.hocon")
         self.workspace.resolve("coded_tools/web_fetch.py")
         self.assertEqual(self.content.listings, 1)
-
-    def test_forcing_a_fetch_asks_the_source_again(self):
-        """Which is how a caller picks up a toolbox that has changed."""
-        self.workspace.fetch()
-        self.workspace.fetch(force=True)
-        self.assertEqual(self.content.listings, 2)
-
-    def test_a_source_that_cannot_be_listed_reports_rather_than_raises(self):
-        """Best effort by contract: a caller carries on, and the next build that needs
-        a path asks again."""
-        self.content.broken = True
-        self.assertFalse(self.workspace.fetch())
 
     # --- resolution --------------------------------------------------------
     def test_a_path_the_toolbox_holds_outright_resolves_to_itself(self):
@@ -212,15 +195,61 @@ class TestMirrorWorkspace(unittest.TestCase):
         mirrored: Path = self.mirror / "registries/aaosa.hocon"
         self.workspace.materialize("registries/aaosa.hocon")
         self.content.files.pop("registries/aaosa.hocon")
-        self.workspace.fetch(force=True)
-        self.assertIsNone(self.workspace.materialize("registries/aaosa.hocon"))
+        # The next build, with a workspace of its own.
+        later: MirrorWorkspace = MirrorWorkspace(self.content, self.mirror)
+        self.assertIsNone(later.materialize("registries/aaosa.hocon"))
         self.assertFalse(mirrored.exists())
+
+    def test_a_missing_include_naming_a_mirror_directory_leaves_it(self):
+        """A directory at a missing file's path holds other files' copies, and an
+        include is not an error worth aborting a build for."""
+        self.workspace.materialize("registries/aaosa.hocon")
+        self.assertIsNone(self.workspace.materialize("registries"))
+        self.assertTrue((self.mirror / "registries/aaosa.hocon").is_file())
+
+    def test_an_unchanged_mirror_file_is_not_written_again(self):
+        """A pre-seeded mirror on a read-only filesystem still has to serve a build."""
+        self.workspace.materialize("registries/aaosa.hocon")
+        with mock.patch.object(MirrorWorkspace, "_write", side_effect=AssertionError("written")):
+            local: Optional[Path] = self.workspace.materialize("registries/aaosa.hocon")
+        self.assertEqual(local, self.mirror / "registries/aaosa.hocon")
+
+    def test_a_changed_mirror_file_is_written_again(self):
+        """Skipping the write must not keep an old copy."""
+        self.workspace.materialize("registries/aaosa.hocon")
+        self.content.files["registries/aaosa.hocon"] = b"{ changed }"
+        local: Optional[Path] = self.workspace.materialize("registries/aaosa.hocon")
+        self.assertEqual(local.read_bytes(), b"{ changed }")
+
+    def test_a_source_that_cannot_be_read_is_answered_from_the_mirror(self):
+        """An offline build keeps working from what an earlier build mirrored, and a
+        file the mirror lacks still reports the source's failure."""
+        mirrored: Path = self.mirror / "registries/aaosa.hocon"
+        mirrored.parent.mkdir(parents=True)
+        mirrored.write_bytes(b"{ kept }")
+        self.content.broken = True
+        self.assertEqual(self.workspace.materialize("registries/aaosa.hocon"), mirrored)
+        self.assertEqual(mirrored.read_bytes(), b"{ kept }")
+        with self.assertRaises(OSError):
+            self.workspace.materialize("registries/absent.hocon")
+
+    def test_a_source_that_cannot_be_listed_is_asked_once_per_build(self):
+        """Against an unreachable source each further attempt only waits out another
+        timeout, so a build does not pay one per include. The next build asks again."""
+        self.content.broken = True
+        with self.assertRaises(OSError):
+            self.workspace.materialize("registries/aaosa.hocon")
+        with self.assertRaises(OSError):
+            self.workspace.materialize("coded_tools/web_fetch.py")
+        self.assertEqual(self.content.listings, 1)
+        self.content.broken = False
+        later: MirrorWorkspace = MirrorWorkspace(self.content, self.mirror)
+        self.assertIsNotNone(later.materialize("registries/aaosa.hocon"))
 
     def test_a_path_leaving_the_mirror_is_refused(self):
         """A logical path comes from a network's own include lines, so it is input."""
         escaped: Path = self.base / "escaped.hocon"
         self.content.files["escaped.hocon"] = b"{}"
-        self.workspace.fetch(force=True)
         self.assertIsNone(self.workspace.materialize("../escaped.hocon"))
         self.assertFalse(escaped.exists())
 
@@ -256,7 +285,6 @@ class TestMirrorWorkspace(unittest.TestCase):
         """A self-contained network has no external toolbox, and the build takes the
         same path it takes over a checkout — it just resolves nothing."""
         workspace: MirrorWorkspace = MirrorWorkspace(EmptyContent(), self.mirror)
-        self.assertTrue(workspace.fetch())
         self.assertIsNone(workspace.resolve("registries/aaosa.hocon"))
         self.assertIsNone(workspace.read_text("registries/aaosa.hocon"))
         self.assertIsNone(workspace.materialize("registries/aaosa.hocon"))

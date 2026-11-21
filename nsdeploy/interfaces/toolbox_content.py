@@ -79,10 +79,9 @@ class ToolboxContent:
         implementation write an empty method would say nothing. A source that keeps a
         file list, a revision or a file for its own lifetime overrides this.
 
-        A workspace calls it when a caller asks for a forced refresh. It is the only
-        way a build can see a file that was added to a toolbox after the toolbox was
-        first listed, because clearing what the workspace learned leaves the source's
-        own memo in place.
+        `CachedContent` calls it on the source it wraps when the cached file list
+        expires. The source's own memo can be as old as that list, and answering from
+        it would write the old list back with a new time.
         """
         return
 

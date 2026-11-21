@@ -80,11 +80,12 @@ class ToolboxWorkspace:
 
         A file the external toolbox no longer holds is removed from the mirror rather than left
         behind, so a stale copy cannot satisfy an include the external toolbox has dropped.
+        An implementation may serve its existing copy when the toolbox cannot be read at all.
 
         :param logical_path: The path an agent network asks for.
         :return: The local path, or None when the external toolbox holds no such file.
         :raises NotImplementedError: Always; an implementation owns its mirror.
-        :raises OSError: If the file cannot be written.
+        :raises OSError: If the toolbox cannot be read and there is no copy, or if the file cannot be written.
         """
         raise NotImplementedError
 
@@ -123,23 +124,5 @@ class ToolboxWorkspace:
 
         :return: The import root directory.
         :raises NotImplementedError: Always; an implementation owns its mirror.
-        """
-        raise NotImplementedError
-
-    def fetch(self, force: bool = False) -> bool:
-        """
-        Do now whatever this workspace would otherwise do on first use.
-
-        A source that answers `list_paths` over a network wants that call made once,
-        by a trusted process, rather than by each build that happens to be first — and
-        wants it refreshed before anything cached for it expires. A workspace with
-        nothing to prepare returns True without doing anything.
-
-        Best effort by contract: a workspace that cannot pre-fetch content is not broken, and a
-        caller is expected to carry on.
-
-        :param force: Refresh even when what was prepared earlier is still usable.
-        :return: True when the workspace is ready to resolve paths.
-        :raises NotImplementedError: Always; an implementation knows what it prepares.
         """
         raise NotImplementedError

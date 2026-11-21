@@ -44,7 +44,7 @@ from pyhocon import ConfigTree
 
 from nsdeploy.coded_tool_module import CodedToolModule
 from nsdeploy.interfaces.toolbox_layout import ToolboxLayout
-from nsdeploy.studio import StudioSource
+from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
 
 # Substring that marks an agent as running in non-grounded "demo mode" (it is told
 # to fabricate realistic-looking answers). Matches the studio's demo_mode template.
@@ -98,10 +98,10 @@ class DeploymentPlan:  # pylint: disable=too-many-instance-attributes
     notes: List[str] = field(default_factory=list)
 
 
-def _prefetch_includes(text: str, source: StudioSource, missing: List[str], seen: set,
+def _prefetch_includes(text: str, workspace: ToolboxWorkspace, missing: List[str], seen: set,
                        parent_dir: str = "") -> None:
-    """Recursively materialize every `include`d file (from the source) into the
-    source root so pyhocon can resolve them locally.
+    """Recursively materialize every `include`d file into the workspace's include
+    base so pyhocon can resolve them locally.
 
     Top-level includes are root-relative (neuro-san resolves them against the repo
     root). pyhocon, however, resolves an include *nested* inside an included file
@@ -126,31 +126,31 @@ def _prefetch_includes(text: str, source: StudioSource, missing: List[str], seen
                 found = True  # already attempted (and reported, if missing)
                 break
             seen.add(logical)
-            path: Optional[Path] = source.ensure(logical)
+            path: Optional[Path] = workspace.materialize(logical)
             if path is None:
                 continue
             found = True
-            _prefetch_includes(path.read_text(encoding="utf-8"), source, missing, seen,
+            _prefetch_includes(path.read_text(encoding="utf-8"), workspace, missing, seen,
                                parent_dir=posixpath.dirname(logical))
             break
         if not found:
-            missing.append(f"Cannot include file {rel} (not found in {getattr(source, 'repo', source.root)}).")
+            missing.append(f"Cannot include file {rel} (not found in {workspace.identity()}).")
 
 
-def resolve_hocon(hocon_path: Path, source: StudioSource) -> tuple[Dict[str, Any], List[str]]:
-    """Parse + fully resolve a HOCON, with includes resolved from `source` (a local
-    checkout or the GitHub repo) into source.root.
+def resolve_hocon(hocon_path: Path, workspace: ToolboxWorkspace) -> tuple[Dict[str, Any], List[str]]:
+    """Parse + fully resolve a HOCON, with includes materialized by `workspace` (over
+    a local checkout or the GitHub repo) into its include base.
 
     Returns (config_dict, missing_includes). Missing includes are non-fatal (e.g. an
     absent llm_config.hocon just means the runtime falls back to its default model).
     """
-    return _parse_hocon_content(hocon_path.read_text(encoding="utf-8"), source)
+    return _parse_hocon_content(hocon_path.read_text(encoding="utf-8"), workspace)
 
 
-def _parse_hocon_content(content: str, source: StudioSource) -> tuple[Dict[str, Any], List[str]]:
-    """Parse HOCON text using source.root as the include base."""
+def _parse_hocon_content(content: str, workspace: ToolboxWorkspace) -> tuple[Dict[str, Any], List[str]]:
+    """Parse HOCON text against the workspace's include base."""
     missing: List[str] = []
-    _prefetch_includes(content, source, missing, set())
+    _prefetch_includes(content, workspace, missing, set())
     captured: List[str] = []
 
     class _IncludeCapture(logging.Handler):
@@ -164,7 +164,7 @@ def _parse_hocon_content(content: str, source: StudioSource) -> tuple[Dict[str, 
     pyhocon_logger.addHandler(handler)
     try:
         with redirect_stderr(io.StringIO()):
-            cfg: ConfigTree = ConfigFactory.parse_string(content, basedir=str(source.root))
+            cfg: ConfigTree = ConfigFactory.parse_string(content, basedir=str(workspace.include_base()))
     finally:
         pyhocon_logger.removeHandler(handler)
     missing.extend(m for m in captured if m not in missing)
@@ -205,7 +205,7 @@ def _find_front_man(config: Dict[str, Any]) -> str:
     return ""
 
 
-def expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
+def expand_embedded_network_refs(config: Dict[str, Any], workspace: ToolboxWorkspace,
                                  missing_includes: List[str]) -> Dict[str, str]:
     """Fetch slash-referenced registry HOCONs and inline their agents.
 
@@ -221,7 +221,7 @@ def expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
         rel_path: Optional[str] = _network_ref_to_rel_path(ref)
         if not rel_path:
             return None
-        path: Optional[Path] = source.ensure(rel_path)
+        path: Optional[Path] = workspace.materialize(rel_path)
         if not path:
             return None
         if ref in expanded:
@@ -230,9 +230,9 @@ def expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
 
         child_config: Dict[str, Any]
         child_missing: List[str]
-        child_config, child_missing = _parse_hocon_content(path.read_text(encoding="utf-8"), source)
+        child_config, child_missing = _parse_hocon_content(path.read_text(encoding="utf-8"), workspace)
         missing_includes.extend(m for m in child_missing if m not in missing_includes)
-        child_aliases: Dict[str, str] = expand_embedded_network_refs(child_config, source, missing_includes)
+        child_aliases: Dict[str, str] = expand_embedded_network_refs(child_config, workspace, missing_includes)
 
         child_tools: List[Dict[str, Any]] = child_config.get("tools", []) or []
         child_agents: List[Dict[str, Any]] = [copy.deepcopy(t) for t in child_tools if _is_llm_agent(t)]
@@ -280,9 +280,9 @@ def expand_embedded_network_refs(config: Dict[str, Any], source: StudioSource,
     return aliases
 
 
-def load_toolbox_info(source: StudioSource) -> Dict[str, Any]:
-    """Load toolbox_info.hocon from the source (name -> {class, description, parameters})."""
-    path: Optional[Path] = source.ensure(ToolboxLayout.TOOLBOX_INFO)
+def load_toolbox_info(workspace: ToolboxWorkspace) -> Dict[str, Any]:
+    """Load toolbox_info.hocon from the workspace (name -> {class, description, parameters})."""
+    path: Optional[Path] = workspace.materialize(ToolboxLayout.TOOLBOX_INFO)
     if not path:
         return {}
     cfg: ConfigTree = ConfigFactory.parse_file(str(path))
@@ -362,12 +362,12 @@ def _can_construct_with_no_args(cls: Any) -> bool:
     )
 
 
-def _resolve_class(class_path: str, source: StudioSource) -> Optional[tuple[str, str]]:
+def _resolve_class(class_path: str, workspace: ToolboxWorkspace) -> Optional[tuple[str, str]]:
     """Resolve a toolbox `class` ("[pkg.]module.Class") to an importable
-    (module, Class), fetching the coded-tool source from `source` if needed.
+    (module, Class), fetching the coded-tool source through `workspace` if needed.
 
-    The module's file name (its last dotted segment) is mirrored into the source's
-    `coded_tools` package and imported from there — so the repo's own package layout
+    The module's file name (its last dotted segment) is mirrored into the workspace's
+    `coded_tools` package and imported from its import root — so the repo's own package layout
     doesn't matter.
     """
     if "." not in class_path:
@@ -378,11 +378,12 @@ def _resolve_class(class_path: str, source: StudioSource) -> Optional[tuple[str,
     module_leaf: str = module_part.split(".")[-1]
     if not module_leaf.isidentifier() or not class_name.isidentifier():
         return None
-    if not source.ensure_coded_tool(f"{module_leaf}.py"):
+    if not workspace.ensure_coded_tool(f"{module_leaf}.py"):
         return None
-    if str(source.root) not in sys.path:
-        sys.path.insert(0, str(source.root))
-    module: Optional[str] = CodedToolModule.find(source.root, module_leaf)
+    import_root: Path = workspace.import_root()
+    if str(import_root) not in sys.path:
+        sys.path.insert(0, str(import_root))
+    module: Optional[str] = CodedToolModule.find(import_root, module_leaf)
     if module is None:
         return None
     mod: Optional[ModuleType] = _import_with_autoinstall(module)
@@ -393,12 +394,12 @@ def _resolve_class(class_path: str, source: StudioSource) -> Optional[tuple[str,
 
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
 def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],  # pylint: disable=too-many-statements
-               network_name: str, missing_includes: List[str], source: StudioSource,
+               network_name: str, missing_includes: List[str], workspace: ToolboxWorkspace,
                include_python_tools: bool = True) -> DeploymentPlan:
     """Classify the resolved config into a DeploymentPlan."""
     config = copy.deepcopy(config)
     all_missing_includes: List[str] = list(missing_includes)
-    expand_embedded_network_refs(config, source, all_missing_includes)
+    expand_embedded_network_refs(config, workspace, all_missing_includes)
     tools: List[Dict[str, Any]] = config.get("tools", []) or []
     agent_names: set[str] = {t["name"] for t in tools if "name" in t and "instructions" in t}
 
@@ -461,7 +462,7 @@ def build_plan(config: Dict[str, Any], toolbox_info: Dict[str, Any],  # pylint: 
         if not class_path:
             referenced_missing.add(name)
             return
-        resolved: Optional[tuple[str, str]] = _resolve_class(class_path, source)
+        resolved: Optional[tuple[str, str]] = _resolve_class(class_path, workspace)
         if not resolved:
             referenced_missing.add(name)
             return
