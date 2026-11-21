@@ -216,17 +216,6 @@ class TestCachedContent(unittest.TestCase):
         self.assertIn("registries/aaosa.hocon", self.second_reader(ttl_seconds=0).list_paths())
         self.assertEqual(self.source.listings, 2)
 
-    def test_a_forced_refresh_does_not_wait_for_a_retry(self):
-        """A refresh is asked for explicitly, so the retry delay does not apply to it."""
-        self.cached.list_paths()
-        self.source.broken = True
-        self.second_reader(ttl_seconds=0).list_paths()
-        self.source.broken = False
-        forced: CachedContent = self.second_reader(ttl_seconds=0)
-        forced.refresh()
-        forced.list_paths()
-        self.assertEqual(self.source.listings, 3)
-
     def test_a_source_that_cannot_be_listed_with_no_cache_still_fails(self):
         """Reporting no files would make a build report every include as missing and
         say nothing about the cause."""
@@ -238,32 +227,6 @@ class TestCachedContent(unittest.TestCase):
         """A half-written file from an interrupted build must not stop the next one."""
         (self.cache / CachedContent.LISTING_NAME).write_text("{not json", encoding="utf-8")
         self.assertEqual(sorted(self.cached.list_paths()), sorted(self.source.files.keys()))
-
-    # --- refreshing --------------------------------------------------------
-    def test_a_refresh_reaches_past_the_cached_listing(self):
-        """A forced fetch has to reach every layer; stopping at the disk cache would
-        keep a file added upstream invisible until the time to live expired."""
-        self.cached.list_paths()
-        self.source.files["registries/added.hocon"] = b"{}"
-        later: CachedContent = self.second_reader()
-        later.refresh()
-        self.assertIn("registries/added.hocon", later.list_paths())
-
-    def test_a_refresh_asks_the_wrapped_source_to_forget_too(self):
-        """The source memoizes its own listing, so a refresh that stopped here would
-        be answered from that instead."""
-        self.cached.list_paths()
-        self.cached.refresh()
-        self.assertEqual(self.source.refreshes, 1)
-
-    def test_a_refresh_still_falls_back_when_the_source_cannot_be_reached(self):
-        """Otherwise asking for fresh content would turn a cache that works offline
-        into a failed build."""
-        self.cached.list_paths()
-        later: CachedContent = self.second_reader()
-        later.refresh()
-        self.source.broken = True
-        self.assertIn("registries/aaosa.hocon", later.list_paths())
 
     # --- the files ---------------------------------------------------------
     def test_a_file_is_read_from_the_source_once_across_readers(self):

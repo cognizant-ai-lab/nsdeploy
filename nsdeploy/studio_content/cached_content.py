@@ -79,7 +79,6 @@ class CachedContent(ToolboxContent):
         self._ttl: float = float(ttl_seconds)
         self._paths: Optional[List[str]] = None
         self._revision: str = ""
-        self._forced: bool = False
 
     @override
     def identity(self) -> str:
@@ -116,29 +115,6 @@ class CachedContent(ToolboxContent):
         paths: List[str] = self._paths if self._paths is not None else []
         # A copy, so a caller that keeps the list cannot change what is cached here.
         return list(paths)
-
-    @override
-    def refresh(self) -> None:
-        """
-        Forget the file list, and ask the wrapped source to forget its own.
-
-        A forced refresh has to reach every layer. Clearing only what this object holds
-        would leave the cached listing on disk, and the next reader — in this process
-        or the next one — would answer from it until the time to live expired, which is
-        the one thing `force` exists to override.
-
-        The cached listing is kept rather than deleted, so that a refresh against a
-        source that cannot be reached still falls back to it instead of failing a build
-        that would otherwise have worked.
-
-        Cached files are left alone. Each is keyed by the path the source reported, and
-        a refreshed listing either names that path again or stops naming it, so a file
-        that is no longer part of the toolbox becomes unreachable rather than wrong.
-        """
-        self._paths = None
-        self._revision = ""
-        self._forced = True
-        self._content.refresh()
 
     @override
     def read(self, path: str) -> Optional[bytes]:
@@ -201,28 +177,26 @@ class CachedContent(ToolboxContent):
             self._load_upstream_or_fall_back(cached)
         finally:
             CachedContent._unlock(handle)
-            # Asked for once. A later question in this process reads what was just loaded.
-            self._forced = False
 
     def _load_upstream_or_fall_back(self, cached: Optional[Dict[str, Any]]) -> None:
         """
         Ask the source for the file list, falling back to an older cached one.
 
-        :param cached: The cached listing that is past its age or being refreshed, if any.
+        :param cached: The cached listing that is past its age, if any.
         :raises OSError: If the source cannot be listed and there is no cached list.
         """
-        if cached is not None and not self._forced:
+        if cached is not None:
             # An expired listing has to reach past the source's own memo too, which
-            # may be as old as the listing. A forced refresh has already done this.
+            # may be as old as the listing.
             self._content.refresh()
         try:
             self._load_upstream()
         except OSError:
             if cached is None:
                 raise
-            # The cached list is past its age, or a refresh was asked for, and the
-            # source cannot be reached. A build from a stale list is better than no
-            # build, and every file it names is likely cached too.
+            # The cached list is past its age, and the source cannot be reached. A build
+            # from a stale list is better than no build, and every file it names is likely
+            # cached too.
             logger.warning("cannot list %s; using the cached file list", self._content.identity(), exc_info=True)
             self._accept(cached)
             self._write_listing(float(cached.get("written") or 0.0), time.time() + CachedContent.RETRY_DELAY_SECONDS)
@@ -235,10 +209,9 @@ class CachedContent(ToolboxContent):
         asks readers to wait before trying again.
 
         :param cached: The cached listing, if any.
-        :return: True when it exists, no refresh was asked for, and it is within its
-                 age or a retry is not yet due.
+        :return: True when it exists and it is within its age or a retry is not yet due.
         """
-        if cached is None or self._forced:
+        if cached is None:
             return False
         now: float = time.time()
         # The age is read from the listing itself, so it always belongs to these paths.
