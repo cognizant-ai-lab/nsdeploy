@@ -1,9 +1,10 @@
-# Toolbox seam: ToolboxContent and ToolboxWorkspace
+# Toolbox abstraction: ToolboxContent and ToolboxWorkspace
 
 This document gives the design decisions for the two interfaces that supply the dependencies of a main HOCON file to
 the build. It also gives the update policy for the source listing.
 
-The text agrees with ASD-STE100 where possible. Code names and file names are in code format.
+The text agrees with ASD-STE100 where possible.
+Code names and file names are in code format.
 
 ## 1. The build
 
@@ -40,7 +41,7 @@ dependencies, and with a local checkout of such a repository. nsdeploy has a def
 `nsdeploy/studio.py`), but the interfaces do not use its name or its layout. A network that has no dependencies can
 also use no toolbox.
 
-The seam isolates the build from the location of the dependencies. The build does not know if they come from a local
+The Toolbox abstraction isolates the build from the location of the dependencies. The build does not know if they come from a local
 checkout, a GitHub repository, or no toolbox.
 
 ## 3. Terms
@@ -209,8 +210,8 @@ A repository can keep its files in a layout of its own. For example, the default
 - A coded tool is found by file name only. `_resolve_class` in `resolve.py` keeps only the last segment of the
   `class` value. The module can be in any directory.
 
-`resolve` in `MirrorWorkspace` finds each source path from the listing. This behaviour is older than the seam. The
-old `GithubStudio` also read the git tree and matched by suffix.
+`resolve` in `MirrorWorkspace` finds each source path from the listing. This behaviour is preserved from previous
+implementation. The old `GithubStudio` also read the git tree and matched by suffix.
 
 ### 7.2 The alternative: one request for each file
 
