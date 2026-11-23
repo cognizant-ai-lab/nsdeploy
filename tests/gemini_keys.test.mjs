@@ -95,6 +95,11 @@ test('the Google default model is accepted against a models/... list', { todo: T
   assert.equal(isPublishedModel('gemini-9-unknown', googleModels), false);
 });
 
+test('an AQ. key is recognised as a Google AI Studio key', { todo: TODO }, () => {
+  // New AI Studio keys start with "AQ."; keys made earlier start with "AIza".
+  assert.equal(providerForApiKey('AQ.example')?.name, 'Google AI Studio');
+});
+
 test('the next request sends the Gemini thought_signature back', { todo: TODO }, async () => {
   const { frontRequests } = await runTurn([toolCall('agent_a', 0)]);
   const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
