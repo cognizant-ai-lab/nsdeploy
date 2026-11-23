@@ -1,9 +1,10 @@
-# Toolbox seam: ToolboxContent and ToolboxWorkspace
+# Toolbox abstraction: ToolboxContent and ToolboxWorkspace
 
 This document gives the design decisions for the two interfaces that supply the dependencies of a main HOCON file to
 the build. It also gives the update policy for the source listing.
 
-The text agrees with ASD-STE100 where possible. Code names and file names are in code format.
+The text agrees with ASD-STE100 standard where possible.
+Code names and file names are in code format.
 
 ## 1. The build
 
