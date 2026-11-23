@@ -41,8 +41,8 @@ dependencies, and with a local checkout of such a repository. nsdeploy has a def
 `nsdeploy/studio.py`), but the interfaces do not use its name or its layout. A network that has no dependencies can
 also use no toolbox.
 
-The Toolbox abstraction isolates the build from the location of the dependencies. The build does not know if they come from a local
-checkout, a GitHub repository, or no toolbox.
+The Toolbox abstraction isolates the build from the location of the dependencies. The build does not know
+if they come from a local checkout, a GitHub repository, or no toolbox.
 
 ## 3. Terms
 
