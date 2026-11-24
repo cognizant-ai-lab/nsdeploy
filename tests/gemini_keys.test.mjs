@@ -145,6 +145,10 @@ test('2 tool calls in one step from a router that numbers every call 0 both run'
   await assertBothRun([toolCall('agent_a', 0), toolCall('agent_b', 0)]);
 });
 
+test('2 numbered tool calls that start out of order run in index order', async () => {
+  await assertBothRun([toolCall('agent_b', 1), toolCall('agent_a', 0)]);
+});
+
 test('1 tool call split across chunks runs once with all its arguments', async () => {
   const args = JSON.stringify({ request: 'ask agent_a' });
   const { subAgentRequests, frontRequests } = await runTurn([
