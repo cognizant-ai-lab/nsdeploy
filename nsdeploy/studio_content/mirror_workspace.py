@@ -11,8 +11,6 @@ from nsdeploy.interfaces.toolbox_content import ToolboxContent
 from nsdeploy.interfaces.toolbox_layout import ToolboxLayout
 from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
 
-logger: logging.Logger = logging.getLogger(__name__)
-
 
 class MirrorWorkspace(ToolboxWorkspace):
     """A workspace that answers from one `ToolboxContent`, copying to disk on demand.
@@ -39,6 +37,9 @@ class MirrorWorkspace(ToolboxWorkspace):
     suite and a developer's real builds, or two services with different content —
     and then it is a bug that only shows up as a stale file.
     """
+
+    # Named after the module, so logging configuration that names the module still applies.
+    LOGGER: logging.Logger = logging.getLogger(__name__)
 
     def __init__(self, content: ToolboxContent, mirror: Path) -> None:
         """
@@ -160,8 +161,8 @@ class MirrorWorkspace(ToolboxWorkspace):
         except OSError as exception:
             if target.is_symlink() or not target.is_file():
                 raise
-            logger.warning("cannot read %s from %s (%s); using the mirrored copy",
-                           logical_path, self._content.identity(), exception)
+            MirrorWorkspace.LOGGER.warning("cannot read %s from %s (%s); using the mirrored copy",
+                                           logical_path, self._content.identity(), exception)
             return target
         if raw is None:
             # Only a stale file goes. A directory at this path holds other files' copies.

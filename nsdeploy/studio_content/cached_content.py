@@ -22,8 +22,6 @@ try:
 except ImportError:  # pragma: no cover - Windows has no fcntl.
     fcntl = None
 
-logger: logging.Logger = logging.getLogger(__name__)
-
 
 class CachedContent(ToolboxContent):
     """Another `ToolboxContent`, answered from a directory on disk where it can be.
@@ -47,6 +45,9 @@ class CachedContent(ToolboxContent):
     and is ignored when it does not match, so the mistake shows up as a slow build
     rather than as the wrong files; the files themselves cannot be checked that way.
     """
+
+    # Named after the module, so logging configuration that names the module still applies.
+    LOGGER: logging.Logger = logging.getLogger(__name__)
 
     # The file list, and the files, kept apart so that an upstream path can never
     # collide with the cache's own bookkeeping. The lock serializes listing refreshes
@@ -139,16 +140,16 @@ class CachedContent(ToolboxContent):
         except FileNotFoundError:
             pass
         except OSError as exception:
-            logger.warning("cannot read the cached %s from %s; asking the source: %s",
-                           path, self._cache, exception)
+            CachedContent.LOGGER.warning("cannot read the cached %s from %s; asking the source: %s",
+                                         path, self._cache, exception)
         raw: Optional[bytes] = self._content.read(path)
         if raw is None:
             return None
         try:
             self._write(target, raw)
         except OSError as exception:
-            logger.warning("cannot cache %s from %s in %s: %s",
-                           path, self._content.identity(), self._cache, exception)
+            CachedContent.LOGGER.warning("cannot cache %s from %s in %s: %s",
+                                         path, self._content.identity(), self._cache, exception)
         return raw
 
     def _load(self) -> None:
@@ -197,7 +198,8 @@ class CachedContent(ToolboxContent):
             # The cached list is past its age, and the source cannot be reached. A build
             # from a stale list is better than no build, and every file it names is likely
             # cached too.
-            logger.warning("cannot list %s; using the cached file list", self._content.identity(), exc_info=True)
+            CachedContent.LOGGER.warning("cannot list %s; using the cached file list", self._content.identity(),
+                                         exc_info=True)
             self._accept(cached)
             self._write_listing(float(cached.get("written") or 0.0), time.time() + CachedContent.RETRY_DELAY_SECONDS)
 
@@ -235,7 +237,7 @@ class CachedContent(ToolboxContent):
         except OSError as exception:
             # A read-only cache cannot be locked. Refreshing unlocked costs at most a
             # duplicate request.
-            logger.warning("cannot lock the cache %s: %s", self._cache, exception)
+            CachedContent.LOGGER.warning("cannot lock the cache %s: %s", self._cache, exception)
             if handle is not None:
                 handle.close()
             return None
@@ -312,8 +314,8 @@ class CachedContent(ToolboxContent):
             self._write(self._cache / CachedContent.LISTING_NAME, raw)
         except OSError as exception:
             # A cache that cannot be written is a slow source, not a broken one.
-            logger.warning("cannot cache the file list of %s in %s: %s",
-                           self._content.identity(), self._cache, exception)
+            CachedContent.LOGGER.warning("cannot cache the file list of %s in %s: %s",
+                                         self._content.identity(), self._cache, exception)
 
     def _file_path(self, path: str) -> Path:
         """

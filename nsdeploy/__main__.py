@@ -34,7 +34,7 @@ from nsdeploy.gateway import run_gateway_command
 from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
 from nsdeploy.linker import load_deploy_links
 from nsdeploy.linker import run_link_command
-from nsdeploy.launcher import serve
+from nsdeploy.launcher import Launcher
 from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.resolve import build_plan
 from nsdeploy.resolve import format_report
@@ -399,10 +399,10 @@ def main() -> int:
         return 0
 
     # The import root holds the (materialized) coded-tool sources the MCP hosts import.
-    serve(out_dir, plan, workspace.import_root(), port=args.port, site_base=site_base,
-          upstream=args.upstream,
-          runtime_dir=runtime_dir, ext_mcps=plan.external_mcps,
-          facade_upstream=args.facade_upstream, mock_llm=args.mock_llm)
+    Launcher.serve(out_dir, plan, workspace.import_root(), port=args.port, site_base=site_base,
+                   upstream=args.upstream,
+                   runtime_dir=runtime_dir, ext_mcps=plan.external_mcps,
+                   facade_upstream=args.facade_upstream, mock_llm=args.mock_llm)
     return 0
 
 

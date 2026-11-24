@@ -901,7 +901,7 @@ class EngineCliContractTest(unittest.TestCase):
             missing, [],
             f"nsdeploy no longer accepts {missing}. The supervisor passes these; a "
             f"missing one fails every deployment. If the engine was just replaced, "
-            f"restore the flag (see nsdeploy/launcher.py serve(host=...)).")
+            f"restore the flag (see Launcher.serve(host=...) in nsdeploy/launcher.py).")
 
     def test_host_is_detected_rather_than_assumed(self) -> None:
         """Whatever the engine does about --host, the service must agree with it.
@@ -921,7 +921,7 @@ class EngineCliContractTest(unittest.TestCase):
 
         self.assertEqual(
             supported, binds_given_host,
-            "engine_supports_host() and launcher.serve() disagree: the flag is "
+            "engine_supports_host() and Launcher.serve() disagree: the flag is "
             f"{'advertised' if supported else 'absent'} but the listener "
             f"{'does' if binds_given_host else 'does not'} bind what it is given. "
             "A flag accepted and ignored is worse than one rejected.")

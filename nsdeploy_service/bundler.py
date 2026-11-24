@@ -42,14 +42,14 @@ class Bundler:
     """Build an agent network HOCON into a static bundle, in this process.
 
     A static bundle is not a deployment. `nsdeploy --static-bundle` generates the
-    site and returns, instead of calling `launcher.serve()`, so there is no port, no
+    site and returns, instead of calling `Launcher.serve()`, so there is no port, no
     child process to supervise and no lifecycle to persist. Nothing here reaches the
     store, and nothing about a bundle outlives the request that asked for it.
 
     That also answers the rule supervisor.py sets out, which is that nsdeploy is
     never imported in process. Both of its reasons are about a *deployment*:
 
-      * `serve()` never returns, so an in-process call could not be torn down. A
+      * `Launcher.serve()` never returns, so an in-process call could not be torn down. A
         static build returns.
       * resolving a network may pip-install a coded tool's dependencies, which does
         not belong in an API process. `build_plan` is called here with
