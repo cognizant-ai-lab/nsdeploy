@@ -6,7 +6,7 @@ import { providerForApiKey } from '../nsdeploy/runtime/ui.js';
 
 // Google AI Studio (Gemini) key bugs from ticket #59. The bug tests are marked todo: they run and
 // report each bug without failing npm test. The fix removes { todo: TODO } so they must pass.
-// The "with index" and "split across chunks" tests pass today and guard the fix.
+// The "with index" and the 2 "split across chunks" tests pass today and guard the fix.
 const MODEL = 'gemini-3.8-flash';
 const ROUTER = 'https://google.example/v1beta/openai';
 const TODO = 'ticket #59: fails until the fix lands';
@@ -152,6 +152,17 @@ test('1 tool call split across chunks runs once with all its arguments', async (
     { index: 0, id: 'call-agent_a', type: 'function', function: { name: 'agent_a', arguments: '' } },
     { index: 0, function: { arguments: args.slice(0, 10) } },
     { index: 0, function: { arguments: args.slice(10) } },
+  ]);
+  assert.equal(subAgentRequests.length, 1);
+  const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
+  assert.deepEqual(assistant.tool_calls.map((call) => [call.id, call.function.name, call.function.arguments]), [['call-agent_a', 'agent_a', args]]);
+});
+
+test('1 tool call with no index, split across chunks, runs once with all its arguments', async () => {
+  const args = JSON.stringify({ request: 'ask agent_a' });
+  const { subAgentRequests, frontRequests } = await runTurn([
+    { id: 'call-agent_a', type: 'function', function: { name: 'agent_a', arguments: args.slice(0, 10) } },
+    { function: { arguments: args.slice(10) } },
   ]);
   assert.equal(subAgentRequests.length, 1);
   const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
