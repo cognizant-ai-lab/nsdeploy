@@ -142,7 +142,7 @@ test('2 tool calls in one step with index null both run', { todo: TODO }, async 
   await assertBothRun([toolCall('agent_a', null), toolCall('agent_b', null)]);
 });
 
-test('2 tool calls in one step with index 0 on both run', { todo: TODO }, async () => {
+test('2 tool calls in one step from a router that numbers every call 0 both run', { todo: TODO }, async () => {
   await assertBothRun([toolCall('agent_a', 0), toolCall('agent_b', 0)]);
 });
 
