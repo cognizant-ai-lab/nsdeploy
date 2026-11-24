@@ -112,6 +112,15 @@ test('a later step sends the thought_signature of every earlier step back', { to
   assert.deepEqual(assistants.map((message) => message.tool_calls[0].extra_content), [signature('agent_a'), signature('agent_b')]);
 });
 
+test('2 Gemini calls in one step: the signature goes back on the first call only', { todo: TODO }, async () => {
+  // Gemini sends each parallel call with no index and signs only the first one.
+  const unsigned = toolCall('agent_b');
+  delete unsigned.extra_content;
+  const { frontRequests } = await runTurn([toolCall('agent_a'), unsigned]);
+  const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
+  assert.deepEqual(assistant.tool_calls.map((call) => call.extra_content), [signature('agent_a'), undefined]);
+});
+
 // Checks that both agents ran and each got its own tool result.
 async function assertBothRun(calls) {
   const { text, subAgentRequests, frontRequests } = await runTurn(calls);
