@@ -167,3 +167,60 @@ test('1 tool call with no index, split across chunks, runs once with all its arg
   const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
   assert.deepEqual(assistant.tool_calls.map((call) => [call.id, call.function.name, call.function.arguments]), [['call-agent_a', 'agent_a', args]]);
 });
+
+const ARGS_A = JSON.stringify({ request: 'ask agent_a' });
+const ARGS_B = JSON.stringify({ request: 'ask agent_b' });
+
+// Runs one step and returns how many agents ran, and each call the next request sends
+// back as [id, name, arguments, signature].
+async function callsSentBack(pieces) {
+  const { subAgentRequests, frontRequests } = await runTurn(pieces);
+  const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
+  const calls = assistant.tool_calls.map((call) => [call.id, call.function.name, call.function.arguments, call.extra_content]);
+  return { ran: subAgentRequests.length, calls };
+}
+
+// 2 Gemini calls with no index, the first split across chunks. id is '' or undefined
+// (left out); with no id to go by, the second function name starts the second call.
+function callsWithoutIds(id) {
+  const withId = id === undefined ? {} : { id };
+  return [
+    { ...withId, type: 'function', function: { name: 'agent_a', arguments: ARGS_A.slice(0, 10) }, extra_content: signature('agent_a') },
+    { function: { arguments: ARGS_A.slice(10) } },
+    { ...withId, type: 'function', function: { name: 'agent_b', arguments: ARGS_B }, extra_content: signature('agent_b') },
+  ];
+}
+
+test('2 calls with empty ids and no index keep their own names, arguments and signatures', async () => {
+  const { ran, calls } = await callsSentBack(callsWithoutIds(''));
+  assert.equal(ran, 2);
+  assert.deepEqual(calls, [['', 'agent_a', ARGS_A, signature('agent_a')], ['', 'agent_b', ARGS_B, signature('agent_b')]]);
+});
+
+test('2 calls with no ids and no index keep their own names, arguments and signatures', async () => {
+  const { ran, calls } = await callsSentBack(callsWithoutIds(undefined));
+  assert.equal(ran, 2);
+  assert.deepEqual(calls, [[undefined, 'agent_a', ARGS_A, signature('agent_a')], [undefined, 'agent_b', ARGS_B, signature('agent_b')]]);
+});
+
+// Pieces of 2 calls that interleave as ids a, b, a. index is 0 on every piece, or left out.
+function interleavedCalls(index) {
+  const withIndex = index === undefined ? {} : { index };
+  return [
+    { ...withIndex, id: 'call-agent_a', type: 'function', function: { name: 'agent_a', arguments: ARGS_A.slice(0, 10) } },
+    { ...withIndex, id: 'call-agent_b', type: 'function', function: { name: 'agent_b', arguments: ARGS_B } },
+    { ...withIndex, id: 'call-agent_a', function: { arguments: ARGS_A.slice(10) } },
+  ];
+}
+
+test('pieces of 2 calls that interleave, all with index 0, stay 2 calls', async () => {
+  const { ran, calls } = await callsSentBack(interleavedCalls(0));
+  assert.equal(ran, 2);
+  assert.deepEqual(calls, [['call-agent_a', 'agent_a', ARGS_A, undefined], ['call-agent_b', 'agent_b', ARGS_B, undefined]]);
+});
+
+test('pieces of 2 calls that interleave, with no index, stay 2 calls', async () => {
+  const { ran, calls } = await callsSentBack(interleavedCalls(undefined));
+  assert.equal(ran, 2);
+  assert.deepEqual(calls, [['call-agent_a', 'agent_a', ARGS_A, undefined], ['call-agent_b', 'agent_b', ARGS_B, undefined]]);
+});

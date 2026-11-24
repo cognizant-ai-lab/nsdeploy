@@ -167,7 +167,7 @@ export class LlmClient {
     let buf = "";
     let content = "";
     const toolCalls = []; // assembled in the order the calls start
-    const latestByIndex = new Map(); // each index -> the slot of the latest call opened with it
+    const currentByIndex = new Map(); // each index (null for none) -> the slot its latest piece went to
     let finishReason = null;
     let usage = null;
     let model = null;
@@ -187,7 +187,7 @@ export class LlmClient {
       }
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
-          const idx = LlmClient.toolCallSlot(toolCalls, tc, latestByIndex);
+          const idx = LlmClient.toolCallSlot(toolCalls, tc, currentByIndex);
           if (!toolCalls[idx]) toolCalls[idx] = { id: tc.id, type: "function", function: { name: "", arguments: "" } };
           if (tc.id) toolCalls[idx].id = tc.id;
           if (tc.function?.name) toolCalls[idx].function.name += tc.function.name;
@@ -230,33 +230,29 @@ export class LlmClient {
   /**
    * Return the slot in toolCalls that one streamed tool-call piece belongs to.
    *
-   * Most routers number each call with index and send its id on the first piece. Some
-   * routers (LiteLLM, MLflow, older Ollama) number every call 0, so a new id at an index
-   * already in use starts a new call. Gemini sends each call whole with no index (or index
-   * null), and its id can be empty, so with no index a new id or a second function name
+   * A piece with the id of a call already started continues that call, even when pieces
+   * of two calls interleave. Otherwise the piece goes to the current call at its index.
+   * Most routers number each call and send its id and name on the first piece. Some
+   * routers (LiteLLM, MLflow, older Ollama) number every call 0, and Gemini sends no index
+   * (or index null), sometimes with an empty id. So a new id, or a second function name,
    * starts a new call.
    *
    * :param toolCalls: The calls put together so far, one per slot.
    * :param piece: One entry of a chunk's delta.tool_calls.
-   * :param latestByIndex: For each index in this stream, the slot of the latest call
-   *     opened with it. Updated when an indexed piece starts a call.
+   * :param currentByIndex: For each index in this stream, and null for pieces with no
+   *     index, the slot its latest piece went to. Updated here.
    * :return: The slot number.
    */
-  static toolCallSlot(toolCalls, piece, latestByIndex) {
-    if (Number.isInteger(piece.index)) {
-      const slot = latestByIndex.get(piece.index);
-      // Continue the latest call at this index unless both have ids and they differ.
-      if (slot !== undefined && !(piece.id && toolCalls[slot]?.id && piece.id !== toolCalls[slot].id)) return slot;
-      latestByIndex.set(piece.index, toolCalls.length);
-      return toolCalls.length;
+  static toolCallSlot(toolCalls, piece, currentByIndex) {
+    const index = Number.isInteger(piece.index) ? piece.index : null;
+    let slot = piece.id ? toolCalls.findIndex((call) => call?.id === piece.id) : -1;
+    if (slot < 0) {
+      slot = currentByIndex.get(index);
+      const call = slot === undefined ? undefined : toolCalls[slot];
+      // A call's id and name come once, so a new id or a second name starts a new call.
+      if (!call || (piece.id && call.id) || (piece.function?.name && call.function?.name)) slot = toolCalls.length;
     }
-    const last = toolCalls.length - 1;
-    if (last < 0) return 0;
-    const current = toolCalls[last];
-    // When both have ids, the ids decide.
-    if (piece.id && current?.id) return piece.id === current.id ? last : toolCalls.length;
-    // A call's name comes once, so a second name starts a new call.
-    if (piece.function?.name && current?.function?.name) return toolCalls.length;
-    return last;
+    currentByIndex.set(index, slot);
+    return slot;
   }
 }
