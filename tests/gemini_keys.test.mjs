@@ -149,6 +149,25 @@ test('2 numbered tool calls that start out of order run in index order', async (
   await assertBothRun([toolCall('agent_b', 1), toolCall('agent_a', 0)]);
 });
 
+test('a call at a very large index, streamed in many pieces, is put together quickly', async () => {
+  // The index comes from the provider, so finding a piece's call must not scan every slot up to it.
+  // That scan runs without yielding, so a test timeout cannot stop it: the test measures the time.
+  const index = 1000000;
+  const args = JSON.stringify({ request: 'ask agent_a' });
+  const pieces = [{ index, id: 'call-agent_a', type: 'function', function: { name: 'agent_a', arguments: '' } }];
+  for (let i = 0; i < 300; i += 1) {
+    pieces.push({ index, id: 'call-agent_a', function: { arguments: args[i] ?? '' } });
+  }
+  const started = performance.now();
+  const { subAgentRequests, frontRequests } = await runTurn(pieces);
+  const elapsed = performance.now() - started;
+  // Scanning every slot takes seconds here; looking the id up takes milliseconds.
+  assert.ok(elapsed < 2000, `took ${Math.round(elapsed)} ms`);
+  assert.equal(subAgentRequests.length, 1);
+  const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
+  assert.deepEqual(assistant.tool_calls.map((call) => [call.id, call.function.name, call.function.arguments]), [['call-agent_a', 'agent_a', args]]);
+});
+
 test('1 tool call split across chunks runs once with all its arguments', async () => {
   const args = JSON.stringify({ request: 'ask agent_a' });
   const { subAgentRequests, frontRequests } = await runTurn([
