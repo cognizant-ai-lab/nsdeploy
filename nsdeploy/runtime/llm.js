@@ -166,7 +166,10 @@ export class LlmClient {
     const dec = new TextDecoder();
     let buf = "";
     let content = "";
-    const toolCalls = []; // assembled by index
+    const toolCalls = []; // one slot per call: its index when free, otherwise the next one
+    // byIndex: each index (null for none) -> the slot its latest piece went to.
+    // byId: each call id -> its slot.
+    const slots = { byIndex: new Map(), byId: new Map() };
     let finishReason = null;
     let usage = null;
     let model = null;
@@ -186,11 +189,14 @@ export class LlmClient {
       }
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
-          const idx = tc.index ?? 0;
+          const idx = LlmClient.toolCallSlot(toolCalls, tc, slots);
           if (!toolCalls[idx]) toolCalls[idx] = { id: tc.id, type: "function", function: { name: "", arguments: "" } };
           if (tc.id) toolCalls[idx].id = tc.id;
           if (tc.function?.name) toolCalls[idx].function.name += tc.function.name;
           if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
+          // Gemini 3 puts a thought signature here. It rejects the next request unless
+          // the signature comes back on the same call, so keep the field as received.
+          if (tc.extra_content) toolCalls[idx].extra_content = tc.extra_content;
         }
       }
       if (choice.finish_reason) finishReason = choice.finish_reason;
@@ -221,5 +227,43 @@ export class LlmClient {
     }
 
     return { content, toolCalls: toolCalls.filter(Boolean), finishReason, usage, model };
+  }
+
+  /**
+   * Return the slot in toolCalls that one streamed tool-call piece belongs to.
+   *
+   * A piece with the id of a call already started continues that call, even when pieces
+   * of two calls interleave. Otherwise the piece goes to the current call at its index.
+   * Most routers number each call and send its id on the first piece. Some routers
+   * (LiteLLM, MLflow, older Ollama) number every call 0, so a new id starts a new call.
+   * Gemini sends no index (or index null), sometimes with an empty id, so with no index a
+   * second function name starts a new call too. A new call takes the slot its index names
+   * when that slot is free, so calls keep the router's order even if they start out of order.
+   *
+   * :param toolCalls: The calls put together so far, one per slot.
+   * :param piece: One entry of a chunk's delta.tool_calls.
+   * :param slots: This stream's lookups, updated here. byIndex maps each index (null for
+   *     pieces with no index) to the slot its latest piece went to, and byId maps each call
+   *     id to its slot, so no lookup scans toolCalls.
+   * :return: The slot number.
+   */
+  static toolCallSlot(toolCalls, piece, slots) {
+    const index = Number.isInteger(piece.index) ? piece.index : null;
+    let slot = piece.id ? slots.byId.get(piece.id) : undefined;
+    if (slot === undefined) {
+      slot = slots.byIndex.get(index);
+      const call = slot === undefined ? undefined : toolCalls[slot];
+      // A new id starts a new call. With no index, so does a second name: numbered pieces
+      // may split a name, but a call with no index sends its name once.
+      const secondName = index === null && piece.function?.name && call?.function?.name;
+      if (!call || (piece.id && call.id) || secondName) {
+        // A reused index, or no index, puts the new call at the end.
+        slot = index !== null && !toolCalls[index] ? index : toolCalls.length;
+      }
+    }
+    slots.byIndex.set(index, slot);
+    // The caller gives the call this id, so later pieces with it find the call here.
+    if (piece.id) slots.byId.set(piece.id, slot);
+    return slot;
   }
 }

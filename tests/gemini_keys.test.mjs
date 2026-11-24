@@ -4,12 +4,11 @@ import test from 'node:test';
 import { Engine } from '../nsdeploy/runtime/engine.js';
 import { providerForApiKey } from '../nsdeploy/runtime/ui.js';
 
-// Google AI Studio (Gemini) key bugs from ticket #59. The bug tests are marked todo: they run and
-// report each bug without failing npm test. The fix removes { todo: TODO } so they must pass.
-// The "with index" and the 2 "split across chunks" tests pass today and guard the fix.
+// Google AI Studio (Gemini) key cases from ticket #59: the default model against Google's
+// "models/..." list, "AQ." keys, thought signatures, and the stream shapes routers use for
+// parallel tool calls. A fake Google router streams the replies, so no key is needed.
 const MODEL = 'gemini-3.8-flash';
 const ROUTER = 'https://google.example/v1beta/openai';
-const TODO = 'ticket #59: fails until the fix lands';
 
 const network = {
   llm_config: { model_name: MODEL },
@@ -83,9 +82,9 @@ async function runTurn(...steps) {
   }
 }
 
-test('the Google default model is accepted against a models/... list', { todo: TODO }, async () => {
-  // ui.js validateConfiguredModel checks availableModels.includes(model) inside the panel
-  // code, which a test cannot reach. The fix exposes the check as model.js isPublishedModel.
+test('the Google default model is accepted against a models/... list', async () => {
+  // The settings panel (ui.js validateConfiguredModel) checks the model with model.js
+  // isPublishedModel, so the test calls it directly.
   const { isPublishedModel } = await import('../nsdeploy/runtime/model.js');
   assert.equal(typeof isPublishedModel, 'function', 'model.js has no isPublishedModel check');
   const googleModels = ['models/gemini-3.8-flash', 'models/gemini-2.5-flash'];
@@ -95,24 +94,31 @@ test('the Google default model is accepted against a models/... list', { todo: T
   assert.equal(isPublishedModel('gemini-9-unknown', googleModels), false);
 });
 
-test('an AQ. key is recognised as a Google AI Studio key', { todo: TODO }, () => {
+test('a model typed with models/ is still rejected by a provider whose list has no prefix', async () => {
+  const { isPublishedModel } = await import('../nsdeploy/runtime/model.js');
+  const openaiModels = ['gpt-5.5', 'gpt-5.4-mini'];
+  assert.equal(isPublishedModel('gpt-5.5', openaiModels), true);
+  assert.equal(isPublishedModel('models/gpt-5.5', openaiModels), false);
+});
+
+test('an AQ. key is recognised as a Google AI Studio key', () => {
   // New AI Studio keys start with "AQ."; keys made earlier start with "AIza".
   assert.equal(providerForApiKey('AQ.example')?.name, 'Google AI Studio');
 });
 
-test('the next request sends the Gemini thought_signature back', { todo: TODO }, async () => {
+test('the next request sends the Gemini thought_signature back', async () => {
   const { frontRequests } = await runTurn([toolCall('agent_a', 0)]);
   const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
   assert.deepEqual(assistant.tool_calls[0].extra_content, signature('agent_a'));
 });
 
-test('a later step sends the thought_signature of every earlier step back', { todo: TODO }, async () => {
+test('a later step sends the thought_signature of every earlier step back', async () => {
   const { frontRequests } = await runTurn([toolCall('agent_a', 0)], [toolCall('agent_b', 0)]);
   const assistants = frontRequests[2].messages.filter((message) => message.role === 'assistant' && message.tool_calls);
   assert.deepEqual(assistants.map((message) => message.tool_calls[0].extra_content), [signature('agent_a'), signature('agent_b')]);
 });
 
-test('2 Gemini calls in one step: the signature goes back on the first call only', { todo: TODO }, async () => {
+test('2 Gemini calls in one step: the signature goes back on the first call only', async () => {
   // Gemini sends each parallel call with no index and signs only the first one.
   const unsigned = toolCall('agent_b');
   delete unsigned.extra_content;
@@ -134,16 +140,39 @@ test('2 tool calls in one step with index both run', async () => {
   await assertBothRun([toolCall('agent_a', 0), toolCall('agent_b', 1)]);
 });
 
-test('2 tool calls in one step without index both run', { todo: TODO }, async () => {
+test('2 tool calls in one step without index both run', async () => {
   await assertBothRun([toolCall('agent_a'), toolCall('agent_b')]);
 });
 
-test('2 tool calls in one step with index null both run', { todo: TODO }, async () => {
+test('2 tool calls in one step with index null both run', async () => {
   await assertBothRun([toolCall('agent_a', null), toolCall('agent_b', null)]);
 });
 
-test('2 tool calls in one step from a router that numbers every call 0 both run', { todo: TODO }, async () => {
+test('2 tool calls in one step from a router that numbers every call 0 both run', async () => {
   await assertBothRun([toolCall('agent_a', 0), toolCall('agent_b', 0)]);
+});
+
+test('2 numbered tool calls that start out of order run in index order', async () => {
+  await assertBothRun([toolCall('agent_b', 1), toolCall('agent_a', 0)]);
+});
+
+test('a call at a very large index, streamed in many pieces, is put together quickly', async () => {
+  // The index comes from the provider, so finding a piece's call must not scan every slot up to it.
+  // That scan runs without yielding, so a test timeout cannot stop it: the test measures the time.
+  const index = 1000000;
+  const args = JSON.stringify({ request: 'ask agent_a' });
+  const pieces = [{ index, id: 'call-agent_a', type: 'function', function: { name: 'agent_a', arguments: '' } }];
+  for (let i = 0; i < 300; i += 1) {
+    pieces.push({ index, id: 'call-agent_a', function: { arguments: args[i] ?? '' } });
+  }
+  const started = performance.now();
+  const { subAgentRequests, frontRequests } = await runTurn(pieces);
+  const elapsed = performance.now() - started;
+  // Scanning every slot takes seconds here; looking the id up takes milliseconds.
+  assert.ok(elapsed < 2000, `took ${Math.round(elapsed)} ms`);
+  assert.equal(subAgentRequests.length, 1);
+  const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
+  assert.deepEqual(assistant.tool_calls.map((call) => [call.id, call.function.name, call.function.arguments]), [['call-agent_a', 'agent_a', args]]);
 });
 
 test('1 tool call split across chunks runs once with all its arguments', async () => {
@@ -167,4 +196,71 @@ test('1 tool call with no index, split across chunks, runs once with all its arg
   assert.equal(subAgentRequests.length, 1);
   const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
   assert.deepEqual(assistant.tool_calls.map((call) => [call.id, call.function.name, call.function.arguments]), [['call-agent_a', 'agent_a', args]]);
+});
+
+const ARGS_A = JSON.stringify({ request: 'ask agent_a' });
+const ARGS_B = JSON.stringify({ request: 'ask agent_b' });
+
+test('1 numbered tool call whose name is split across chunks runs once under its whole name', async () => {
+  const { subAgentRequests, frontRequests } = await runTurn([
+    { index: 0, id: 'call-agent_a', type: 'function', function: { name: 'agent_', arguments: '' } },
+    { index: 0, function: { name: 'a', arguments: ARGS_A } },
+  ]);
+  assert.equal(subAgentRequests.length, 1);
+  const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
+  assert.deepEqual(assistant.tool_calls.map((call) => [call.id, call.function.name, call.function.arguments]), [['call-agent_a', 'agent_a', ARGS_A]]);
+});
+
+// Runs one step and returns how many agents ran, and each call the next request sends
+// back as [id, name, arguments, signature].
+async function callsSentBack(pieces) {
+  const { subAgentRequests, frontRequests } = await runTurn(pieces);
+  const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
+  const calls = assistant.tool_calls.map((call) => [call.id, call.function.name, call.function.arguments, call.extra_content]);
+  return { ran: subAgentRequests.length, calls };
+}
+
+// 2 Gemini calls with no index, the first split across chunks. id is '' or undefined
+// (left out); with no id to go by, the second function name starts the second call.
+function callsWithoutIds(id) {
+  const withId = id === undefined ? {} : { id };
+  return [
+    { ...withId, type: 'function', function: { name: 'agent_a', arguments: ARGS_A.slice(0, 10) }, extra_content: signature('agent_a') },
+    { function: { arguments: ARGS_A.slice(10) } },
+    { ...withId, type: 'function', function: { name: 'agent_b', arguments: ARGS_B }, extra_content: signature('agent_b') },
+  ];
+}
+
+test('2 calls with empty ids and no index keep their own names, arguments and signatures', async () => {
+  const { ran, calls } = await callsSentBack(callsWithoutIds(''));
+  assert.equal(ran, 2);
+  assert.deepEqual(calls, [['', 'agent_a', ARGS_A, signature('agent_a')], ['', 'agent_b', ARGS_B, signature('agent_b')]]);
+});
+
+test('2 calls with no ids and no index keep their own names, arguments and signatures', async () => {
+  const { ran, calls } = await callsSentBack(callsWithoutIds(undefined));
+  assert.equal(ran, 2);
+  assert.deepEqual(calls, [[undefined, 'agent_a', ARGS_A, signature('agent_a')], [undefined, 'agent_b', ARGS_B, signature('agent_b')]]);
+});
+
+// Pieces of 2 calls that interleave as ids a, b, a. index is 0 on every piece, or left out.
+function interleavedCalls(index) {
+  const withIndex = index === undefined ? {} : { index };
+  return [
+    { ...withIndex, id: 'call-agent_a', type: 'function', function: { name: 'agent_a', arguments: ARGS_A.slice(0, 10) } },
+    { ...withIndex, id: 'call-agent_b', type: 'function', function: { name: 'agent_b', arguments: ARGS_B } },
+    { ...withIndex, id: 'call-agent_a', function: { arguments: ARGS_A.slice(10) } },
+  ];
+}
+
+test('pieces of 2 calls that interleave, all with index 0, stay 2 calls', async () => {
+  const { ran, calls } = await callsSentBack(interleavedCalls(0));
+  assert.equal(ran, 2);
+  assert.deepEqual(calls, [['call-agent_a', 'agent_a', ARGS_A, undefined], ['call-agent_b', 'agent_b', ARGS_B, undefined]]);
+});
+
+test('pieces of 2 calls that interleave, with no index, stay 2 calls', async () => {
+  const { ran, calls } = await callsSentBack(interleavedCalls(undefined));
+  assert.equal(ran, 2);
+  assert.deepEqual(calls, [['call-agent_a', 'agent_a', ARGS_A, undefined], ['call-agent_b', 'agent_b', ARGS_B, undefined]]);
 });
