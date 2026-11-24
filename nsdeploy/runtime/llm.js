@@ -232,10 +232,10 @@ export class LlmClient {
    *
    * A piece with the id of a call already started continues that call, even when pieces
    * of two calls interleave. Otherwise the piece goes to the current call at its index.
-   * Most routers number each call and send its id and name on the first piece. Some
-   * routers (LiteLLM, MLflow, older Ollama) number every call 0, and Gemini sends no index
-   * (or index null), sometimes with an empty id. So a new id, or a second function name,
-   * starts a new call.
+   * Most routers number each call and send its id on the first piece. Some routers
+   * (LiteLLM, MLflow, older Ollama) number every call 0, so a new id starts a new call.
+   * Gemini sends no index (or index null), sometimes with an empty id, so with no index a
+   * second function name starts a new call too.
    *
    * :param toolCalls: The calls put together so far, one per slot.
    * :param piece: One entry of a chunk's delta.tool_calls.
@@ -249,8 +249,10 @@ export class LlmClient {
     if (slot < 0) {
       slot = currentByIndex.get(index);
       const call = slot === undefined ? undefined : toolCalls[slot];
-      // A call's id and name come once, so a new id or a second name starts a new call.
-      if (!call || (piece.id && call.id) || (piece.function?.name && call.function?.name)) slot = toolCalls.length;
+      // A new id starts a new call. With no index, so does a second name: numbered pieces
+      // may split a name, but a call with no index sends its name once.
+      const secondName = index === null && piece.function?.name && call?.function?.name;
+      if (!call || (piece.id && call.id) || secondName) slot = toolCalls.length;
     }
     currentByIndex.set(index, slot);
     return slot;

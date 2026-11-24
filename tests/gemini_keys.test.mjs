@@ -171,6 +171,16 @@ test('1 tool call with no index, split across chunks, runs once with all its arg
 const ARGS_A = JSON.stringify({ request: 'ask agent_a' });
 const ARGS_B = JSON.stringify({ request: 'ask agent_b' });
 
+test('1 numbered tool call whose name is split across chunks runs once under its whole name', async () => {
+  const { subAgentRequests, frontRequests } = await runTurn([
+    { index: 0, id: 'call-agent_a', type: 'function', function: { name: 'agent_', arguments: '' } },
+    { index: 0, function: { name: 'a', arguments: ARGS_A } },
+  ]);
+  assert.equal(subAgentRequests.length, 1);
+  const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
+  assert.deepEqual(assistant.tool_calls.map((call) => [call.id, call.function.name, call.function.arguments]), [['call-agent_a', 'agent_a', ARGS_A]]);
+});
+
 // Runs one step and returns how many agents ran, and each call the next request sends
 // back as [id, name, arguments, signature].
 async function callsSentBack(pieces) {
