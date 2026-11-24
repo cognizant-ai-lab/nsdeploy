@@ -94,6 +94,13 @@ test('the Google default model is accepted against a models/... list', async () 
   assert.equal(isPublishedModel('gemini-9-unknown', googleModels), false);
 });
 
+test('a model typed with models/ is still rejected by a provider whose list has no prefix', async () => {
+  const { isPublishedModel } = await import('../nsdeploy/runtime/model.js');
+  const openaiModels = ['gpt-5.5', 'gpt-5.4-mini'];
+  assert.equal(isPublishedModel('gpt-5.5', openaiModels), true);
+  assert.equal(isPublishedModel('models/gpt-5.5', openaiModels), false);
+});
+
 test('an AQ. key is recognised as a Google AI Studio key', () => {
   // New AI Studio keys start with "AQ."; keys made earlier start with "AIza".
   assert.equal(providerForApiKey('AQ.example')?.name, 'Google AI Studio');
