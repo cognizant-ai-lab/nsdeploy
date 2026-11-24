@@ -163,7 +163,7 @@ try {
   const realFetch = window.fetch;
   window.fetch = async (url, init) => {
     if (String(url) === `${google.router}/models`) {
-      return new Response(JSON.stringify({ object: "list", data: [{ id: `models/${google.model}` }, { id: "models/gemini-2.5-flash" }] }), { headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ object: "list", data: [{ id: "models/gemini-3.8-flash" }, { id: "models/gemini-2.5-flash" }] }), { headers: { "Content-Type": "application/json" } });
     }
     return realFetch(url, init);
   };
