@@ -4,12 +4,11 @@ import test from 'node:test';
 import { Engine } from '../nsdeploy/runtime/engine.js';
 import { providerForApiKey } from '../nsdeploy/runtime/ui.js';
 
-// Google AI Studio (Gemini) key bugs from ticket #59. The bug tests are marked todo: they run and
-// report each bug without failing npm test. The fix removes { todo: TODO } so they must pass.
-// The "with index" and the 2 "split across chunks" tests pass today and guard the fix.
+// Google AI Studio (Gemini) key cases from ticket #59: the default model against Google's
+// "models/..." list, "AQ." keys, thought signatures, and the stream shapes routers use for
+// parallel tool calls. A fake Google router streams the replies, so no key is needed.
 const MODEL = 'gemini-3.8-flash';
 const ROUTER = 'https://google.example/v1beta/openai';
-const TODO = 'ticket #59: fails until the fix lands';
 
 const network = {
   llm_config: { model_name: MODEL },
@@ -83,9 +82,9 @@ async function runTurn(...steps) {
   }
 }
 
-test('the Google default model is accepted against a models/... list', { todo: TODO }, async () => {
-  // ui.js validateConfiguredModel checks availableModels.includes(model) inside the panel
-  // code, which a test cannot reach. The fix exposes the check as model.js isPublishedModel.
+test('the Google default model is accepted against a models/... list', async () => {
+  // The settings panel (ui.js validateConfiguredModel) checks the model with model.js
+  // isPublishedModel, so the test calls it directly.
   const { isPublishedModel } = await import('../nsdeploy/runtime/model.js');
   assert.equal(typeof isPublishedModel, 'function', 'model.js has no isPublishedModel check');
   const googleModels = ['models/gemini-3.8-flash', 'models/gemini-2.5-flash'];
@@ -95,24 +94,24 @@ test('the Google default model is accepted against a models/... list', { todo: T
   assert.equal(isPublishedModel('gemini-9-unknown', googleModels), false);
 });
 
-test('an AQ. key is recognised as a Google AI Studio key', { todo: TODO }, () => {
+test('an AQ. key is recognised as a Google AI Studio key', () => {
   // New AI Studio keys start with "AQ."; keys made earlier start with "AIza".
   assert.equal(providerForApiKey('AQ.example')?.name, 'Google AI Studio');
 });
 
-test('the next request sends the Gemini thought_signature back', { todo: TODO }, async () => {
+test('the next request sends the Gemini thought_signature back', async () => {
   const { frontRequests } = await runTurn([toolCall('agent_a', 0)]);
   const assistant = frontRequests[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
   assert.deepEqual(assistant.tool_calls[0].extra_content, signature('agent_a'));
 });
 
-test('a later step sends the thought_signature of every earlier step back', { todo: TODO }, async () => {
+test('a later step sends the thought_signature of every earlier step back', async () => {
   const { frontRequests } = await runTurn([toolCall('agent_a', 0)], [toolCall('agent_b', 0)]);
   const assistants = frontRequests[2].messages.filter((message) => message.role === 'assistant' && message.tool_calls);
   assert.deepEqual(assistants.map((message) => message.tool_calls[0].extra_content), [signature('agent_a'), signature('agent_b')]);
 });
 
-test('2 Gemini calls in one step: the signature goes back on the first call only', { todo: TODO }, async () => {
+test('2 Gemini calls in one step: the signature goes back on the first call only', async () => {
   // Gemini sends each parallel call with no index and signs only the first one.
   const unsigned = toolCall('agent_b');
   delete unsigned.extra_content;
@@ -134,15 +133,15 @@ test('2 tool calls in one step with index both run', async () => {
   await assertBothRun([toolCall('agent_a', 0), toolCall('agent_b', 1)]);
 });
 
-test('2 tool calls in one step without index both run', { todo: TODO }, async () => {
+test('2 tool calls in one step without index both run', async () => {
   await assertBothRun([toolCall('agent_a'), toolCall('agent_b')]);
 });
 
-test('2 tool calls in one step with index null both run', { todo: TODO }, async () => {
+test('2 tool calls in one step with index null both run', async () => {
   await assertBothRun([toolCall('agent_a', null), toolCall('agent_b', null)]);
 });
 
-test('2 tool calls in one step from a router that numbers every call 0 both run', { todo: TODO }, async () => {
+test('2 tool calls in one step from a router that numbers every call 0 both run', async () => {
   await assertBothRun([toolCall('agent_a', 0), toolCall('agent_b', 0)]);
 });
 

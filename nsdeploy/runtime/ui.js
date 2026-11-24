@@ -19,7 +19,7 @@ import {
   selectByokProfile,
   upsertByokProfile,
 } from "./byok.js";
-import { effectiveModel, isPlaceholderModel, normalizeModelName } from "./model.js";
+import { effectiveModel, isPlaceholderModel, isPublishedModel, normalizeModelName } from "./model.js";
 import { normalizePresentation } from "./cruse.js";
 import { PRESENTATION_CSS, renderMarkdown, renderRichComponent } from "./cruse-render.js";
 import { createTurnStatusController } from "./turn-status.js";
@@ -33,7 +33,8 @@ export const API_KEY_PROVIDERS = [
     keyUrl: "https://aistudio.google.com/apikey",
     router: "https://generativelanguage.googleapis.com/v1beta/openai",
     model: "gemini-3.8-flash",
-    keyPrefixes: ["AIza"],
+    // AI Studio now creates "AQ." keys; keys made earlier start with "AIza".
+    keyPrefixes: ["AIza", "AQ."],
     accessNote: "Free tier",
   },
   {
@@ -1159,7 +1160,7 @@ export function mountApp(root, { engine, trace, manifest }) {
       refreshHint();
     }
     const availableModels = await fetchAvailableModels(router, key);
-    if (!availableModels?.length || availableModels.includes(model)) return true;
+    if (!availableModels?.length || isPublishedModel(model, availableModels)) return true;
 
     const shown = availableModels.slice(0, 6);
     const remainder = availableModels.length - shown.length;

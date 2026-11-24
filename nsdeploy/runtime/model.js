@@ -2,6 +2,9 @@
 // use fallbackModel and isPlaceholderModel instead of this name.
 const MOCK_MODEL_NAME = "mock-1";
 
+// Google's /models list names each model "models/<name>", and visitors type either form.
+const MODELS_PREFIX = /^models\//;
+
 // Canonicalize model identifiers entered through profiles or forms.
 export function normalizeModelName(value) {
   let model = String(value ?? "").trim();
@@ -18,6 +21,25 @@ export function normalizeModelName(value) {
 export function isPlaceholderModel(model) {
   const name = normalizeModelName(model);
   return !name || name === MOCK_MODEL_NAME;
+}
+
+/**
+ * Return whether a provider's model list includes a model.
+ *
+ * A "models/" prefix on either side is ignored, so "gemini-3.8-flash" matches
+ * Google's "models/gemini-3.8-flash".
+ *
+ * :param model: The model the visitor or the site chose.
+ * :param availableModels: The model names the provider's /models list returned.
+ * :return: True if the list includes the model.
+ */
+export function isPublishedModel(model, availableModels) {
+  const wanted = normalizeModelName(model).replace(MODELS_PREFIX, "");
+  for (const available of availableModels || []) {
+    // Compare without the prefix on either side.
+    if (String(available).replace(MODELS_PREFIX, "") === wanted) return true;
+  }
+  return false;
 }
 
 // The model an agent sends when neither the visitor nor the agent names one: the

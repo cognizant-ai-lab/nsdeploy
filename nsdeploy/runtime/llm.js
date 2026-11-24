@@ -166,7 +166,8 @@ export class LlmClient {
     const dec = new TextDecoder();
     let buf = "";
     let content = "";
-    const toolCalls = []; // assembled by index
+    const toolCalls = []; // assembled in the order the calls start
+    const latestByIndex = new Map(); // each index -> the slot of the latest call opened with it
     let finishReason = null;
     let usage = null;
     let model = null;
@@ -186,11 +187,14 @@ export class LlmClient {
       }
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
-          const idx = tc.index ?? 0;
+          const idx = LlmClient.toolCallSlot(toolCalls, tc, latestByIndex);
           if (!toolCalls[idx]) toolCalls[idx] = { id: tc.id, type: "function", function: { name: "", arguments: "" } };
           if (tc.id) toolCalls[idx].id = tc.id;
           if (tc.function?.name) toolCalls[idx].function.name += tc.function.name;
           if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
+          // Gemini 3 puts a thought signature here. It rejects the next request unless
+          // the signature comes back on the same call, so keep the field as received.
+          if (tc.extra_content) toolCalls[idx].extra_content = tc.extra_content;
         }
       }
       if (choice.finish_reason) finishReason = choice.finish_reason;
@@ -221,5 +225,38 @@ export class LlmClient {
     }
 
     return { content, toolCalls: toolCalls.filter(Boolean), finishReason, usage, model };
+  }
+
+  /**
+   * Return the slot in toolCalls that one streamed tool-call piece belongs to.
+   *
+   * Most routers number each call with index and send its id on the first piece. Some
+   * routers (LiteLLM, MLflow, older Ollama) number every call 0, so a new id at an index
+   * already in use starts a new call. Gemini sends each call whole with no index (or index
+   * null), and its id can be empty, so with no index a new id or a second function name
+   * starts a new call.
+   *
+   * :param toolCalls: The calls put together so far, one per slot.
+   * :param piece: One entry of a chunk's delta.tool_calls.
+   * :param latestByIndex: For each index in this stream, the slot of the latest call
+   *     opened with it. Updated when an indexed piece starts a call.
+   * :return: The slot number.
+   */
+  static toolCallSlot(toolCalls, piece, latestByIndex) {
+    if (Number.isInteger(piece.index)) {
+      const slot = latestByIndex.get(piece.index);
+      // Continue the latest call at this index unless both have ids and they differ.
+      if (slot !== undefined && !(piece.id && toolCalls[slot]?.id && piece.id !== toolCalls[slot].id)) return slot;
+      latestByIndex.set(piece.index, toolCalls.length);
+      return toolCalls.length;
+    }
+    const last = toolCalls.length - 1;
+    if (last < 0) return 0;
+    const current = toolCalls[last];
+    // When both have ids, the ids decide.
+    if (piece.id && current?.id) return piece.id === current.id ? last : toolCalls.length;
+    // A call's name comes once, so a second name starts a new call.
+    if (piece.function?.name && current?.function?.name) return toolCalls.length;
+    return last;
   }
 }
