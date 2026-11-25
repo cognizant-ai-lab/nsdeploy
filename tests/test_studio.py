@@ -11,7 +11,6 @@ from unittest import mock
 from nsdeploy.coded_tool_module import CodedToolModule
 from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
 from nsdeploy.studio import Studio
-from nsdeploy.studio_content.cached_content import CachedContent
 from nsdeploy.studio_content.github_content import GithubContent
 
 
@@ -133,18 +132,17 @@ class TestStudioLocal(unittest.TestCase):
 class TestStudioGithub(unittest.TestCase):
     """
     Tests that `Studio.github` builds a workspace in which a repository is mirrored at
-    the logical paths a build asks for, and that a later build answers from the cache
-    without reading the repository again.
+    the logical paths a build asks for, and that a build that cannot reach the
+    repository is served from the mirror.
     """
 
     REPO: str = "cognizant-ai-lab/neuro-san-studio"
 
     def setUp(self) -> None:
         """
-        Create an empty cache and a workspace that reads the repository through it.
+        Create an empty mirror and a workspace that reads the repository into it.
 
-        The cache sits in a test-owned parent, because the repository cache is written
-        beside it and a test writes files next to it.
+        The mirror sits in a test-owned parent, because a test writes a file next to it.
         """
         parent: Path = Path(tempfile.mkdtemp()).resolve()
         self.addCleanup(shutil.rmtree, parent)
@@ -156,8 +154,8 @@ class TestStudioGithub(unittest.TestCase):
         """
         Answer every repository call from the test, so no test reaches the network.
 
-        All three calls are replaced together: the cache asks for the revision as well
-        as the file list, and an unpatched one is a real request to GitHub.
+        All three calls are replaced together, because an unpatched one is a real
+        request to GitHub.
 
         :param paths: What the repository lists.
         :param raw: What every file read returns.
@@ -167,18 +165,6 @@ class TestStudioGithub(unittest.TestCase):
                                    list_paths=mock.MagicMock(return_value=paths),
                                    read=mock.MagicMock(return_value=raw),
                                    revision=mock.MagicMock(return_value="sha"))
-
-    @staticmethod
-    def unreachable_repository() -> Any:
-        """
-        Fail any repository call, so a test can prove that none is made.
-
-        :return: The patch to use as a context manager.
-        """
-        return mock.patch.multiple(GithubContent,
-                                   list_paths=mock.MagicMock(side_effect=AssertionError("listed")),
-                                   read=mock.MagicMock(side_effect=AssertionError("read")),
-                                   revision=mock.MagicMock(side_effect=AssertionError("revision")))
 
     @staticmethod
     def offline_repository() -> Any:
@@ -202,85 +188,23 @@ class TestStudioGithub(unittest.TestCase):
         self.assertEqual(path, self.cache / "registries" / "aaosa.hocon")
         self.assertEqual(path.read_text(encoding="utf-8"), "{}")
 
-    def test_a_later_build_reads_nothing_from_the_repository(self) -> None:
+    def test_a_later_build_reads_the_repository_again(self) -> None:
         """
-        Tests that a warm cache costs no request, in this process or the next one. This
-        is what keeps a repeat build off the network, and the file list, which is the
-        rate-limited call, unasked for.
+        Tests that each build reads the repository, so a file edited upstream reaches
+        the next build and replaces the mirrored copy.
         """
         with self.repository(["neuro_san_studio/registries/aaosa.hocon"]):
             self.studio.materialize("registries/aaosa.hocon")
         # A workspace with no memory, as the next build process has.
         later: ToolboxWorkspace = Studio.github(self.REPO, "main", cache_dir=self.cache)
-        with self.unreachable_repository():
+        with self.repository(["neuro_san_studio/registries/aaosa.hocon"], raw=b"{ edited }"):
             path: Optional[Path] = later.materialize("registries/aaosa.hocon")
-        self.assertEqual(path, self.cache / "registries" / "aaosa.hocon")
-        self.assertEqual(path.read_text(encoding="utf-8"), "{}")
-
-    def test_the_repository_cache_is_kept_out_of_the_include_base(self) -> None:
-        """
-        Tests that the cache's own bookkeeping does not appear in the mirror. pyhocon
-        parses a network against the mirror, so anything written there is a file a
-        network could include.
-        """
-        with self.repository(["registries/aaosa.hocon"]):
-            self.studio.materialize("registries/aaosa.hocon")
-        upstream: Path = self.cache.parent / Studio.UPSTREAM_DIR / self.cache.name
-        self.assertTrue((upstream / CachedContent.LISTING_NAME).is_file())
-        written: List[Path] = []
-        # Every file the build left in the mirror.
-        for path in self.cache.rglob("*"):
-            if path.is_file():
-                written.append(path.relative_to(self.cache))
-        self.assertEqual(written, [Path("registries/aaosa.hocon")])
-
-    def test_an_include_cannot_reach_the_repository_cache(self) -> None:
-        """
-        Tests that a network naming the cache's own files cannot overwrite a cached
-        file or remove the file list. Both are inputs to every later build.
-        """
-        repository: List[str] = ["a/common.hocon", "b/common.hocon"]
-        with self.repository(repository):
-            self.studio.materialize("a/common.hocon")
-            self.studio.materialize("b/common.hocon")
-        upstream: Path = self.cache.parent / Studio.UPSTREAM_DIR / self.cache.name
-        listing: Path = upstream / CachedContent.LISTING_NAME
-        cached: List[Path] = sorted((upstream / CachedContent.FILES_DIR).iterdir())
-        reach: str = f"../{Studio.UPSTREAM_DIR}/{upstream.name}"
-        with self.repository(repository, raw=b"overwritten"):
-            self.assertIsNone(self.studio.materialize(f"{reach}/{CachedContent.FILES_DIR}/{cached[-1].name}"))
-            self.assertIsNone(self.studio.materialize(f"{reach}/{CachedContent.LISTING_NAME}"))
-            self.assertIsNone(self.studio.materialize(f"{Studio.UPSTREAM_DIR}/{CachedContent.LISTING_NAME}"))
-        self.assertEqual(len(cached), 2)
-        # Each cached file still holds what the repository returned.
-        for path in cached:  # type: Path
-            self.assertEqual(path.read_bytes(), b"{}")
-        self.assertTrue(listing.is_file())
-
-    def test_a_ref_named_like_a_cache_does_not_share_it(self) -> None:
-        """
-        Tests that the default mirror of a ref named `main.upstream` is not the cache of
-        `main`, so a network built from one cannot change the other's cached inputs.
-        """
-        home: Path = self.cache.parent / "home"
-        with mock.patch.object(Path, "home", return_value=home):
-            main: ToolboxWorkspace = Studio.github(self.REPO, "main")
-            other: ToolboxWorkspace = Studio.github(self.REPO, "main.upstream")
-        with self.repository(["registries/aaosa.hocon", CachedContent.LISTING_NAME]):
-            main.materialize("registries/aaosa.hocon")
-            caches: Path = home / ".cache" / "nsdeploy" / Studio.UPSTREAM_DIR
-            listing: Path = caches / main.include_base().name
-            before: bytes = (listing / CachedContent.LISTING_NAME).read_bytes()
-            other.materialize(CachedContent.LISTING_NAME)
-            other.materialize("absent.hocon")
-        self.assertEqual((listing / CachedContent.LISTING_NAME).read_bytes(), before)
-        self.assertNotEqual(main.include_base(), listing)
-        self.assertNotEqual(other.include_base(), listing)
+        self.assertEqual(path.read_bytes(), b"{ edited }")
 
     def test_refs_with_slashes_get_separate_flat_mirrors(self) -> None:
         """
-        Tests that a ref containing `/` does not put its mirror or cache inside the
-        mirror of a shorter ref, where that ref's includes could reach them, and that
+        Tests that a ref containing `/` does not put its mirror inside the mirror of a
+        shorter ref, where that ref's includes could reach it, and that
         refs which read alike once sanitized still get separate mirrors.
         """
         home: Path = self.cache.parent / "home"
@@ -295,10 +219,10 @@ class TestStudioGithub(unittest.TestCase):
         for base in bases:  # type: Path
             self.assertEqual(base.parent, root)
 
-    def test_an_offline_build_uses_a_mirror_with_no_repository_cache(self) -> None:
+    def test_an_offline_build_uses_the_mirror(self) -> None:
         """
-        Tests that a mirror filled before the repository cache existed still serves a
-        build that cannot reach the repository, and that a file it lacks still fails.
+        Tests that a mirror filled by an earlier build still serves a build that cannot
+        reach the repository, and that a file it lacks still fails.
         """
         mirrored: Path = self.cache / "registries" / "aaosa.hocon"
         mirrored.parent.mkdir(parents=True)
@@ -323,10 +247,10 @@ class TestStudioGithub(unittest.TestCase):
             with self.assertRaises(OSError):
                 self.studio.ensure_coded_tool("absent.py")
 
-    def test_materialize_rejects_a_path_outside_the_cache(self) -> None:
+    def test_materialize_rejects_a_path_outside_the_mirror(self) -> None:
         """
         Tests that a `..` in a network's include cannot answer with a file outside the
-        cache, cached or not.
+        mirror.
         """
         outside: Path = self.cache.parent / "escape.hocon"
         outside.write_text("{}", encoding="utf-8")

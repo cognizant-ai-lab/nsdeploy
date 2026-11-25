@@ -19,13 +19,9 @@ class GithubContent(ToolboxContent):
     raw.githubusercontent.com, which is not part of that allowance. Keeping them
     distinct is why `list_paths` is the expensive call and `read` is not.
 
-    **No caching here, on purpose.** A disk cache shared between processes, a
-    refresh before it expires, and the warm-up that keeps a burst of builds from
-    each paying for its own listing are all real requirements — and all of them are
-    about coordinating several readers, which one adapter cannot see. They belong to
-    a caching `ToolboxContent` wrapped around this one, or to the workspace. What is
-    here is the memoized listing for this object's own lifetime, which costs nothing
-    and surprises nobody.
+    **No caching here, on purpose.** What is here is the memoized listing for this
+    object's own lifetime, which costs nothing and surprises nobody. A cache shared
+    between builds would coordinate several readers, which one adapter cannot see.
 
     **No credential is read from the environment, on purpose.** The token is a
     constructor argument so that whoever holds it decides who gets one. A studio is
@@ -95,17 +91,6 @@ class GithubContent(ToolboxContent):
         # _load leaves this set; the check is for the type checker, not for a case
         # that can happen.
         return self._paths if self._paths is not None else []
-
-    @override
-    def refresh(self) -> None:
-        """
-        Forget the memoized file list and the revision it was taken at.
-
-        The next listing costs one request to the rate-limited tree endpoint, which is
-        why nothing but an explicit refresh causes it.
-        """
-        self._paths = None
-        self._revision = ""
 
     @override
     def read(self, path: str) -> Optional[bytes]:

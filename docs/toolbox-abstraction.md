@@ -65,7 +65,7 @@ resolve.py, __main__.py, linker.py, cailville.py, nsdeploy_service/bundler.py
 ToolboxWorkspace  (interface)      <- MirrorWorkspace
         |
         v
-ToolboxContent    (interface)      <- LocalContent | EmptyContent | CachedContent(GithubContent)
+ToolboxContent    (interface)      <- LocalContent | EmptyContent | GithubContent
 ```
 
 - `ToolboxContent` is the pluggable side. Each storage type has one implementation.
@@ -88,8 +88,6 @@ to the build.
 - `list_paths()`: all source paths, as one flat list.
 - `read(path)`: the bytes of one file. It returns `None` when the file does not exist. It raises `OSError` for all
   other failures.
-- `refresh()`: discard memoized data. The default does nothing. `CachedContent` calls it on the wrapped source when
-  the cached listing expires.
 
 ### 5.2 Decisions
 
@@ -103,7 +101,6 @@ to the build.
 - **Absent and failed are different.** `read` returns `None` for a file that does not exist. It raises for a fault,
   for example a rate limit or a server error. The build reports an absent file as a missing include. It reports a
   fault as an error.
-- **`refresh` has a default.** A source that memoizes nothing is correct without an override.
 
 ### 5.3 Implementations
 
@@ -118,16 +115,14 @@ to the build.
 
 - The listing comes from the git trees API. This API has a rate limit: 60 requests per hour without a token.
 - A file comes from `raw.githubusercontent.com`. This endpoint is not part of the API allowance.
-- It memoizes the listing for the life of the object. It has no disk cache. A disk cache coordinates many readers,
-  and one adapter cannot see them. `CachedContent` does this work.
+- It memoizes the listing for the life of the object. It has no disk cache. Each build makes a new object, so each
+  build makes one listing request.
 - It does not read a token from the environment. The caller gives the token. A toolbox is read in processes that
   run uploaded code, and these processes must not get a credential.
 - It percent-encodes the repository, the ref and the path, but not `/`. Thus `a#b.hocon` and `release#1` are
   correct requests.
 
 `EmptyContent` holds no files. A self-contained network uses it.
-
-`CachedContent` wraps a source and keeps its answers on disk. Section 8 gives its policy.
 
 ## 6. ToolboxWorkspace
 
@@ -162,9 +157,8 @@ resolves again. Each MCP host gets the import root on its command line.
 - **`read_text` for parsed files.** A file that is parsed, not included or imported, does not need a disk copy.
 - **Package marker.** `ensure_coded_tool` writes `coded_tools/__init__.py`, also when the tool is absent. An empty
   package does no damage. A module with no package cannot be imported.
-- **No warm-up method.** A workspace loads the listing on first use. Each build makes a new workspace, so the
-  memory of a workspace never lives longer than one build. The shared disk cache and its lock (section 8) prevent a
-  listing request for each build. A separate warm-up method is thus not necessary.
+- **No warm-up method.** A workspace loads the listing on first use. Each build makes a new workspace, and builds
+  share nothing except the mirror. A warm-up in one process thus cannot help a build in a different process.
 
 ### 6.4 MirrorWorkspace
 
@@ -226,103 +220,51 @@ A build can read files one at a time with no listing. Each request is
 3. **No reliable absence.** With a listing, a file that is not in the listing does not exist. With candidate paths,
    "all candidates returned 404" can also mean "the file is in a new location".
 
-### 7.3 Where the complexity comes from
+### 7.3 The cost of the listing
 
-The listing request uses the GitHub API, which has a rate limit. The disk cache, the time to live, the lock, the
-retry delay and the offline fallback all exist because of this limit. A file read uses the content endpoint and has
-none of this cost.
+The listing request uses the GitHub API, which has a rate limit (section 8.2). A file read uses the content endpoint
+and does not count against this limit.
 
-A local checkout has no such cost. `LocalContent` makes its listing with one walk of the directory tree, and does not
-use `CachedContent`.
+A local checkout has no such cost. `LocalContent` makes its listing with one walk of the directory tree.
 
 ## 8. Listing update policy
 
-`CachedContent` applies this policy. `Studio.github` wraps `GithubContent` in `CachedContent`. `Studio.local` does not
-use `CachedContent`.
+### 8.1 Rule
 
-### 8.1 Goals
+nsdeploy does not keep a listing between builds:
 
-1. A repeated build makes no request to the source.
-2. A build sees a file that was added to the toolbox, within a known time.
-3. Many builds that start at the same time make one listing request.
-4. A source that cannot be reached does not stop a build that has a cached listing.
-5. A failed cache never stops a build that the source can supply.
+1. A content source asks for its listing one time, on first use. It keeps the listing in memory for its life.
+2. Each build makes a new workspace and a new content source.
+3. Thus each build gets a new listing from the source.
 
-### 8.2 Listing record
+The mirror is the only data that stays on disk after a build. Only the listing resolves a path. A build uses a
+mirror copy without the listing only when the source cannot be reached (section 8.3).
 
-The listing is one JSON file, `listing.json`. It contains:
+### 8.2 Results
 
-- `identity`: the source that wrote it.
-- `revision`: the revision of the source at that time.
-- `written`: the time when the source gave this list.
-- `retry_after`: the time until which readers use this list after it expires. The value 0 means no retry delay.
-- `paths`: the source paths.
+- **Changes are visible to the next build.** A file that is added to, removed from or changed in the repository is
+  visible to the next build. No time to live applies.
+- **Files are read for each build.** `materialize` reads each file from the source. It writes the mirror copy only
+  when the bytes are different (section 6.4).
+- **One listing request for each GitHub build.** The git trees API has a rate limit of 60 requests per hour without a
+  token. Thus nsdeploy can do approximately 60 GitHub builds per hour from one network address. Builds that start at
+  the same time each make their own request.
+- **File reads have no such limit.** A file comes from `raw.githubusercontent.com`, which is not part of the API
+  allowance.
 
-The age comes from `written` in the file, not from the file modification time. The paths and their age thus come
-from one read. Another process can replace the file between two reads, and this does not cause an incorrect age.
+### 8.3 When the source cannot be reached
 
-A listing with a different `identity` is ignored. Two sources that use one directory by error thus cause a slow
-build, not incorrect files.
+1. The listing request fails. The workspace keeps the failure for the rest of the build (section 6.4).
+2. `materialize` uses a mirror copy that an earlier build left, and logs a warning.
+3. A file that has no mirror copy stops the build with the error from the source.
+4. No mirror copy is removed. Only a successful listing can show that the toolbox dropped a file.
 
-### 8.3 Decision sequence
+Thus an offline build operates when an earlier build of the same network filled the mirror.
 
-For each process, the listing is loaded one time:
+### 8.4 Local checkout
 
-1. If the process has the listing in memory, use it.
-2. Read `listing.json`. The listing is usable if all these conditions are true:
-   - It exists, and its `identity` agrees.
-   - Its age is less than the time to live (`DEFAULT_TTL_SECONDS`, 3600 s), or the current time is before
-     `retry_after`.
-3. If the listing is usable, use it.
-4. If not, get the lock `listing.lock`. Then read `listing.json` again. Another process can have refreshed it during
-   the wait. If it is now usable, use it.
-5. If not, ask the source:
-   - If a cached listing exists, it is expired. First call `refresh()` on the source. The memo of the source can be
-     as old as the cached listing.
-   - If the source answers, write the new listing with `written` set to now and `retry_after` set to 0.
-   - If the source fails, and a cached listing exists, use the cached listing. Write it again with the same
-     `written` and with `retry_after` set to now plus `RETRY_DELAY_SECONDS` (300 s). Log a warning.
-   - If the source fails, and no cached listing exists, raise the error.
-6. Release the lock.
-
-### 8.4 Reasons for the values
-
-- **Time to live: one hour.** A branch moves. A build must see a new file in a short time. One hour keeps the
-  listing request infrequent in one work session.
-- **Retry delay: five minutes.** Without it, each build that waits on the lock repeats the failed request. Each
-  attempt can wait for the full timeout of the source (`TIMEOUT_SECONDS`, 30 s). Six builds can then wait for three
-  minutes, although a usable listing exists.
-- **Lock and second read.** Without them, each build in a burst sees the same expired listing and makes its own
-  request. A burst can then use all of the rate limit.
-- **No lock on Windows.** `fcntl` is not available. Without the lock, builds can make duplicate requests. The result
-  stays correct.
-- **No lock on a read-only cache.** The build logs a warning and continues. The cost is at most a duplicate request.
-
-### 8.5 No forced refresh
-
-The time to live is the only cause of a new listing. No command and no method makes a build ask for a new listing
-earlier. A file that is added to the repository is thus visible to builds within one hour, not immediately. To see it
-immediately, remove `listing.json` from the repository cache (section 9).
-
-### 8.6 Files
-
-- **Files do not expire.** Only the listing expires. A file that changed in place under the same path, on a branch
-  that moved, is not read again. This is the cost of no request for each file in each build.
-- **An absence is not cached.** A file that the source does not have is not recorded. A file that is added later is
-  thus found by the next build.
-- **Digest keys.** Each cached file is at `files/<sha256 of the source path>`. A path that changes from file to
-  directory between revisions, for example `assets` and `assets/logo.png`, cannot collide. No path can go out of the
-  cache directory.
-- **Cache failures are not build failures.** A file that cannot be written to the cache is returned. A cached file
-  that cannot be read is a miss, and the read goes to the source.
-- **A new listing does not delete files.** A file that is not in the new listing cannot be resolved, so its cached
-  copy is not used.
-
-### 8.7 Stale listing and the mirror
-
-An offline build that uses a stale listing removes a mirror copy that the listing does not name. The listing is the
-newest record of the repository. Each mirror file was resolved from a listing of the same age or older. Thus a file
-that the newest listing does not name was dropped, as far as the build can know.
+`LocalContent` applies the same rule. It walks the checkout one time for each build, and reads each file from the
+checkout. An edit in the checkout is visible to the next build.
 
 ## 9. Disk layout
 
@@ -332,32 +274,21 @@ All directories are under `~/.cache/nsdeploy/`:
 ~/.cache/nsdeploy/
     local_<checkout name>_<sha12>/                 mirror of a local checkout
     <owner>_<repo>@<ref>_<sha12>/                  mirror of a GitHub repository at a ref
-    .upstream/
-        <owner>_<repo>@<ref>_<sha12>/              repository cache of that mirror
-            listing.json
-            listing.lock
-            files/<sha256 of source path>
 ```
 
 - **Mirror names are one path component.** Characters other than `A-Z a-z 0-9 . _ @ -` become `_`. A 12-character
   digest of the exact `repo@ref` follows. Thus `release/feature` does not put a mirror in the mirror of `release`. Refs
   that become equal after the change, for example `release/feature` and `release_feature`, stay different. The name
   is limited to 255 bytes.
-- **The repository cache is out of the mirror.** The mirror is the include base. A network include can name each
-  file in it. In `.upstream/`, a network can get to the cache only with `..`, and the workspace refuses `..`.
-- **The cache has its own namespace.** No mirror name can be `.upstream`, because each mirror name contains `@` or
-  starts with `local_`. A mirror for a ref with the name `main.upstream` thus cannot be the cache of `main`.
-- **A downloaded file has two copies.** One copy is in the cache, with a key from the source path. One copy is in the
-  mirror, at the logical path. Toolbox files are small. To keep one copy, the mirror must know which sources are safe
-  to read from disk. That decision belongs to a content source, not to the workspace.
+- **The mirror holds only logical paths.** It is the include base, so a network include can name each file in it.
+  nsdeploy writes nothing else into a mirror.
 
 ## 10. Known limits
 
 - **No pinned revision.** The build does not record the toolbox revision, and does not pin to it. Builds are thus not
   reproducible.
-- **Files on a moving branch can be old.** See section 8.6.
-- **No forced refresh.** See section 8.5. A command-line option can add it. The option needs a `refresh()` override
-  in `CachedContent` that skips the disk listing one time.
+- **One listing request for each GitHub build.** See section 8.2. A token, or a disk cache shared between builds,
+  can remove this limit.
 - **The alternative in section 7.2 is not implemented.** A fixed layout map with direct file reads would remove the
-  listing cache. It would also put knowledge of one repository layout into nsdeploy. This change is possible in a
+  listing request. It would also put knowledge of one repository layout into nsdeploy. This change is possible in a
   separate pull request.

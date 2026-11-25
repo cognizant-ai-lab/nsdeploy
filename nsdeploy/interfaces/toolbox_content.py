@@ -70,21 +70,6 @@ class ToolboxContent:
         """
         raise NotImplementedError
 
-    def refresh(self) -> None:
-        """
-        Forget anything this source memoized, so the next question reaches it again.
-
-        The one method here with a working default rather than `NotImplementedError`:
-        a source that memoizes nothing is already correct, and making every
-        implementation write an empty method would say nothing. A source that keeps a
-        file list, a revision or a file for its own lifetime overrides this.
-
-        `CachedContent` calls it on the source it wraps when the cached file list
-        expires. The source's own memo can be as old as that list, and answering from
-        it would write the old list back with a new time.
-        """
-        return
-
     def read(self, path: str) -> Optional[bytes]:
         """
         Read one file by the path `list_paths` reported for it.

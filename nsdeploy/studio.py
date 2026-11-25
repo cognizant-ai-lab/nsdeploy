@@ -7,7 +7,6 @@ from typing import Optional
 
 from nsdeploy.interfaces.toolbox_content import ToolboxContent
 from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
-from nsdeploy.studio_content.cached_content import CachedContent
 from nsdeploy.studio_content.github_content import GithubContent
 from nsdeploy.studio_content.local_content import LocalContent
 from nsdeploy.studio_content.mirror_workspace import MirrorWorkspace
@@ -30,12 +29,6 @@ class Studio:
     paths, mirroring and coded-tool packaging belong to `MirrorWorkspace`.
     """
 
-    # The directory, beside the mirrors, that holds one repository cache per mirror
-    # under the mirror's own name. No default mirror name can equal it: those carry an
-    # `@` or a `local_` prefix, and each is one path component, so the namespace is
-    # never inside a mirror.
-    UPSTREAM_DIR: str = ".upstream"
-
     @staticmethod
     def local(path: str | Path, cache_dir: Optional[Path] = None) -> ToolboxWorkspace:
         """
@@ -54,7 +47,10 @@ class Studio:
     @staticmethod
     def github(repo: str = DEFAULT_REPO, ref: str = DEFAULT_REF, cache_dir: Optional[Path] = None) -> ToolboxWorkspace:
         """
-        Read a GitHub repository on demand, through a cache shared by every build.
+        Read a GitHub repository on demand.
+
+        Each workspace asks the repository for its file list once, and reads each file
+        it needs from the repository. Nothing but the mirror is kept between builds.
 
         :param repo: The GitHub repository, as `owner/name`.
         :param ref: The branch, tag or commit to read.
@@ -63,23 +59,9 @@ class Studio:
         """
         default_cache: Path = Path.home() / ".cache" / "nsdeploy" / Studio._mirror_name(repo, ref)
         mirror: Path = (Path(cache_dir) if cache_dir else default_cache).resolve()
-        # The repository cache sits beside the mirror, never inside it. The mirror is
-        # the include base, so anything under it can be named by a network's include,
-        # and a cached file or the file list could then be overwritten for every later
-        # build. Beside it, reaching the cache takes a `..`, which the workspace refuses.
-        # It is in a namespace of its own rather than a sibling with a suffix, so no
-        # other mirror -- such as the one for a ref named `main.upstream` -- is the cache.
-        #
-        # A downloaded file therefore exists twice: in the cache, keyed by the
-        # repository's own path, and in the mirror at the logical path a network asks
-        # for. That is accepted. Studio files are small, and collapsing the two would
-        # mean teaching the mirror which sources are safe to answer from disk -- a
-        # decision that belongs to a content source, not to the workspace.
-        #
         # No token: a studio is read in processes that run uploaded code, and this
         # source has always read the public repository anonymously.
-        kept: Path = mirror.parent / Studio.UPSTREAM_DIR / mirror.name
-        return Studio._workspace(CachedContent(GithubContent(repo, ref), kept), mirror)
+        return Studio._workspace(GithubContent(repo, ref), mirror)
 
     @staticmethod
     def _mirror_name(repo: str, ref: str) -> str:
