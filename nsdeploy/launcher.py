@@ -39,11 +39,9 @@ from nsdeploy.commerce.service import from_plan
 from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.resolve import HostableTool
 
-logger: logging.Logger = logging.getLogger(__name__)
-
 # The vendored neuro-san-web browser runtime (self-contained ES modules) ships inside
 # the package as data so editable and regular installs both find it. Overridable via
-# serve(..., runtime_dir=...) / --runtime-dir.
+# Launcher.serve(..., runtime_dir=...) / --runtime-dir.
 DEFAULT_RUNTIME_DIR: Path = Path(__file__).resolve().parent / "runtime"
 MIME: Dict[str, str] = {
     ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -446,7 +444,7 @@ def make_handler(site_dir: Path, upstream: str, runtime_dir: Path, ext_mcps: Lis
                 inside = real_path.is_relative_to(base_dir.resolve())
             except (OSError, RuntimeError, ValueError) as exc:
                 # A symlink loop or a NUL byte in the request cannot be resolved; treat it as a missing file.
-                logger.warning("Cannot resolve static path %r: %r", path, exc)
+                Launcher.LOGGER.warning("Cannot resolve static path %r: %r", path, exc)
             if ".." in path or not inside or not real_path.is_file():
                 return self._send(404, b"404 " + path.encode(), "text/plain", cors=False)
             data: bytes = real_path.read_bytes()
@@ -576,83 +574,95 @@ def spawn_mcp_servers(plan: DeploymentPlan, studio_root: Path, python_exe: str) 
     return bindings
 
 
-# pylint: disable-next=too-many-arguments,too-many-locals  # top-level entry point wiring every server
-def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int = 8080,
-          site_base: Optional[str] = None,
-          upstream: str = "https://api.openai.com/v1", python_exe: Optional[str] = None,
-          runtime_dir: Optional[Path] = None, ext_mcps: Optional[List[str]] = None,
-          facade_upstream: Optional[str] = None, mock_llm: bool = False) -> None:
+class Launcher:
     """
-    Start the MCP tool servers and the public facade, then serve the site until interrupted.
+    Serves a generated site on loopback, with its MCP tool servers and public facade.
 
-    :param site_dir: Directory holding the generated site files.
-    :param plan: The resolved deployment plan.
-    :param studio_root: Root of the studio that provides the coded tools.
-    :param port: Loopback port the site origin listens on.
-    :param site_base: Public base URL of the site, when it differs from the loopback address.
-    :param upstream: OpenAI-compatible upstream base URL for the BYOK proxy.
-    :param python_exe: Python interpreter for subprocesses; defaults to the current one.
-    :param runtime_dir: Directory holding the neuro-san-web browser runtime.
-    :param ext_mcps: External MCP server URLs to proxy.
-    :param facade_upstream: OpenAI-compatible upstream for the public MCP facade.
-    :param mock_llm: Whether the site defaults to the mock LLM router.
+    `serve` is the entry point. It starts the subprocesses, serves until interrupted,
+    and then stops every subprocess it started.
     """
-    python_exe = python_exe or sys.executable
-    runtime_dir = runtime_dir or DEFAULT_RUNTIME_DIR
-    ext_mcps = ext_mcps or []
-    bindings: List[Tuple[subprocess.Popen, int]] = spawn_mcp_servers(plan, studio_root, python_exe)
-    facade_proc: Optional[subprocess.Popen] = None
-    try:
-        local_mcps: List[str] = [f"http://127.0.0.1:{private_port}/mcp" for _, private_port in bindings]
-        facade_port: int = _free_tcp_port()
-        facade_upstream = facade_upstream or os.environ.get("NSDEPLOY_FACADE_UPSTREAM") or upstream
-        repo_root: str = str(Path(__file__).resolve().parents[1])
-        # The facade runs the network for MCP callers with *their* BYOK credentials, so it
-        # must not even be able to see the host's provider credentials.
-        env: Dict[str, str] = scrubbed_env(os.environ)
-        env["PYTHONPATH"] = os.pathsep.join([repo_root, str(studio_root), env.get("PYTHONPATH", "")])
-        # pylint: disable-next=consider-using-with  # stopped in the finally block below
-        facade_proc = subprocess.Popen(
-            _facade_command(python_exe, site_dir, plan, port, facade_port, facade_upstream,
-                            site_base),
-            env=env, cwd=repo_root,
-        )
-        _wait_for_listener(facade_proc, facade_port)
-        commerce: Optional[CommerceSite] = from_plan(plan, site_dir, site_base or f"http://127.0.0.1:{port}")
-        handler: Type[BaseHTTPRequestHandler] = make_handler(site_dir, upstream, runtime_dir, ext_mcps, local_mcps,
-                                                             f"http://127.0.0.1:{facade_port}/mcp", commerce)
-        httpd: ThreadingHTTPServer = ThreadingHTTPServer(("127.0.0.1", port), handler)
-        url: str = (site_base or f"http://127.0.0.1:{port}").rstrip("/") + "/"
-        print(f"\n🌐  {plan.network_name} is live:  {url}")
-        if site_base:
-            print(f"    Loopback backend: 127.0.0.1:{port}")
-        llm_default: str = "mock /v1 (developer mode)" if mock_llm else "BYOK /byok/v1 (API key required)"
-        print(f"    LLM default: {llm_default}  ·  BYOK upstream → {upstream}")
-        print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: caller BYOK → {facade_upstream}"
-              f"  ·  steward: {plan.network_name}_private_steward.hocon")
-        if plan.hostable_tools:
-            print("    MCP tool servers (same-origin proxy → private subprocess):")
-            i: int
-            tool: HostableTool
-            private_port: int
-            for i, (tool, (_, private_port)) in enumerate(zip(plan.hostable_tools, bindings)):
-                print(f"      • {tool.name}  →  /_mcp/{i}/mcp  →  127.0.0.1:{private_port}")
-        target: str
-        for i, target in enumerate(ext_mcps):
-            print(f"    External MCP (proxied): /ext-mcp/{i}/mcp  →  {target}")
-        if plan.link_slots:
-            pending: int = len(set(plan.link_slots) - set(plan.links))
-            print(f"    Linker: {pending} pending agent-network link(s); outbound bindings stay on this site")
-        print("    Ctrl-C to stop.\n")
+
+    # Named after the module, so logging configuration that names the module still applies.
+    LOGGER: logging.Logger = logging.getLogger(__name__)
+
+    @staticmethod
+    # pylint: disable-next=too-many-arguments,too-many-locals  # top-level entry point wiring every server
+    def serve(site_dir: Path, plan: DeploymentPlan, studio_root: Path, *, port: int = 8080,
+              site_base: Optional[str] = None,
+              upstream: str = "https://api.openai.com/v1", python_exe: Optional[str] = None,
+              runtime_dir: Optional[Path] = None, ext_mcps: Optional[List[str]] = None,
+              facade_upstream: Optional[str] = None, mock_llm: bool = False) -> None:
+        """
+        Start the MCP tool servers and the public facade, then serve the site until interrupted.
+
+        :param site_dir: Directory holding the generated site files.
+        :param plan: The resolved deployment plan.
+        :param studio_root: Root of the studio that provides the coded tools.
+        :param port: Loopback port the site origin listens on.
+        :param site_base: Public base URL of the site, when it differs from the loopback address.
+        :param upstream: OpenAI-compatible upstream base URL for the BYOK proxy.
+        :param python_exe: Python interpreter for subprocesses; defaults to the current one.
+        :param runtime_dir: Directory holding the neuro-san-web browser runtime.
+        :param ext_mcps: External MCP server URLs to proxy.
+        :param facade_upstream: OpenAI-compatible upstream for the public MCP facade.
+        :param mock_llm: Whether the site defaults to the mock LLM router.
+        """
+        python_exe = python_exe or sys.executable
+        runtime_dir = runtime_dir or DEFAULT_RUNTIME_DIR
+        ext_mcps = ext_mcps or []
+        bindings: List[Tuple[subprocess.Popen, int]] = spawn_mcp_servers(plan, studio_root, python_exe)
+        facade_proc: Optional[subprocess.Popen] = None
         try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            pass
+            local_mcps: List[str] = [f"http://127.0.0.1:{private_port}/mcp" for _, private_port in bindings]
+            facade_port: int = _free_tcp_port()
+            facade_upstream = facade_upstream or os.environ.get("NSDEPLOY_FACADE_UPSTREAM") or upstream
+            repo_root: str = str(Path(__file__).resolve().parents[1])
+            # The facade runs the network for MCP callers with *their* BYOK credentials, so it
+            # must not even be able to see the host's provider credentials.
+            env: Dict[str, str] = scrubbed_env(os.environ)
+            env["PYTHONPATH"] = os.pathsep.join([repo_root, str(studio_root), env.get("PYTHONPATH", "")])
+            # pylint: disable-next=consider-using-with  # stopped in the finally block below
+            facade_proc = subprocess.Popen(
+                _facade_command(python_exe, site_dir, plan, port, facade_port, facade_upstream,
+                                site_base),
+                env=env, cwd=repo_root,
+            )
+            _wait_for_listener(facade_proc, facade_port)
+            commerce: Optional[CommerceSite] = from_plan(plan, site_dir, site_base or f"http://127.0.0.1:{port}")
+            handler: Type[BaseHTTPRequestHandler] = make_handler(site_dir, upstream, runtime_dir, ext_mcps, local_mcps,
+                                                                 f"http://127.0.0.1:{facade_port}/mcp", commerce)
+            httpd: ThreadingHTTPServer = ThreadingHTTPServer(("127.0.0.1", port), handler)
+            url: str = (site_base or f"http://127.0.0.1:{port}").rstrip("/") + "/"
+            print(f"\n🌐  {plan.network_name} is live:  {url}")
+            if site_base:
+                print(f"    Loopback backend: 127.0.0.1:{port}")
+            llm_default: str = "mock /v1 (developer mode)" if mock_llm else "BYOK /byok/v1 (API key required)"
+            print(f"    LLM default: {llm_default}  ·  BYOK upstream → {upstream}")
+            print(f"    Public MCP facade: /mcp  →  127.0.0.1:{facade_port}  ·  LLM: caller BYOK → {facade_upstream}"
+                  f"  ·  steward: {plan.network_name}_private_steward.hocon")
+            if plan.hostable_tools:
+                print("    MCP tool servers (same-origin proxy → private subprocess):")
+                i: int
+                tool: HostableTool
+                private_port: int
+                for i, (tool, (_, private_port)) in enumerate(zip(plan.hostable_tools, bindings)):
+                    print(f"      • {tool.name}  →  /_mcp/{i}/mcp  →  127.0.0.1:{private_port}")
+            target: str
+            for i, target in enumerate(ext_mcps):
+                print(f"    External MCP (proxied): /ext-mcp/{i}/mcp  →  {target}")
+            if plan.link_slots:
+                pending: int = len(set(plan.link_slots) - set(plan.links))
+                print(f"    Linker: {pending} pending agent-network link(s); outbound bindings stay on this site")
+            print("    Ctrl-C to stop.\n")
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                pass
+            finally:
+                httpd.server_close()
         finally:
-            httpd.server_close()
-    finally:
-        if facade_proc is not None:
-            _stop_process(facade_proc)
-        proc: subprocess.Popen
-        for proc, _ in bindings:
-            _stop_process(proc)
+            if facade_proc is not None:
+                _stop_process(facade_proc)
+            proc: subprocess.Popen
+            for proc, _ in bindings:
+                _stop_process(proc)

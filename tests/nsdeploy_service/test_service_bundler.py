@@ -60,7 +60,7 @@ class BundlerTest(unittest.TestCase):
         self._tmp: tempfile.TemporaryDirectory[str]
         self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with; cleaned up in tearDown
         self.root: Path = Path(self._tmp.name)
-        # An empty checkout, so includes resolve locally and GithubStudio is never
+        # An empty checkout, so includes resolve locally and Studio.github is never
         # constructed. The test network has no includes, so there is nothing to find.
         (self.root / "studio").mkdir()
 

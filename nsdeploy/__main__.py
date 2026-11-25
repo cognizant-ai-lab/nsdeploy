@@ -31,9 +31,10 @@ from nsdeploy.action_discovery import prepare_actions
 from nsdeploy.form_actions import action_discovery_config
 from nsdeploy.generate import generate_site
 from nsdeploy.gateway import run_gateway_command
+from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
 from nsdeploy.linker import load_deploy_links
 from nsdeploy.linker import run_link_command
-from nsdeploy.launcher import serve
+from nsdeploy.launcher import Launcher
 from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.resolve import build_plan
 from nsdeploy.resolve import format_report
@@ -42,11 +43,9 @@ from nsdeploy.resolve import resolve_hocon
 from nsdeploy.site_source import load_site_theme
 from nsdeploy.site_source import seed_site_source
 from nsdeploy.site_source import site_source_exists
-from nsdeploy.studio import DEFAULT_REF
-from nsdeploy.studio import DEFAULT_REPO
-from nsdeploy.studio import GithubStudio
-from nsdeploy.studio import LocalStudio
-from nsdeploy.studio import StudioSource
+from nsdeploy.toolboxworkspacefactory import DEFAULT_REF
+from nsdeploy.toolboxworkspacefactory import DEFAULT_REPO
+from nsdeploy.toolboxworkspacefactory import ToolboxWorkspaceFactory
 from nsdeploy.theme import DEFAULT_THEME_MODEL
 from nsdeploy.theme import ThemeSpec
 from nsdeploy.theme import load_theme_file
@@ -201,12 +200,12 @@ def main() -> int:
         print(f"error: HOCON not found: {hocon_path}", file=sys.stderr)
         return 2
 
-    source: StudioSource
+    workspace: ToolboxWorkspace
     if args.studio:
-        source = LocalStudio(args.studio)
+        workspace = ToolboxWorkspaceFactory.local(args.studio)
         print(f"▶ Resolving {hocon_path.name} (studio: {args.studio}) …\n")
     else:
-        source = GithubStudio(args.repo, args.ref)
+        workspace = ToolboxWorkspaceFactory.github(args.repo, args.ref)
         print(f"▶ Resolving {hocon_path.name} (tools from github:{args.repo}@{args.ref}) …\n")
 
     network_name: str = hocon_path.stem
@@ -231,7 +230,7 @@ def main() -> int:
         ap.error(str(exc))
     config: Dict[str, Any]
     missing_includes: List[str]
-    config, missing_includes = resolve_hocon(hocon_path, source)
+    config, missing_includes = resolve_hocon(hocon_path, workspace)
     cailville_draft: Optional[CommunityDraft] = None
     cailville = None
     if args.add_to_cailville:
@@ -279,9 +278,9 @@ def main() -> int:
             return 2
     if cailville_draft is not None:
         private_steward_sites.update(cailville.public_site_directory(cailville_draft.community))
-    toolbox_info: Dict[str, Any] = {} if args.static_bundle else load_toolbox_info(source)
+    toolbox_info: Dict[str, Any] = {} if args.static_bundle else load_toolbox_info(workspace)
     plan: DeploymentPlan = build_plan(
-        config, toolbox_info, network_name, missing_includes, source,
+        config, toolbox_info, network_name, missing_includes, workspace,
         include_python_tools=not args.static_bundle,
     )
 
@@ -399,11 +398,11 @@ def main() -> int:
         print("   (static output: not launching)" if args.static_bundle else "   (--no-serve: not launching)")
         return 0
 
-    # source.root holds the (materialized) coded-tool sources the MCP hosts import.
-    serve(out_dir, plan, source.root, port=args.port, site_base=site_base,
-          upstream=args.upstream,
-          runtime_dir=runtime_dir, ext_mcps=plan.external_mcps,
-          facade_upstream=args.facade_upstream, mock_llm=args.mock_llm)
+    # The import root holds the (materialized) coded-tool sources the MCP hosts import.
+    Launcher.serve(out_dir, plan, workspace.import_root(), port=args.port, site_base=site_base,
+                   upstream=args.upstream,
+                   runtime_dir=runtime_dir, ext_mcps=plan.external_mcps,
+                   facade_upstream=args.facade_upstream, mock_llm=args.mock_llm)
     return 0
 
 

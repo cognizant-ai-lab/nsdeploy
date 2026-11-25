@@ -1,6 +1,3 @@
-from typing import Tuple
-
-
 class ToolboxLayout:
     """The paths and names nsdeploy expects a neuro-san-studio to publish.
 
@@ -27,10 +24,6 @@ class ToolboxLayout:
     # The package directory a studio checkout may nest its sources under. Only a hint
     # for resolution: a source is not required to use it.
     STUDIO_PACKAGE: str = "neuro_san_studio"
-
-    # Suffixes a logical path may carry. Anything else is not studio content, which is
-    # what lets a source reject a request without reading it.
-    CONTENT_SUFFIXES: Tuple[str, ...] = (".hocon", ".conf", ".json", ".py")
 
     @staticmethod
     def coded_tool_path(module_file: str) -> str:

@@ -6,8 +6,9 @@ from typing import Dict
 from typing import List
 
 from nsdeploy.generate import _seed_default_model
+from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
 from nsdeploy.resolve import _parse_hocon_content
-from nsdeploy.studio import LocalStudio
+from nsdeploy.toolboxworkspacefactory import ToolboxWorkspaceFactory
 
 
 class NestedIncludeTests(unittest.TestCase):
@@ -25,7 +26,7 @@ class NestedIncludeTests(unittest.TestCase):
             'include "developer_llm_config.hocon"\n', encoding="utf-8")
         (self.root / "config" / "developer_llm_config.hocon").write_text(
             '{ "llm_config": { "fallbacks": [ { "model_name": "gpt-test" } ] } }\n', encoding="utf-8")
-        self.source: LocalStudio = LocalStudio(self.root)
+        self.source: ToolboxWorkspace = ToolboxWorkspaceFactory.local(self.root)
 
     def test_nested_include_resolves_relative_to_including_file(self) -> None:
         """Check nested include resolves relative to including file."""
