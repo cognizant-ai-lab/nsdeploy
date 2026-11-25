@@ -30,9 +30,9 @@ from nsdeploy.resolve import BROWSER_OMITTED_TOOLS
 from nsdeploy.resolve import DEMO_MODE_MARKER
 from nsdeploy.resolve import expand_embedded_network_refs
 from nsdeploy.resolve import resolve_hocon
-from nsdeploy.studio import DEFAULT_REF
-from nsdeploy.studio import DEFAULT_REPO
-from nsdeploy.studio import Studio
+from nsdeploy.toolboxworkspacefactory import DEFAULT_REF
+from nsdeploy.toolboxworkspacefactory import DEFAULT_REPO
+from nsdeploy.toolboxworkspacefactory import ToolboxWorkspaceFactory
 
 
 @dataclass
@@ -340,7 +340,7 @@ def run_link_command(argv: Optional[List[str]] = None) -> int:
     missing: List[str] = [str(path) for path in paths if not path.is_file()]
     if missing:
         parser.error("HOCON not found: " + ", ".join(missing))
-    workspace: ToolboxWorkspace = Studio.local(args.studio) if args.studio else Studio.github(args.repo, args.ref)
+    workspace: ToolboxWorkspace = ToolboxWorkspaceFactory.local(args.studio) if args.studio else ToolboxWorkspaceFactory.github(args.repo, args.ref)
 
     local: List[NetworkDescription] = []
     path: Path

@@ -21,9 +21,9 @@ from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.resolve import HostableTool
 from nsdeploy.resolve import build_plan
 from nsdeploy.resolve import resolve_hocon
-from nsdeploy.studio import DEFAULT_REF
-from nsdeploy.studio import DEFAULT_REPO
-from nsdeploy.studio import Studio
+from nsdeploy.toolboxworkspacefactory import DEFAULT_REF
+from nsdeploy.toolboxworkspacefactory import DEFAULT_REPO
+from nsdeploy.toolboxworkspacefactory import ToolboxWorkspaceFactory
 from nsdeploy.theme import DEFAULT_THEME_MODEL
 from nsdeploy.theme import ThemeSpec
 from nsdeploy.theme import propose_theme
@@ -372,10 +372,10 @@ class Bundler:
         """
         settings: Settings = self.settings
         if settings.studio:
-            return Studio.local(settings.studio)
+            return ToolboxWorkspaceFactory.local(settings.studio)
         repo: str = settings.repo or DEFAULT_REPO
         ref: str = settings.ref or DEFAULT_REF
-        return Studio.github(repo, ref)
+        return ToolboxWorkspaceFactory.github(repo, ref)
 
     @staticmethod
     def safe_name(raw: Optional[str]) -> str:

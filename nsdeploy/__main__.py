@@ -43,9 +43,9 @@ from nsdeploy.resolve import resolve_hocon
 from nsdeploy.site_source import load_site_theme
 from nsdeploy.site_source import seed_site_source
 from nsdeploy.site_source import site_source_exists
-from nsdeploy.studio import DEFAULT_REF
-from nsdeploy.studio import DEFAULT_REPO
-from nsdeploy.studio import Studio
+from nsdeploy.toolboxworkspacefactory import DEFAULT_REF
+from nsdeploy.toolboxworkspacefactory import DEFAULT_REPO
+from nsdeploy.toolboxworkspacefactory import ToolboxWorkspaceFactory
 from nsdeploy.theme import DEFAULT_THEME_MODEL
 from nsdeploy.theme import ThemeSpec
 from nsdeploy.theme import load_theme_file
@@ -202,10 +202,10 @@ def main() -> int:
 
     workspace: ToolboxWorkspace
     if args.studio:
-        workspace = Studio.local(args.studio)
+        workspace = ToolboxWorkspaceFactory.local(args.studio)
         print(f"▶ Resolving {hocon_path.name} (studio: {args.studio}) …\n")
     else:
-        workspace = Studio.github(args.repo, args.ref)
+        workspace = ToolboxWorkspaceFactory.github(args.repo, args.ref)
         print(f"▶ Resolving {hocon_path.name} (tools from github:{args.repo}@{args.ref}) …\n")
 
     network_name: str = hocon_path.stem

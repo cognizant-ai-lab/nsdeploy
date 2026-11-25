@@ -15,34 +15,34 @@ DEFAULT_REPO: str = "cognizant-ai-lab/neuro-san-studio"
 DEFAULT_REF: str = "main"
 
 
-class Studio:
-    """Builds the `ToolboxWorkspace` a build reads neuro-san-studio files through.
+class ToolboxWorkspaceFactory:
+    """Builds the `ToolboxWorkspace` through which a build reads dependency files.
 
     A build needs HOCON includes such as `aaosa.hocon`, the toolbox catalogue
     `toolbox/toolbox_info.hocon`, and coded-tool `.py` sources. The end user should not
-    have to clone neuro-san-studio for them, so by default nsdeploy reads just those
+    have to clone sources repository for them, so by default nsdeploy reads just those
     files from the public GitHub repository and mirrors them into a local directory: a
     pyhocon include base and a `coded_tools` import path. A checkout can still be used,
     for offline work and for development, and is mirrored the same way.
 
     This class only chooses the content source and the directories. Resolving logical
-    paths, mirroring and coded-tool packaging belong to `MirrorWorkspace`.
+    paths, mirroring and coded-tool packaging belong to `ToolboxWorkspace` implementation.
     """
 
     @staticmethod
     def local(path: str | Path, cache_dir: Optional[Path] = None) -> ToolboxWorkspace:
         """
-        Read a local studio checkout. Requested files are copied on every request, so
+        Read a local repository checkout. Requested files are copied on every request, so
         edits to the checkout apply to the next build.
 
-        :param path: The local neuro-san-studio checkout.
+        :param path: The local repository checkout.
         :param cache_dir: The mirror directory; defaults to one per checkout under `~/.cache/nsdeploy`.
         :return: The workspace over the checkout.
         """
         checkout: Path = Path(path).resolve()
         digest: str = hashlib.sha256(str(checkout).encode("utf-8")).hexdigest()[:12]
         default_cache: Path = Path.home() / ".cache" / "nsdeploy" / f"local_{checkout.name}_{digest}"
-        return Studio._workspace(LocalContent(checkout), Path(cache_dir) if cache_dir else default_cache)
+        return ToolboxWorkspaceFactory._workspace(LocalContent(checkout), Path(cache_dir) if cache_dir else default_cache)
 
     @staticmethod
     def github(repo: str = DEFAULT_REPO, ref: str = DEFAULT_REF, cache_dir: Optional[Path] = None) -> ToolboxWorkspace:
@@ -57,11 +57,11 @@ class Studio:
         :param cache_dir: The mirror directory; defaults to one per repository and ref under `~/.cache/nsdeploy`.
         :return: The workspace over the repository.
         """
-        default_cache: Path = Path.home() / ".cache" / "nsdeploy" / Studio._mirror_name(repo, ref)
+        default_cache: Path = Path.home() / ".cache" / "nsdeploy" / ToolboxWorkspaceFactory._mirror_name(repo, ref)
         mirror: Path = (Path(cache_dir) if cache_dir else default_cache).resolve()
-        # No token: a studio is read in processes that run uploaded code, and this
+        # No token: a repository is read in processes that run uploaded code, and this
         # source has always read the public repository anonymously.
-        return Studio._workspace(GithubContent(repo, ref), mirror)
+        return ToolboxWorkspaceFactory._workspace(GithubContent(repo, ref), mirror)
 
     @staticmethod
     def _mirror_name(repo: str, ref: str) -> str:
@@ -88,7 +88,7 @@ class Studio:
         """
         Serve a build from `content`, mirroring what it needs into `mirror`.
 
-        :param content: Where the studio files are read from.
+        :param content: Where the repository files are read from.
         :param mirror: The directory the requested files are mirrored into.
         :return: The workspace.
         """

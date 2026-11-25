@@ -19,7 +19,7 @@ from nsdeploy.resolve import DEMO_MODE_MARKER
 from nsdeploy.resolve import DeploymentPlan
 from nsdeploy.resolve import HostableTool
 from nsdeploy.resolve import build_plan
-from nsdeploy.studio import Studio
+from nsdeploy.toolboxworkspacefactory import ToolboxWorkspaceFactory
 from nsdeploy.theme import ThemeSpec
 
 
@@ -30,7 +30,7 @@ class LinkerTests(unittest.TestCase):
         self.temp: tempfile.TemporaryDirectory[str] = (
             tempfile.TemporaryDirectory())  # pylint: disable=consider-using-with; closed in tearDown
         self.root: Path = Path(self.temp.name)
-        self.source: ToolboxWorkspace = Studio.local(self.root)
+        self.source: ToolboxWorkspace = ToolboxWorkspaceFactory.local(self.root)
 
     def tearDown(self) -> None:
         self.temp.cleanup()

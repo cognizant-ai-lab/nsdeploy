@@ -30,9 +30,9 @@ from nsdeploy.generate import write_private_steward_manifest
 from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
 from nsdeploy.linker import write_link_file
 from nsdeploy.resolve import resolve_hocon
-from nsdeploy.studio import DEFAULT_REF
-from nsdeploy.studio import DEFAULT_REPO
-from nsdeploy.studio import Studio
+from nsdeploy.toolboxworkspacefactory import DEFAULT_REF
+from nsdeploy.toolboxworkspacefactory import DEFAULT_REPO
+from nsdeploy.toolboxworkspacefactory import ToolboxWorkspaceFactory
 
 
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
@@ -650,9 +650,9 @@ def prepare_runtime_sources(cailville_dir: Path, project_dir: Path, *,
         hocon: Path = _member_path(cailville_dir, site["hocon"])
         workspace: ToolboxWorkspace
         if site.get("studio"):
-            workspace = Studio.local(site["studio"])
+            workspace = ToolboxWorkspaceFactory.local(site["studio"])
         else:
-            workspace = Studio.github(site.get("repo", DEFAULT_REPO), site.get("ref", DEFAULT_REF))
+            workspace = ToolboxWorkspaceFactory.github(site.get("repo", DEFAULT_REPO), site.get("ref", DEFAULT_REF))
         config: Dict[str, Any]
         config, _ = resolve_hocon(hocon, workspace)
         config = augment_config(config, site_id, community, base_domain=base_domain,

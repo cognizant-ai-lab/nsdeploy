@@ -10,7 +10,7 @@ from unittest import mock
 
 from nsdeploy.coded_tool_module import CodedToolModule
 from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
-from nsdeploy.studio import Studio
+from nsdeploy.toolboxworkspacefactory import ToolboxWorkspaceFactory
 from nsdeploy.studio_content.github_content import GithubContent
 
 
@@ -33,7 +33,7 @@ class TestStudioLocal(unittest.TestCase):
         self.write("registries/aaosa.hocon", "{}")
         self.write("venv/lib/coded_tools/only_in_venv.py", "")
         self.write("escape.txt", "")
-        self.studio: ToolboxWorkspace = Studio.local(self.checkout, cache_dir=self.cache)
+        self.studio: ToolboxWorkspace = ToolboxWorkspaceFactory.local(self.checkout, cache_dir=self.cache)
 
     def write(self, rel_path: str, text: str) -> None:
         """
@@ -100,7 +100,7 @@ class TestStudioLocal(unittest.TestCase):
         """
         self.studio.materialize("registries/aaosa.hocon")
         (self.checkout / "registries" / "aaosa.hocon").unlink()
-        self.assertIsNone(Studio.local(self.checkout, cache_dir=self.cache).materialize("registries/aaosa.hocon"))
+        self.assertIsNone(ToolboxWorkspaceFactory.local(self.checkout, cache_dir=self.cache).materialize("registries/aaosa.hocon"))
         self.assertFalse((self.cache / "registries" / "aaosa.hocon").exists())
 
     def test_concurrent_ensure_shares_mirror(self) -> None:
@@ -110,7 +110,7 @@ class TestStudioLocal(unittest.TestCase):
         studios: List[ToolboxWorkspace] = []
         # Give each thread its own workspace, as each build creates one.
         for _ in range(16):  # type: int
-            studios.append(Studio.local(self.checkout, cache_dir=self.cache))
+            studios.append(ToolboxWorkspaceFactory.local(self.checkout, cache_dir=self.cache))
         with ThreadPoolExecutor(max_workers=16) as pool:
             results: List[Optional[Path]] = list(pool.map(self.ensure_toolbox, studios))
         # Every thread gets the mirrored file.
@@ -147,7 +147,7 @@ class TestStudioGithub(unittest.TestCase):
         parent: Path = Path(tempfile.mkdtemp()).resolve()
         self.addCleanup(shutil.rmtree, parent)
         self.cache: Path = parent / "studio"
-        self.studio: ToolboxWorkspace = Studio.github(self.REPO, "main", cache_dir=self.cache)
+        self.studio: ToolboxWorkspace = ToolboxWorkspaceFactory.github(self.REPO, "main", cache_dir=self.cache)
 
     @staticmethod
     def repository(paths: List[str], raw: bytes = b"{}") -> Any:
@@ -196,7 +196,7 @@ class TestStudioGithub(unittest.TestCase):
         with self.repository(["neuro_san_studio/registries/aaosa.hocon"]):
             self.studio.materialize("registries/aaosa.hocon")
         # A workspace with no memory, as the next build process has.
-        later: ToolboxWorkspace = Studio.github(self.REPO, "main", cache_dir=self.cache)
+        later: ToolboxWorkspace = ToolboxWorkspaceFactory.github(self.REPO, "main", cache_dir=self.cache)
         with self.repository(["neuro_san_studio/registries/aaosa.hocon"], raw=b"{ edited }"):
             path: Optional[Path] = later.materialize("registries/aaosa.hocon")
         self.assertEqual(path.read_bytes(), b"{ edited }")
@@ -213,7 +213,7 @@ class TestStudioGithub(unittest.TestCase):
         with mock.patch.object(Path, "home", return_value=home):
             # One workspace per ref, recording where each mirror is.
             for ref in ["release", "release/feature", "release_feature"]:  # type: str
-                bases.append(Studio.github(self.REPO, ref).include_base())
+                bases.append(ToolboxWorkspaceFactory.github(self.REPO, ref).include_base())
         self.assertEqual(len(set(bases)), 3)
         # Every mirror is directly under the nsdeploy cache root, so none holds another.
         for base in bases:  # type: Path
