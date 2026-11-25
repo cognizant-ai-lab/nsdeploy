@@ -138,17 +138,6 @@ class LocalContent(ToolboxContent):
         return self._paths
 
     @override
-    def refresh(self) -> None:
-        """
-        Forget the memoized file list, so the next listing walks the checkout again.
-
-        What makes a file added to the checkout visible to a build that has already
-        listed it. An edit to a file already listed needs none of this: `read` goes to
-        the checkout every time.
-        """
-        self._paths = None
-
-    @override
     def read(self, path: str) -> Optional[bytes]:
         """
         Read one file of the checkout.

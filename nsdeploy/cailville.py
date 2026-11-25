@@ -27,13 +27,12 @@ from nsdeploy.cailville_map import CailvilleMap
 from nsdeploy.gateway import network_slug
 from nsdeploy.gateway import public_origin
 from nsdeploy.generate import write_private_steward_manifest
+from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
 from nsdeploy.linker import write_link_file
 from nsdeploy.resolve import resolve_hocon
 from nsdeploy.studio import DEFAULT_REF
 from nsdeploy.studio import DEFAULT_REPO
-from nsdeploy.studio import GithubStudio
-from nsdeploy.studio import LocalStudio
-from nsdeploy.studio import StudioSource
+from nsdeploy.studio import Studio
 
 
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
@@ -649,13 +648,13 @@ def prepare_runtime_sources(cailville_dir: Path, project_dir: Path, *,
     for site_id in sorted(derived):
         site: Dict[str, Any] = sites[site_id]
         hocon: Path = _member_path(cailville_dir, site["hocon"])
-        source: StudioSource
+        workspace: ToolboxWorkspace
         if site.get("studio"):
-            source = LocalStudio(site["studio"])
+            workspace = Studio.local(site["studio"])
         else:
-            source = GithubStudio(site.get("repo", DEFAULT_REPO), site.get("ref", DEFAULT_REF))
+            workspace = Studio.github(site.get("repo", DEFAULT_REPO), site.get("ref", DEFAULT_REF))
         config: Dict[str, Any]
-        config, _ = resolve_hocon(hocon, source)
+        config, _ = resolve_hocon(hocon, workspace)
         config = augment_config(config, site_id, community, base_domain=base_domain,
                                 public_scheme=public_scheme, public_port=public_port)
         destination: Path = output_dir / f"{site_id}.hocon"

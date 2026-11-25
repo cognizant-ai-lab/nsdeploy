@@ -70,22 +70,6 @@ class ToolboxContent:
         """
         raise NotImplementedError
 
-    def refresh(self) -> None:
-        """
-        Forget anything this source memoized, so the next question reaches it again.
-
-        The one method here with a working default rather than `NotImplementedError`:
-        a source that memoizes nothing is already correct, and making every
-        implementation write an empty method would say nothing. A source that keeps a
-        file list, a revision or a file for its own lifetime overrides this.
-
-        A workspace calls it when a caller asks for a forced refresh. It is the only
-        way a build can see a file that was added to a toolbox after the toolbox was
-        first listed, because clearing what the workspace learned leaves the source's
-        own memo in place.
-        """
-        return
-
     def read(self, path: str) -> Optional[bytes]:
         """
         Read one file by the path `list_paths` reported for it.

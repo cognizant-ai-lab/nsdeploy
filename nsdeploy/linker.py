@@ -25,15 +25,14 @@ from urllib.parse import ParseResult
 from urllib.parse import urljoin
 from urllib.parse import urlparse
 
+from nsdeploy.interfaces.toolbox_workspace import ToolboxWorkspace
 from nsdeploy.resolve import BROWSER_OMITTED_TOOLS
 from nsdeploy.resolve import DEMO_MODE_MARKER
 from nsdeploy.resolve import expand_embedded_network_refs
 from nsdeploy.resolve import resolve_hocon
 from nsdeploy.studio import DEFAULT_REF
 from nsdeploy.studio import DEFAULT_REPO
-from nsdeploy.studio import GithubStudio
-from nsdeploy.studio import LocalStudio
-from nsdeploy.studio import StudioSource
+from nsdeploy.studio import Studio
 
 
 @dataclass
@@ -341,15 +340,15 @@ def run_link_command(argv: Optional[List[str]] = None) -> int:
     missing: List[str] = [str(path) for path in paths if not path.is_file()]
     if missing:
         parser.error("HOCON not found: " + ", ".join(missing))
-    source: StudioSource = LocalStudio(args.studio) if args.studio else GithubStudio(args.repo, args.ref)
+    workspace: ToolboxWorkspace = Studio.local(args.studio) if args.studio else Studio.github(args.repo, args.ref)
 
     local: List[NetworkDescription] = []
     path: Path
     for path in paths:
         config: Dict[str, Any]
         missing_includes: List[str]
-        config, missing_includes = resolve_hocon(path, source)
-        expand_embedded_network_refs(config, source, missing_includes)
+        config, missing_includes = resolve_hocon(path, workspace)
+        expand_embedded_network_refs(config, workspace, missing_includes)
         local.append(describe_config(config, path.stem, path))
 
     site_map: Dict[str, str] = {}
